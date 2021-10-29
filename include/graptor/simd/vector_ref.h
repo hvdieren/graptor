@@ -189,8 +189,7 @@ public:
 	// static_assert( layout != lo_unknown, "cannot do CAS in gather/scatter" );
 	member_type n = val.at(0); // assumes VL == 1
 	member_type o = old.at(0);
-	// bool r = CAS( &m_addr[m_sidx], o, n );
-	bool r = encoding::cas( &m_addr[m_sidx], o, n );
+	bool r = encoding::template cas<vector_traits>( &m_addr[m_sidx], o, n );
 	return r;
     }
     
