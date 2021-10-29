@@ -1,0 +1,19 @@
+#ifndef GRAPTOR_CONFIG_H_IN
+#define GRAPTOR_CONFIG_H_IN
+
+#define Graptor_VERSION_MAJOR @Graptor_VERSION_MAJOR@
+#define Graptor_VERSION_MINOR @Graptor_VERSION_MINOR@
+
+#define BACKEND_seq 0
+#define BACKEND_cilk_numa 1
+#define BACKEND_cilk 2
+#define BACKEND_openmp_numa 3
+#define BACKEND_openmp 4
+
+#define HAS_NUMA(cfg)  ((cfg)&1)
+
+#cmakedefine GRAPTOR_PARALLEL BACKEND_@GRAPTOR_PARALLEL@
+
+#define ALT_BOR_ASSIGN 1
+
+#endif // GRAPTOR_CONFIG_H_IN
