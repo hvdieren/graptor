@@ -522,7 +522,6 @@ struct fp_conversion_traits {
 	} else
 #endif
 	if constexpr ( false ) {
-	    return cvt_float_width<T,V,VL>( a );
 	} else {
 	    constexpr unsigned short VL1
 		= std::conditional_t<(sizeof(T) > sizeof(V)),src_traits,dst_traits>
@@ -799,219 +798,7 @@ struct int_conversion_traits<T, U, VL,
  * Lane width and type conversions: vectors
  ***********************************************************************/
 
-#if 0
-template<typename T, typename U, unsigned short VL>
-struct int_conversion_traits<T,U,VL,
-			 std::enable_if_t<
-			     sizeof(T) == sizeof(U)
-			     && is_integral_or_logical_v<T>
-			     && is_integral_or_logical_v<U>
-			     && VL != 1>> {
-    using src_traits = vector_type_traits_vl<T, VL>;
-    using dst_traits = vector_type_traits_vl<U, VL>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-	if constexpr ( std::is_same_v<T,U> )
-	    return a;
-	else if constexpr ( std::is_same_v<T,bool> && is_logical_v<U> ) {
-	    assert( 0 && "NYI" );
-	} else if constexpr ( is_logical_v<T> && std::is_same_v<U,bool> ) {
-	    assert( 0 && "NYI" );
-	} else if constexpr ( std::is_same_v<T,std::make_unsigned_t<U>>
-			      || std::is_same_v<std::make_unsigned_t<T>,U> )
-	    // There is nothing we can do in this instance
-	    return a;
-
-	assert( 0 && "NYI" );
-    }
-};
-#endif
-
-#if 0
-template<typename T, unsigned short VL>
-struct int_conversion_traits<T,T,VL,
-			 std::enable_if_t<std::is_floating_point_v<T>
-					  && VL != 1>> {
-    using traits = vector_type_traits_vl<T, VL>;
-
-    static typename traits::type convert( typename traits::type a ) {
-	return a;
-    }
-};
-#endif
-
-#ifdef __MMX__
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 4,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 2
-			     && sizeof(U) == 4
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 4>;
-    using dst_traits = vector_type_traits_vl<U, 4>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-#ifdef __SSE4_1__
-	auto b = _mm_cvtsi64_si128( _mm_cvtm64_si64( a ) );
-	if constexpr ( std::is_signed_v<typename src_traits::member_type>
-		       || is_logical_v<typename src_traits::member_type> )
-	    return _mm_cvtepi16_epi32( b );
-	else
-	    return _mm_cvtepu16_epi32( b );
-#else
-	assert( 0 && "NYI" );
-#endif
-    }
-};
-#endif
-
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 4,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 4
-			     && sizeof(U) == 2
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 4>;
-    using dst_traits = vector_type_traits_vl<U, 4>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-#ifdef __SSE3__
-	const auto * shufmask =
-	    reinterpret_cast<const __m128i*>( conversion_4x4_2x4_shuffle );
-	auto idx = _mm_load_si128( shufmask );
-	return _mm_cvtsi64_m64( _mm_cvtsi128_si64(
-				    _mm_shuffle_epi8( a, idx ) ) );
-#else
-	assert( 0 && "NYI" );
-#endif
-    }
-};
-#endif
-#endif // __MMX__
-
 #if __AVX2__
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 16,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 2
-			     && sizeof(U) == 1
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 16>;
-    using dst_traits = vector_type_traits_vl<U, 16>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-	if constexpr ( std::is_same_v<U,bool> ) {
-	    assert( 0 && "NYI" );
-	} else if constexpr ( is_logical_v<T> ) {
-	    assert( 0 && "NYI" );
-	} else {
-	    assert( 0 && "NYI" );
-	}
-    }
-};
-#endif
-#endif // __AVX2__
-
-#ifdef __SSE4_1__
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 4,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 1
-			     && sizeof(U) == 4
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 4>;
-    using dst_traits = vector_type_traits_vl<U, 4>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-	if constexpr ( std::is_same_v<T,bool> ) {
-	    if constexpr ( is_logical_v<U> ) {
-		auto b = _mm_cvt_epi8_epi32( _mm_cvtsi32_si128( a ) );
-		auto z = dst_traits::setzero();
-		auto c = dst_traits::cmpne( b, z, target::mt_vmask() );
-		return c;
-	    }
-	} else if constexpr ( is_logical_v<U> ) {
-	    return _mm_cvtepi8_epi32( _mm_cvtsi32_si128( a ) );
-	} else {
-	    if constexpr ( std::is_signed_v<T> )
-		return _mm_cvtepi8_epi32( _mm_cvtsi32_si128( a ) );
-	    else
-		return _mm_cvtepu8_epi32( _mm_cvtsi32_si128( a ) );
-	}
-	assert( 0 && "NYI" );
-    }
-};
-#endif
-
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 4,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 4
-			     && sizeof(U) == 1
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 4>;
-    using dst_traits = vector_type_traits_vl<U, 4>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-	if constexpr ( std::is_same_v<U,bool> ) {
-	    auto shr = _mm_srli_epi32( a, 31 ); // top bit to lowest position
-	    return _mm_cvtsi128_si32( _mm_cvtepi32_epi8( shr ) );
-	} else if constexpr ( is_logical_v<U> ) {
-	    auto shr = _mm_srli_epi32( a, 24 ); // top bit to new top bit
-	    return _mm_cvtsi128_si32( _mm_cvtepi32_epi8( shr ) );
-	} else {
-	    // general integers: truncate
-	    return _mm_cvtsi128_si32( _mm_cvtepi32_epi8( a ) );
-	}
-    }
-};
-#endif
-#endif
-
-#if __AVX2__
-#if 0
-template<typename T, typename U>
-struct int_conversion_traits<T, U, 4,
-			 typename std::enable_if<
-			     !std::is_same<T,U>::value
-			     && is_integral_or_logical<T>::value
-			     && is_integral_or_logical<U>::value
-			     && sizeof(T) == 2
-			     && sizeof(U) == 8
-			     >::type> {
-    using src_traits = vector_type_traits_vl<T, 4>;
-    using dst_traits = vector_type_traits_vl<U, 4>;
-
-    static typename dst_traits::type convert( typename src_traits::type a ) {
-	__m128i b = _mm_cvtsi64_si128( _mm_cvtm64_si64( a ) );
-	if constexpr ( std::is_signed_v<T> || is_logical_v<T> )
-	    return _mm256_cvtepi16_epi64( b );
-	else
-	    return _mm256_cvtepu16_epi64( b );
-    }
-};
-#endif
-
 template<>
 struct fp_conversion_traits<float, double, 4> {
     using src_traits = vector_type_traits_vl<float, 4>;
@@ -1036,6 +823,189 @@ struct fp_conversion_traits<float, double, 4> {
     }
 };
 #endif // __AVX2__
+
+#if __AVX2__
+template<>
+struct fp_conversion_traits<long unsigned int, float, 4> {
+    using src_traits = vector_type_traits_vl<long unsigned int, 4>;
+    using dst_traits = vector_type_traits_vl<float, 4>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	__m256i c = _mm256_shuffle_epi32( a, 0b10001000 );
+	__m256i cc = _mm256_permute4x64_epi64( c, 0b1000 );
+	__m128i s = _mm256_castsi256_si128( cc );
+	return _mm_cvtepi32_ps( s );
+    }
+};
+#elif __SSE4_2__
+template<>
+struct fp_conversion_traits<long unsigned int, float, 4> {
+    using src_traits = vector_type_traits_vl<long unsigned int, 4>;
+    using dst_traits = vector_type_traits_vl<float, 4>;
+    using cnv_traits = fp_conversion_traits<long unsigned int, float, 2>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	__m128i lo = src_traits::lower_half( a );
+	__m128i hi = src_traits::upper_half( a );
+	__m128 flo = _mm_cvtpd_ps( uint64_to_double( lo ) );
+	__m128 fhi = _mm_cvtpd_ps( uint64_to_double( hi ) );
+	return _mm_shuffle_ps( flo, fhi, 0b01000100 );
+    }
+
+    // https://stackoverflow.com/questions/41144668/how-to-efficiently-perform-double-int64-conversions-with-sse-avx
+    static __m128d uint64_to_double(__m128i x) {
+	x = _mm_or_si128(x, _mm_castpd_si128(_mm_set1_pd(0x0010000000000000)));
+	return _mm_sub_pd(_mm_castsi128_pd(x), _mm_set1_pd(0x0010000000000000));
+    }
+};
+#else
+/* -- handle using recursion
+template<>
+struct fp_conversion_traits<long unsigned int, float, 4> {
+    using src_traits = vector_type_traits_vl<long unsigned int, 4>;
+    using dst_traits = vector_type_traits_vl<float, 4>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	using luint = long unsigned int;
+	using half_traits = vector_type_traits_vl<long unsigned int, 2>;
+	luint m0 = half_traits::lane( src_traits::lower_half( a ), 0 );
+	luint m1 = half_traits::lane( src_traits::lower_half( a ), 1 );
+	luint m2 = half_traits::lane( src_traits::upper_half( a ), 0 );
+	luint m3 = half_traits::lane( src_traits::upper_half( a ), 1 );
+	return dst_traits::set( (float)m3, (float)m2, (float)m1, (float)m0 );
+    }
+};
+*/
+#endif
+
+#ifdef __AVX512F__
+template<>
+struct fp_conversion_traits<long unsigned int, float, 8> {
+    using src_traits = vector_type_traits_vl<long unsigned int, 8>;
+    using dst_traits = vector_type_traits_vl<float, 8>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	__m512 f = _mm512_cvt_roundepu32_ps( a, _MM_FROUND_CUR_DIRECTION );
+	__m512 c = _mm512_shuffle_ps( f, f, _MM_SHUFFLE( 2, 0, 2, 0 ) );
+	return _mm512_castps512_ps256( c );
+    }
+};
+
+template<>
+struct fp_conversion_traits<long unsigned int, float, 16> {
+    using src_traits = vector_type_traits_vl<long unsigned int, 16>;
+    using dst_traits = vector_type_traits_vl<float, 16>;
+    using idx_traits = vector_type_traits_vl<unsigned int, 16>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	// Note: this first shrinks the width because AVX512DQ instructions
+	// are required to convert epu64 to ps
+	__m512i ca = _mm512_castsi256_si512( _mm512_cvtepi64_epi32( a.a ) );
+	__m512i cb = _mm512_castsi256_si512( _mm512_cvtepi64_epi32( a.b ) );
+	__m512i c = _mm512_shuffle_i32x4( ca, cb, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+	return _mm512_cvt_roundepu32_ps( c, _MM_FROUND_CUR_DIRECTION );
+    }
+};
+
+template<>
+struct fp_conversion_traits<float, double, 8> {
+    using src_traits = vector_type_traits_vl<float, 8>;
+    using dst_traits = vector_type_traits_vl<double, 8>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	return _mm512_cvtps_pd( a );
+    }
+};
+
+template<>
+struct fp_conversion_traits<float, double, 16> {
+    using src_traits = vector_type_traits_vl<float, 16>;
+    using dst_traits = vector_type_traits_vl<double, 16>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	auto lo = src_traits::lower_half( a );
+	auto hi = src_traits::upper_half( a );
+	return dst_traits::type{ _mm512_cvtps_pd( lo ), _mm512_cvtps_pd( hi ) };
+    }
+};
+
+template<>
+struct fp_conversion_traits<unsigned long, unsigned long long, 8> {
+    using src_traits = vector_type_traits_vl<unsigned, 8>;
+    using dst_traits = vector_type_traits_vl<unsigned long, 8>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	return _mm512_cvtepi32_epi64( a );
+    }
+};
+
+template<>
+struct fp_conversion_traits<bool, logical<8>, 16> {
+    using src_traits = vector_type_traits_vl<bool, 16>;
+    using dst_traits = vector_type_traits_vl<logical<8>, 16>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	return typename dst_traits::type{
+	    _mm512_cvtepi8_epi64( a ),
+	    _mm512_cvtepi8_epi64( _mm_srli_si128( a, 64 ) ) };
+    }
+};
+
+#elif __AVX2__ // __AVX512F__ above
+
+template<>
+struct fp_conversion_traits<float, double, 8> {
+    using src_traits = vector_type_traits_vl<float, 8>;
+    using dst_traits = vector_type_traits_vl<double, 8>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	using half_traits = fp_conversion_traits<float, double, 4>;
+	__m256d lo = half_traits::convert( src_traits::lower_half( a ) );
+	__m256d hi = half_traits::convert( src_traits::upper_half( a ) );
+	return dst_traits::type{ lo, hi };
+    }
+};
+
+template<>
+struct fp_conversion_traits<long unsigned int, float, 8> {
+    // No AVX512 available
+    using src_traits = vector_type_traits_vl<long unsigned int, 8>;
+    using dst_traits = target::avx2_4fx8<float>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	// No suitable vector operations available pre-AVX512.
+	// Take apart vector and rebuild
+	using half_traits = typename src_traits::lo_half_traits;
+	typename half_traits::type lo = src_traits::lower_half( a );
+	typename half_traits::type hi = src_traits::upper_half( a );
+	return dst_traits::set(
+	    (float)half_traits::lane3( hi ),
+	    (float)half_traits::lane2( hi ),
+	    (float)half_traits::lane1( hi ),
+	    (float)half_traits::lane0( hi ),
+	    (float)half_traits::lane3( lo ),
+	    (float)half_traits::lane2( lo ),
+	    (float)half_traits::lane1( lo ),
+	    (float)half_traits::lane0( lo ) );
+    }
+};
+#endif // __AVX512F__
+
+
+/*
+#if __SSE4_2__
+template<>
+struct conversion_traits<float, double, 2> {
+    using src_traits = vector_type_traits_vl<float, 2>;
+    using dst_traits = vector_type_traits_vl<double, 2>;
+
+    static typename dst_traits::type convert( typename src_traits::type a ) {
+	// Converts 2x float (MMX) to 2x double (SSE4). Assumes SS4.
+	return _mm256_cvtps_pd( a );
+    }
+};
+#endif
+*/
 
 } // namespace conversion
 
@@ -1073,7 +1043,7 @@ struct conversion_traits<T,U,VL,
     static typename dst_traits::type convert( typename src_traits::type a ) {
 	if constexpr ( std::is_same_v<T,U> )
 	    return a;
-	else if constexpr ( std::is_floating_point_v<T> || std::is_floating_point_v<U>)
+	else if constexpr ( std::is_floating_point_v<T> || std::is_floating_point_v<U> )
 	    return conversion::fp_conversion_traits<T,U,VL>::convert( a );
 	else
 	    return conversion::int_conversion_traits<T,U,VL>::convert( a );
