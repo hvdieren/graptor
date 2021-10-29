@@ -1,4 +1,5 @@
 #include <ostream>
+#include <iostream>
 #include <random>
 
 #include "graptor/target/vector.h"
