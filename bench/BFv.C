@@ -32,35 +32,11 @@ using expr::_0;
 #define VARIANT 0
 #endif
 
-struct BF_customfp_config {
-    static constexpr size_t bit_size = 16;
-};
-
-using cfp_cfg = variable_customfp_config<BF_customfp_config>;
-
 #if VARIANT == 0
 using FloatTy = float;
 using SFloatTy = float;
 using EncCur = array_encoding<FloatTy>;
 using EncNew = array_encoding<FloatTy>;
-using EncEdge = array_encoding<FloatTy>;
-#elif VARIANT == 1
-using FloatTy = float;
-using SFloatTy = scustomfp<false,7,9,true,6>;
-using EncCur = array_encoding_wide<SFloatTy>;
-using EncNew = EncCur;
-using EncEdge = array_encoding<FloatTy>;
-#elif VARIANT == 2
-using FloatTy = float;
-using SFloatTy = vcustomfp<cfp_cfg>;
-using EncCur = array_encoding<SFloatTy>;
-using EncNew = EncCur;
-using EncEdge = array_encoding<FloatTy>;
-#elif VARIANT == 3
-using FloatTy = float;
-using SFloatTy = scustomfp<false,7,9,true,11>;
-using EncCur = array_encoding_wide<SFloatTy>;
-using EncNew = EncCur;
 using EncEdge = array_encoding<FloatTy>;
 #else
 #error "Bad value for VARIANT"
@@ -220,40 +196,6 @@ public:
 	std::cout << "Smallest edge_weight: " << f_min << "\n";
 	std::cout << "Largest edge_weight: " << f_max << "\n";
 	std::cout << "Longest path: " << f_max*(FloatTy)est_diam << "\n";
-
-	// Determine configuration of custom floating-point format, assuming
-	// maximum path length is est_diam hubs at most.
-	// The shortest path length is 0 (from vertex to itself), however,
-	// this is an exceptional case and we may detect and handle it, or
-	// assume that the smallest path length can be 0.
-	// Here, we require that 0 and infinity are correctly represented.
-#if VARIANT == 1 || VARIANT == 3
-	std::cout << "Smallest float: " << SFloatTy::min().get()
-		  << " = " << (float)SFloatTy::min() << "\n";
-	std::cout << "Largest float: " << SFloatTy::max().get()
-		  << " = " << (float)SFloatTy::max() << "\n";
-	assert( f_min >= (float)SFloatTy::min()
-		&& f_max <= (float)SFloatTy::max()
-		&& "edge weights out of range for data type" );
-#elif VARIANT == 2
-	// Need to add up to this many, worst case
-	f_max *= (FloatTy)est_diam;
-
-	// Ensure we can at least encode the value 1.0
-	f_max = std::max( f_max, 1.0f );
-
-	cfp_cfg::set_param_for_range( std::min( (FloatTy)0, f_min ),
-				      f_max, false );
-	auto vz = typename EncCur::stored_type(0.0f);
-	std::cout << "Configuration (0.0f value): "
-		  << vz << " -> " << (float)vz << "\n";
-	auto vo = typename EncCur::stored_type(1.0f);
-	std::cout << "Configuration (1.0f value): "
-		  << vo << " -> " << (float)vo << "\n";
-	auto vh = typename EncCur::stored_type(0.5f);
-	std::cout << "Configuration (0.5f value): "
-		  << vh << " -> " << (float)vh << "\n";
-#endif
 
 	static_assert( std::is_same_v<EdgeTy,FloatTy>,
 		       "requires re-coding of edges" );
