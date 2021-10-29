@@ -27,6 +27,9 @@ auto licm_split( redop<R,V,RedOp> r );
 template<typename E1, typename E2, typename BinOp>
 auto licm_split( binop<E1,E2,BinOp> b );
 
+template<typename A, typename T, unsigned short VL>
+auto licm_split( refop<A,T,VL> r );
+
 /***********************************************************************
  * Predicates to determine if LICM can be applied.
  ***********************************************************************/
