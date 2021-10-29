@@ -275,7 +275,9 @@ public:
 	bool r = false;
 	do {
 	    o = m_addr[m_sidx];
-	} while( o == ~(VID)0 && !(r = encoding::cas( &m_addr[m_sidx], o, n )) );
+	} while( o == ~(VID)0
+		 && !(r = encoding::template cas<vector_traits>(
+			  &m_addr[m_sidx], o, n )) );
 	using L = typename add_logical<member_type>::type;
 	return r
 	    ? vector<L,1>::true_mask()
