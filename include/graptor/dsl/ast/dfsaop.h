@@ -160,6 +160,29 @@ struct dfsaop_MIS {
 	    return make_rvalue( upd );
     }
 
+    template<typename VTr, typename I, typename MTr, typename Enc, bool NT,
+	     layout_t LayoutR,
+	     layout_t Layout2,
+	     layout_t Layout3,
+	     typename MPack>
+    static auto
+    evaluate_atomic( sb::lvalue<VTr,I,Enc,NT,LayoutR> s,
+		     sb::rvalue<VTr,Layout2> u,
+		     sb::rvalue<MTr,Layout3> c,
+		     const MPack & mpack ) {
+	simd::detail::vector_impl<VTr> r, sval;
+	simd::detail::vector_ref_impl<VTr,I,Enc,NT,LayoutR> sref = s.value();
+	auto upd = mpack.template get_any<simd::detail::mask_bool_traits>();
+	if( upd.data() ) {
+	    do {
+		sval = sref.load();
+		r = eval( sval, u.value(), c.value()  );
+	    } while( ( r != sval ).data() && !sref.cas( sval, r ) );
+	    return make_rvalue( r != sval );
+	} else
+	    return make_rvalue( upd );
+    }
+
 private:
     template<typename VTr, typename MTr, layout_t Layout1, layout_t Layout2>
     static simd::vec<VTr,simd::lo_unknown> eval(
