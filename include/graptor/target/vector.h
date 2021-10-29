@@ -421,6 +421,11 @@ struct vfp_traits_select<
 template<typename T, unsigned short nbytes>
 using vector_type_int_traits =
     typename target::vint_traits_select<T,nbytes>::type;
+    
+template<typename T, unsigned short nbytes>
+struct vector_type_traits<
+    T,nbytes,std::enable_if_t<std::is_floating_point<T>::value>>
+    : public target::vfp_traits_select<T,nbytes>::type { };
 
 /***********************************************************************
  * Mask traits (AVX-512)
