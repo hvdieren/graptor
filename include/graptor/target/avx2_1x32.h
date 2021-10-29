@@ -43,6 +43,8 @@ public:
     using mask_traits = mask_type_traits<32>;
     using mask_type = typename mask_traits::type;
 
+    using mt_preferred = target::mt_vmask;
+
     using half_traits = sse42_1x16<member_type>;
     // using recursive_traits = vt_recursive<member_type,1,32,half_traits>;
     using int_traits = avx2_1x32<int_type>;

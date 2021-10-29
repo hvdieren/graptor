@@ -37,6 +37,8 @@ public:
     using mask_traits = mask_type_traits<16>;
     using mask_type = typename mask_traits::type;
 
+    using mt_preferred = target::mt_vmask;
+
     // using half_traits = vector_type_int_traits<member_type,16>;
     using half_traits = sse42_2x8<member_type>;
     using recursive_traits = vt_recursive<member_type,2,32,half_traits>;
