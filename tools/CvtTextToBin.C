@@ -5,6 +5,7 @@
 
 #include "graptor/graptor.h"
 #include "graptor/graph/cgraph.h"
+#include "graptor/legacy/IO.h"
 
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
