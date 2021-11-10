@@ -355,6 +355,14 @@ public:
 	return _mm256_mask_i32gather_ps( setzero(), a, b, *(type*)&mask, W );
     }
     static auto
+    gather( const member_type *a, itype b, vpair<vmask_type,vmask_type> mask ) {
+	__m128i lo = avx2_convert_8i_4i( mask.a );
+	__m128i hi = avx2_convert_8i_4i( mask.b );
+	vmask_type mask32 = _mm256_castsi128_si256( lo );
+	mask32 = _mm256_inserti128_si256( mask32, hi, 1 );
+	return _mm256_mask_i32gather_ps( setzero(), a, b, *(type*)&mask32, W );
+    }
+    static auto
     gather( const member_type *a, itype b, mask_type mask ) {
 #if __AVX512F__ && __AVX512VL__
 	return _mm256_mmask_i32gather_ps( setzero(), mask, b, a, W );
@@ -395,6 +403,43 @@ public:
 	for( size_t i=0; i < vlen; ++i )
 	    if( int_traits::lane( mask, i ) )
 		a[int_traits::lane( b, i )] = lane( c, i );
+#endif
+    }
+    static void scatter( member_type *a, itype b, type c,
+			 vpair<vmask_type,vmask_type> mask ) {
+#if __AVX512VL__
+	__m128i lo = avx2_convert_8i_4i( mask.a );
+	__m128i hi = avx2_convert_8i_4i( mask.b );
+	vmask_type mask32 = _mm256_castsi128_si256( lo );
+	mask32 = _mm256_inserti128_si256( mask32, hi, 1 );
+	_mm256_mask_i32scatter_ps( (void *)a, asmask( mask32 ), b, c,
+				   sizeof(member_type) );
+#else
+	for( size_t i=0; i < vlen/2; ++i )
+	    if( int_traits::lane( mask.a, i ) )
+		a[int_traits::lane( b, i )] = lane( c, i );
+	for( size_t i=vlen/2; i < vlen; ++i )
+	    if( int_traits::lane( mask.b, i-vlen/2 ) )
+		a[int_traits::lane( b, i )] = lane( c, i );
+#endif
+    }
+
+    static __m128i avx2_convert_8i_4i( __m256i a ) {
+#if __AVX512VL__
+	return _mm256_cvtepi64_epi32( a );
+#else
+	// We choose an instruction sequence that does not require loading
+	// shuffle masks. A single step would be possible with permutevar8x32
+	// followed by cast to extract lower 128 bits, however, the load of
+	// the shuffle mask is expensive (possible 7 cycles) on sky lake,
+	// and will occupy a register to hold the temporary.
+	// This conversion simply truncates the integers to 32 bits.
+	const __m256i s = _mm256_shuffle_epi32( a, 0b10001000 );
+	const __m256i z = target::avx2_bitwise::setzero();
+	const __m256i l = _mm256_blend_epi32( z, s, 0b11000011 );
+	const __m128i hi = _mm256_extracti128_si256( l, 1 );
+	const __m128i lo = _mm256_castsi256_si128( l );
+	return _mm_or_si128( hi, lo );
 #endif
     }
 };
