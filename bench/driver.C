@@ -55,12 +55,25 @@ struct helper<GraphGGVEBOSIMD> {
 
 using GraphVEBOGraptorT = GraphVEBOGraptor<GRAPTOR_MODE>;
 
-template<>
-struct helper<GraphVEBOGraptorT> {
-    static GraphVEBOGraptor<GRAPTOR_MODE>
+using GraphVEBOGraptorPullDataParNotCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(0,0,1)>;
+using GraphVEBOGraptorPullDataParCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(1,0,1)>;
+using GraphVEBOGraptorPushSingleCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(1,1,0)>;
+using GraphVEBOGraptorPushSingleNotCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(0,1,0)>;
+using GraphVEBOGraptorPushDataParNotCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(0,0,0)>;
+using GraphVEBOGraptorPushDataParCached =
+    GraphVEBOGraptor<GRAPTOR_MODE_MACRO(1,0,0)>;
+
+template<graptor_mode_t Mode>
+struct helper<GraphVEBOGraptor<Mode>> {
+    static GraphVEBOGraptor<Mode>
 	createGraph( const GraphCSx & G, commandLine & P,
 		     int npart, int maxVL ) {
-	return GraphVEBOGraptor<GRAPTOR_MODE>( G, npart, maxVL/2, maxVL, 4 );
+	return GraphVEBOGraptor<Mode>( G, npart, maxVL/2, maxVL, 4 );
     }
 };
 
