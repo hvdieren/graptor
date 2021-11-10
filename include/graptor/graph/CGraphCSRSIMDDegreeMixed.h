@@ -7,37 +7,7 @@
 #include "graptor/mm.h"
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/GraphCSx.h"
-
-#define GRAPTOR_WITH_REDUCE 1
-#define GRAPTOR_WITH_SELL 2
-#define GRAPTOR_MIXED 3
-
-#ifndef GRAPTOR_THRESHOLD_MULTIPLIER
-#define GRAPTOR_THRESHOLD_MULTIPLIER 1
-#endif // GRAPTOR_THRESHOLD_MULTIPLIER
-
-#ifndef GRAPTOR_DEGREE_BITS
-#define GRAPTOR_DEGREE_BITS 16
-#endif // GRAPTOR_DEGREE_BITS
-
-#ifndef GRAPTOR_SKIP_BITS
-#if GRAPTOR_CSR_INDIR
-#define GRAPTOR_SKIP_BITS 0
-#else
-#define GRAPTOR_SKIP_BITS 0
-#endif
-#endif // GRAPTOR_SKIP_BITS
-
-#ifndef GRAPTOR_DEGREE_MULTIPLIER
-#define GRAPTOR_DEGREE_MULTIPLIER 3
-#endif // GRAPTOR_DEGREE_MULTIPLIER
-
-// Problem: DEG12 does not work easily as common targets will cause allocation
-//          of additional vectors, causing the degree to decrease
-//          non-monotonically
-#ifndef GRAPTOR_DEG12
-#define GRAPTOR_DEG12 0
-#endif // GRAPTOR_DEG12
+#include "graptor/graph/GraptorDef.h"
 
 template<typename fVID>
 struct SortByDecrDegStable {
@@ -52,7 +22,8 @@ private:
 
 // GraptorVReduce is a special case of this with nelm == G.n
 // Also necessary to change the direction of the argument graph
-template<typename fVID, typename fEID, unsigned short DegreeBits>
+template<graptor_mode_t Mode,
+	 typename fVID, typename fEID, unsigned short DegreeBits>
 class GraptorVPush {
 public:
     GraptorVPush( unsigned short maxVL_ )
@@ -63,11 +34,12 @@ public:
 	  overflows( 0 ), size( 0 ), ninv( 0 ), edges( nullptr ) { }
 
     template<bool AnalyseMode, typename Remapper>
-    fEID process( const GraphCSx & Gcsr,
-		  fVID lo, fVID hi, fVID nelm,
-		  unsigned int p,
-		  Remapper remap,
-		  fVID * edges_ ) {
+    fEID process_remap( const GraphCSx & Gcsr,
+			fVID lo, fVID hi, fVID nelm,
+			unsigned int p,
+			Remapper remap,
+			fVID * edges_,
+			EID * starts_d1_unused ) {
 	// Record edges for auxiliary function
 	edges = edges_;
 
@@ -117,16 +89,29 @@ public:
 	return nxt;
     }
 
+    template<bool AnalyseMode, typename Remapper>
+    fEID process_remap( const GraphCSx & Gcsc,
+			unsigned int p,
+			fVID vslim, fVID nelm,
+			Remapper remap,
+			fVID * edges_,
+			fEID * starts_ ,
+			const fVID * redir, fVID redir_nnz,
+			const partitioner & part ) {
+	assert( 0 && "should not be called" );
+	return 0;
+    }
+
     template<bool AnalyseMode>
-    fEID process( const GraphCSx & Gcsr,
-		  const partitioner & part,
-		  unsigned int p,
+    fEID process_redir( const GraphCSx & Gcsr,
+			const partitioner & part,
+			unsigned int p,
 #if GRAPTOR_CSR_INDIR == 1
-		  fVID * redir,
-		  fVID redir_nnz,
+			fVID * redir,
+			fVID redir_nnz,
 #endif
-		  fVID * edges_,
-		  fEID * starts_ ) {
+			fVID * edges_,
+			fEID * starts_ ) {
 	// Record edges for auxiliary function
 	edges = edges_;
 	// starts = starts_;
@@ -222,30 +207,30 @@ private:
 	    if( value & ~vmask )
 		overflows++;
 	} else {
-#if GRAPTOR_CACHED == 1
-	    // Only record degree information in first vector of a run
-	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) == 0 ) {
+	    if constexpr ( GraptorConfig<Mode>::is_cached ) {
+		// Only record degree information in first vector of a run
+		if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) == 0 ) {
+		    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+		    if( deg3 > (dmax/2-1) )
+			deg3 = dmax/2-1;
+		    fVID d = deg3 >> (lane * dbpl);
+		    d &= ( fVID(1) << dbpl ) - 1;
+
+		    value &= vmask;
+		    value |= d << ( sizeof(fVID) * 8 - dbpl );
+		}
+		edges[pos] = value;
+	    } else {
 		fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
-		if( deg3 > (dmax/2-1) )
-		    deg3 = dmax/2-1;
+		if( deg3 > (dmax-1) )
+		    deg3 = dmax-1;
 		fVID d = deg3 >> (lane * dbpl);
 		d &= ( fVID(1) << dbpl ) - 1;
 
 		value &= vmask;
 		value |= d << ( sizeof(fVID) * 8 - dbpl );
+		edges[pos] = value;
 	    }
-	    edges[pos] = value;
-#else
-	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
-	    if( deg3 > (dmax-1) )
-		deg3 = dmax-1;
-	    fVID d = deg3 >> (lane * dbpl);
-	    d &= ( fVID(1) << dbpl ) - 1;
-
-	    value &= vmask;
-	    value |= d << ( sizeof(fVID) * 8 - dbpl );
-	    edges[pos] = value;
-#endif
 	}
     }
 
@@ -258,7 +243,8 @@ private:
     fVID * edges;
 };
 
-template<typename fVID, typename fEID, unsigned short DegreeBits>
+template<graptor_mode_t Mode,
+	 typename fVID, typename fEID, unsigned short DegreeBits>
 class GraptorCSRDataPar {
 public:
     GraptorCSRDataPar( unsigned short maxVL_ )
@@ -270,14 +256,14 @@ public:
 	  size( 0 ), ninv( 0 ), edges( nullptr ) { }
 
     template<bool AnalyseMode, typename Remapper>
-    fEID process( const GraphCSx & Gcsc,
-		  unsigned int p,
-		  fVID vslim, fVID nelm,
-		  Remapper remap,
-		  fVID * edges_,
-		  fEID * starts_ ,
-		  const fVID * redir, fVID redir_nnz,
-		  const partitioner & part ) {
+    fEID process_remap( const GraphCSx & Gcsc,
+			unsigned int p,
+			fVID vslim, fVID nelm,
+			Remapper remap,
+			fVID * edges_,
+			fEID * starts_ ,
+			const fVID * redir, fVID redir_nnz,
+			const partitioner & part ) {
 	// Calculate dimensions of SIMD representation
 	// Record edges for auxiliary function
 	edges = edges_;
@@ -479,6 +465,17 @@ public:
 	return nxt;
     }
 
+    template<bool AnalyseMode, typename Remapper>
+    fEID process_remap( const GraphCSx & Gcsr,
+			fVID lo, fVID hi, fVID nelm,
+			unsigned int p,
+			Remapper remap,
+			fVID * edges_,
+			EID * starts_d1_unused ) {
+	assert( 0 && "Should not be called" );
+	return 0;
+    }
+
     bool success() const { return overflows == 0; }
     fEID nOverflows() const { return overflows; }
     fEID nBytes() const { return size; }
@@ -581,11 +578,11 @@ private:
 	    return;
 	}
 #endif
-#if GRAPTOR_CACHED == 1
+	if constexpr ( GraptorConfig<Mode>::is_cached ) {
 	    // Only record degree information in first vector of a word
-	if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2))) != 0 )
-	    return;
-#endif
+	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2))) != 0 )
+		return;
+	}
 	    
 	fVID r = edges[pos];
 
@@ -631,6 +628,7 @@ public:
  * partitions, i.e., index only needed for first vertex, remainder
  * can be delta-degree
  */
+template<graptor_mode_t Mode>
 class GraphCSRSIMDDegreeMixed {
     VID n;	//!< Number of vertices
     VID nv;	//!< Number of SIMD groupds of vertices (n rounded up to maxVL)
@@ -685,7 +683,7 @@ public:
 
 #if GRAPTOR_EXTRACT_OPT
 	assert( maxVL == GRAPTOR_DEGREE_BITS && "restriction" );
-#endif // GRAPTOR_CSC
+#endif // GRAPTOR_EXTRACT_OPT
 
 	VID lo = part.start_of(p);
 	VID hi = part.end_of(p);
@@ -716,44 +714,46 @@ public:
 		m += idx[r+1] - idx[r];
 	}
 	assert( m <= Gcsc.numEdges() );
-#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-#if GRAPTOR_DEG12 == 1
-#error "GRAPTOR_DEG12 requires SELL"
-#endif
-#endif
+	static_assert(
+	    (((unsigned)Mode) & GRAPTOR_WITH_SELL) != 0
+	    || GRAPTOR_DEG12 != 1,
+	    "GRAPTOR_DEG12 requires SELL" );
 
 	// Figure out cut-off vertex
 	mv = mvd1 = mvdpar = mv1 = mv2 = 0;
-#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-	vslim = hi;
-	for( VID v=hi; v > lo; v-- ) {
-	    // VID r = remap.first[v-1]; // loop index shifted by -1
-	    VID r = remap.origID( v-1 ); // loop index shifted by -1
-	    VID deg = idx[r+1] - idx[r];
-	    if( deg > 0 ) {
-		vslim = v; // upper bound, deg[vslim] == 0
-		break;
+// #if (((unsigned)Mode) & GRAPTOR_WITH_SELL) == 0
+	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
+	    vslim = hi;
+	    for( VID v=hi; v > lo; v-- ) {
+		// VID r = remap.first[v-1]; // loop index shifted by -1
+		VID r = remap.origID( v-1 ); // loop index shifted by -1
+		VID deg = idx[r+1] - idx[r];
+		if( deg > 0 ) {
+		    vslim = v; // upper bound, deg[vslim] == 0
+		    break;
+		}
 	    }
-	}
-#elif (GRAPTOR & GRAPTOR_WITH_REDUCE) == 0
-	vslim = lo;
-#else
-	// Cut-off point for d1 vs dpar
-	const VID threshold = GRAPTOR_THRESHOLD_MULTIPLIER * maxVL;
+	} else if constexpr ( GraptorConfig<Mode>::is_datapar ) {
+// #elif (((unsigned)Mode) & GRAPTOR_WITH_REDUCE) == 0
+	    vslim = lo;
+	} else {
+// #else
+	    // Cut-off point for d1 vs dpar
+	    const VID threshold = GRAPTOR_THRESHOLD_MULTIPLIER * maxVL;
 
-	vslim = lo+nv;
-	for( VID v=lo; v < hi; v++ ) { // TODO: take steps of maxVL
-	    // Traverse vertices in order of decreasing degree
-	    // VID r = remap.first[v];
-	    VID r = remap.origID( v );
-	    VID deg = idx[r+1] - idx[r];
-	    if( deg < threshold ) { // threshold - evaluate
-		vslim = std::max( lo, v - ( v % maxVL ) );
-		//std::cerr << "set vslim C=" << vslim << "\n";
-		break;
+	    vslim = lo+nv;
+	    for( VID v=lo; v < hi; v++ ) { // TODO: take steps of maxVL
+		// Traverse vertices in order of decreasing degree
+		// VID r = remap.first[v];
+		VID r = remap.origID( v );
+		VID deg = idx[r+1] - idx[r];
+		if( deg < threshold ) { // threshold - evaluate
+		    vslim = std::max( lo, v - ( v % maxVL ) );
+		    //std::cerr << "set vslim C=" << vslim << "\n";
+		    break;
+		}
 	    }
 	}
-#endif // GRAPTOR_BY_VERTEX
 
 	// Round up vslim to next multiple of maxVL
 	if( vslim % maxVL != 0 )
@@ -761,7 +761,7 @@ public:
 
 #if GRAPTOR_CSR_INDIR == 1
 	{
-	    GraptorCSRDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
+	    GraptorCSRDataPar<Mode,VID,EID,DegreeBits> enc_dpar( maxVL );
 	    std::pair<mmap_ptr<VID>, VID> pair
 		= enc_dpar.reorder( Gcsc, p, maxVL, nelm, remap, part, allocation );
 	    redir = pair.first;
@@ -773,8 +773,8 @@ public:
 
 	// Count number of required edges to store graph
 	{
-	    GraptorVPush<VID,EID,DegreeBits> size_d1( maxVL );
-	    GraptorCSRDataPar<VID,EID,DegreeBits> size_dpar( maxVL );
+	    GraptorVPush<Mode,VID,EID,DegreeBits> size_d1( maxVL );
+	    GraptorCSRDataPar<Mode,VID,EID,DegreeBits> size_dpar( maxVL );
 	    fmt_d1_dpar<true>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
 			       remap, nullptr, nullptr, size_d1, size_dpar,
 			       starts.get(), &starts[(vslim-lo)/maxVL],
@@ -805,23 +805,29 @@ public:
 	    else if( deg == 1 )
 		mv1 += maxVL;
 	    else if( deg > 2 ) {
-#if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0 && (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-		vslim = v; // adjust vslim
+		if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
+// #if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0 && (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+		    vslim = v; // adjust vslim
 		// std::cerr << "adjust vslim=" << vslim << "\n";
-#endif
+// #endif
+		}
 		break;
 	    }
 	}
-#if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
-	mvdpar -= mv1 + mv2;
-#endif
+	if constexpr ( GraptorConfig<Mode>::is_datapar ) {
+// #if (((unsigned)Mode) & GRAPTOR_WITH_SELL) != 0
+	    mvdpar -= mv1 + mv2;
+// #endif
+	}
 	assert( mv1 <= mv );
 	assert( mv2 <= mv );
 #endif
 
-#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-	assert( mvdpar == 0 );
-#endif
+	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
+// #if (((unsigned)Mode) & GRAPTOR_WITH_SELL) == 0
+	    assert( mvdpar == 0 );
+// #endif
+	}
 
 	// std::cerr << "mv=" << mv
 		  // << "\nvslim=" << vslim
@@ -841,8 +847,8 @@ public:
 
 	// Now that we know that the degree bits are available, encode degrees.
 	{
-	    GraptorVPush<VID,EID,DegreeBits> enc_d1( maxVL );
-	    GraptorCSRDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
+	    GraptorVPush<Mode,VID,EID,DegreeBits> enc_d1( maxVL );
+	    GraptorCSRDataPar<Mode,VID,EID,DegreeBits> enc_dpar( maxVL );
 	    fmt_d1_dpar<false>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
 				remap, edges.get(), &edges[mvd1], enc_d1, enc_dpar,
 				starts.get(), &starts[(vslim-lo)/maxVL],
@@ -853,13 +859,15 @@ public:
 	}
     }
 
-#if GRAPTOR_CSC == 0 && GRAPTOR == 1
     // VPush only. SIMD edge groups/partition and NNZ/partition
     // These statistics are correct also in case of GRAPTOR_CSR_INDIR
     static std::pair<const EID *,const VID *>
     space_from_csr( const GraphCSx & Gcsr,
 		    const partitioner & part,
 		    unsigned short maxVL ) {
+	assert( !GraptorConfig<Mode>::is_csc
+		&& !GraptorConfig<Mode>::is_datapar
+		&& "should not be called/compiled" );
 	// Calculate the number of edges, counted by full SIMD groups,
 	// required to store each partition of the graph.
 	const unsigned int np = part.get_num_partitions();
@@ -979,11 +987,11 @@ public:
 		m += idx[r+1] - idx[r];
 	}
 	assert( m <= Gcsr.numEdges() );
-#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-#if GRAPTOR_DEG12 == 1
-#error "GRAPTOR_DEG12 requires SELL"
-#endif
-#endif
+
+	// #if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+	static_assert(
+	    (((unsigned)Mode)&2) != 1 || GRAPTOR_DEG12 != 1,
+	    "GRAPTOR_DEG12 requires SELL" );
 
 	// Figure out cut-off vertex
 	// mv is pre-calculated
@@ -1019,8 +1027,8 @@ public:
 
 	// Encode...
 	{
-	    GraptorVPush<VID,EID,DegreeBits> enc_d1( maxVL );
-	    EID ne = enc_d1.template process<false>(
+	    GraptorVPush<Mode,VID,EID,DegreeBits> enc_d1( maxVL );
+	    EID ne = enc_d1.template process_redir<false>(
 		Gcsr, part, p,
 #if GRAPTOR_CSR_INDIR == 1
 		redir.get(), redir_nnz,
@@ -1092,7 +1100,6 @@ public:
 	delete[] degp;
     }
 #endif
-#endif
 
 
 private:
@@ -1113,21 +1120,27 @@ private:
 	// TODO: lo-vslim is not the range of source; sources
 	// are 0-vslim/vslim-n and destinations are defined by partition
 	// start/end
-#if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0
-	fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, nelm, p, remap, edges_d1, starts_d1 );
-	assert( fnc_d1.success() );
+	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
+#if GRAPTOR_CSR_INDIR == 1
+	    static_assert( !GraptorConfig<Mode>::is_csc,
+			   "GRAPTOR_CSR_INDIR currently not supported" );
+#else
+	    fnc_d1.template process_remap<EstimateMode>( Gcsc, lo, vslim, nelm, p, remap, edges_d1, starts_d1 );
+	    assert( fnc_d1.success() );
 #endif
+	}
 
-#if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
-#if GRAPTOR_CSR_INDIR != 1 && GRAPTOR_CSC == 0
-#error "GRAPTOR_CSR_INDIR currently required"
-#elif GRAPTOR_CSR_INDIR == 1
-	fnc_dpar.template process<EstimateMode>(
-	    Gcsc, p, vslim, nelm, remap, edges_dpar, starts_dpar,
-	    redir, redir_nnz, part );
-	assert( fnc_dpar.success() );
+	if constexpr ( GraptorConfig<Mode>::is_datapar ) {
+#if GRAPTOR_CSR_INDIR != 1
+	    static_assert( !GraptorConfig<Mode>::is_csc,
+			   "GRAPTOR_CSR_INDIR currently required" );
+#else
+	    fnc_dpar.template process_remap<EstimateMode>(
+		Gcsc, p, vslim, nelm, remap, edges_dpar, starts_dpar,
+		redir, redir_nnz, part );
+	    assert( fnc_dpar.success() );
 #endif
-#endif
+	}
     }
     
 public:
