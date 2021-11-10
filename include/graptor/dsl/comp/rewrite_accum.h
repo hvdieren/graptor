@@ -10,6 +10,10 @@ template<typename E1, typename E2, typename RedOp, typename Cache, typename PIDE
 static constexpr
 auto rewrite_privatize_accumulators( redop<E1,E2,RedOp> r, Cache & c, PIDExpr pid );
 
+template<typename S, typename U, typename C, typename DFSAOp, typename Cache, typename PIDExpr>
+static constexpr
+auto rewrite_privatize_accumulators( dfsaop<S,U,C,DFSAOp> r, Cache & c, PIDExpr pid );
+
 template<typename Expr, typename UnOp, typename Cache, typename PIDExpr>
 static constexpr
 auto rewrite_privatize_accumulators( unop<Expr,UnOp> u, Cache & c, PIDExpr pid );
@@ -117,6 +121,17 @@ auto rewrite_privatize_accumulators( redop<E1,E2,RedOp> r, Cache & c, PIDExpr pi
 		       rewrite_privatize_accumulators( r.val(), c, pid ),
 		       RedOp() );
 }
+
+template<typename S, typename U, typename C, typename DFSAOp, typename Cache, typename PIDExpr>
+static constexpr
+auto rewrite_privatize_accumulators( dfsaop<S,U,C,DFSAOp> r, Cache & c, PIDExpr pid ) {
+    // TODO: Is this correct?
+    return make_dfsaop( rewrite_privatize_accumulators( r.state(), c, pid ),
+			rewrite_privatize_accumulators( r.update(), c, pid ),
+			rewrite_privatize_accumulators( r.condition(), c, pid ),
+			DFSAOp() );
+}
+
 
 } // namespace detail
 
