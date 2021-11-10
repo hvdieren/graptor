@@ -5,14 +5,14 @@
 // TODO:
 // - use emap_scan
 
-template<unsigned short VL, graptor_mode_t M, typename MVExpr,
+template<unsigned short VL, typename MVExpr,
 	 typename RExpr, typename VOPCaches,
 	 typename Environment, typename Config>
 __attribute__((flatten))
 static inline void GraptorCSRVPushNotCachedDriver(
-    const GraphVEBOGraptor<M> & GA,
+    const GraphVEBOGraptor<gm_csr_vpush_not_cached> & GA,
     int p,
-    const GraphCSRSIMDDegreeMixed & GP,
+    const GraphCSRSIMDDegreeMixed<gm_csr_vpush_not_cached> & GP,
     const partitioner & part,
     const MVExpr & m_vexpr,
     const RExpr & rexpr,
@@ -58,8 +58,9 @@ static inline void GraptorCSRVPushNotCachedDriver(
     auto vsrc = simd::template create_constant<vid_type>( (VID)0 );
 #endif
 
+    std::cerr << ">> p=" << p << " nvec=" << nvec << "\n";
     for( EID s=0; s < nvec; s += VL ) {
-	//std::cerr << "= vertex s=" << s << " vsrc[0]=" << vsrc.at(0) << "\n";
+	// std::cerr << "= vertex s=" << s << " vsrc[0]=" << vsrc.at(0) << "\n";
 	
 	// Extract degree. Increment by one to adjust encoding
 	auto edata = simd::template load_from<vid_type>( &edge[s] );
@@ -75,7 +76,11 @@ static inline void GraptorCSRVPushNotCachedDriver(
 	//       out like in convergence), then skip over distance as given
 	//       by code.
 
-	// std::cerr << "SIMD s=" << s << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
+#if GRAPTOR_CSR_INDIR == 1
+	std::cerr << "SIMD s=" << s << " sidx=" << sidx << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
+#else
+	std::cerr << "SIMD s=" << s << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
+#endif
 
 	// validate( GA.getCSR(), vsrc, vdst );
 	
@@ -85,7 +90,8 @@ static inline void GraptorCSRVPushNotCachedDriver(
 	    expr::create_entry<expr::vk_src>( vsrc ),
 	    expr::create_entry<expr::vk_mask>( vmask ),
 	    expr::create_entry<expr::vk_dst>( vdst ) );
-	auto rval_output = expr::evaluate( c, m, m_vexpr );
+	auto mpack = expr::sb::create_mask_pack( vdst != vmask );
+	auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
 
 	// Using a blend: vsrc += iif( (bool)(code & 1), vzero, vone );
 	// instead of a broadcast completes in 3 vs 2 clock cycles on KNL
@@ -95,18 +101,19 @@ static inline void GraptorCSRVPushNotCachedDriver(
 	VID vstep = ( code == 0 ) ? 1 : 0;
 #if GRAPTOR_CSR_INDIR == 1
 	sidx += vstep;
-	// vsrc = simd_vector<VID, VL>( (VID)redir[sidx], lo_constant );
 	vsrc = simd::template create_constant<vid_type>( (VID)redir[sidx] );
 #else
-	vsrc += simd_vector<VID, VL>( (VID)vstep );
+	vsrc += simd::template create_constant<vid_type>( (VID)vstep );
 #endif
     }
 
 #if GRAPTOR_CSR_INDIR == 1
+    // This assertion is not precise - does not account for
+    // rounding that occurs on getRedirNNZ value.
     assert( sidx <= GP.getRedirNNZ() && sidx+VL > GP.getRedirNNZ() );
 #endif
 
-    GraptorCSRVertexOp<VL>( p, part, rexpr, c );
+    GraptorCSRVertexOp<VL>( env, p, part, rexpr, c );
 
     cache_commit( env, vop_caches, c, m_pid );
 }
