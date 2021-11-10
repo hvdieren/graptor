@@ -145,6 +145,13 @@ struct redop_logicalor {
 	       typename std::enable_if<simd::matchVLtt<VTr,MTr>::value>::type * = nullptr ) {
 	return make_rvalue( reduce_logicalor( r.value(), r.mask() ) );
     }
+    template<typename VTr, layout_t Layout, typename MPack>
+    static auto
+    evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	auto v = r.value();
+	auto m = mpack.get_mask_for( v );
+	return make_rvalue( reduce_logicalor( v, m ), sb::mask_pack<>() );
+    }
 
     template<typename VTr, typename MTr1, typename MTr2, typename I,
 	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
@@ -549,8 +556,13 @@ struct redop_min {
 		typename decltype(less)::mask_traits>();
 	    auto sel = less && cmask;
 	    // Note: mask not needed for store - already accounted for in iif()
-	    // Mask may be more efficient in a scatter
-	    l.value().store( ::iif( sel, lval, r.value() ) );
+	    if constexpr ( Layout1 == simd::lo_linear
+			   || Layout1 == simd::lo_linalgn ) {
+		l.value().store( ::iif( sel, lval, r.value() ) );
+	    } else {
+		// Mask is necessary in a scatter in case of invalid addresses
+		l.value().store( r.value(), sel );
+	    }
 	    return make_rvalue( sel, mpack );
 	} 
     }
