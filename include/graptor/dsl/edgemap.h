@@ -32,9 +32,9 @@
 // #include "graptor/dsl/emap/GraptorCSCVReduceCached.h"
 // #include "graptor/dsl/emap/GraptorCSCVReduceNotCached.h"
 #include "graptor/dsl/emap/GraptorCSCDataParCached.h"
-// #include "graptor/dsl/emap/GraptorCSCDataParNotCached.h"
-// #include "graptor/dsl/emap/GraptorCSRVPushCached.h"
-// #include "graptor/dsl/emap/GraptorCSRVPushNotCached.h"
+#include "graptor/dsl/emap/GraptorCSCDataParNotCached.h"
+#include "graptor/dsl/emap/GraptorCSRVPushCached.h"
+#include "graptor/dsl/emap/GraptorCSRVPushNotCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParNotCached.h"
 
