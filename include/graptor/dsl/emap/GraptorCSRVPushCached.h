@@ -9,13 +9,13 @@
 
 // This function implements a reverse Grazelle-like vectorization,
 // using push-style traversal as opposed to pull-style
-template<unsigned short VL, typename GraphType, typename Extractor,
+template<unsigned short VL, typename Extractor,
 	 typename MVExpr, typename VCache,
 	 typename Cache>
 __attribute__((always_inline, flatten))
 static inline void GraptorCSRVPushCached(
-    const GraphType & GA,
-    const GraphCSRSIMDDegreeMixed & GP,
+    const GraphVEBOGraptor<gm_csr_vpush_cached> & GA,
+    const GraphCSRSIMDDegreeMixed<gm_csr_vpush_cached> & GP,
     int p,
     const partitioner & part,
     const Extractor extractor,
@@ -117,9 +117,9 @@ static inline void GraptorCSRVPushCached(
 template<unsigned short VL, graptor_mode_t M, typename MVExpr,
 	 typename RExpr, typename VCache, typename VOPCache>
 static inline void GraptorCSRVPushCachedDriver(
-    const GraphVEBOGraptor<M> & GA,
+    const GraphVEBOGraptor<gm_csr_vpush_cached> & GA,
     int p,
-    const GraphCSRSIMDDegreeMixed & GP,
+    const GraphCSRSIMDDegreeMixed<gm_csr_vpush_cached> & GP,
     const partitioner & part,
     const MVExpr & m_vexpr,
     const RExpr & rexpr,
@@ -163,13 +163,12 @@ static inline void GraptorCSRVPushCachedDriver(
     cache_commit( vop_caches, c, m_pid );
 }
 
-template<unsigned short VL, typename Operator>
-__attribute__((always_inline))
-static inline void csc_vector_with_cache_loop(
+template<typename EMapConfig, typename Operator>
+__attribute__((flatten))
+static inline void emap_push(
     const GraphVEBOGraptor<gm_csr_vpush_cached> & GA,
     Operator & op, const partitioner & part ) {
-    // typename std::enable_if<Operator::is_scan>::type * = nullptr ) {
-    // Fused CSC + vertexop version where vertexop may involve a scan
+    constexpr unsigned short VL = EMapConfig::VL;
     unsigned short storedVL = GA.getMaxVL();
 
     // std::cerr << "VEBOGraptor with VL=" << VL << " VEL=" << sizeof(VID)
