@@ -1593,7 +1593,7 @@ private:
 
 template<>
 inline frontier frontier::create<frontier_type::ft_bool>( const partitioner & part ) {
-    return frontier::dense( part, part.get_num_vertices() );
+    return frontier::dense( part, part.get_num_elements() );
 }
 
 template<>
