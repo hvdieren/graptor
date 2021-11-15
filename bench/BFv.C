@@ -257,6 +257,10 @@ public:
 #endif
 #endif
 
+	    // If we have a sparse frontier that is unbacked, we cannot
+	    // do sparse processing. Hence, perform another dense edgemap
+	    // but one which produces a backed frontier.
+	    
 	    // Traverse edges, remove duplicate live destinations.
 	    frontier output;
 #if UNCOND_EXEC
@@ -264,25 +268,59 @@ public:
 #else
 	    auto filter_strength = api::strong;
 #endif
-	    api::edgemap(
-		GA, 
+
+#if UNCOND_EXEC
+	    // Returning to sparse frontier should probably be done explicitly
+	    // in case of deferred updates, i.e., forcibly calculate the sparse
+	    // frontier prior to the next edgemap.
+	    bool require_strong
+		// = api::default_threshold().is_sparse( F, GA.numEdges() );
+		= true;
+#else
+	    bool require_strong = true;
+#endif
+
+	    if( require_strong ) {
+		api::edgemap(
+		    GA, 
 #if DEFERRED_UPDATE
-		api::record( output,
-			     [&] ( auto d ) {
-				 return cur_dist[d] != new_dist[d]; },
-			     filter_strength ),
+		    api::record( output,
+				 [&] ( auto d ) {
+				     return cur_dist[d] != new_dist[d]; },
+				 api::strong ),
 #else
-		api::record( output, api::reduction, filter_strength ),
+		    api::record( output, api::reduction, api::strong ),
 #endif
-		api::filter( filter_strength, api::src, F ),
-		api::relax( [&]( auto s, auto d, auto e ) {
+		    api::filter( filter_strength, api::src, F ),
+		    api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
-		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
+			return new_dist[d].min( new_dist[s] + edge_weight[e] );
 #else
-		    return new_dist[d].min( cur_dist[s] + edge_weight[e] );
+			return new_dist[d].min( cur_dist[s] + edge_weight[e] );
 #endif
-			    } )
-		).materialize();
+				} )
+		    ).materialize();
+	    } else {
+		api::edgemap(
+		    GA, 
+#if DEFERRED_UPDATE
+		    api::record( output,
+				 [&] ( auto d ) {
+				     return cur_dist[d] != new_dist[d]; },
+				 api::weak ),
+#else
+		    api::record( output, api::reduction, api::strong ),
+#endif
+		    api::filter( filter_strength, api::src, F ),
+		    api::relax( [&]( auto s, auto d, auto e ) {
+#if LEVEL_ASYNC
+			return new_dist[d].min( new_dist[s] + edge_weight[e] );
+#else
+			return new_dist[d].min( cur_dist[s] + edge_weight[e] );
+#endif
+				} )
+		    ).materialize();
+	    }
 
 #if 0
 	    map_vertexL( part,
@@ -337,7 +375,7 @@ public:
 #endif
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    if( output.getType() == frontier_type::ft_unbacked || 1 ) {
+	    if( output.getType() == frontier_type::ft_unbacked /*|| 1*/ ) {
 		make_lazy_executor( part )
 		    .vertex_map( [&]( auto v ) {
 			return cur_dist[v] = new_dist[v];
