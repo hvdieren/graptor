@@ -269,58 +269,25 @@ public:
 	    auto filter_strength = api::strong;
 #endif
 
-#if UNCOND_EXEC
-	    // Returning to sparse frontier should probably be done explicitly
-	    // in case of deferred updates, i.e., forcibly calculate the sparse
-	    // frontier prior to the next edgemap.
-	    bool require_strong
-		// = api::default_threshold().is_sparse( F, GA.numEdges() );
-		= true;
-#else
-	    bool require_strong = true;
-#endif
-
-	    if( require_strong ) {
-		api::edgemap(
-		    GA, 
+	    api::edgemap(
+		GA, 
 #if DEFERRED_UPDATE
-		    api::record( output,
-				 [&] ( auto d ) {
-				     return cur_dist[d] != new_dist[d]; },
-				 api::strong ),
+		api::record( output,
+			     [&] ( auto d ) {
+				 return cur_dist[d] != new_dist[d]; },
+			     filter_strength ),
 #else
-		    api::record( output, api::reduction, api::strong ),
+		api::record( output, api::reduction, filter_strength ),
 #endif
-		    api::filter( filter_strength, api::src, F ),
-		    api::relax( [&]( auto s, auto d, auto e ) {
+		api::filter( filter_strength, api::src, F ),
+		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
-			return new_dist[d].min( new_dist[s] + edge_weight[e] );
+		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
 #else
-			return new_dist[d].min( cur_dist[s] + edge_weight[e] );
+		    return new_dist[d].min( cur_dist[s] + edge_weight[e] );
 #endif
-				} )
-		    ).materialize();
-	    } else {
-		api::edgemap(
-		    GA, 
-#if DEFERRED_UPDATE
-		    api::record( output,
-				 [&] ( auto d ) {
-				     return cur_dist[d] != new_dist[d]; },
-				 api::weak ),
-#else
-		    api::record( output, api::reduction, api::strong ),
-#endif
-		    api::filter( filter_strength, api::src, F ),
-		    api::relax( [&]( auto s, auto d, auto e ) {
-#if LEVEL_ASYNC
-			return new_dist[d].min( new_dist[s] + edge_weight[e] );
-#else
-			return new_dist[d].min( cur_dist[s] + edge_weight[e] );
-#endif
-				} )
-		    ).materialize();
-	    }
+		} )
+		).materialize();
 
 #if 0
 	    map_vertexL( part,
@@ -372,6 +339,30 @@ public:
 		assert( k == output.nActiveVertices() );
 	    }
 #endif
+#endif
+
+#if !LEVEL_ASYNC || DEFERRED_UPDATE
+	    // A sparse frontier that cannot be automatically converted due to
+	    // being unbacked.
+	    if( F.getType() == frontier_type::ft_unbacked
+		&& api::default_threshold().is_sparse( output, m ) ) {
+		frontier ftrue = frontier::all_true( n, m );
+		frontier output2;
+		make_lazy_executor( part )
+		    .vertex_filter( GA, ftrue, output2,
+				    [&]( auto v ) {
+					return cur_dist[v] != new_dist[v];
+				    } )
+		    .materialize();
+
+		assert( output.nActiveVertices() == output2.nActiveVertices()
+			&& "check number of vertices is the same" );
+		assert( output.nActiveEdges() == output2.nActiveEdges()
+			&& "check number of edges is the same" );
+
+		output.del();
+		output = output2;
+	    }
 #endif
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
