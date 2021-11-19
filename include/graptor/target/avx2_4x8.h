@@ -793,6 +793,11 @@ public:
     create_extractor( unsigned degree_bits, unsigned degree_shift ) {
 	return avx2_epi32_extract_degree8( degree_bits, degree_shift );
     }
+#elif __AVX2__
+    static avx2_epi32_extract_degree
+    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+	return avx2_epi32_extract_degree( degree_bits, degree_shift );
+    }
 #endif
 #else
     static avx2_epi32_extract_degree
