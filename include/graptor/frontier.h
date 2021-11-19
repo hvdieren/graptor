@@ -453,9 +453,10 @@ public:
     template<class vertex>
     inline void calculateActiveCounts( graph<vertex> G, VID n = ~(VID)0 ); 
     template<typename GraphType>
-    inline void calculateActiveCounts( GraphType G );
+    inline void calculateActiveCounts( const GraphType & G );
     inline void calculateActiveCounts( GraphCSx G, VID from, VID to );
-    inline void calculateActiveCounts( GraphCSx G, const partitioner & part,
+    inline void calculateActiveCounts( const GraphCSx & G,
+				       const partitioner & part,
 				       VID n );
 private:
     template<typename FlagsTy>

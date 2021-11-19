@@ -99,11 +99,11 @@ public:
 };
 class GoutDegreeCSxV
 {
-    GraphCSx & G;
+    const GraphCSx & G;
     VID *s;
 
 public:
-    GoutDegreeCSxV(GraphCSx & G_, VID* s_) : G(G_), s(s_) { }
+    GoutDegreeCSxV( const GraphCSx & G_, VID* s_ ) : G( G_ ), s( s_ ) { }
     // Note: adding up multiple degrees may overflow VID width in some graphs
     EID operator()( VID i ) {
 	const EID *idx = G.getIndex();
@@ -223,12 +223,13 @@ void frontier::calculateActiveCounts( GraphCSx G, VID from, VID to ) {
 }
 
 template<typename GraphType>
-void frontier::calculateActiveCounts( GraphType G ) {
+void frontier::calculateActiveCounts( const GraphType & G ) {
     calculateActiveCounts( G.getCSR(), G.get_partitioner(), ~(VID)0 );
 }
 
 // Note: this function must be passed the CSR graph
-void frontier::calculateActiveCounts( GraphCSx G, const partitioner & part,
+void frontier::calculateActiveCounts( const GraphCSx & G,
+				      const partitioner & part,
 				      VID n ) {
     // Calculate statistics on active vertices and their out-degree
     switch( ftype ) {
