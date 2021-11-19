@@ -308,6 +308,16 @@ public:
         f.ftype = frontier_type::ft_sparse;
         return f;
     }
+    static frontier sparse( VID nv, VID nactv, VID * ptr ) {
+	// std::cerr << "FRONTIER create sparse\n";
+        frontier f;
+	f.nv = nv;
+	f.nactv = nactv;
+	f.nacte = 0;
+	f.get_s() = ptr;
+        f.ftype = frontier_type::ft_sparse;
+        return f;
+    }
     static frontier create( VID nv, VID v, VID odeg ) {
 	// std::cerr << "FRONTIER create one\n";
         frontier f;
@@ -1022,6 +1032,7 @@ public:
     void toSparse( const partitioner & part ) {
 	switch( ftype ) {
 	case frontier_type::ft_true: break;
+	case frontier_type::ft_sparse: break;
 	case frontier_type::ft_unbacked:
 	{
 	    // Assume nactv is correct; simply allocate backing storage.
@@ -1031,7 +1042,6 @@ public:
 	}
 	case frontier_type::ft_bool:
 	{
-	    // std::cerr << "FRONTIER CONVERT frontier from bool to sparse\n";
 	    _seq<VID> R = packDense( part, get_b().get() );
 	    replace_storage( R );
 	    break;
@@ -1072,7 +1082,6 @@ public:
 	    replace_storage( R );
 	    break;
 	}
-	case frontier_type::ft_sparse: break;
 	default: UNREACHABLE_CASE_STATEMENT;
 	}
     }
