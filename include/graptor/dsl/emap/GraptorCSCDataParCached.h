@@ -43,13 +43,7 @@ static inline void GraptorCSCDataParCached(
     using svid_type = simd::ty<VID,1>;
     using seid_type = simd::ty<EID,1>;
 
-#if FRONTIER_BITMASK || __AVX512F__
-    // using output_type = simd::detail::mask_impl<
-    // simd::detail::mask_bit_traits<MVExpr::VL>>;
     using output_type = simd::container<typename MVExpr::data_type>;
-#else
-    using output_type = simd::container<typename MVExpr::data_type>;
-#endif
 
     auto pvec1 = simd::template create_constant<svid_type>( VL*(VID)p );
     auto m_pid = expr::create_value_map_new<VL>(
@@ -62,21 +56,21 @@ static inline void GraptorCSCDataParCached(
 
     // Split caches with pid cache hoisted out of loop
     // This is only valid when storedVL == VL.
-    auto c = cache_create_no_init(
-	// cache_cat( vop_caches, cache_cat( vcaches, vcaches_use ) ),
-	all_caches, m_pid );
+    auto c = cache_create_no_init( all_caches, m_pid );
     cache_init( env, c, vop_caches, m_pid ); // partial init
 
     // Carried over from one phase to the next
     VID sstart = GP.getSlimVertex();
     auto sdst = simd::template create_constant<svid_type>( sstart );
     auto sstep = simd::template create_constant<svid_type>( (VID)VL );
-    auto vpend = simd::template create_constant<vid_type>( part.end_of(p) );
+
+    VID send = part.end_of(p);
+    auto vpend = simd::template create_constant<vid_type>( send );
+
     EID sedge = part.edge_start_of( p );
     EID s = 0;
-    while( s < nvec && /*vdst.at(0)*/ sdst.at(0) < part.end_of(p) ) {
-	// std::cerr << "vdst[0]=" << vdst.at(0) << "\n";
-
+    const VID dmax = 1 << (GP.getMaxVL() * GP.getDegreeBits());
+    while( s < nvec && sdst.at(0) < send ) {
 	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
@@ -89,9 +83,6 @@ static inline void GraptorCSCDataParCached(
 		       "expect edgemap operation to return update mask" );
 	auto output = output_type::false_mask();
 
-	const auto vone = simd::template create_one<vid_type>();
-
-	const VID dmax = 1 << (GP.getMaxVL() * GP.getDegreeBits());
 	EID code;
 	do {
 	    // Extract degree. Increment by one to adjust encoding
@@ -112,7 +103,8 @@ static inline void GraptorCSCDataParCached(
 #endif
 
 	    // End of run of SIMD groups
-	    EID smax = std::min( s + EID(deg) * VL, nvec );
+	    // EID smax = std::min( s + EID(deg) * VL, nvec );
+	    EID smax = s + EID(deg) * VL;
 
 	    // std::cerr << "SIMD group v0=" << vdst.at(0) << " s=" << s << " deg=" << deg << " nvec=" << nvec << " - new\n";
 
@@ -171,8 +163,8 @@ static inline void GraptorCSCDataParCached(
 		// std::cerr << VID(sdst.at(0)+l) << "\n";
 	// }
 
-	auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
-	auto mpack = expr::sb::create_mask_pack( vdst < vpend );
+	// auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
+	// auto mpack = expr::sb::create_mask_pack( vdst < vpend );
 
 	// Evaluate hoisted part of expression.
 	{
@@ -185,10 +177,10 @@ static inline void GraptorCSCDataParCached(
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
-	    env.evaluate( c, m, mpack, m_rexpr );
+	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
 	}
 
-	cache_commit( env, vcaches, c, m, mpack );
+	cache_commit( env, vcaches, c, m /*, mpack*/ );
 	// vdst.set_unsafe( vdst + vstep );
 	sdst += sstep;
     }
@@ -198,7 +190,7 @@ static inline void GraptorCSCDataParCached(
     // We might benefit from creating a variation of m_rexpr that does not
     // include frontier calculation, i.e., constant-propagate a false
     // vk_smk.
-    while( sdst.at(0) < part.end_of(p) ) {
+    while( sdst.at(0) < send ) {
 	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
@@ -207,8 +199,8 @@ static inline void GraptorCSCDataParCached(
 	cache_init( env, c, vcaches, m ); // partial init
 
 	// Determine valid lanes
-	auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
-	auto mpack = expr::sb::create_mask_pack( vdst < vpend );
+	// auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
+	// auto mpack = expr::sb::create_mask_pack( vdst < vpend );
 
 	// Evaluate hoisted part of expression.
 	{
@@ -220,10 +212,10 @@ static inline void GraptorCSCDataParCached(
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
-	    env.evaluate( c, m, mpack, m_rexpr );
+	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
 	}
 
-	cache_commit( env, vcaches, c, m, mpack );
+	cache_commit( env, vcaches, c, m /*, mpack*/ );
 	// vdst.set_unsafe( vdst + vstep );
 	sdst += sstep;
     }
