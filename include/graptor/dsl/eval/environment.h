@@ -13,10 +13,8 @@ public:
     using address_map_t = AddressMap;
 
 public:
-    __attribute__((noinline))
     execution_environment( address_map_t && amap )
 	: m_aid_to_address( std::forward<address_map_t>( amap ) ) { }
-    __attribute__((noinline))
     execution_environment( const address_map_t & amap )
 	: m_aid_to_address( std::move( amap ) ) { }
 
