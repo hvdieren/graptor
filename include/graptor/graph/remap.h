@@ -22,12 +22,12 @@ public:
     RemapVertex( const VID * origID, const VID * remapID )
 	: m_origID( origID ), m_remapID( remapID ) { }
 
-    static constexpr bool is_idempotent() { return true; }
+    static constexpr bool is_idempotent() { return false; }
     
     VID origID( VID v ) const { return m_origID[v]; }
     VID remapID( VID v ) const { return m_remapID[v]; }
 
-    VID * getOrigIDPtr() const { return m_origID; }
+    VID * getOrigIDPtr() const { return const_cast<VID *>( m_origID ); }
 
     template<unsigned short W, typename GraphTy>
     frontier createValidFrontier( const GraphTy & G ) {
