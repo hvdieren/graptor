@@ -25,12 +25,15 @@ static inline VID GraptorCSRDataParCached(
     const Config & config ) {
 
     using vid_type = simd::ty<VID,VL>;
+    using seid_type = simd::ty<EID,1>;
 
     VID sidx = 0;
     EID s = 0;
     VID n = GA.numVertices();
 
     const simd_vector<VID, VL> vmask( extractor.get_mask() );
+
+    EID sedge = part.edge_start_of( p );
 
 #if GRAPTOR_CSR_INDIR == 0
     VID vmax = n;
@@ -96,11 +99,13 @@ static inline VID GraptorCSRDataParCached(
 		// std::cerr << "   s=" << s << " smax=" << smax << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << "\n";
 
 		// apply op vsrc, vdst;
+		auto sv = simd::create_scalar<seid_type>( sedge+s );
 		auto m = expr::create_value_map_new<VL>(
 		    expr::create_entry<expr::vk_pid>( pvec1 ),
 		    expr::create_entry<expr::vk_mask>( vmask ),
 		    expr::create_entry<expr::vk_src>( vsrc ),
-		    expr::create_entry<expr::vk_dst>( vdst ) );
+		    expr::create_entry<expr::vk_dst>( vdst ),
+		    expr::create_entry<expr::vk_edge>( sv ) );
 		auto mpack = expr::sb::create_mask_pack( vdst != vmask );
 		auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
 		// output.lor_assign( rval_output.mask() );
