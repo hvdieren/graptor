@@ -15,6 +15,9 @@ configure_file(include/graptor/config.h.in config.h)
 # also add ROOT/include directory
 include_directories("${PROJECT_BINARY_DIR}" "include")
 
+# set MAX_VL to  8 on an AVX2 system
+#        and to 16 on an AVX512 system
+#     set it to  1 for scalar (non-vectorized) execution
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=1")
 set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=native -DLONG -DMAX_VL=8")
