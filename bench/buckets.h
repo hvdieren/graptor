@@ -146,12 +146,14 @@ struct bucket_updater_dense {
 	    return std::make_pair( nth, m_fn( nth ) );
     }
     
+/*
     ID get( ID nth ) const {
 	if( !m_mask[nth] )
 	    return ~(VID)0;
 	else
 	    return nth;
     }
+*/
     
 private:
     const L * m_mask;
@@ -298,6 +300,7 @@ public:
 	case frontier_type::ft_logical2:
 	case frontier_type::ft_logical8:
 	    assert( 0 && "NYI" );
+	    break;
 	case frontier_type::ft_logical4:
 	{
 	    bucket_updater_dense<frontier_type::ft_logical4, ID, BucketFn>
@@ -345,11 +348,11 @@ private:
 
 	// 0. Allocate memory
 	unsigned np = part.get_num_partitions();
-	ID hsize = BLOCK;
+	ID hsize = ( BLOCK + sizeof(ID) - 1 ) / sizeof(ID);
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
 	ID * hist = new ID[(np+1) * hsize](); // zero init
-	uint8_t * idb = new uint8_t[num_elements];
+	// uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -366,14 +369,14 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
-		idb[v] = b;
+		// idb[v] = b;
 	    }
 	} );
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each partition / bucket
 	ID * thist = &hist[np * hsize];
-	parallel_for( ID b=0; b < m_open_buckets+1; ++b ) {
+	/*parallel_*/for( ID b=0; b < m_open_buckets+1; ++b ) {
 	    ID t = 0;
 	    for( unsigned p=0; p < np; ++p ) {
 		ID u = hist[p*hsize+b];
@@ -393,15 +396,15 @@ private:
 	    VID e = part.end_of( p );
 	    ID * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		// ID id, bkt;
-		// std::tie( id, bkt ) = fn( v );
-		ID id = fn.get( v );
+		ID id, bkt;
+		std::tie( id, bkt ) = fn( v );
+		// ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
 		    continue;
 
-		// ID b = slot( bkt );
-		ID b = idb[v];
+		ID b = slot( bkt );
+		// ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -425,7 +428,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
-	delete[] idb;
+	// delete[] idb;
 	delete[] hist;
     }
 
@@ -448,7 +451,7 @@ private:
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
 	ID * hist = new ID[(np+1) * hsize]();
-	uint8_t * idb = new uint8_t[num_elements];
+	// uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -465,7 +468,7 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
-		idb[v] = b;
+		// idb[v] = b;
 	    }
 	};
 	
@@ -492,15 +495,15 @@ private:
 	    VID e = std::min( (p+1)*CHUNK, num_elements );
 	    ID * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		// ID id, bkt;
-		// std::tie( id, bkt ) = fn( v );
-		ID id = fn.get( v );
+		ID id, bkt;
+		std::tie( id, bkt ) = fn( v );
+		// ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
 		    continue;
 
-		// ID b = slot( bkt );
-		ID b = idb[v];
+		ID b = slot( bkt );
+		// ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -531,7 +534,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
-	delete[] idb;
+	// delete[] idb;
 	delete[] hist;
     }
 	
@@ -548,19 +551,15 @@ private:
 	    ID b = slot( bkt );
 	    m_buckets[b].insert( id );
 	    ++num_inserted;
+
 /*
 	    if( m_fn.set_slot( id, b ) ) {
 		m_buckets[b].insert( id );
 		++num_inserted;
 	    }
 */
-
-	    // std::cerr << "BUCKETS: insert " << id << " into " << b
-	    // << " contains now " << m_buckets[b].size() << "\n";
 	}
 	m_elems += num_inserted;
-	// std::cerr << "BUCKETS: insert " << k
-		  // << " elements, count now " << m_elems << "\n";
 
 	ID k = 0;
 	for( ID i=0; i <= m_open_buckets; ++i )
