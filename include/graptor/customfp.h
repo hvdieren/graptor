@@ -243,11 +243,11 @@ static constexpr bool is_extended_floating_point_v
 /***********************************************************************
  * Numeric limits
  ***********************************************************************/
-#if 0
+#if 1
 namespace std {
 
-template<bool S, unsigned short E, unsigned short M, bool Z>
-class numeric_limits<scustomfp_em<S,E,M,Z>> {
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+class numeric_limits<::detail::customfp_em<S,E,M,Z,B>> {
 public:
     static constexpr bool is_specialized = true;
     static constexpr bool is_signed = S;
@@ -263,8 +263,10 @@ public:
     static constexpr bool is_bounded = false;
     static constexpr bool is_modulo = false;
     static constexpr bool digits = false;
-    static constexpr bool is_modulo = false;
     
+    static ::detail::customfp_em<S,E,M,Z,B> max() {
+	return ::detail::customfp_em<S,E,M,Z,B>::max();
+    }
 };
 
 } // namespace std
