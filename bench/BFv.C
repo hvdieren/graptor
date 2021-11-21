@@ -2,6 +2,7 @@
 
 #include "graptor/graptor.h"
 #include "graptor/api.h"
+#include "path.h"
 
 using expr::_0;
 
@@ -94,7 +95,7 @@ public:
 		} )
 		).materialize();
 	} else {
-	    expr::array_ro<VID,VID,var_remap> a_remap( remap.getOrigPtr() );
+	    expr::array_ro<VID,VID,var_remap> a_remap( remap.getOrigIDPtr() );
 	    api::edgemap(
 		GA,
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -512,24 +513,10 @@ public:
 
     void validate( stat & stat_buf ) {
 	VID n = GA.numVertices();
-	// VID longest = iter - 1;
-	FloatTy infinity = std::numeric_limits<FloatTy>::infinity();
-	FloatTy longest = 0, shortest = infinity;
-	for( VID v=0; v < n; ++v ) {
-#if VARIANT == 0
-	    if( longest < new_dist[v] && ! std::isinf( new_dist[v] ) )
-		longest = new_dist[v];
-	    if( shortest > new_dist[v]
-		&& ! std::isinf( new_dist[v] ) && new_dist[v] != 0 )
-		shortest = new_dist[v];
-#else
-	    if( longest < new_dist[v] && new_dist[v] != (float)SFloatTy::max() )
-		longest = new_dist[v];
-	    if( shortest > new_dist[v]
-		&& new_dist[v] != (float)SFloatTy::max() && new_dist[v] != 0 )
-		shortest = new_dist[v];
-#endif
-	}
+	const partitioner &part = GA.get_partitioner();
+
+	FloatTy shortest, longest;
+	std::tie( shortest, longest ) = find_min_max( GA, new_dist );
 
 	std::cout << "Shortest path from " << start
 		  << " (original: " << GA.originalID( start ) << ") : "
