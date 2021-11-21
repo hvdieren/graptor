@@ -10,7 +10,7 @@ using expr::_1;
 
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
-#define DEFERRED_UPDATE 0
+#define DEFERRED_UPDATE 1
 #endif
 
 #ifndef LEVEL_ASYNC
@@ -105,6 +105,10 @@ struct bucket_fn {
     template<VID Scale>
     FloatTy get_scaled( VID v ) const {
 	return (VID)( ((FloatTy)m_dist[v]) / ( m_delta / (FloatTy)Scale ) );
+    }
+
+    FloatTy get( VID v ) const {
+	return m_dist[v];
     }
     
 private:
@@ -294,17 +298,21 @@ public:
 	float density;
 	VID nactv;
 	EID nacte;
+	float meps;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
 		      << " density: " << density
 		      << " (E:" << nacte
 		      << ", V:" << nactv
-		      << ")\n";
+		      << ") M-edges/s: " << meps
+		      << "\n";
 	}
     };
 
-    struct stat { };
+    struct stat {
+	FloatTy shortest, longest;
+    };
 
     void run() {
 	const partitioner &part = GA.get_partitioner();
@@ -510,10 +518,12 @@ public:
 			     [&] ( auto d ) {
 				 auto z =
 				     expr::value<simd::ty<VID,decltype(d)::VL>,expr::vk_zero>();
+/* TODO: bkts differ, or bkt remains BUT distances differ
 				 auto cur_bkt = bkt_fn( cur_dist[d] );
 				 auto new_bkt = bkt_fn( new_dist[d] );
 				 return cur_bkt != new_bkt || new_bkt < a_cur[z]; },
-				 // return cur_dist[d] != new_dist[d]; },
+*/
+				 return cur_dist[d] != new_dist[d]; },
 			     api::strong ),
 #else
 		// api::record( output, api::reduction, filter_strength ),
@@ -656,6 +666,8 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].delay = tm_iter.next();
+		info_buf[iter].meps = 
+		    float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
@@ -771,7 +783,27 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 	}
     }
 
-    static void report( const std::vector<stat> & stat_buf ) { }
+    static void report( const std::vector<stat> & stat_buf ) {
+	bool fail = false;
+	for( int i=1; i < stat_buf.size(); ++i ) {
+	    if( stat_buf[i].shortest != stat_buf[0].shortest ) {
+		std::cerr << "ERROR: round " << i << " has shortest path="
+			  << stat_buf[i].shortest
+			  << " while round 0 has shortest path="
+			  << stat_buf[0].shortest << "\n";
+		fail = true;
+	    }
+	    if( stat_buf[i].longest != stat_buf[0].longest ) {
+		std::cerr << "ERROR: round " << i << " has longest path="
+			  << stat_buf[i].longest
+			  << " while round 0 has longest path="
+			  << stat_buf[0].longest << "\n";
+		fail = true;
+	    }
+	}
+	if( fail )
+	    abort();
+    }
 
     void validate( stat & stat_buf ) {
 	VID n = GA.numVertices();
@@ -779,26 +811,8 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 	FloatTy shortest, longest;
 	std::tie( shortest, longest ) = find_min_max( GA, new_dist );
 
-#if 0	
-	// VID longest = iter - 1;
-	FloatTy infinity = std::numeric_limits<FloatTy>::infinity();
-	FloatTy longest = 0, shortest = infinity;
-	for( VID v=0; v < n; ++v ) {
-#if VARIANT == 0
-	    if( longest < new_dist[v] && ! std::isinf( new_dist[v] ) )
-		longest = new_dist[v];
-	    if( shortest > new_dist[v]
-		&& ! std::isinf( new_dist[v] ) && new_dist[v] != 0 )
-		shortest = new_dist[v];
-#else
-	    if( longest < new_dist[v] && new_dist[v] != (float)SFloatTy::max() )
-		longest = new_dist[v];
-	    if( shortest > new_dist[v]
-		&& new_dist[v] != (float)SFloatTy::max() && new_dist[v] != 0 )
-		shortest = new_dist[v];
-#endif
-	}
-#endif
+	stat_buf.shortest = shortest;
+	stat_buf.longest = longest;
 
 	std::cout << "Shortest path from " << start
 		  << " (original: " << GA.originalID( start ) << ") : "
