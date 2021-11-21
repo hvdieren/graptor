@@ -263,3 +263,5 @@ const char * graph_traversal_kind_names[
     "irregular",
     "illegal-graph-traversal-kind"
 };
+
+frontier * zero_frontier = nullptr;
