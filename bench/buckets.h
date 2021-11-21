@@ -36,6 +36,26 @@ public:
 	m_entries[m_count++] = val;
     }
 
+    // Note: requires &b != this
+    void take( bucket<ID> & b ) {
+	grow( b.m_count );
+	std::copy( &b.m_entries[0], &b.m_entries[b.m_count],
+		   &m_entries[m_count] );
+	m_count += b.m_count;
+	b.m_count = 0;
+    }
+
+    ID filter( ID inc ) {
+	ID l = 0;
+	for( ID k=0; k < inc; ++k ) {
+	    if( m_entries[m_count+k] != ~(ID)0 ) {
+		m_entries[m_count+l] = m_entries[m_count+k];
+		++l;
+	    }
+	}
+	return l;
+    }
+
     void grow( ID inc ) {
 	if( m_count + inc > m_capacity ) {
 	    m_capacity = m_capacity == 0 ? 128 : 2*m_capacity;
@@ -94,6 +114,10 @@ struct bucket_updater {
 	ID bkt = m_fn( id );
 	return std::make_pair( id, bkt );
     }
+
+    ID get( ID nth ) const {
+	return m_lst[nth];
+    }
     
 private:
     const ID * m_lst;
@@ -122,10 +146,31 @@ struct bucket_updater_dense {
 	    return std::make_pair( nth, m_fn( nth ) );
     }
     
+    ID get( ID nth ) const {
+	if( !m_mask[nth] )
+	    return ~(VID)0;
+	else
+	    return nth;
+    }
+    
 private:
     const L * m_mask;
     ID m_num;
     BucketFn m_fn;
+};
+
+template<typename BktFn>
+struct half_bucket_fn {
+    using ID = typename BktFn::ID;
+    
+    half_bucket_fn( BktFn fn ) : m_fn( fn ) { }
+
+    ID operator() ( ID v ) const {
+	return m_fn.template get_scaled<2>( v );
+    }
+    
+private:
+    BktFn m_fn;
 };
 
 template<typename ID_, typename BktFn_>
@@ -152,21 +197,67 @@ public:
 	delete[] m_buckets;
     }
 
+    template<typename ID__, typename BktFn__>
+    friend class buckets;
+
     bool empty() const { return m_elems == 0; }
 
     ID get_current_bucket() const { return m_cur_range + m_cur_bkt + 1; }
+
+/*
+    need to consider reinsertion cost -> especially if in dense traversal
+    we visit all vertices, and may count all as updated, even if they
+	do not move bucket (we will re-insert, doubly -> toDense should catch duplicates in sparse frontier or not?)
+	Seems like number of removable vertices is really small
+*/
 
     frontier __attribute__((noinline)) next_bucket() {
 	while( true ) {
 	    // Re-do current bucket if not empty (some elements changed, and
 	    // remained in current bucket)
 	    if( !m_buckets[m_cur_bkt].empty() ) {
-		ID b = m_cur_bkt;
-		m_elems -= m_buckets[b].size();
-		// std::cerr << "BUCKETS: take bucket " << b
-			  // << " with " << m_buckets[b].size() << " items "
-			  // << " count now " << m_elems << "\n";
-		return m_buckets[b].as_frontier( m_range );
+/* merge buckets
+		m_elems -= m_buckets[m_cur_bkt].size();
+		for( ID b=m_cur_bkt+1; b < m_open_buckets; ++b ) {
+		    if( m_buckets[m_cur_bkt].size()
+			+ m_buckets[b].size() > 16384 )
+			break;
+
+		    m_elems -= m_buckets[b].size();
+		    m_buckets[m_cur_bkt].take( m_buckets[b] );
+		}
+*/
+/* split buckets
+		if( m_buckets[m_cur_bkt].size() > (1<<16) ) {
+		    using namespace std;
+		    using HFn = half_bucket_fn<BucketFn>;
+
+		    HFn hfn( m_fn );
+		    buckets<ID,HFn> bkts2( m_range, 2, hfn );
+		    bkts2.m_cur_range = ( m_cur_range + m_cur_bkt ) * 2;
+		    bkts2.m_buckets[0].grow( m_buckets[m_cur_bkt].size() );
+		    bkts2.m_buckets[1].grow( m_buckets[m_cur_bkt].size() );
+		    bkts2.update_buckets( m_buckets[m_cur_bkt] );
+
+		    assert( bkts2.m_buckets[0].size()
+			    + bkts2.m_buckets[1].size()
+			    == m_buckets[m_cur_bkt].size() );
+		    
+		    frontier F = bkts2.m_buckets[0].as_frontier( m_range );
+		    swap( m_buckets[m_cur_bkt], bkts2.m_buckets[1] );
+		    if( F.nActiveVertices() == 0 )
+			F.del();
+		    else {
+			std::cerr << "split " << bkts2.m_elems
+				  << " into " << F.nActiveVertices() << "\n";
+			m_elems -= F.nActiveVertices();
+			return F;
+		    } 
+		}
+ */
+
+		m_elems -= m_buckets[m_cur_bkt].size();
+		return m_buckets[m_cur_bkt].as_frontier( m_range );
 	    }
 
 	    // Progress to next bucket
@@ -249,14 +340,16 @@ private:
 			       IterFn fn, ID num_elements ) {
 	static constexpr ID BLOCK = 64;
 
+	if( num_elements == 0 )
+	    return;
+
 	// 0. Allocate memory
 	unsigned np = part.get_num_partitions();
 	ID hsize = BLOCK;
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	ID * hist = new ID[(np+1) * hsize];
-
-	std::fill( &hist[0], &hist[(np+1)*hsize], ID(0) );
+	ID * hist = new ID[(np+1) * hsize](); // zero init
+	uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -273,6 +366,7 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
+		idb[v] = b;
 	    }
 	} );
 	
@@ -299,14 +393,22 @@ private:
 	    VID e = part.end_of( p );
 	    ID * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
-		std::tie( id, bkt ) = fn( v );
+		// ID id, bkt;
+		// std::tie( id, bkt ) = fn( v );
+		ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
 		    continue;
 
-		ID b = slot( bkt );
+		// ID b = slot( bkt );
+		ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
+/*
+		if( m_fn.set_slot( id, b ) )
+		    m_buckets[b].insert( lhist[b]++, id );
+		else
+		    __sync_fetch_and_add( &thist[b], -1 );
+*/
 	    }
 	} );
 
@@ -323,6 +425,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
+	delete[] idb;
 	delete[] hist;
     }
 
@@ -330,6 +433,9 @@ private:
     void update_buckets_sparse( IterFn fn, ID num_elements ) {
 	static constexpr ID CHUNK = 4096;
 	static constexpr ID BLOCK = 64;
+
+	if( num_elements == 0 )
+	    return;
 
 	ID np = ( num_elements + CHUNK - 1 ) / CHUNK;
 	if( np < 2 ) {
@@ -341,9 +447,8 @@ private:
 	ID hsize = BLOCK;
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	ID * hist = new ID[(np+1) * hsize];
-
-	std::fill( &hist[0], &hist[(np+1)*hsize], ID(0) );
+	ID * hist = new ID[(np+1) * hsize]();
+	uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -360,6 +465,7 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
+		idb[v] = b;
 	    }
 	};
 	
@@ -386,16 +492,31 @@ private:
 	    VID e = std::min( (p+1)*CHUNK, num_elements );
 	    ID * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
-		std::tie( id, bkt ) = fn( v );
+		// ID id, bkt;
+		// std::tie( id, bkt ) = fn( v );
+		ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
 		    continue;
 
-		ID b = slot( bkt );
+		// ID b = slot( bkt );
+		ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
+/*
+		if( m_fn.set_slot( id, b ) )
+		    m_buckets[b].insert( lhist[b]++, id );
+		else
+		    m_buckets[b].insert( lhist[b]++, ~(ID)0 );
+*/
 	    }
 	};
+
+	// 4b. filter empty slots
+/*
+	parallel_for( ID b=0; b < m_open_buckets+1; ++b ) {
+	    thist[b] = m_buckets[b].filter( thist[b] );
+	}
+*/
 
 	// 5. Update bucket sizes
 	for( ID b=0; b < m_open_buckets+1; ++b ) {
@@ -410,6 +531,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
+	delete[] idb;
 	delete[] hist;
     }
 	
@@ -426,6 +548,12 @@ private:
 	    ID b = slot( bkt );
 	    m_buckets[b].insert( id );
 	    ++num_inserted;
+/*
+	    if( m_fn.set_slot( id, b ) ) {
+		m_buckets[b].insert( id );
+		++num_inserted;
+	    }
+*/
 
 	    // std::cerr << "BUCKETS: insert " << id << " into " << b
 	    // << " contains now " << m_buckets[b].size() << "\n";
