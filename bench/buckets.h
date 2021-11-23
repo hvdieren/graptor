@@ -219,15 +219,15 @@ public:
 	    // remained in current bucket)
 	    if( !m_buckets[m_cur_bkt].empty() ) {
 /* merge buckets
-		m_elems -= m_buckets[m_cur_bkt].size();
 		for( ID b=m_cur_bkt+1; b < m_open_buckets; ++b ) {
 		    if( m_buckets[m_cur_bkt].size()
-			+ m_buckets[b].size() > 16384 )
+			+ m_buckets[b].size() > m_range/8 )
 			break;
 
-		    m_elems -= m_buckets[b].size();
 		    m_buckets[m_cur_bkt].take( m_buckets[b] );
 		}
+		m_elems -= m_buckets[m_cur_bkt].size();
+		return m_buckets[m_cur_bkt].as_frontier( m_range );
 */
 /* split buckets
 		if( m_buckets[m_cur_bkt].size() > (1<<16) ) {
@@ -258,6 +258,8 @@ public:
 		}
  */
 
+/*
+*/
 		m_elems -= m_buckets[m_cur_bkt].size();
 		return m_buckets[m_cur_bkt].as_frontier( m_range );
 	    }
