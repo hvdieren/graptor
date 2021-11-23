@@ -30,6 +30,7 @@ static inline void GraptorCSRVPushNotCachedDriver(
     // assert( part.end_of(p) >= part.start_of(p) );
 
     using vid_type = simd::ty<VID,VL>;
+    using seid_type = simd::ty<EID,1>;
 
     auto pvec1 = simd::template create_constant<simd::ty<VID,1>>( VL*(VID)p );
     auto m_pid = expr::create_value_map_new<VL>(
@@ -53,12 +54,15 @@ static inline void GraptorCSRVPushNotCachedDriver(
     VID sidx = 0;
     // simd_vector<VID, VL> vsrc( (VID)redir[sidx], lo_constant );
     auto vsrc = simd::template create_constant<vid_type>( (VID)redir[sidx] );
+    assert( 0 && "NYI" );
 #else
     // simd_vector<VID, VL> vsrc( (VID)0, lo_constant );
     auto vsrc = simd::template create_constant<vid_type>( (VID)0 );
 #endif
 
-    std::cerr << ">> p=" << p << " nvec=" << nvec << "\n";
+    EID sedge = part.edge_start_of( p );
+
+    // std::cerr << ">> p=" << p << " nvec=" << nvec << "\n";
     for( EID s=0; s < nvec; s += VL ) {
 	// std::cerr << "= vertex s=" << s << " vsrc[0]=" << vsrc.at(0) << "\n";
 	
@@ -77,19 +81,21 @@ static inline void GraptorCSRVPushNotCachedDriver(
 	//       by code.
 
 #if GRAPTOR_CSR_INDIR == 1
-	std::cerr << "SIMD s=" << s << " sidx=" << sidx << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
+	// std::cerr << "SIMD s=" << s << " sidx=" << sidx << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
 #else
-	std::cerr << "SIMD s=" << s << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
+	// std::cerr << "SIMD s=" << s << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
 #endif
 
 	// validate( GA.getCSR(), vsrc, vdst );
 	
 	// apply op vsrc, vdst;
+	auto sv = simd::create_scalar<seid_type>( sedge+s );
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_pid>( simd::vector<VID,1>( p ) ),
 	    expr::create_entry<expr::vk_src>( vsrc ),
 	    expr::create_entry<expr::vk_mask>( vmask ),
-	    expr::create_entry<expr::vk_dst>( vdst ) );
+	    expr::create_entry<expr::vk_dst>( vdst ),
+	    expr::create_entry<expr::vk_edge>( sv ) );
 	auto mpack = expr::sb::create_mask_pack( vdst != vmask );
 	auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
 
