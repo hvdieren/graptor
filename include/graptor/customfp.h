@@ -267,6 +267,10 @@ public:
     static ::detail::customfp_em<S,E,M,Z,B> max() {
 	return ::detail::customfp_em<S,E,M,Z,B>::max();
     }
+    
+    static ::detail::customfp_em<S,E,M,Z,B> infinity() {
+	return max(); // not correct, but closest match
+    }
 };
 
 } // namespace std
