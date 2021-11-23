@@ -636,8 +636,8 @@ struct binop_bor {
 
 template<typename E1, typename E2>
 auto make_bor( E1 l, E2 r,
-	       typename std::enable_if<!std::is_same<E1,noop>::value
-	       && !std::is_same<E2,noop>::value>::type * = nullptr ) {
+	       typename std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_lor() );
 }
 
@@ -682,8 +682,8 @@ struct binop_bxor {
 
 template<typename E1, typename E2>
 auto make_bxor( E1 l, E2 r,
-	       typename std::enable_if<!std::is_same<E1,noop>::value
-	       && !std::is_same<E2,noop>::value>::type * = nullptr ) {
+	       typename std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_bxor() );
 }
 
