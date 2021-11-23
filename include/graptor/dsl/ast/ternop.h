@@ -51,7 +51,7 @@ auto make_ternop( E1 e1, E2 e2, E3 e3, TernOp op ) {
 				e3.template expand<Tr>(),
 				op );
 	} else
-	    return make_ternop( e1, expand_cst( e2, e3 ), op );
+	    return make_ternop( e1, expand_cst( e2, e3 ), e3, op );
     } else if constexpr ( e3.opcode == op_constant )
 	return make_ternop( e1, e2, expand_cst( e3, e2 ), op );
     else
