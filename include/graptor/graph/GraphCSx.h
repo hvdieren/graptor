@@ -13,6 +13,7 @@
 
 #include "graptor/itraits.h"
 #include "graptor/mm.h"
+#include "graptor/mm/mm.h"
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/remap.h"
 
@@ -66,30 +67,44 @@ class GraphCSx {
     mmap_ptr<VID> degree;
     bool symmetric;
 
+    mm::buffer<float> * weights;
+
 public:
     GraphCSx() { }
     GraphCSx( const std::string & infile, int allocation = -1,
-	      bool _symmetric = false ) 
-	: symmetric( _symmetric ) {
+	      bool _symmetric = false, const char * wfile = nullptr ) 
+	: symmetric( _symmetric ), weights( nullptr ) {
 	if( allocation == -1 ) {
 	    numa_allocation_interleaved alloc;
 	    readFromBinaryFile( infile, alloc );
+	    if( wfile )
+		readWeightsFromBinaryFile( wfile, alloc );
 	} else {
 	    numa_allocation_local alloc( allocation );
 	    readFromBinaryFile( infile, alloc );
+	    if( wfile )
+		readWeightsFromBinaryFile( wfile, alloc );
 	}
     }
     GraphCSx( const std::string & infile, const numa_allocation & allocation,
 	      bool _symmetric )
-	: symmetric( _symmetric ) {
+	: symmetric( _symmetric ), weights( nullptr ) {
 	readFromBinaryFile( infile, allocation );
     }
-    GraphCSx( VID n_, EID m_, int allocation, bool symmetric_ = false )
-	: n( n_ ), nmaxdeg( ~VID(0) ), m( m_ ), symmetric( symmetric_ ) {
-	if( allocation == -1 )
+    GraphCSx( VID n_, EID m_, int allocation, bool symmetric_ = false,
+	      bool weights_ = false )
+	: n( n_ ), nmaxdeg( ~VID(0) ), m( m_ ), symmetric( symmetric_ ),
+	  weights( nullptr ) {
+	if( allocation == -1 ) {
 	    allocateInterleaved();
-	else
+	    if( weights_ )
+		weights = new mm::buffer<float>( m, numa_allocation_interleaved() );
+	} else {
 	    allocateLocal( allocation );
+	    if( weights_ )
+		weights = new mm::buffer<float>(
+		    m, numa_allocation_local( allocation ) );
+	}
     }
     void del() {
 	index.del();
@@ -99,7 +114,8 @@ public:
     template<typename vertex>
     GraphCSx( const wholeGraph<vertex> & WG, int allocation )
 	: n( WG.n ), m( WG.m ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ) {
+	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
+	  weights( nullptr ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
@@ -121,7 +137,8 @@ public:
 	build_degree();
     }
     GraphCSx( const GraphCSx & WG, int allocation )
-	: n( WG.n ), m( WG.m ), symmetric( WG.isSymmetric() ) {
+	: n( WG.n ), m( WG.m ), symmetric( WG.isSymmetric() ),
+	  weights( nullptr ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
@@ -150,7 +167,8 @@ public:
     GraphCSx( const wholeGraph<vertex> & WG, int allocation,
 	      std::pair<const VID *, const VID *> remap )
 	: n( WG.n ), m( WG.m ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ) {
+	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
+	  weights( nullptr ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
@@ -232,6 +250,13 @@ public:
 	VID norig = Gcsr.n;
 	assert( n - Gcsr.n == npad );
 
+	const bool has_weights = weights != nullptr;
+	float * const Tweights = has_weights ? weights->get() : nullptr;
+	assert( ( ( Gcsr.getWeights() != nullptr ) || !has_weights )
+		&& "expecting weights in graph" );
+	float * const Gweights = Gcsr.getWeights()
+	    ? Gcsr.getWeights()->get() : nullptr;
+
 	// 1. Build array for each v its degree (in parallel)
 	parallel_for( VID v=0; v < n; ++v ) {
 	    VID w = remap.origID( v );
@@ -247,9 +272,17 @@ public:
 	    VID w = remap.origID( v );
 	    EID nxt = index[v];
 	    VID deg = w < norig ? Gcsr.index[w+1] - Gcsr.index[w] : 0;
-	    for( VID j=0; j < deg; ++j )
-		edges[nxt++] = remap.remapID( Gcsr.edges[Gcsr.index[w]+j] );
-	    std::sort( &edges[index[v]], &edges[nxt] );
+	    for( VID j=0; j < deg; ++j ) {
+		edges[nxt] = remap.remapID( Gcsr.edges[Gcsr.index[w]+j] );
+		if( has_weights )
+		    Tweights[nxt] = Gweights[Gcsr.index[w]+j];
+		++nxt;
+	    }
+	    if( has_weights )
+		paired_sort( &edges[index[v]], &edges[nxt],
+			     &Tweights[index[v]] );
+	    else
+		std::sort( &edges[index[v]], &edges[nxt] );
 	}
 	build_degree();
     }
@@ -275,6 +308,13 @@ public:
 	}
 	assert( index[n] == m );
 
+	float * w = nullptr, * wg = nullptr;
+	if( weights ) {
+	    w = weights->get();
+	    wg = Gcsr.weights->get();
+	    assert( w && wg );
+	}
+
 	std::cerr << "transpose: place\n";
 	parallel_for( VID s=0; s < n; ++s ) {
 	    EID i = Gcsr.index[s];
@@ -282,13 +322,20 @@ public:
 	    for( ; i < j; ++i ) {
 		auto idx = __sync_fetch_and_add( &aux[Gcsr.edges[i]], 1 );
 		edges[idx] = s;
+
+		if( w )
+		    w[idx] = wg[i];
 	    }
 	}
 
 	std::cerr << "transpose: sort\n";
 	parallel_for( VID s=0; s < n; ++s ) {
 	    assert( aux[s] == index[s+1] );
-	    std::sort( &edges[index[s]], &edges[index[s+1]] );
+	    if( w )
+		paired_sort( &edges[index[s]], &edges[index[s+1]],
+			     &w[index[s]] );
+	    else
+		std::sort( &edges[index[s]], &edges[index[s+1]] );
 	}
 
 	aux.del();
@@ -341,7 +388,8 @@ public:
     GraphCSx( const wholeGraph<vertex> & WG,
 	      const partitioner & part, int p, int allocation )
 	: n( WG.numVertices() ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value )  {
+	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
+	  weights( nullptr ) {
 	// Range of destination vertices to include
 	VID rangeLow = part.start_of(p);
 	VID rangeHi = part.start_of(p+1);
@@ -378,7 +426,8 @@ public:
 	      const partitioner & part, int p,
 	      std::pair<const VID *, const VID *> remap )
 	: n( WG.numVertices() ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ) {
+	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
+	  weights( nullptr )  {
 	// Range of destination vertices to include
 	VID rangeLow = part.start_of(p);
 	VID rangeHi = part.start_of(p+1);
@@ -412,7 +461,8 @@ public:
 	      const partitioner & part, int p,
 	      std::pair<const VID *, const VID *> remap )
 	: n( WG.numVertices() ),
-	  symmetric( false ) { // as these are partitions, won't be symmetric
+	  symmetric( false ),
+	  weights( nullptr )  { // as these are partitions, won't be symmetric
 	// Range of destination vertices to include
 	VID rangeLow = part.start_of(p);
 	VID rangeHi = part.start_of(p+1);
@@ -562,6 +612,32 @@ public:
 	std::cerr << "Reading file done" << std::endl;
 #endif
 	build_degree();
+    }
+
+    void readWeightsFromBinaryFile( const std::string & wfile,
+				    const numa_allocation & alloc ) {
+	std::cerr << "Reading (using mmap) weights file " << wfile << std::endl;
+	int fd;
+
+	if( (fd = open( wfile.c_str(), O_RDONLY )) < 0 ) {
+	    std::cerr << "Cannot open file '" << wfile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+	off_t len = lseek( fd, 0, SEEK_END );
+	if( len == off_t(-1) ) {
+	    std::cerr << "Cannot lseek to end of file '" << wfile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+
+	assert( len == m * sizeof(float)
+		&& "weights file size mismatch" );
+
+	weights = new mm::buffer<float>( (size_t)m, fd, (off_t)0, alloc );
+
+	close( fd );
+	std::cerr << "Reading file done" << std::endl;
     }
 
 public:
@@ -764,6 +840,41 @@ public:
     }
 
 public:
+    mm::buffer<EID> buildInverseEdgeMap() const {
+	mm::buffer<EID> buf( m, numa_allocation_interleaved() );
+	EID * invert = buf.get();
+	const EID * idx = index.get();
+	const VID * edg = edges.get();
+
+	// TODO: could optimise for symmetric graphs by limiting the scan
+	//       to, e.g., j < i and setting invert[j] = i; at the same time
+	//       as invert[i] = j;
+	parallel_for( VID u=0; u < n; ++u ) {
+	    EID s = idx[u];
+	    EID e = idx[u+1];
+	    for( EID i=s; i < e; ++i ) {
+		VID v = edg[i];
+		invert[i] = ~(EID)0;
+		EID vs = idx[v];
+		EID ve = idx[v+1];
+		for( EID j=vs; j < ve; ++j ) {
+		    if( edg[j] == u ) {
+			invert[i] = j;
+			break;
+		    } else if( edg[j] > u ) {
+			// Note: this is an optimisation based on the assumption
+			//       that the neighbourlist is sorted in increasing
+			//       order.
+			break;
+		    }
+		}
+	    }
+	}
+
+	return buf;
+    }
+
+public:
     EID *getIndex() { return index.get(); }
     const EID *getIndex() const { return index.get(); }
     VID *getEdges() { return edges.get(); }
@@ -793,6 +904,8 @@ public:
 		return true;
 	return false;
     }
+
+    const mm::buffer<float> * getWeights() const { return weights; }
 
 private:
     void allocate( const numa_allocation & alloc ) {
