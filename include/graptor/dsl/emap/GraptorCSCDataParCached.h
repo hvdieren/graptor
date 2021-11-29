@@ -298,9 +298,14 @@ static inline void emap_pull(
     auto all_caches
 	= cache_cat( vop_caches, cache_cat( vcaches, vcaches_use ) );
 
+    // Override pointer for vk_eweight with the relevant permuation of the
+    // weights for the GA graph.
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	GA.getWeights() ? GA.getWeights()->get() : nullptr );
+					 
     // TODO maybe need to include aexpr0
     auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), all_caches,
+	op.get_ptrset( ew_pset ), all_caches,
 	/*aexpr,*/ m_vexpr0, /*m_rexpr,*/ pvop0, pvopf0 );
 
     // Loop termination condition (active check)
