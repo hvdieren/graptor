@@ -197,8 +197,10 @@ int main(int argc, char* argv[])
     long rounds = P.getOptionLongValue("-rounds",3); // Usually 20 rounds
     int vlen = P.getOptionLongValue("-l", 8);    // NUMA node number
     int numOfNode = P.getOptionLongValue("-p", 0);    // NUMA node number
+    const char * weights = P.getOptionValue("-weights"); // file with weights
 
 #if NUMA
+    // Note: this is legacy for GraphGrind
     if( numOfNode == 0 )
         numOfNode = numa_num_configured_nodes();
 #else
@@ -209,7 +211,7 @@ int main(int argc, char* argv[])
 
     assert( binary );
     
-    GraphCSx G( iFile, -1, symmetric );
+    GraphCSx G( iFile, -1, symmetric, weights );
     auto PG = createGraph( G, P );
     G.del(); // G no longer needed
 
