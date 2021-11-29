@@ -46,6 +46,7 @@ class GraphVEBOGraptor {
     unsigned short minVL, maxVL;
     VID maxdiff;
     GraptorEIDRetriever eid_retriever;
+    mm::buffer<float> * m_weights;
 
 public:
     GraphVEBOGraptor( const GraphCSx & Gcsr,
@@ -67,7 +68,9 @@ public:
 	    // Symmetric, so identical to CSR
 	    csc_tmp = const_cast<GraphCSx *>( &Gcsr );
 	} else {
-	    csc_tmp = new GraphCSx( Gcsr.numVertices(), Gcsr.numEdges(), -1 );
+	    csc_tmp = new GraphCSx( Gcsr.numVertices(), Gcsr.numEdges(), -1,
+				    Gcsr.isSymmetric(),
+				    Gcsr.getWeights() != nullptr );
 	    csc_tmp->import_transpose( Gcsr );
 	}
 
@@ -83,7 +86,9 @@ public:
 
 	    // Setup CSR
 	    std::cerr << "Reorder CSR...\n";
-	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
+	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1,
+				 Gcsr.isSymmetric(),
+				 Gcsr.getWeights() != nullptr );
 	    csr.import_expand( Gcsr, part, remap.remapper() );
 
 	    // Setup CSC partitions
@@ -211,6 +216,7 @@ public:
 	
 	// Setup EID retriever - map vertices to EID index
 	// WARNING: UNTESTED
+	m_weights = new mm::buffer<float>( ne, numa_allocation_edge_partitioned( part ) );
 	eid_retriever.init( part.get_vertex_range(), maxVL );
 	map_partitionL( part, [&]( int p ) {
 		VID lo = part.start_of(p);
@@ -225,6 +231,13 @@ public:
 		for( VID v=lo; v < hi; v += maxVL ) {
 		    eid_retriever.edge_offset[v/maxVL]
 			= starts[(v-lo)/maxVL] + part.edge_start_of( p );
+		}
+
+		float * w = m_weights ? m_weights->get() : nullptr;
+		if( w ) {
+		    float *pw = csc[p].getWeights();
+		    std::copy( &pw[0], &pw[csc[p].numSIMDEdges()],
+			       &w[part.edge_start_of(p)] );
 		}
 	  } );
 
@@ -243,6 +256,17 @@ public:
 	remap.del();
 	eid_retriever.del();
     }
+
+/*
+    void validateWeights( const GraphCSx & Gcsr ) const {
+	if( !Gcsr.getWeights() )
+	    return;
+	
+	map_partitionL( part, [&]( int p ) {
+	    csc[p].validateWeights( Gcsr, eid_retriever );
+	} );
+    }
+*/
 
 public:
     void fragmentation() const {
@@ -352,6 +376,8 @@ public:
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
 
     bool isSymmetric() const { return getCSR().isSymmetric(); }
+
+    mm::buffer<float> * getWeights() const { return m_weights; }
 };
 
 #endif // GRAPTOR_GRAPH_CGRAPHVEBOGRAPTOR_H

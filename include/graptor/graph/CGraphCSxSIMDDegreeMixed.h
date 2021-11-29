@@ -37,7 +37,11 @@ public:
 		  fVID lo, fVID hi,
 		  Remapper remap,
 		  fVID * edges_,
-		  fEID * starts_ ) {
+		  fEID * starts_,
+		  float * weights_ ) {
+	// We haven't written the code yet to fill out the weights
+	assert( !weights_ && "NYI" );
+	
 	// Record edges for auxiliary function
 	edges = edges_;
 	// assert( false && "Initialisation of starts for EIDRetriever NYI" );
@@ -154,28 +158,33 @@ public:
 	  vmask( (fVID(1)<<(sizeof(fVID)*8-dbpl))-1 ),
 	  dmax( fVID(1) << (dbpl*maxVL) ),
 	  overflows( 0 ),
-	  size( 0 ), ninv( 0 ), edges( nullptr ) { }
+	  size( 0 ), ninv( 0 ),
+	  edges( nullptr ), starts( nullptr ), weights( nullptr ) { }
 
     template<bool AnalyseMode, typename Remapper>
     fEID process( const GraphCSx & Gcsc,
 		  fVID lo, fVID hi,
 		  Remapper remap,
 		  VID * edges_,
-		  EID * starts_ ) {
+		  EID * starts_,
+		  float * weights_ ) {
 	// Record edges for auxiliary function
 	edges = edges_;
 	starts = starts_;
+	weights = weights_;
 
 	// Process relevant edges and either calculate storage requirement
 	// or construct graph representation.
 	fVID n = Gcsc.numVertices();
 	const fEID * idx = Gcsc.getIndex();
 	const fVID * edg = Gcsc.getEdges();
+	const float * Gw = Gcsc.getWeights() ? Gcsc.getWeights()->get() : nullptr;
 	fVID nv = maxVL * ( ( hi - lo + maxVL - 1 ) / maxVL );
 	assert( nv >= (hi-lo) && nv < (hi-lo) + maxVL );
 	    
 	fVID maxdeg = gtraits_getmaxoutdegree<GraphCSx>(Gcsc).getMaxOutDegree();
 	fVID * buf = new fVID[maxdeg];
+	float * wuf = weights ? new float[maxdeg] : nullptr;
 
 	// All vector lanes map to same destination
 	fEID nxt = 0;
@@ -205,29 +214,38 @@ public:
 		    fVID ldeg = ww < n ? idx[ww+1] - idx[ww] : 0;
 		    assert( ldeg <= deg );
 		    assert( ldeg <= maxdeg );
-		    for( fVID j=0; j < ldeg; ++j )
+		    for( fVID j=0; j < ldeg; ++j ) {
 			buf[j] = remap.remapID(edg[idx[ww]+j]);
-		    std::sort( &buf[0], &buf[ldeg] );
+			if( wuf )
+			    wuf[j] = Gw[idx[ww]+j];
+		    }
+		    if( wuf )
+			paired_sort( &buf[0], &buf[ldeg], &wuf[0] );
+		    else
+			std::sort( &buf[0], &buf[ldeg] );
 
 		    for( fVID j=0; j < ldeg; ++j ) {
 			assert( j == 0 || buf[j] > buf[j-1] );
-			record<AnalyseMode>( j, lnxt, buf[j], v, deg );
+			record<AnalyseMode>( j, lnxt, buf[j], v,
+					     wuf ? wuf[j] : 0, deg );
 			lnxt += maxVL;
 		    } 
 		    for( fVID j=ldeg; j < deg; ++j ) {
-			record<AnalyseMode>( j, lnxt, vmask, v, deg );
+			record<AnalyseMode>( j, lnxt, vmask, v, 0, deg );
 			lnxt += maxVL;
 		    }
 		} else {
 		    fVID ww = ~(VID)0;
 		    for( fVID j=0; j < deg; ++j ) {
-			record<AnalyseMode>( j, lnxt, vmask, v, deg );
+			record<AnalyseMode>( j, lnxt, vmask, v, 0, deg );
 			lnxt += maxVL;
 		    } 
 		}
 	    }
 	    nxt += maxVL * deg;
 	}
+	if( wuf )
+	    delete[] wuf;
 	delete[] buf;
 	return nxt;
     }
@@ -239,7 +257,7 @@ public:
 
 private:
     template<bool AnalyseMode>
-    void record( fVID seq, fEID pos, fVID value, fVID dest, fVID deg ) {
+    void record( fVID seq, fEID pos, fVID value, fVID dest, float w, fVID deg ) {
 	if constexpr ( AnalyseMode ) {
 	    size += sizeof(fVID);
 	    if( (value & vmask) == vmask )
@@ -251,6 +269,8 @@ private:
 		// Only record degree information in first vector of a word
 		if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2-1))) != 0 ) {
 		    edges[pos] = value;
+		    if( weights )
+			weights[pos] = w;
 		    return;
 		}
 	    }
@@ -280,6 +300,8 @@ private:
 	    value &= vmask;
 	    value |= d << ( sizeof(fVID) * 8 - dbpl );
 	    edges[pos] = value;
+	    if( weights )
+		weights[pos] = w;
 	}
     }
 
@@ -300,6 +322,7 @@ public:
     fEID overflows, size, ninv;
     fVID * edges;
     fEID * starts;
+    float * weights;
 };
 
 /**
@@ -333,6 +356,7 @@ class GraphCSxSIMDDegreeMixed {
     unsigned short maxVL;
     mmap_ptr<VID> edges;
     mmap_ptr<EID> starts;
+    mm::buffer<float> * weights;
 
     static constexpr unsigned short DegreeBits = GRAPTOR_DEGREE_BITS;
 
@@ -342,12 +366,15 @@ public:
     void del() {
 	edges.del();
 	starts.del();
+	if( weights )
+	    weights->del();
     }
     template<typename Remapper>
     void import( const GraphCSx & Gcsc,
 		 VID lo, VID hi, VID xxx_unused, unsigned short maxVL_,
 		 Remapper remap,
 		 int allocation ) {
+	weights = nullptr;
 	maxVL = maxVL_;
 
 #if GRAPTOR_EXTRACT_OPT
@@ -422,7 +449,7 @@ public:
 	    GraptorDataPar<Mode,VID,EID,DegreeBits> size_dpar( maxVL );
 	    fmt_d1_dpar<true>( Gcsc, lo, hi, vslim, maxVL,
 			       remap, nullptr, nullptr, nullptr, nullptr,
-			       size_d1, size_dpar );
+			       nullptr, nullptr, size_d1, size_dpar );
 	    nbytes = size_d1.nBytes() + size_dpar.nBytes();
 	    mvd1 = size_d1.nBytes() / sizeof(VID);
 	    assert( mvd1 * sizeof(VID) == size_d1.nBytes() );
@@ -481,18 +508,33 @@ public:
 		  // << "\n";
 
 	// Allocate data structures
-	if( allocation == -1 )
+	if( allocation == -1 ) {
 	    allocateInterleaved();
-	else
+	    if( Gcsc.getWeights() != nullptr )
+		weights = new mm::buffer<float>(
+		    mv, numa_allocation_interleaved() );
+	} else {
 	    allocateLocal( allocation );
+	    if( Gcsc.getWeights() != nullptr )
+		weights = new mm::buffer<float>(
+		    mv, numa_allocation_local( allocation ) );
+	}
 
 	// Now that we know that the degree bits are available, encode degrees.
 	{
 	    GraptorVReduce<Mode,VID,EID,DegreeBits> enc_d1( maxVL );
 	    GraptorDataPar<Mode,VID,EID,DegreeBits> enc_dpar( maxVL );
+	    
+	    float * w_d1 = nullptr, * w_dpar = nullptr;
+	    if( weights ) {
+		w_d1 = weights->get();
+		w_dpar = &w_d1[mvd1];
+	    }
+
 	    fmt_d1_dpar<false>( Gcsc, lo, hi, vslim, maxVL,
 				remap, edges.get(), &edges[mvd1],
 				starts.get(), &starts[(vslim-lo)/maxVL],
+				w_d1, w_dpar,
 				enc_d1, enc_dpar );
 	}
     }
@@ -506,11 +548,12 @@ private:
 		      Remapper remap,
 		      VID * edges_d1, VID * edges_dpar,
 		      EID * starts_d1, EID * starts_dpar,
+		      float * w_d1, float * w_dpar,
 		      Functor1 & fnc_d1, FunctorD & fnc_dpar ) {
 // #if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0
 	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
 	// d1_value( Gcsc, lo, vslim, maxVL, remap, edges_d1, fnc_d1 );
-	    fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, remap, edges_d1, starts_d1 );
+	    fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, remap, edges_d1, starts_d1, w_d1 );
 	    assert( fnc_d1.success() );
 	}
 // #endif
@@ -518,7 +561,7 @@ private:
 // #if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
 	if constexpr ( GraptorConfig<Mode>::is_datapar ) {
 	    fnc_dpar.template process<EstimateMode>( 
-		Gcsc, vslim, hi, remap, edges_dpar, starts_dpar );
+		Gcsc, vslim, hi, remap, edges_dpar, starts_dpar, w_dpar );
 	    assert( fnc_dpar.success() );
 	}
 // #endif
@@ -528,6 +571,8 @@ public:
     VID *getEdges() { return edges.get(); }
     const VID *getEdges() const { return edges.get(); }
     const EID *getStarts() const { return starts.get(); }
+    float * getWeights() { return weights ? weights->get() : nullptr; }
+    const float * getWeights() const { return weights ? weights->get() : nullptr; }
 
     VID numVertices() const { return n; }
     EID numEdges() const { return m; }
