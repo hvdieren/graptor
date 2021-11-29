@@ -475,10 +475,15 @@ struct arg_filter_op {
 	    return m_op.vertexop( vid );
     }
 
-    auto get_ptrset() const {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	return expr::map_set_if_absent<
 	    (unsigned)aid_key(expr::array_aid(expr::aid_frontier_old_f))>(
-		m_op.get_ptrset(), m_frontier.getDense<ftype>() );
+		m_op.get_ptrset( pset ), m_frontier.getDense<ftype>() );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     const auto get_config() const { return m_op.get_config(); }
@@ -606,8 +611,13 @@ struct arg_filter_a_op {
 	    return m_op.vertexop( vid );
     }
 
-    auto get_ptrset() const {
-	return map_merge( m_op.get_ptrset(), m_ptrset );
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
+	return map_merge( m_op.get_ptrset( pset ), m_ptrset );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     template<frontier_type ftype>
@@ -841,7 +851,8 @@ struct arg_record_reduction_op {
 	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
     }
 
-    auto get_ptrset() const {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	return expr::map_set_if_absent<
 	    (unsigned)aid_key(expr::array_aid(expr::aid_frontier_new))>(
 		expr::map_set_if_absent<
@@ -850,11 +861,15 @@ struct arg_record_reduction_op {
 		    (unsigned)aid_key(expr::array_aid(expr::aid_frontier_nactv))>(
 			expr::map_set_if_absent<
 			(unsigned)aid_key(expr::array_aid(expr::aid_graph_degree))>(
-			    m_op.get_ptrset(),
+			    m_op.get_ptrset( pset ),
 			    m_degree ),
 			m_frontier.nActiveVerticesPtr() ),
 		    m_frontier.nActiveEdgesPtr() ),
 		m_frontier.getDense<ftype>() );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     const auto get_config() const { return m_op.get_config(); }
@@ -930,7 +945,8 @@ struct arg_record_reduction_op<
 	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
     }
 
-    auto get_ptrset() const {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	return
 	    expr::map_set_if_absent<
 		(unsigned)aid_key(expr::array_aid(expr::aid_frontier_nacte))>(
@@ -938,10 +954,14 @@ struct arg_record_reduction_op<
 		    (unsigned)aid_key(expr::array_aid(expr::aid_frontier_nactv))>(
 			expr::map_set_if_absent<
 			(unsigned)aid_key(expr::array_aid(expr::aid_graph_degree))>(
-			    m_op.get_ptrset(),
+			    m_op.get_ptrset( pset ),
 			    m_degree ),
 			m_frontier.nActiveVerticesPtr() ),
 		    m_frontier.nActiveEdgesPtr() );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     const auto get_config() const { return m_op.get_config(); }
@@ -1048,14 +1068,15 @@ struct arg_record_method_op {
 	}
     }
 
-    auto get_ptrset() const {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	auto common = expr::map_set_if_absent<
 	    (unsigned)aid_key(expr::array_aid(expr::aid_frontier_nacte))>(
 		expr::map_set_if_absent<
 		(unsigned)aid_key(expr::array_aid(expr::aid_frontier_nactv))>(
 		    expr::map_set_if_absent<
 		    (unsigned)aid_key(expr::array_aid(expr::aid_graph_degree))>(
-			map_merge( m_op.get_ptrset(), m_ptrset ),
+			map_merge( m_op.get_ptrset( pset ), m_ptrset ),
 			m_degree ),
 		    m_frontier.nActiveVerticesPtr() ),
 		m_frontier.nActiveEdgesPtr() );
@@ -1065,6 +1086,10 @@ struct arg_record_method_op {
 	    return expr::map_set_if_absent<
 		(unsigned)aid_key(expr::array_aid(expr::aid_frontier_new))>(
 		    common, m_frontier.getDense<ftype>() );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     const auto get_config() const { return m_op.get_config(); }
@@ -1434,13 +1459,18 @@ struct op_def {
 	return expr::set_mask( m, e );
     }
 
-    auto get_ptrset() const {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	auto s = expr::value<simd::ty<VID,1>,expr::vk_src>();
 	auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
 	auto e = expr::value<simd::ty<EID,1>,expr::vk_edge>();
 	return map_merge(
-	    expr::extract_pointer_set( relax( s, d, e ) ),
+	    expr::extract_pointer_set_with( pset, relax( s, d, e ) ),
 	    expr::extract_pointer_set( vertexop( d ) ) );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     bool is_true_src_frontier() const {
@@ -1888,6 +1918,9 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 			config, GA.getCSR(), part, record_op, F );
 		}
 	    } else {
+		// TODO: this is only correct for symmetric graphs!
+		assert( GA.getCSR().isSymmetric()
+			&& "symmetry required in absence of getCSC()" );
 		// No argument supplied that tells us where to store frontier.
 		frontier G = csc_sparse_aset_no_f(
 		    config, GA.getCSR(), part, scalar_op, F );
@@ -2188,7 +2221,91 @@ public:
     const char * get_name() const { return m_name; }
 
 private:
-    mm::buffer<typename encoding::stored_type> mem; 	 	//!< memory buffer
+    mm::buffer<typename encoding::stored_type> mem; //!< memory buffer
+    const char * m_name;	//!< explanatory name describing edge property
+};
+
+/************************************************************************
+ * Representation of a property for edge weights. This class does not
+ * contain the actual weights, as the weight array is considered immutable
+ * and the order in which weights are stored is specialised to the graph
+ * data structure and layout.
+ * Indexing produces a syntax tree. For safety reasons, the address is a
+ * null pointer.
+ *
+ * The class has an interface that is compatible to that of the general
+ * edgeprop class.
+ *
+ * @param <T> the type of array elements
+ * @param <U> the type of the array index
+ * @param <Encoding> optional in-memory array encoding specification
+ ************************************************************************/
+template<typename T, typename U, typename Encoding>
+class edgeprop<T,U,expr::vk_eweight,Encoding>
+    : private NonCopyable<edgeprop<T,U,expr::vk_eweight,Encoding>> {
+public:
+    using type = T; 	 	 	//!< type of array elements
+    using index_type = U; 	 	//!< index type of property
+    using encoding = Encoding; 	 	//!< data encoding in memory
+    static constexpr short AID = expr::vk_eweight; //!< array ID of property
+    //! type of array syntax tree for this property
+    using array_ty = expr::array_ro<type,index_type,AID,encoding>;
+
+    /** Constructor: create an edge property.
+     *
+     * @param[in] part graph partitioner object dictating size and allocation
+     * @param[in] name explanation string for debugging
+     */
+    edgeprop( const partitioner & part, const char * name = nullptr )
+	: m_name( name ) { }
+
+    /*! Factory creation method for an edge property.
+     *
+     * @param[in] part graph partitioner object dictating size and allocation
+     * @param[in] name explanation string for debugging
+     */
+    static edgeprop
+    create( const partitioner & part, const char * name = nullptr ) {
+	return edgeprop( part, name );
+    }
+
+    //! Release memory - noop
+    void del() { }
+
+    /*! Subscript operator overload for syntax trees
+     * This operator builds a syntax tree that represents an array index
+     * operation.
+     *
+     * @param[in] e Syntax tree element for the index
+     * @return The syntax tree representing the indexing of the array
+     */
+    template<typename Expr>
+    std::enable_if_t<expr::is_expr_v<Expr>,
+		     decltype(array_ty(nullptr)[*(Expr*)nullptr])>
+    operator[] ( const Expr & e ) const {
+	static_assert( std::is_same_v<index_type,
+		       typename Expr::data_type::element_type>,
+		       "requires a match of index_type" );
+	return array_ty( nullptr )[e];
+    }
+
+    /*! Subscript operator overload for native C++ array operation.
+     * Indexes the array and returns the value at index #e of the array.
+     * This operator is deleted for vk_eweight; the class does not
+     * contain the data.
+     *
+     * @param[in] e array index
+     * @return value found at array index #e
+     */
+    T operator[] ( EID e ) const = delete;
+
+    typename encoding::stored_type * get_ptr() const {
+	return nullptr;
+    }
+
+    const char * get_name() const { return m_name; }
+
+private:
     const char * m_name;	//!< explanatory name describing edge property
 };
 
