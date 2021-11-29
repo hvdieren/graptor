@@ -41,6 +41,10 @@ public:
 	    const char * reason = nullptr )
 	: alc( methods::template allocate_intlv<value_type>(
 		   elements, reason ) ) { }
+    buffer( size_t elements, int fd, off_t off, const numa_allocation & am,
+	    const char * reason = nullptr )
+	: alc( methods::template map_file<value_type>(
+		   elements, fd, off, am, reason ) ) { }
     buffer( size_t elements, numa_allocation_local am,
 	    const char * reason = nullptr )
 	: alc( methods::template allocate_local<value_type>(
