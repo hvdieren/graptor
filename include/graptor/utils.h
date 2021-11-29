@@ -11,9 +11,17 @@
 
 // I/O
 #include <ostream>
+#include <iostream>
 
 // enable_if
 #include <type_traits>
+
+// iterators
+#include <iterator>
+#include <functional>
+
+// algorithms
+#include <numeric>
 
 /***********************************************************************
  * Constants
@@ -202,6 +210,46 @@ std::ostream & operator << ( std::ostream & os, pretty_size<T> && ps ) {
 template<typename T>
 pretty_size<T> pretty( T && t ) {
     return pretty_size<T>( std::forward<T>( t ) );
+}
+
+/***********************************************************************
+ * paired_sort
+ * Handy, e.g., when sorting data in corresponding positions of distinct
+ * arrays. Goal is to sort by T s...e and adjust U along with it.
+ * T, U are RandomAccessIterators
+ ***********************************************************************/
+template<typename T, typename U>
+void paired_sort( T s, T e, U u ) {
+    using namespace std; // for ADL of swap
+    
+    // Check array length
+    using I = typename std::iterator_traits<T>::difference_type;
+    I len = std::distance( s, e );
+    if( len <= 1 ) // easy
+	return;
+    
+    // Set up index array
+    I idx_buf[128];
+    I * idx = len > 128 ? new I[len] : &idx_buf[0];
+    std::iota( &idx[0], &idx[len], 0 );
+
+    // Sort indices
+    std::sort( &idx[0], &idx[len],
+	       [s]( I a, I b ) { return *(s+a) < *(s+b); } );
+    
+    // Apply sorted permutation to arrays
+    for( I i=0; i < len-1; ++i ) {
+	I pos = idx[i];
+	while( pos < i ) // add path splitting optimisation?
+	    pos = idx[pos];
+
+	swap( *(s+i), *(s+pos) );
+	swap( *(u+i), *(u+pos) );
+    }
+
+    // Cleanup
+    if( len > 128 )
+	delete[] idx;
 }
 
 #endif // GRAPTOR_UTILS_H
