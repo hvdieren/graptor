@@ -70,6 +70,17 @@ struct config {
 	sz = size;
         return ret;
     }
+
+    static off_t small_page_start_adjustment( off_t off ) {
+	off_t diff = 0;
+	if( (off & off_t(SMALL_PAGE_SIZE-1)) != 0 ) {
+	    diff = off & off_t(SMALL_PAGE_SIZE-1);
+	    off -= diff;
+	    assert( (off & off_t(SMALL_PAGE_SIZE-1)) == 0 );
+	}
+	return diff;
+    }
+
 };
 
 struct methods {
@@ -98,7 +109,29 @@ struct methods {
 	    }
 	}
 	intptr_t mem = reinterpret_cast<intptr_t>( memp );
-	return allocation( mem, size );
+	return allocation( mem, size, !config::USE_POSIX_MEMALIGN );
+    }
+
+    static allocation map_file( size_t size, int fd, off_t off ) {
+	// Adjust offset to coincide with small page size boundary
+	off_t diff = config::small_page_start_adjustment( off );
+	size_t total_size = size + diff;
+	off -= diff;
+
+	// Memory-map a number of pages from the file
+	void * memp = mmap( 0, total_size, PROT_READ, MAP_SHARED, fd, off );
+	if( memp == MAP_FAILED ) { // failure
+	    std::cerr << __FILE__ << ':'
+		      << __LINE__ << ':'
+		      << __func__ << ": mmap of size " << total_size
+		      << " from fd " << fd << ", offset " << off
+		      << " failed: " << strerror( errno )
+		      << std::endl;
+	    abort();
+	}
+	intptr_t mem = reinterpret_cast<intptr_t>( memp );
+	mem += diff;
+	return allocation( mem, size, true, true ); // mmap, aligned
     }
 
     template<typename T,    // type to allocate
@@ -162,14 +195,51 @@ struct methods {
 	return alc;
     }
 
+    template<typename T>    // type to allocate
+    static allocation
+    map_file_intlv( size_t elements, int fd, off_t off,
+		const char * reason = nullptr ) {
+	allocation alc = map_file( elements * sizeof(T), fd, off );
+
+	MM_DEBUG_INTLV_ALLOC( elements, sizeof(T), alc.ptr(), reason );
+
+	if constexpr ( config::BIND_NUMA )
+	    interleave_pages( alc );
+
+	return alc;
+    }
+
+    template<typename T>    // type to allocate
+    static allocation
+    map_file( size_t elements, int fd, off_t off,
+	      const numa_allocation & alloc,
+	      const char * reason = nullptr ) {
+	switch( alloc.get_kind() ) {
+	case na_interleaved:
+	    return map_file_intlv<T>( elements, fd, off, reason );
+	    break;
+	case na_local:
+	case na_partitioned:
+	case na_edge_partitioned:
+	    assert( 0 && "NYI" );
+	    break;
+	}
+    }
     static void deallocate( const allocation & alc,
 			    const char * reason = nullptr ) {
 	MM_DEBUG_DEL( reinterpret_cast<void *>( alc.ptr() ), reason );
-	if constexpr ( config::USE_POSIX_MEMALIGN ) {
-            free( reinterpret_cast<void *>( alc.ptr() ) );
-	} else {
-            int munmapres = munmap( reinterpret_cast<void *>( alc.ptr() ),
-				    alc.size() );
+	if( alc.is_mapped() ) {
+	    // Adjust offset to coincide with small page size boundary
+	    off_t diff = 0;
+	    intptr_t mem = reinterpret_cast<intptr_t>( alc.ptr() );
+	    size_t size = alc.size();
+	    if( alc.is_aligned() ) {
+		config::small_page_start_adjustment( mem );
+		size += diff;
+		mem -= diff;
+	    }
+
+            int munmapres = munmap( reinterpret_cast<void *>( mem ), size );
             if( munmapres == -1 ) {
 		std::cerr << __FILE__ << ':'
 			  << __LINE__ << ':'
@@ -180,7 +250,8 @@ struct methods {
 			  << std::endl;
                 abort();
             }
-        }
+        } else
+            free( reinterpret_cast<void *>( alc.ptr() ) );
     }
 
 private:
