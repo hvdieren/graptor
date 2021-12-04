@@ -81,16 +81,13 @@ using EdgeTy = typename EncEdge::stored_type;
 enum variable_name {
     var_cur = 0,
     var_new = 1,
-    var_weight = 2,
     var_min = 3,
     var_max = 4,
     var_remap = 5,
     var_cur2 = 6,
     var_new2 = 7,
     var_dstep_delta = 8,
-    var_bkt_cur = 9,
-    var_slot = 10,
-    var_small = 11
+    var_bkt_cur = 9
 };
 
 struct bucket_fn {
@@ -117,66 +114,6 @@ private:
     FloatTy m_delta;
 };
 
-struct bucket_small_fn {
-    using ID = VID;
-    
-    bucket_small_fn( SFloatTy * dist, SFloatTy * small, FloatTy delta )
-	: m_dist( dist ), m_small( small ), m_delta( delta ) { }
-
-    VID operator() ( VID v ) const {
-	FloatTy d = m_dist[v];
-	FloatTy s = m_small[v];
-	return (VID)( ( d + s ) / m_delta );
-    }
-
-/*
-    template<VID Scale>
-    FloatTy get_scaled( VID v ) const {
-	return (VID)( ((FloatTy)m_dist[v]) / ( m_delta / (FloatTy)Scale ) );
-    }
-
-    FloatTy get( VID v ) const {
-	return m_dist[v];
-    }
-*/
-    
-private:
-    SFloatTy * m_dist;
-    SFloatTy * m_small;
-    FloatTy m_delta;
-};
-
-struct bucket_uniq_fn {
-    using ID = VID;
-    
-    bucket_uniq_fn( FloatTy * dist, FloatTy delta, SlotID * slot )
-	: m_dist( dist ), m_delta( delta ), m_slot( slot ) { }
-
-    VID operator() ( VID v ) const {
-	return (VID)( m_dist[v] / m_delta );
-    }
-
-    template<VID Scale>
-    FloatTy get_scaled( VID v ) const {
-	return (VID)( m_dist[v] / ( m_delta / (FloatTy)Scale ) );
-    }
-
-    bool set_slot( VID v, SlotID b ) {
-	// Could also use atomic_min...
-	if( m_slot[v] <= b )
-	    return false;
-	else {
-	    m_slot[v] = b;
-	    return true;
-	}
-    }
-    
-private:
-    FloatTy * m_dist;
-    FloatTy m_delta;
-    SlotID * m_slot;
-};
-
 template <class GraphType>
 class DSSSP {
 public:
@@ -186,7 +123,6 @@ public:
 	  cur_dist( GA.get_partitioner(), "current distance" ),
 #endif
 	  new_dist( GA.get_partitioner(), "new distance" ),
-	  // slot( GA.get_partitioner(), "bucket slot" ),
 	  edge_weight( GA.get_partitioner(), "edge weight" ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -194,155 +130,6 @@ public:
 	est_diam = P.getOptionLongValue( "-sssp:diam", 20 );
 	start = GA.remapID( P.getOptionLongValue( "-start", 0 ) );
 	delta = P.getOptionDoubleValue( "-sssp:delta", 1.0 );
-	const char * dump_ligra_file = P.getOptionValue( "-dump:ligra" );
-
-#if 0
-	{
-	    const partitioner &part = GA.get_partitioner();
-	    map_partitionL( part, [&]( unsigned p ) {
-		EID s = part.edge_start_of( p );
-		auto csc = GA.getCSC( p );
-		float * w = csc.getWeights();
-		std::copy( &w[0], &w[csc.numEdges()],
-			   &edge_weight.get_ptr()[s] );
-	    } );
-	}
-
-	// Initialise (random) edge weights
-	VID n = GA.numVertices();
-	auto remap = GA.get_remapper();
-#if 0
-	if constexpr ( remap.is_idempotent() ) {
-	    api::edgemap(
-		GA,
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    auto cR = expr::constant_val2<VID>( d, 127 );
-		    auto cO = expr::constant_val2<FloatTy>( d, 64 );
-		    auto cW = expr::constant_val2<FloatTy>( d, 64 * 16 );
-		    auto val = ( s + d ) & cR;
-		    return expr::make_seq(
-			edge_weight[e] =
-			expr::constant_val2<FloatTy>( d, 0.125 )
-			+ ( expr::cast<FloatTy>( val ) - cO ) / cW,
-			expr::true_val( d ) );
-		} )
-		).materialize();
-	} else {
-	    expr::array_ro<VID,VID,var_remap> a_remap( remap.getOrigIDPtr() );
-#if 0
-	    api::edgemap(
-		GA,
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    auto ss = a_remap[s];
-		    auto dd = a_remap[d];
-		    auto h = expr::iif( ss > dd, ss, dd );
-		    auto l = expr::iif( ss > dd, dd, ss );
-		    auto cR = expr::constant_val2<VID>( d, 127 );
-		    auto cO = expr::constant_val2<FloatTy>( d, 64 );
-		    auto cW = expr::constant_val2<FloatTy>( d, 64 * 16 );
-		    auto val = ( ((h<<_1)<<_1) + l ) & cR;
-		    // auto val = ( ss + dd ) & cR;
-		    return expr::make_seq(
-			edge_weight[e] =
-			expr::constant_val2<FloatTy>( d, 0.125 )
-			+ ( expr::cast<FloatTy>( val ) - cO ) / cW,
-			expr::true_val( d ) );
-/*
-		    return edge_weight[e] = expr::iif(
-			( ( ss + dd ) & _1 ) != _0,
-			expr::constant_val2<FloatTy>( d, 0.125 ),
-			expr::constant_val2<FloatTy>( d, 0.25 ) );
-*/
-		} ) )
-#else
-		api::edgemap(
-		    GA,
-		    api::relax( [&]( auto s, auto d, auto e ) {
-			using traits = typename decltype(e)::data_type;
-			constexpr unsigned Bits = traits::B;
-			auto magic
-			    = expr::constant_val2( e, (EID)0xcdef893021b83a );
-			auto shm = expr::constant_val2( e, (EID)(Bits-17) );
-			auto sh = expr::constant_val2( e, (EID)(17) );
-			auto mask = expr::allones_val( e ) >> shm;
-			auto scale = expr::constant_val2( edge_weight[e],
-							  (FloatTy)(1<<14) );
-			auto slice0 = e ^ magic;
-			auto slice1 = slice0 >> sh;
-			auto slice2 = slice1 >> sh;
-			auto slices = slice0 ^ slice1 ^ slice2;
-			auto val = ( slices & mask ) + _1;
-			return edge_weight[e]
-			    = expr::cast<FloatTy>( val ) / scale;
-		    } ) )
-#endif
-		.materialize();
-	}
-#endif
-
-#if 0
-	if( dump_ligra_file ) {
-	    std::ofstream os( dump_ligra_file );
-	    os << std::setprecision(10);
-	    const GraphCSx & G = GA.getCSR();
-	    const partitioner &part = GA.get_partitioner();
-
-	    VID n = part.get_num_vertices();
-
-	    os << "WeightedAdjacencyGraph\n"
-	       << n << "\n" << G.numEdges() << "\n";
-
-	    EID idx = 0;
-	    for( VID v=0; v < n; ++v ) {
-		VID vv = remap.remapID( v );
-		VID d = G.getDegree( vv );
-		os << idx << "\n";
-		idx += d;
-	    }
-
-	    auto * edges = new std::pair<VID,FloatTy>[G.numEdges()];
-	    auto eid_retriever = GA.get_eid_retriever();
-	    EID off = 0;
-	    for( VID v=0; v < n; ++v ) {
-		VID vv = remap.remapID( v );
-		VID d = G.getDegree( vv );
-		for( VID j=0; j < d; ++j ) {
-		    VID uu = G.getNeighbor( vv, j );
-		    VID ngh = remap.origID( uu );
-		    EID eid = eid_retriever.get_edge_eid( vv, j );
-		    edges[off+j].first = ngh;
-		    edges[off+j].second = edge_weight[eid];
-
-/*
-		    VID cR = 127;
-		    FloatTy cO = 64;
-		    FloatTy cW = 64 * 16;
-		    VID val = ( v + ngh ) & cR;
-		    FloatTy w = 0.125 + ( ((FloatTy)val) - cO ) / cW;
-		    assert( w == edge_weight[eid] );
-*/
-		}
-		std::sort( &edges[off], &edges[off+d] );
-		for( VID j=0; j < d; ++j )
-		    os << edges[off+j].first << "\n";
-		off += d;
-	    }
-
-	    off = 0;
-	    for( VID v=0; v < n; ++v ) {
-		VID vv = remap.remapID( v );
-		VID d = G.getDegree( vv );
-		for( VID j=0; j < d; ++j ) {
-		    os << edges[off+j].second << "\n";
-		}
-		off += d;
-	    }
-
-	    delete[] edges;
-	    os.close();
-	}
-#endif
-#endif
 
 	static bool once = false;
 	if( !once ) {
@@ -498,60 +285,15 @@ public:
 #endif
 		     new_dist[v] = inf );
 	    } )
-/*
-	    .vertex_map( [&]( auto v ) {
-		auto ones
-		    = expr::value<simd::ty<USlotID,decltype(v)::VL>,
-				  expr::vk_truemask>();
-		return slot[v] = ones >> _1;
-	    } )
-*/
 	    .materialize();
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	cur_dist.get_ptr()[start] = 0.0f;
 #endif
 	new_dist.get_ptr()[start] = 0.0f;
 
-	// Calculate lowest weight among out-going edges
-#if 0
-	api::vertexprop<FloatTy,VID,var_small,EncNew>
-	    small_out( part, "smallest out-edge" );
-	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-		auto inf = expr::constant_val2<SFloatTy>(
-		    v, std::numeric_limits<SFloatTy>::infinity() );
-		return small_out[v] = inf;
-	    } )
-	    .materialize();
-	api::edgemap(
-	    GA, 
-	    api::relax( [&]( auto s, auto d, auto e ) {
-		return small_out[d].min(
-		    expr::cast<FloatTy>( edge_weight[e] ) );
-	    } ) )
-	    .vertex_map( [&]( auto v ) {
-		auto inf = expr::constant_val2<SFloatTy>(
-		    v, std::numeric_limits<SFloatTy>::infinity() );
-		return small_out[v] = expr::iif( small_out[v] == inf,
-						 _0, small_out[v] );
-	    } )
-	    .materialize();
-#endif
-
-
 	// Create bucket structure
-/*
-	buckets<VID,bucket_uniq_fn>
-	    bkts( n, 127,
-		  bucket_uniq_fn( new_dist.get_ptr(), delta, slot.get_ptr() ) );
-*/
 	buckets<VID,bucket_fn>
 	    bkts( n, 127, bucket_fn( new_dist.get_ptr(), delta ) );
-/*
-	buckets<VID,bucket_small_fn>
-	    bkts( n, 127, bucket_small_fn( new_dist.get_ptr(),
-					   small_out.get_ptr(), delta ) );
-*/
 
 	// Place start vertex in first bucket
 	bkts.insert( start, 0 );
@@ -571,26 +313,8 @@ public:
 	++iter;
 
 	while( !bkts.empty() ) {  // iterate until all vertices visited
-	    // timer tm;
-	    // tm.start();
-
 	    frontier F = bkts.next_bucket();
 	    F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
-
-	    // Record that elements removed from bucketing structure by
-	    // clearing slot
-/*
-	    make_lazy_executor( part )
-		.vertex_map( F, [&]( auto v ) {
-		    auto ones
-			= expr::value<simd::ty<USlotID,decltype(v)::VL>,
-				      expr::vk_truemask>();
-		    return slot[v] = ones >> _1;
-		} )
-		.materialize();
-*/
-
-	    // std::cerr << "get bucket: " << tm.next() << "\n";
 
 #if VARIANT == 3
 	    f_max = -std::numeric_limits<FloatTy>::max();
@@ -630,8 +354,6 @@ public:
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
-		// api::config( api::always_dense ),
-		// api::config( api::always_sparse ),
 #if DEFERRED_UPDATE
 		// TODO: Do we apply the deferred update function in sparse
 		//       edgemap?
@@ -640,43 +362,29 @@ public:
 				 auto z =
 				     expr::value<simd::ty<VID,decltype(d)::VL>,expr::vk_zero>();
 /* TODO: bkts differ, or bkt remains BUT distances differ
+*/
 				 auto cur_bkt = bkt_fn( cur_dist[d] );
 				 auto new_bkt = bkt_fn( new_dist[d] );
 				 return cur_bkt != new_bkt || new_bkt < a_cur[z]; },
-*/
-				 return cur_dist[d] != new_dist[d]; },
-			     api::strong ),
+			     // return cur_dist[d] != new_dist[d]; },
+			     // api::strong ),
+			     filter_strength ),
 #else
 		// api::record( output, api::reduction, filter_strength ),
 		// Do not allow unbacked frontiers
-		api::record( output, api::reduction, strong ),
+		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
 		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
-/*
----> calculate bucket, if changed, make active
-need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_map w/ frontier to set to inf)
-		    return expr::make_seq(
-			new_dist[d].min( new_dist[s] + edge_weight[e] ),
-			b[d].min( bkt_fn( new_dist[d] ) ) );
-*/
 #else
 		    return new_dist[d].min( cur_dist[s] + edge_weight[e] );
 #endif
 		} )
 		).materialize();
 
-/*
-	    std::cerr << "P:";
-	    for( VID v=0; v < n; ++v ) {
-		std::cerr << ' ' << new_dist[v];
-	    }
-	    std::cerr << '\n';
-*/
-
-#if !LEVEL_ASYNC || DEFERRED_UPDATE
+#if ( !LEVEL_ASYNC || DEFERRED_UPDATE ) && 0
 	    // A sparse frontier that cannot be automatically converted due to
 	    // being unbacked.
 	    if( F.getType() == frontier_type::ft_unbacked
@@ -703,10 +411,8 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 
 	    bkts.update_buckets( part, output );
 
-	    // std::cerr << "unbacked: " << tm.next() << "\n";
-
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    if( output.getType() == frontier_type::ft_unbacked /*|| 1*/ ) {
+	    if( output.getType() == frontier_type::ft_unbacked || 1 ) {
 		make_lazy_executor( part )
 		    .vertex_map( [&]( auto v ) {
 			return cur_dist[v] = new_dist[v];
@@ -723,9 +429,6 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 	    // new_dist.get_ptr() );
 #endif
 
-	    // std::cerr << "copy: " << tm.next() << "\n";
-
-	    // std::cerr << "output: " << output.nActiveVertices() << "\n";
 	    active += output.nActiveVertices();
 
 	    if( itimes ) {
@@ -778,12 +481,14 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 		api::edgemap(
 		    GA, 
 #if DEFERRED_UPDATE
+		    // We need to know the frontier always in order to
+		    // place vertices in buckets
 		    api::record( output,
 				 [&] ( auto d ) {
 				     return cur_dist2[d] != new_dist2[d]; },
-				 filter_strength ),
+				 api::strong ),
 #else
-		    api::record( output, api::reduction, filter_strength ),
+		    api::record( output, api::reduction, api::strong ),
 #endif
 		    api::filter( filter_strength, api::src, F ),
 		    api::relax( [&]( auto s, auto d, auto e ) {
@@ -842,8 +547,6 @@ need to keep b[] up to date when taking out a frontier (next_frontier -> vertex_
 	    new_dist2.del();
 	}
 #endif // VARIANT == 3
-
-	// small_out.del();
     }
 
     void post_process( stat & stat_buf ) {
@@ -911,9 +614,7 @@ private:
     api::vertexprop<FloatTy,VID,var_cur,EncCur> cur_dist;
 #endif
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
-    // api::vertexprop<VID,VID,var_slot,array_encoding<SlotID>> slot;
     api::edgeprop<FloatTy,EID,expr::vk_eweight,EncEdge> edge_weight;
-    // api::edgeprop<FloatTy,EID,var_weight,EncEdge> edge_weight;
     std::vector<info> info_buf;
 };
 
