@@ -516,8 +516,8 @@ public:
     void writeToTextFile( const std::string & ofile ) {
 	ofstream file( ofile, ios::out | ios::trunc );
 
-	file << "AdjacencyGraph\n"
-	     << (uint64_t)n << "\n"
+	file << ( weights ? "WeightedAdjacencyGraph\n" : "AdjacencyGraph\n" );
+	file << (uint64_t)n << "\n"
 	     << (uint64_t)m << "\n";
 
 	for( VID v=0; v < n; ++v )
@@ -525,6 +525,14 @@ public:
 
 	for( EID e=0; e < m; ++e )
 	    file << edges[e] << '\n';
+
+	if( weights ) {
+	    float * w = weights->get();
+	    file.precision( std::numeric_limits<float>::max_digits10 );
+	    file << std::fixed;
+	    for( EID e=0; e < m; ++e )
+		file << w[e] << '\n';
+	}
 	    
 	file.close();
     }
@@ -849,23 +857,61 @@ public:
 	// TODO: could optimise for symmetric graphs by limiting the scan
 	//       to, e.g., j < i and setting invert[j] = i; at the same time
 	//       as invert[i] = j;
-	parallel_for( VID u=0; u < n; ++u ) {
-	    EID s = idx[u];
-	    EID e = idx[u+1];
-	    for( EID i=s; i < e; ++i ) {
-		VID v = edg[i];
-		invert[i] = ~(EID)0;
-		EID vs = idx[v];
-		EID ve = idx[v+1];
-		for( EID j=vs; j < ve; ++j ) {
-		    if( edg[j] == u ) {
+	if( symmetric ) {
+	    parallel_for( VID u=0; u < n; ++u ) {
+		EID s = idx[u];
+		EID e = idx[u+1];
+		for( EID i=s; i < e; ++i ) {
+		    VID v = edg[i];
+		    if( v > u )
+			break;
+		    EID vs = idx[v];
+		    EID ve = idx[v+1];
+
+		    // Note: this is an optimisation based on the
+		    //       assumption that the neighbour list is
+		    //       sorted in increasing order.
+		    if( ve - vs > (EID)30 ) {
+			const VID * ij
+			    = std::lower_bound( &edg[vs], &edg[ve], u );
+			assert( u == *ij
+				&& "need to find value in symmetric graph" );
+			EID j = ij - edg;
 			invert[i] = j;
-			break;
-		    } else if( edg[j] > u ) {
-			// Note: this is an optimisation based on the assumption
-			//       that the neighbourlist is sorted in increasing
-			//       order.
-			break;
+			invert[j] = i;
+		    } else {
+			for( EID j=vs; j < ve; ++j ) {
+			    if( edg[j] == u ) {
+				invert[i] = j;
+				invert[j] = i;
+				break;
+			    } else if( edg[j] > u ) {
+				// Assuming sorted list
+				break;
+			    }
+			}
+		    }
+		}
+	    }
+	} else {
+	    parallel_for( VID u=0; u < n; ++u ) {
+		EID s = idx[u];
+		EID e = idx[u+1];
+		for( EID i=s; i < e; ++i ) {
+		    VID v = edg[i];
+		    invert[i] = ~(EID)0;
+		    EID vs = idx[v];
+		    EID ve = idx[v+1];
+		    for( EID j=vs; j < ve; ++j ) {
+			if( edg[j] == u ) {
+			    invert[i] = j;
+			    break;
+			} else if( edg[j] > u ) {
+			    // Note: this is an optimisation based on the
+			    //       assumption that the neighbourlist is
+			    //       sorted in increasing order.
+			    break;
+			}
 		    }
 		}
 	    }
