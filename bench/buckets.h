@@ -230,7 +230,7 @@ public:
 		return m_buckets[m_cur_bkt].as_frontier( m_range );
 */
 /* split buckets
-		if( m_buckets[m_cur_bkt].size() > (1<<16) ) {
+		if( m_buckets[m_cur_bkt].size() > (1<<18) ) {
 		    using namespace std;
 		    using HFn = half_bucket_fn<BucketFn>;
 
@@ -354,7 +354,7 @@ private:
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
 	ID * hist = new ID[(np+1) * hsize](); // zero init
-	// uint8_t * idb = new uint8_t[num_elements];
+	uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -371,7 +371,7 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
-		// idb[v] = b;
+		idb[v] = b;
 	    }
 	} );
 	
@@ -405,8 +405,8 @@ private:
 		if( id == ~(ID)0 )
 		    continue;
 
-		ID b = slot( bkt );
-		// ID b = idb[v];
+		// ID b = slot( bkt );
+		ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -430,7 +430,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
-	// delete[] idb;
+	delete[] idb;
 	delete[] hist;
     }
 
@@ -453,7 +453,7 @@ private:
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
 	ID * hist = new ID[(np+1) * hsize]();
-	// uint8_t * idb = new uint8_t[num_elements];
+	uint8_t * idb = new uint8_t[num_elements];
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -470,7 +470,7 @@ private:
 
 		ID b = slot( bkt );
 		lhist[b]++;
-		// idb[v] = b;
+		idb[v] = b;
 	    }
 	};
 	
@@ -504,8 +504,8 @@ private:
 		if( id == ~(ID)0 )
 		    continue;
 
-		ID b = slot( bkt );
-		// ID b = idb[v];
+		// ID b = slot( bkt );
+		ID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -536,7 +536,7 @@ private:
 	assert( k == m_elems );
 
 	// Cleanup
-	// delete[] idb;
+	delete[] idb;
 	delete[] hist;
     }
 	
