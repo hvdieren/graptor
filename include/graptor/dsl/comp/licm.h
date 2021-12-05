@@ -140,6 +140,10 @@ auto merge_licm_result_seq( licm_result<Red1,CacheOp1,LE1,PE1> l,
     if constexpr ( is_value_vk<PE1,vk_smk>::value ) {
 	if constexpr ( is_value_vk<PE2,vk_smk>::value ) {
 	    return make_licm_result_loop( make_seq( l.le(), r.le() ) );
+	} else if constexpr ( std::is_same_v<expr::noop,PE2> ) {
+	    return make_licm_result( l.red(), l.cop(),
+				     make_seq( l.le(), r.le() ),
+				     l.pe() );
 	} else {
 	    return make_licm_result( r.red(), r.cop(),
 				     make_seq( l.le(), r.le() ),
