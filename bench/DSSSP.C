@@ -362,15 +362,13 @@ public:
 				 auto z =
 				     expr::value<simd::ty<VID,decltype(d)::VL>,expr::vk_zero>();
 /* TODO: bkts differ, or bkt remains BUT distances differ
-*/
 				 auto cur_bkt = bkt_fn( cur_dist[d] );
 				 auto new_bkt = bkt_fn( new_dist[d] );
 				 return cur_bkt != new_bkt || new_bkt < a_cur[z]; },
-			     // return cur_dist[d] != new_dist[d]; },
-			     // api::strong ),
-			     filter_strength ),
+*/
+			     return cur_dist[d] != new_dist[d]; },
+			     api::strong ),
 #else
-		// api::record( output, api::reduction, filter_strength ),
 		// Do not allow unbacked frontiers
 		api::record( output, api::reduction, api::strong ),
 #endif
