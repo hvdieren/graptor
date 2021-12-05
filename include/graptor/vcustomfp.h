@@ -266,9 +266,10 @@ struct variable_customfp_config {
     constexpr static bool I = false; //!< retain infinity value upon conversion
 #endif
 
-    static void set_param_for_range( float minval, float maxval,
-				     bool inf = false ) {
+    static void set_param( float minval, float maxval,
+			   bool sign, bool zero, bool inf = false ) {
 	assert( minval <= maxval && "argument order" );
+	assert( minval > 0.0f && "strictly positive values" );
 	
 #if VCUSTOMFP_INF
 	I = inf;
@@ -276,8 +277,8 @@ struct variable_customfp_config {
 	assert( !inf && "support for infinity disabled" );
 #endif
 
-	S = minval < 0;
-	Z = minval <= 0;
+	S = sign;
+	Z = zero || sign;
 
 	int32_t iminexp = exponent( minval );
 	int32_t imaxexp = exponent( maxval ) + 1;
@@ -286,13 +287,32 @@ struct variable_customfp_config {
 #else
 	assert( imaxexp == B && "bias not configurable" );
 #endif
-	E = rt_ilog2( imaxexp - iminexp + 1 );
+	int32_t rep = std::max( imaxexp - iminexp + 1, B );
+	E = rt_ilog2( rep ) + 1;
 	
 	// assert( B == 0 && "bias currently not taken into account" );
 
 	M = bit_size - ( S ? 1 : 0 ) - E;
 	assert( M + ( S ? 1 : 0 ) + E == bit_size
 		&& "all components must fit in available bits" );
+
+/*
+	std::cerr << "minval=" << minval
+		  << " maxval=" << maxval
+		  << " iminexp=" << iminexp
+		  << " imaxexp=" << imaxexp
+		  << " S=" << S
+		  << " Z=" << Z
+		  << " B=" << B
+		  << " E=" << (uint32_t)E
+		  << " M=" << (uint32_t)M
+		  << "\n";
+*/
+    }
+
+    static void set_param_for_range( float minval, float maxval,
+				     bool inf = false ) {
+	    set_param( minval, maxval, minval < 0, minval <= 0, inf );
     }
 
     template<typename ToTy, typename FromTy>
@@ -303,6 +323,8 @@ struct variable_customfp_config {
 
     static int32_t exponent( float f ) {
 	uint32_t i = type_pun<uint32_t>( f );
+	if( i == 0 )
+	    return 0;
 	uint32_t iu = i << 1; // drop sign bit
 	int32_t e = iu >> 24; // move exponent into place
 	return e - 127; // remove bias
