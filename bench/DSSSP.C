@@ -52,7 +52,9 @@ using EncNew = array_encoding<FloatTy>;
 using EncEdge = array_encoding<FloatTy>;
 #elif VARIANT == 1
 using FloatTy = float;
-using SFloatTy = scustomfp<false,7,9,true,6>;
+// using SFloatTy = scustomfp<false,7,9,true,6>;
+// using SFloatTy = scustomfp<false,8,8,true,0>;
+using SFloatTy = scustomfp<false,5,11,true,15>;
 using EncCur = array_encoding_wide<SFloatTy>;
 using EncNew = EncCur;
 using EncEdge = array_encoding<FloatTy>;
@@ -87,7 +89,9 @@ enum variable_name {
     var_cur2 = 6,
     var_new2 = 7,
     var_dstep_delta = 8,
-    var_bkt_cur = 9
+    var_bkt_cur = 9,
+    var_neg = 10,
+    var_zero = 11
 };
 
 struct bucket_fn {
@@ -190,13 +194,17 @@ public:
 	assert( cur_dist.get_ptr() );
 #endif
 
-#if VARIANT == 3
+#if VARIANT == 2
 	// Analyse exponent range of edge weights, and infer floating-point
 	// format.
 	FloatTy f_min = std::numeric_limits<FloatTy>::max();
 	FloatTy f_max = -std::numeric_limits<FloatTy>::max();
+	bool f_neg = false;
+	bool f_zero = false;
 	expr::array_ro<FloatTy,VID,var_min> a_min( &f_min );
 	expr::array_ro<FloatTy,VID,var_max> a_max( &f_max );
+	expr::array_ro<bool,VID,var_neg> a_neg( &f_neg );
+	expr::array_ro<bool,VID,var_zero> a_zero( &f_zero );
 #if 0
 	// TODO: How to filter out padding edges? Need reference to graph.
 	//       It would be faster to perform a flat edge map, however, to do
@@ -207,8 +215,13 @@ public:
 	    .flat_edge_map( [&]( auto e ) {
 		auto z =
 		    expr::value<simd::ty<VID,decltype(e)::VL>,expr::vk_zero>();
-		return make_seq( a_min[z].min( edge_weight[e] ),
-				 a_max[z].max( edge_weight[e] ) );
+		return make_seq(
+		    a_neg[z] |= edge_weight[e] < _0,
+		    a_zero[z] |= edge_weight[e] == _0,
+		    a_min[z].min(
+			expr::add_mask( expr::abs( edge_weight[e] ),
+					edge_weight[e] != _0 ) ),
+		    a_max[z].max( edge_weight[e] ) );
 	    } )
 	    .materialize();
 #else
@@ -217,8 +230,13 @@ public:
 	    api::relax( [&]( auto s, auto d, auto e ) {
 		auto z =
 		    expr::value<simd::ty<VID,decltype(e)::VL>,expr::vk_zero>();
-		return make_seq( a_min[z].min( edge_weight[e] ),
-				 a_max[z].max( edge_weight[e] ) );
+		return make_seq(
+		    a_neg[z] |= expr::cast<bool>( expr::make_unop_switch_to_vector( edge_weight[e] < _0 ) ),
+		    a_zero[z] |= expr::cast<bool>( expr::make_unop_switch_to_vector( edge_weight[e] == _0 ) ),
+		    a_min[z].min(
+			expr::add_predicate( expr::abs( edge_weight[e] ),
+					     edge_weight[e] != _0 ) ),
+		    a_max[z].max( edge_weight[e] ) );
 	    } ) )
 	    .materialize();
 #endif
@@ -226,6 +244,8 @@ public:
 	std::cout << "Estimated diameter: " << est_diam << "\n";
 	std::cout << "Smallest edge_weight: " << f_min << "\n";
 	std::cout << "Largest edge_weight: " << f_max << "\n";
+	std::cout << "Any negative edge_weight: " << f_neg << "\n";
+	std::cout << "Any zero edge_weight: " << f_zero << "\n";
 	std::cout << "Longest path: " << f_max*(FloatTy)est_diam << "\n";
 
 	// Determine configuration of custom floating-point format, assuming
@@ -249,8 +269,7 @@ public:
 	// Ensure we can at least encode the value 1.0
 	f_max = std::max( f_max, 1.0f );
 
-	cfp_cfg::set_param_for_range( std::min( (FloatTy)0, f_min ),
-				      f_max, false );
+	cfp_cfg::set_param( f_min, f_max, f_neg, f_zero, false );
 	auto vz = typename EncCur::stored_type(0.0f);
 	std::cout << "Configuration (0.0f value): "
 		  << vz << " -> " << (float)vz << "\n";
@@ -407,6 +426,13 @@ public:
 	    }
 #endif
 
+/*
+	    for( VID v=0; v < 128; ++v ) {
+		std::cerr << ' ' << (float)new_dist[v];
+	    }
+	    std::cerr << '\n';
+*/
+
 	    bkts.update_buckets( part, output );
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
@@ -449,7 +475,7 @@ public:
 	}
 
 #if VARIANT == 3
-	if( !F.isEmpty() ) {  // need a second phase
+	if( false && !bkts.empty() ) {  // need a second phase
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	    api::vertexprop<FloatTy,VID,var_cur2> cur_dist2(
 		GA.get_partitioner(), "current distance (2)" );
@@ -465,9 +491,12 @@ public:
 		} )
 		.materialize();
 
-	    while( !F.isEmpty() ) {  // iterate until all vertices visited
+	    while( !bkts.empty() ) {  // iterate until all vertices visited
 		timer tm_iter;
 		tm_iter.start();
+
+		frontier F = bkts.next_bucket();
+		F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
 
 		// Traverse edges, remove duplicate live destinations.
 		frontier output;
@@ -513,6 +542,7 @@ public:
 			.materialize();
 		}
 #endif
+		bkts.update_buckets( part, output );
 
 		active += output.nActiveVertices();
 
