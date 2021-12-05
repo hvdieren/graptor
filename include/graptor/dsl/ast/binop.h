@@ -949,15 +949,15 @@ struct binop_cmplt {
 };
 
 template<typename E1, typename E2>
-binop<E1,E2,binop_cmplt> make_cmplt( E1 l, E2 r ) {
+auto make_cmplt( E1 l, E2 r,
+		 std::enable_if_t<is_base_of<expr_base,E1>::value
+		 && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_cmplt() );
 }
 
 template<typename E1, typename E2>
-typename std::enable_if<is_base_of<expr_base,E1>::value && is_base_of<expr_base,E2>::value,
-			binop<E1,E2,binop_cmplt>>::type
-operator < ( E1 l, E2 r ) {
-    return make_binop( l, r, binop_cmplt() );
+auto operator < ( E1 l, E2 r ) -> decltype(make_cmplt( l, r )) {
+    return make_cmplt( l, r );
 }
 
 
