@@ -161,6 +161,34 @@ private:
     BucketFn m_fn;
 };
 
+template<typename ID_, typename BktFn>
+struct bucket_updater_dense<frontier_type::ft_bit, ID_, BktFn> {
+    using ID = ID_;
+    using BucketFn = BktFn;
+    using L = typename frontier_params<frontier_type::ft_bit,0>::type;
+
+    bucket_updater_dense( const frontier & f, BucketFn fn )
+	: m_mask( f.template getDense<frontier_type::ft_bit>() ),
+	  m_num( f.nVertices() ), m_fn( fn ) { }
+
+    VID size() const { return m_num; }
+
+    std::pair<ID,ID> operator() ( ID nth ) const {
+	constexpr ID mod = 8 * sizeof(L);
+	constexpr ID mask = mod - 1;
+	if( ( ( m_mask[nth / mod] >> ( nth & mask ) ) & 1 ) == 0 )
+	    return std::make_pair( ~(VID)0, ~(VID)0 );
+	else
+	    return std::make_pair( nth, m_fn( nth ) );
+    }
+    
+private:
+    const L * m_mask;
+    ID m_num;
+    BucketFn m_fn;
+};
+
+
 template<typename BktFn>
 struct half_bucket_fn {
     using ID = typename BktFn::ID;
@@ -295,14 +323,26 @@ public:
     void update_buckets( const partitioner & part, frontier & f ) {
 	switch( f.getType() ) {
 	case frontier_type::ft_true:
-	case frontier_type::ft_bit:
 	case frontier_type::ft_bit2:
-	case frontier_type::ft_bool:
 	case frontier_type::ft_logical1:
 	case frontier_type::ft_logical2:
 	case frontier_type::ft_logical8:
 	    assert( 0 && "NYI" );
 	    break;
+	case frontier_type::ft_bit:
+	{
+	    bucket_updater_dense<frontier_type::ft_bit, ID, BucketFn>
+		upd( f, m_fn );
+	    update_buckets_dense( part, upd, upd.size() );
+	    break;
+	}
+	case frontier_type::ft_bool:
+	{
+	    bucket_updater_dense<frontier_type::ft_bool, ID, BucketFn>
+		upd( f, m_fn );
+	    update_buckets_dense( part, upd, upd.size() );
+	    break;
+	}
 	case frontier_type::ft_logical4:
 	{
 	    bucket_updater_dense<frontier_type::ft_logical4, ID, BucketFn>
