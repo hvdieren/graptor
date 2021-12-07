@@ -1268,20 +1268,21 @@ class GraphCOO {
     EID m;
     mmap_ptr<VID> src;
     mmap_ptr<VID> dst;
+    mm::buffer<float> * weights;
 
 public:
     GraphCOO() { }
-    GraphCOO( VID n_, EID m_, int allocation )
-	: n( n_ ), m( m_ ) {
+    GraphCOO( VID n_, EID m_, int allocation, bool weights = false )
+	: n( n_ ), m( m_ ), weights( nullptr ) {
 	if( allocation == -1 )
-	    allocateInterleaved();
+	    allocateInterleaved( weights );
 	else
-	    allocateLocal( allocation );
+	    allocateLocal( allocation, weights );
     }
     template<typename vertex>
     GraphCOO( const wholeGraph<vertex> & WG,
 	      const partitioner & part, int p )
-	: n( WG.numVertices() ) {
+	: n( WG.numVertices() ), weights( nullptr ) {
 	// Range of destination vertices to include
 	VID rangeLow = part.start_of(p);
 	VID rangeHi = part.start_of(p+1);
@@ -1317,16 +1318,20 @@ public:
 #endif
     }
     GraphCOO( const GraphCSx & Gcsr, int allocation )
-	: n( Gcsr.numVertices() ), m( Gcsr.numEdges() ) {
+	: n( Gcsr.numVertices() ), m( Gcsr.numEdges() ), weights( nullptr ) {
 	if( allocation == -1 )
-	    allocateInterleaved();
+	    allocateInterleaved( Gcsr.getWeights() != nullptr );
 	else
-	    allocateLocal( allocation );
+	    allocateLocal( allocation, Gcsr.getWeights() != nullptr );
 	
         EID k = 0;
         for( VID i=0; i < n; i++ ) {
 	    VID deg = Gcsr.getDegree(i);
 	    const VID * ngh = &Gcsr.getEdges()[Gcsr.getIndex()[i]];
+	    const float * w
+		= Gcsr.getWeights()
+		? &Gcsr.getWeights()->get()[Gcsr.getIndex()[i]]
+		: nullptr;
             for( VID j=0; j < deg; ++j ) {
 		VID d = ngh[j];
 		src[k] = i;
@@ -1334,6 +1339,8 @@ public:
 #ifdef WEIGHTED
 		wgh[k] = V[i].getInWeight( j );
 #endif
+		if( weights )
+		    weights->get()[k] = w[j];
 		k++;
 	    }
 	}
@@ -1348,7 +1355,7 @@ public:
 	
     GraphCOO( const GraphCSx & Gcsc,
 	      const partitioner & part, int p )
-	: n( Gcsc.numVertices() ) {
+	: n( Gcsc.numVertices() ), weights( nullptr ) {
 	// Range of destination vertices to include
 	VID rangeLow = part.start_of(p);
 	VID rangeHi = part.start_of(p+1);
@@ -1358,7 +1365,7 @@ public:
 	    num_edges += Gcsc.getDegree(i);
 
 	m = num_edges;
-	allocateLocal( part.numa_node_of( p ) );
+	allocateLocal( part.numa_node_of( p ), Gcsc.getWeights() != nullptr );
 	
 	// Temporary info - outdegree of inverted edges - later insertion pos
 	// to aid insertion in order sorted by source
@@ -1385,6 +1392,10 @@ public:
         for( VID i=rangeLow; i < rangeHi; i++ ) {
 	    VID deg = Gcsc.getDegree(i);
 	    const VID * ngh = &Gcsc.getEdges()[Gcsc.getIndex()[i]];
+	    const float * w
+		= Gcsc.getWeights()
+		? &Gcsc.getWeights()->get()[Gcsc.getIndex()[i]]
+		: nullptr;
             for( VID j=0; j < deg; ++j ) {
 		VID d = ngh[j];
 		EID k = pos[d]++;
@@ -1393,6 +1404,8 @@ public:
 #ifdef WEIGHTED
 		wgh[k] = V[i].getInWeight( j );
 #endif
+		if( weights )
+		    weights->get()[k] = w[j];
 		k++;
 	    }
 	}
@@ -1404,6 +1417,10 @@ public:
     void del() {
 	src.del();
 	dst.del();
+	if( weights ) {
+	    weights->del();
+	    delete weights;
+	}
     }
 
     void CSR_sort() {
@@ -1419,6 +1436,12 @@ public:
     const VID *getSrc() const { return src.get(); }
     VID *getDst() { return dst.get(); }
     const VID *getDst() const { return dst.get(); }
+    float *getWeights() {
+	return weights ? weights->get() : nullptr;
+    }
+    const float *getWeights() const {
+	return weights ? weights->get() : nullptr;
+    }
 
     void setEdge( EID e, VID s, VID d ) {
 	src[e] = s;
@@ -1430,17 +1453,27 @@ public:
 
 private:
     // Align assuming AVX-512
-    void allocateInterleaved() {
+    void allocateInterleaved( bool aw = false ) {
 	// src.Interleave_allocate( m, 64 );
 	// dst.Interleave_allocate( m, 64 );
 	src.allocate( m, 64, numa_allocation_interleaved() );
 	dst.allocate( m, 64, numa_allocation_interleaved() );
+	if( aw )
+	    weights = new mm::buffer<float>(
+		m, numa_allocation_interleaved() );
+	else
+	    weights = nullptr;
     }
-    void allocateLocal( int numa_node ) {
+    void allocateLocal( int numa_node, bool aw = false ) {
 	// src.local_allocate( m, 64, numa_node );
 	// dst.local_allocate( m, 64, numa_node );
 	src.allocate( m, 64, numa_allocation_local( numa_node ) );
 	dst.allocate( m, 64, numa_allocation_local( numa_node ) );
+	if( aw )
+	    weights = new mm::buffer<float>(
+		m, numa_allocation_local( numa_node ) );
+	else
+	    weights = nullptr;
     }
 };
 
@@ -2801,8 +2834,10 @@ public:
     GraphGGVEBO( const GraphCSx & Gcsr, int npart )
 	: csr( &csr_act ),
 	  csc( &csc_act ),
-	  csr_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric() ),
-	  csc_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric() ),
+	  csr_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric(),
+		   Gcsr.getWeights() != nullptr ),
+	  csc_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric(),
+		   Gcsr.getWeights() != nullptr  ),
 	  coo( new ThisGraphCOO[npart] ),
 	  part( npart, Gcsr.numVertices() ) {
 
@@ -3055,11 +3090,19 @@ private:
 	EID num_edges = csc_idx[rangeHi] - csc_idx[rangeLow];
 
 	ThisGraphCOO & el = coo[p];
-	new ( &el ) ThisGraphCOO( n, num_edges, allocation );
+	new ( &el ) ThisGraphCOO( n, num_edges, allocation, csc->getWeights() );
 
 	// std::cerr << "COO from CSR: n=" << n << " p=" << p
 	// << " alloc=" << allocation << " nE=" << num_edges << "\n";
-	
+
+	// Convenience defs
+	const bool has_weights = el.getWeights() != nullptr;
+	float * const Tweights = has_weights ? el.getWeights() : nullptr;
+	assert( ( ( csr->getWeights() != nullptr ) || !has_weights )
+		&& "expecting weights in graph" );
+	const float * const Gweights = csr->getWeights()
+	    ? csr->getWeights()->get() : nullptr;
+
         EID k = 0;
         for( VID v=0; v < n; v++ ) {
 	    VID deg = idx[v+1] - idx[v];
@@ -3071,6 +3114,8 @@ private:
 #ifdef WEIGHTED
 		    wgh[k] = ...;
 #endif
+		    if( has_weights )
+			Tweights[k] = Gweights[idx[v]+j];
 		    k++;
 		}
 	    }

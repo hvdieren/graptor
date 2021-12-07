@@ -32,8 +32,12 @@ static __attribute__((flatten)) void coo_vector_loop(
     constexpr EID BLOCK_SIZE = 64 / sizeof(VID);
     constexpr EID PREFETCH_DISTANCE = 128; // (2<<20) / sizeof(VID);
     
+    // Override pointer for vk_eweight with the relevant permuation of the
+    // weights for the el graph.
+    auto ew_pset = expr::create_map2<expr::vk_eweight>( el.getWeights() );
+					 
     auto venv = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), vcaches, vexpr );
+	op.get_ptrset( ew_pset ), vcaches, vexpr );
 
     EID i = 0;
     for( ; i+VL-1 < m; i += VL ) {
@@ -45,7 +49,7 @@ static __attribute__((flatten)) void coo_vector_loop(
 	    _mm_prefetch( &dst_arr[i+PREFETCH_DISTANCE], _MM_HINT_NTA );
 	}
 
-	EID seid = eid_retriever.get_edge_eid( i );
+	EID seid = i; // eid_retriever.get_edge_eid( i );
 	auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	
 	auto mp = expr::create_value_map_new<VL>(
@@ -72,7 +76,7 @@ static __attribute__((flatten)) void coo_vector_loop(
     auto sexpr = expr::rewrite_mask_main( sexpr2 );
 
     auto senv = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), scaches, sexpr );
+	op.get_ptrset( ew_pset ), scaches, sexpr );
 
     for( ; i < m; ++i ) {
 	auto src = simd_vector<VID,1>::load_from( &src_arr[i] );	
@@ -108,7 +112,7 @@ static __attribute__((flatten)) void coo_vector_loop(
 	auto src = simd_vector<VID,1>::load_from( &src_arr[i] );	
 	auto dst = simd_vector<VID,1>::load_from( &dst_arr[i] );	
 
-	EID seid = eid_retriever.get_edge_eid( i );
+	EID seid = i; // eid_retriever.get_edge_eid( i );
 	auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	
 	auto mp = expr::create_value_map_new<1>(
@@ -164,38 +168,47 @@ static inline void emap_ireg(
     auto expr2 = expr::rewrite_mask_main( expr1 ); // expr::remove_reload( expr0 );
     auto expr = rewrite_internal( expr2 );
 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), vcaches, vexpr3, expr2, pvop0, pvopf0  );
-
     map_partitionL( part, [&]( int p ) {
-	    // edgemap part
-	    coo_vector_loop<VL>( G.get_edge_list_partition( p ),
-				 env,
-				 G.get_edge_list_eid_retriever( p ),
-				 vexpr, vcaches );
-	
-	    // vertexop (map/scan)
-	    // simd_vector<VID,VL> pp( (VID)p );
-	    auto pp = simd::template create_constant<VID,VL>( p );
-	    VID s = part.start_of( p );
-	    VID e = part.end_of( p );
+	// Override pointer for vk_eweight with the relevant permuation of the
+	// weights for the el graph.
+	auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	    const_cast<float *>( G.get_edge_list_partition( p ).getWeights() )
+	    );
+					 
+	auto env = expr::eval::create_execution_environment_with(
+	    op.get_ptrset( ew_pset ), vcaches, vexpr3, expr2, pvop0, pvopf0  );
 
-	    for( VID v=s; v < e; ++v ) {
-		// simd_vector<VID,VL> vv( v );
-		static_assert( VL == 1, "Looks like VL==1, otherwise ???" );
-		auto vv = simd::template create_constant<VID,VL>( v );
-		auto m = expr::create_value_map_new<VL>(
-		    expr::create_entry<expr::vk_vid>( vv ),
-		    expr::create_entry<expr::vk_pid>( pp ) );
-		// auto m = expr::create_value_map2<
-		// VL,VL,expr::vk_vid,expr::vk_pid>( vv, pp );
-		expr::cache<> c;
-		env.evaluate( c, m, expr );
-	    }
-	} );
+	// edgemap part
+	coo_vector_loop<VL>( G.get_edge_list_partition( p ),
+			     env,
+			     G.get_edge_list_eid_retriever( p ),
+			     vexpr, vcaches );
+	
+	// vertexop (map/scan)
+	// simd_vector<VID,VL> pp( (VID)p );
+	auto pp = simd::template create_constant<VID,VL>( p );
+	VID s = part.start_of( p );
+	VID e = part.end_of( p );
+
+	for( VID v=s; v < e; ++v ) {
+	    // simd_vector<VID,VL> vv( v );
+	    static_assert( VL == 1, "Looks like VL==1, otherwise ???" );
+	    auto vv = simd::template create_constant<VID,VL>( v );
+	    auto m = expr::create_value_map_new<VL>(
+		expr::create_entry<expr::vk_vid>( vv ),
+		expr::create_entry<expr::vk_pid>( pp ) );
+	    // auto m = expr::create_value_map2<
+	    // VL,VL,expr::vk_vid,expr::vk_pid>( vv, pp );
+	    expr::cache<> c;
+	    env.evaluate( c, m, expr );
+	}
+    } );
 
     // Scan acros partitions
     {
+	auto env = expr::eval::create_execution_environment_with(
+	    op.get_ptrset(), vcaches, vexpr3, expr2, pvop0, pvopf0  );
+
 	int np = part.get_num_partitions();
 	for( int p=1; p < np; ++p ) {
 	    auto pp = simd::template create_set1inc<VID,VL,true>( p*VL );

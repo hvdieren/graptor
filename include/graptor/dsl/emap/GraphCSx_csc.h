@@ -55,7 +55,7 @@ template<bool Idempotent, bool Assoc, bool is_ownwr,
 GG_INLINE inline
 void
 process_in_v_e_simd1_VL1( const VID *in, EID deg,
-			  VID scalar_dst, int scalar_pid,
+			  VID scalar_dst, int scalar_pid, EID scalar_eid,
 			  const EIDRetriever & eid_retriever,
 			  const Environment & env,
 			  const Expr & e, const AExpr & ea,
@@ -112,7 +112,8 @@ process_in_v_e_simd1_VL1( const VID *in, EID deg,
 
 	auto src = simd::create_scalar( in[j] );
 	// TODO: edge-eid recovery is incorrect
-	EID seid = eid_retriever.get_edge_eid( in[j], j );
+	// EID seid = eid_retriever.get_edge_eid( in[j], j );
+	EID seid = scalar_eid + j;
 	auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	auto m = expr::create_value_map_new<1>(
 	    expr::create_entry<expr::vk_src>( src ),
@@ -256,8 +257,13 @@ void DBG_NOINLINE csc_loop(
     auto aexpr3 = expr::rewrite_vectors_main( aexpr2 );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
+    // Override pointer for vk_eweight with the relevant permuation of the
+    // weights for the G graph.
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	G.getWeights() ? G.getWeights()->get() : nullptr );
+					 
     auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(),
+	op.get_ptrset( ew_pset ),
 	vcaches, vexpr, aexpr, rexpr, uexpr );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
@@ -268,6 +274,7 @@ void DBG_NOINLINE csc_loop(
 	    // A single partition is processed here. Use a sequential loop.
 	    auto ps = G.part_vertex_begin( part, p );
 	    auto pe = G.part_vertex_end( part, p );
+	    EID e = part.edge_start_of( p );
 	    for( auto ii=ps; ii != pe; ++ii ) {
 		VertexInfo vi = *ii;
 		VID i = vi.v;
@@ -279,12 +286,14 @@ void DBG_NOINLINE csc_loop(
 
 		constexpr bool ID = expr::is_idempotent<decltype(vexpr)>::value;
 		process_in_v_e_simd1_VL1<ID,Assoc,is_ownwr>(
-		    ngh, deg, i, p, eid_retriever, env,
+		    ngh, deg, i, p, e, eid_retriever, env,
 		    rewrite_internal( vexpr ),
 		    rewrite_internal( aexpr ),
 		    rewrite_internal( rexpr ),
 		    rewrite_internal( uexpr ),
 		    c, vcaches, vcaches_use );
+
+		e += deg;
 	    }
 	} );
 }
@@ -377,8 +386,13 @@ void DBG_NOINLINE csc_loop(
     auto aexpr3 = expr::rewrite_vectors_main( aexpr2 );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
+    // Override pointer for vk_eweight with the relevant permuation of the
+    // weights for the G graph.
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	G.getWeights() ? G.getWeights()->get() : nullptr );
+					 
     auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(),
+	op.get_ptrset( ew_pset ),
 	vcaches, accum, vexpr, aexpr, rexpr, uexpr, pvop, pvopf );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
@@ -397,6 +411,7 @@ void DBG_NOINLINE csc_loop(
 	    // A single partition is processed here. Use a sequential loop.
 	    auto ps = G.part_vertex_begin( part, p );
 	    auto pe = G.part_vertex_end( part, p );
+	    EID e = part.edge_start_of( p );
 	    for( auto ii=ps; ii != pe; ++ii ) {
 		VertexInfo vi = *ii;
 		VID i = vi.v;
@@ -411,6 +426,7 @@ void DBG_NOINLINE csc_loop(
 #else
 		    p,
 #endif
+		    e,
 		    eid_retriever,
 		    env,
 		    rewrite_internal( vexpr ),
@@ -418,6 +434,8 @@ void DBG_NOINLINE csc_loop(
 		    rewrite_internal( rexpr ),
 		    rewrite_internal( uexpr ),
 		    c, vcaches, vcaches_use );
+
+		e += deg;
 	    }
 
 	    cache_commit( env, vop_caches, c, m_pid );

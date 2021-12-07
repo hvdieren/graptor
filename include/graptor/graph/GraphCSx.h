@@ -223,14 +223,30 @@ public:
 	EID mm = sequence::plusScan( index.get(), index.get(), n );
 	assert( mm == m && "Index array count mismatch" );
 
+	// Convenience defs
+	const bool has_weights = weights != nullptr;
+	float * const Tweights = has_weights ? weights->get() : nullptr;
+	assert( ( ( Gcsr.getWeights() != nullptr ) || !has_weights )
+		&& "expecting weights in graph" );
+	const float * const Gweights = Gcsr.getWeights()
+	    ? Gcsr.getWeights()->get() : nullptr;
+
 	// 3. Fill out edge array (parallel)
 	parallel_for( VID v=0; v < n; ++v ) {
 	    VID w = remap.first[v];
 	    EID nxt = index[v];
 	    VID deg = Gcsr.index[w+1] - Gcsr.index[w];
-	    for( VID j=0; j < deg; ++j )
-		edges[nxt++] = remap.second[Gcsr.edges[Gcsr.index[w]+j]];
-	    std::sort( &edges[index[v]], &edges[nxt] );
+	    for( VID j=0; j < deg; ++j ) {
+		edges[nxt] = remap.second[Gcsr.edges[Gcsr.index[w]+j]];
+		if( has_weights )
+		    Tweights[nxt] = Gweights[Gcsr.index[w]+j];
+		++nxt;
+	    }
+	    if( has_weights )
+		paired_sort( &edges[index[v]], &edges[nxt],
+			     &Tweights[index[v]] );
+	    else
+		std::sort( &edges[index[v]], &edges[nxt] );
 	}
 	build_degree();
     }
