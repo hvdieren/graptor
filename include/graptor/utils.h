@@ -250,17 +250,15 @@ void paired_sort( T s, T e, U u ) {
     I * idx = len > 128 ? new I[len] : &idx_buf[0];
     std::iota( &idx[0], &idx[len], 0 );
 
-    // Sort indices
-    std::sort( &idx[0], &idx[len],
-	       paired_sort_cmp<I,T>( s ) );
-	       // [s]( I a, I b ) { return *(s+a) < *(s+b); } );
+    // Sort indices. A functor argument is more efficient than a lambda
+    std::sort( &idx[0], &idx[len], paired_sort_cmp<I,T>( s ) );
     
     // Apply sorted permutation to arrays
     for( I i=0; i < len-1; ++i ) {
 	I prev = i;
 	I pos = idx[i];
-	while( pos < i ) { // add path compression optimisation
-	    idx[prev] = pos;
+	while( pos < i ) { // add path splitting optimisation
+	    idx[prev] = idx[pos];
 	    prev = pos;
 	    pos = idx[pos];
 	}
