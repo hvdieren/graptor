@@ -917,7 +917,9 @@ public:
 				invert[j] = i;
 				break;
 			    } else if( edg[j] > u ) {
-				// Assuming sorted list
+				// Assuming sorted list + symmetric
+				assert( 0 && "need to find value in "
+					"symmetric graph" );
 				break;
 			    }
 			}
