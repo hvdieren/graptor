@@ -191,7 +191,7 @@ public:
 		
 	    std::cerr << "VEBO: looks like power-law graph: max-degree: "
 		      << max_deg << " vertices: " << n
-		      << " prelim extended to: " << nwpad << "\n";
+		      << " provisionally extended to: " << nwpad << "\n";
 
 	    remap.allocate( nwpad, numa_allocation_interleaved() );
 
@@ -336,7 +336,7 @@ private:
 		    done = true;
 	    }
 	}
-	assert( v == 0 );
+	assert( v == ~(VID)0 );
 	return vlast;
     }
     VID place_vertices( int P, VID *first, VID *next, VID *a, int d,
@@ -391,12 +391,15 @@ private:
 		v = next[v];
 	    }
 	}
-	assert( v == 0 );
+	assert( v == ~(VID)0 );
 	return vlast;
     }
 
     void vebo( const GraphCSx &csc, partitioner & part, unsigned short maxVL,
 	       bool intlv, unsigned short pmul ) {
+	timer tm;
+	tm.start();
+	
 	std::cerr << "VEBO: start\n";
 	
 	VID n = csc.numVertices();         // Number of vertices
@@ -406,6 +409,11 @@ private:
 
 	assert( gP * maxVL == P );
 
+	std::cerr << "VEBO: parameters: maxVL=" << maxVL
+		  << " intlv=" << intlv << " pmul=" << pmul
+		  << " n=" << n << " P=" << P
+		  << " gP=" << gP << " vP=" << vP << "\n";
+
 	// VID nwpad = n;
 	// if( nwpad % pmul )
 	// nwpad += ( VID(pmul) - nwpad ) % pmul;
@@ -413,10 +421,6 @@ private:
 
 	// 1. Build chains of vertices with the same degree
 	mmap_ptr<VID> mm_first, mm_next, mm_histo;
-	// mm_first.Interleave_allocate( n );
-	// m_alloc.Interleave_allocate( n );
-	// mm_next.Interleave_allocate( n );
-	// mm_histo.Interleave_allocate( n );
 	mm_first.allocate( n, numa_allocation_interleaved() );
 	m_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
 	mm_next.allocate( n, numa_allocation_interleaved() );
@@ -428,8 +432,10 @@ private:
 	parallel_for( VID v=0; v < n; ++v ) {
 	    histo[v] = 0;
 	    first[v] = 0;
-	    next[v] = 0;
+	    next[v] = ~(VID)0;
 	}
+
+	std::cerr << "VEBO: setup: " << tm.next() << "\n";
 
 	const EID * idx = csc.getIndex();
 	EID dmax = 0;
@@ -447,6 +453,8 @@ private:
 		++histo[d];
 	    }
 	}
+
+	std::cerr << "VEBO: binning: " << tm.next() << "\n";
 
 	// 2. Place vertices
 	w = new EID[P];
@@ -544,6 +552,22 @@ private:
 	    } while( d-- > 0 ); // loops over d == 0 as well
 	}
 
+	// Assumption: u[p] = |{v: a[v] == p}|
+/*
+	{
+	    std::fill( &du[0], &du[P], (VID)0 );
+	    VID v = first[dmax];
+	    for( VID i=0; i < n; ++i, v=next[v] ) {
+		assert( ~v != 0 );
+		du[a[v]]++;
+	    }
+	    for( unsigned p=0; p < P; ++p )
+		assert( du[p] == u[p] );
+	}
+*/
+
+	std::cerr << "VEBO: placement: " << tm.next() << "\n";
+
 	// 3. Relabel vertices
 	VID *s = du; // reuse array
 	VID nwpad = n;
@@ -607,11 +631,12 @@ private:
 		part.as_array()[P-1] += extra;
 	    }
 
-	    std::cerr << "calculated nwpad: " << nwpad << "\n";
+	    std::cerr << "VEBO: calculated nwpad: " << nwpad << "\n";
 
 	    // Aggregate values
 	    part.as_array()[P] = nwpad;
-	    part.compute_starts(); // same as s[]
+	    part.inuse_as_array()[0] = u[0];
+	    part.compute_starts_inuse(); // same as s[]
 	}
 
 	// nwpad = part.start_of( P );
@@ -621,6 +646,8 @@ private:
 
 	assert( part.start_of(P) == nwpad );
 	assert( n <= nwpad );
+
+	std::cerr << "VEBO: assignment to partitions: " << tm.next() << "\n";
 
 	// Now create remapping array
 	// Could parallelise this if previously we wired up linked list
@@ -694,18 +721,44 @@ private:
 	    for( VID v=n; v < nwpad; ++v )
 		remap_p[v] = v;
 	} else if( pmul > 1 ) {
+
+	    // Assumption: u[p] = |{v: a[v] == p}|
+	    /*
+	    {
+		VID * du = new unsigned[P+1];
+		std::fill( &du[0], &du[P], (VID)0 );
+		// for( VID v=0; v < n; ++v ) {
+		VID v = first[dmax];
+		for( VID i=0; i < n; ++i, v=next[v] ) {
+		    du[a[v]]++;
+		}
+		for( unsigned p=0; p < P; ++p ) {
+		    assert( du[p] == u[p] );
+		}
+		delete[] du;
+	    }
+	    */
+
+	    // Place vertices to partition in order of decreasing degree.
+	    // Balance partitions out if a partition is full. This should be
+	    // infrequent as it can happen only near the end of allocation.
 	    VID v = first[dmax];
 	    VID *remap_p = remap.get();
 	    for( VID i=0; i < n; ++i, v=next[v] ) {
+		assert( v != ~(VID)0 );
+		assert( a[v] != ~(VID)0 );
 		// Move vertices over to next partition if current partition
 		// is full. Partitions may have been shrunk so their vertex
 		// count is a multiple of maxVL.
 		while( s[a[v]] == part.start_of( a[v]+1 ) ) {
 		    // Override allocation to have multiples of pmul / partition
+		    std::cerr << "v=" << v << " overflows partition " << a[v]
+			      << " move to next\n";
 		    a[v]++;
 		    // assert( idx[v+1] - idx[v] < 2 ); -- typically even 0
 		}
 		remap_p[v] = s[a[v]]++;
+		a[v] = ~(VID)0;
 	    }
 
 	    VID vpad = n;
@@ -730,6 +783,8 @@ private:
 	    for( VID v=n; v < nwpad; ++v )
 		remap_p[v] = v;
 	}
+
+	std::cerr << "VEBO: remapping array: " << tm.next() << "\n";
 
 	delete[] u;
 	delete[] du; // frees also s
