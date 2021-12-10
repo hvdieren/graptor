@@ -218,6 +218,15 @@ pretty_size<T> pretty( T && t ) {
  * arrays. Goal is to sort by T s...e and adjust U along with it.
  * T, U are RandomAccessIterators
  ***********************************************************************/
+template<typename I, typename T>
+struct paired_sort_cmp {
+    paired_sort_cmp( T s_ ) : s( s_ ) { }
+    bool operator() ( I a, I b ) const {
+	return *(s+a) < *(s+b);
+    }
+    const T s;
+};
+
 template<typename T, typename U>
 void paired_sort( T s, T e, U u ) {
     using namespace std; // for ADL of swap
@@ -227,6 +236,14 @@ void paired_sort( T s, T e, U u ) {
     I len = std::distance( s, e );
     if( len <= 1 ) // easy
 	return;
+
+    if( len == 2 ) {
+	if( *s > *(s+1) ) {
+	    swap( *s, *(s+1) );
+	    swap( *u, *(u+1) );
+	}
+	return;
+    }
     
     // Set up index array
     I idx_buf[128];
@@ -235,13 +252,18 @@ void paired_sort( T s, T e, U u ) {
 
     // Sort indices
     std::sort( &idx[0], &idx[len],
-	       [s]( I a, I b ) { return *(s+a) < *(s+b); } );
+	       paired_sort_cmp<I,T>( s ) );
+	       // [s]( I a, I b ) { return *(s+a) < *(s+b); } );
     
     // Apply sorted permutation to arrays
     for( I i=0; i < len-1; ++i ) {
+	I prev = i;
 	I pos = idx[i];
-	while( pos < i ) // add path splitting optimisation?
+	while( pos < i ) { // add path compression optimisation
+	    idx[prev] = pos;
+	    prev = pos;
 	    pos = idx[pos];
+	}
 
 	swap( *(s+i), *(s+pos) );
 	swap( *(u+i), *(u+pos) );
