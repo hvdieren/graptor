@@ -254,8 +254,12 @@ public:
     void import_expand( const GraphCSx & Gcsr,
 			const partitioner & part,
 			Remapper remap ) {
+	timer tm;
+	tm.start();
+	std::cerr << "GraphCSx::import_expand...\n";
+
 	symmetric = Gcsr.isSymmetric();
-	
+
 	// In this version, Gcsr is the original graph with n vertices, but
 	// the current graph and remap expand that to n + npad vertices.
 	
@@ -283,15 +287,19 @@ public:
 	EID mm = sequence::plusScan( index.get(), index.get(), n );
 	assert( mm == m && "Index array count mismatch" );
 
+	std::cerr << "GraphCSx::import_expand: init and remapped index[]: "
+		  << tm.next() << "\n";
+	
 	// 3. Fill out edge array (parallel)
 	parallel_for( VID v=0; v < n; ++v ) {
 	    VID w = remap.origID( v );
 	    EID nxt = index[v];
 	    VID deg = w < norig ? Gcsr.index[w+1] - Gcsr.index[w] : 0;
+	    EID off = w < norig ? Gcsr.index[w] : 0;
 	    for( VID j=0; j < deg; ++j ) {
-		edges[nxt] = remap.remapID( Gcsr.edges[Gcsr.index[w]+j] );
+		edges[nxt] = remap.remapID( Gcsr.edges[off+j] );
 		if( has_weights )
-		    Tweights[nxt] = Gweights[Gcsr.index[w]+j];
+		    Tweights[nxt] = Gweights[off+j];
 		++nxt;
 	    }
 	    if( has_weights )
@@ -300,7 +308,14 @@ public:
 	    else
 		std::sort( &edges[index[v]], &edges[nxt] );
 	}
+
+	std::cerr << "GraphCSx::import_expand: remapping edges and weights: "
+		  << tm.next() << "\n";
+	
 	build_degree();
+
+	std::cerr << "GraphCSx::import_expand: building degree[]: "
+		  << tm.next() << "\n";
     }
     void import_transpose( const GraphCSx & Gcsr ) {
 	assert( n == Gcsr.numVertices() );
@@ -965,6 +980,15 @@ public:
 	    if( edges[e] == d )
 		return true;
 	return false;
+    }
+    std::pair<bool,float> getEdgeWeight( VID s, VID d ) const {
+	bool ret = false;
+	for( EID e=index[s]; e < index[s+1]; ++e )
+	    if( edges[e] == d )
+		return std::make_pair(
+		    true, weights ? weights->get()[e]
+		    : std::numeric_limits<float>::infinity() );
+	return std::make_pair( false, 0.0f );
     }
 
     const mm::buffer<float> * getWeights() const { return weights; }
