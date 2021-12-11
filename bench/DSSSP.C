@@ -89,7 +89,6 @@ enum variable_name {
     var_cur2 = 6,
     var_new2 = 7,
     var_dstep_delta = 8,
-    var_bkt_cur = 9,
     var_neg = 10,
     var_zero = 11
 };
@@ -367,9 +366,6 @@ public:
 		return expr::cast<VID>( d / a_delta[z] );
 	    };
 
-	    VID f_cur = bkts.get_current_bucket();
-	    expr::array_ro<VID,VID,var_bkt_cur> a_cur( &f_cur );
-
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
@@ -378,13 +374,6 @@ public:
 		//       edgemap?
 		api::record( output,
 			     [&] ( auto d ) {
-				 auto z =
-				     expr::value<simd::ty<VID,decltype(d)::VL>,expr::vk_zero>();
-/* TODO: bkts differ, or bkt remains BUT distances differ
-				 auto cur_bkt = bkt_fn( cur_dist[d] );
-				 auto new_bkt = bkt_fn( new_dist[d] );
-				 return cur_bkt != new_bkt || new_bkt < a_cur[z]; },
-*/
 			     return cur_dist[d] != new_dist[d]; },
 			     api::strong ),
 #else
