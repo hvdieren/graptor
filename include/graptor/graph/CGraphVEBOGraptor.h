@@ -45,7 +45,8 @@ class GraphVEBOGraptor {
     partitioner part;
     unsigned short minVL, maxVL;
     VID maxdiff;
-    GraptorEIDRetriever eid_retriever;
+    // GraptorEIDRetriever eid_retriever;
+    IdempotentEIDRetriever<VID,EID> eid_retriever;
     mm::buffer<float> * m_weights;
 
 public:
@@ -216,15 +217,13 @@ public:
 	
 	// Setup EID retriever - map vertices to EID index
 	// WARNING: UNTESTED
-	m_weights = new mm::buffer<float>( ne, numa_allocation_edge_partitioned( part ) );
-	eid_retriever.init( part.get_vertex_range(), maxVL );
+	m_weights = new mm::buffer<float>(
+	    ne, numa_allocation_edge_partitioned( part ), "Graptor weights" );
+	// eid_retriever.init( part.get_vertex_range(), maxVL );
 	map_partitionL( part, [&]( int p ) {
+/* Disable EID Retriever code
 		VID lo = part.start_of(p);
 		VID hi = part.end_of(p);
-
-		EID eid = 0;
-		for( int pp=0; pp < p; ++pp )
-		    eid += csc[p].numSIMDEdges();
 
 		const EID * starts = csc[p].getStarts();
 
@@ -232,7 +231,13 @@ public:
 		    eid_retriever.edge_offset[v/maxVL]
 			= starts[(v-lo)/maxVL] + part.edge_start_of( p );
 		}
+*/
 
+		// TODO: this is holding two copies of the weights.
+		//       Need to at least release the per-partition weights.
+		//       Better still to pre-compute total weight length
+		//       and then provide a pointer into the unified array
+		//       when constructing.
 		float * w = m_weights ? m_weights->get() : nullptr;
 		if( w ) {
 		    float *pw = csc[p].getWeights();
@@ -254,19 +259,12 @@ public:
 	delete[] csc;
 	csc = nullptr;
 	remap.del();
-	eid_retriever.del();
+	if( m_weights ) {
+	    m_weights->del();
+	    delete m_weights;
+	}
+	// eid_retriever.del();
     }
-
-/*
-    void validateWeights( const GraphCSx & Gcsr ) const {
-	if( !Gcsr.getWeights() )
-	    return;
-	
-	map_partitionL( part, [&]( int p ) {
-	    csc[p].validateWeights( Gcsr, eid_retriever );
-	} );
-    }
-*/
 
 public:
     void fragmentation() const {
@@ -319,7 +317,12 @@ public:
     const VID * getOutDegree() const { return getCSR().getDegree(); }
 
     const partitioner & get_partitioner() const { return part; }
+/*
     const GraptorEIDRetriever & get_eid_retriever() const {
+	return eid_retriever;
+    }
+*/
+    const IdempotentEIDRetriever<VID,EID> & get_eid_retriever() const {
 	return eid_retriever;
     }
 
