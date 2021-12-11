@@ -17,6 +17,33 @@ public:
     
 public:
     buffer() { }
+    buffer( size_t elements, const numa_allocation & alloc,
+	    const char * reason = nullptr ) {
+	switch( alloc.get_kind() ) {
+	case na_local:
+	    new (this) buffer(
+		elements,
+		*static_cast<const numa_allocation_local*>( &alloc ) );
+	    break;
+	case na_interleaved:
+	    new (this) buffer(
+		elements,
+		*static_cast<const numa_allocation_interleaved*>( &alloc ) );
+	    break;
+	case na_partitioned:
+	    new (this) buffer(
+		elements,
+		*static_cast<const numa_allocation_partitioned*>( &alloc ) );
+	    break;
+	case na_edge_partitioned:
+	    new (this) buffer(
+		elements,
+		*static_cast<const numa_allocation_edge_partitioned*>( &alloc ) );
+	    break;
+	default:
+	    UNREACHABLE_CASE_STATEMENT;
+	}
+    }
     buffer( size_t elements, numa_allocation_partitioned am,
 	    const char * reason = nullptr )
 	: buffer( am, reason ) {
@@ -58,6 +85,26 @@ public:
     value_type * get() const {
 	return reinterpret_cast<value_type *>( alc.ptr() );
     }
+
+    template<typename U>
+    std::enable_if_t<std::is_integral_v<U>,value_type> & get_ref( U t ) {
+	return get()[t];
+    }
+    template<typename U>
+    const std::enable_if_t<std::is_integral_v<U>,value_type> &
+    get_ref( U t ) const {
+	return get()[t];
+    }
+
+    template<typename U>
+    auto operator[] ( U t ) -> decltype( get_ref(t) ) {
+	return get_ref( t );
+    }
+    template<typename U>
+    auto operator[] ( U t ) const -> decltype( get_ref(t) ) {
+	return get_ref( t );
+    }
+
 private:
     allocation alc;
 };
