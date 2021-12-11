@@ -61,6 +61,25 @@ private:
 };
 
 template<typename fVID, typename fEID>
+class NullEIDRemapper {
+public:
+    using VID = fVID;
+    using EID = fEID;
+
+    NullEIDRemapper( const GraphCSx & csr ) { }
+
+    /**
+     * set - Record that edge (s,d) has EID e in a remapped graph.
+     */
+    void set( VID s, VID d, EID e ) { }
+
+    /**
+     * finalize - sort data and perform checks
+     */
+    void finalize( const partitioner & part ) { }
+};
+
+template<typename fVID, typename fEID>
 class CSxEIDRemapper {
 public:
     using VID = fVID;
