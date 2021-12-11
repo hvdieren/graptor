@@ -21,14 +21,12 @@ protected:
     // In v = remap[w], v is the new vertex ID, w is the old one
     mmap_ptr<lVID> remap;
     mmap_ptr<lVID> reverse;
-    lEID * w;                // Number of edges per partition
 
 public:
-    VEBOReorderState() : w( nullptr ) { }   // Private
+    VEBOReorderState() { }
 
     const lVID *getRemap() const { return remap.get(); }
     const lVID *getReverse() const { return reverse.get(); }
-    const lEID *getW() const { return w; }
 
     std::pair<const lVID *,const lVID *> maps() const {
 	// In w = first[v], v is the new vertex ID, w is the old one
@@ -46,8 +44,6 @@ public:
     void del() {
 	remap.del( "VEBOReorder - remap" );
 	reverse.del( "VEBOReorder - reverse" );
-	if( w )
-	    delete[] w;
     }
 };
 
@@ -454,7 +450,7 @@ private:
 	std::cerr << "VEBO: binning: " << tm.next() << "\n";
 
 	// 2. Place vertices
-	w = new EID[P];
+	EID *w = new EID[P];
 	VID *u = new VID[P];
 	VID *du = new VID[P];
 	std::fill( &w[0], &w[P], EID(0) );
@@ -876,6 +872,7 @@ private:
 
 	std::cerr << "VEBO: remapping array: " << tm.next() << "\n";
 
+	delete[] w;
 	delete[] u;
 	delete[] du; // frees also s
 
@@ -940,7 +937,7 @@ private:
 	std::cerr << "VEBO: binning: " << tm.next() << "\n";
 
 	// 2. Place vertices
-	w = new EID[P];
+	EID *w = new EID[P];
 	VID *u = new VID[P];
 	VID *du = new VID[P];
 	std::fill( &w[0], &w[P], EID(0) );
@@ -1225,6 +1222,7 @@ private:
 	
 	std::cerr << "VEBO: remapping array: " << tm.next() << "\n";
 
+	delete[] w;
 	delete[] u;
 	delete[] du; // frees also s
 
@@ -1514,7 +1512,7 @@ private:
 	}
 
 	// 2. Place vertices
-	w = new EID[P];
+	EID *w = new EID[P];
 	VID *u = new VID[P];
 	VID *du = new VID[P];
 	std::fill( &w[0], &w[P], EID(0) );
@@ -1702,6 +1700,7 @@ private:
 	}
 
 	delete[] lgmax;
+	delete[] w;
 	delete[] u;
 	delete[] du; // frees also s
 
