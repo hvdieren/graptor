@@ -1460,7 +1460,7 @@ private:
 	dst.allocate( m, 64, numa_allocation_interleaved() );
 	if( aw )
 	    weights = new mm::buffer<float>(
-		m, numa_allocation_interleaved() );
+		m, numa_allocation_interleaved(), "CSx weights" );
 	else
 	    weights = nullptr;
     }
@@ -1471,7 +1471,7 @@ private:
 	dst.allocate( m, 64, numa_allocation_local( numa_node ) );
 	if( aw )
 	    weights = new mm::buffer<float>(
-		m, numa_allocation_local( numa_node ) );
+		m, numa_allocation_local( numa_node ), "CSx weights" );
 	else
 	    weights = nullptr;
     }
@@ -2765,7 +2765,10 @@ class GraphGGVEBO {
 #else
     using ThisGraphCOO = GraphCOO;
 #endif
-    using EIDRetriever = CSxEIDRetriever<VID,EID>;
+    // using EIDRetriever = CSxEIDRetriever<VID,EID>;
+    // using EIDRemapper = CSxEIDRemapper<VID,EID>;
+    using EIDRemapper = NullEIDRemapper<VID,EID>;
+    using EIDRetriever = IdempotentEIDRetriever<VID,EID>;
 
     GraphCSx * csr, * csc; // for transpose
     GraphCSx csr_act, csc_act;
@@ -2867,7 +2870,7 @@ public:
 	csr_act.import( Gcsr, remap.maps() );
 
 	// Setup EID remapper based on remapped (padded) vertices
-	CSxEIDRemapper<VID,EID> eid_remapper( csr_act );
+	EIDRemapper eid_remapper( csr_act );
 
 	// Create COO partitions in parallel
 #if GG_ALWAYS_MEDIUM
@@ -2886,7 +2889,7 @@ public:
 #endif
 	    } );
 	eid_remapper.finalize( part );
-	eid_retriever = eid_remapper.create_retriever();
+	// eid_retriever = eid_remapper.create_retriever();
 
 	// set up edge partitioner - determines how to allocate edge properties
 	EID * counts = part.edge_starts();
@@ -2903,6 +2906,7 @@ public:
 
 
     void del() {
+	remap.del();
 	csr_act.del();
 	csc_act.del();
 	for( int p=0; p < part.get_num_partitions(); ++p )
@@ -3035,7 +3039,7 @@ public:
 
 private:
     void createCOOPartitionFromCSC( VID n, int p, int allocation,
-				    CSxEIDRemapper<VID,EID> & eid_remapper ) {
+				    EIDRemapper & eid_remapper ) {
 	// In w = remap.first[v], v is the new vertex ID, w is the old one
 	// In v = remap.second[w], v is the new vertex ID, w is the old one
 
@@ -3074,7 +3078,7 @@ private:
 #endif
     }
     void createCOOPartitionFromCSR( VID n, int p, int allocation,
-				    CSxEIDRemapper<VID,EID> & eid_remapper ) {
+				    EIDRemapper & eid_remapper ) {
 	// In w = remap.first[v], v is the new vertex ID, w is the old one
 	// In v = remap.second[w], v is the new vertex ID, w is the old one
 
