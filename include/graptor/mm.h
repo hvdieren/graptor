@@ -2,6 +2,8 @@
 #ifndef GRAPHGRIND_MM_H
 #define GRAPHGRIND_MM_H
 
+#include <cstdlib>
+
 #if defined(DMALLOC)
 #include <dmalloc.h>
 #endif
@@ -57,13 +59,13 @@ static double del_time=0;
 #include <set>
 
 #define MM_DEBUG_INTLV_ALLOC(n,e,mem,s)				\
-    _mm_dbg_intlv_alc(__FILE__,__LINE__,(n),(e),(mem),(s))
+    _mm_dbg_intlv_alc(__FILE__,__LINE__,(n),(e),reinterpret_cast<void *>(mem),(s))
 #define MM_DEBUG_PART_ALLOC(part,e,mem,s)			\
-    _mm_dbg_part_alc(__FILE__,__LINE__,(part),(e),(mem),(s))
+    _mm_dbg_part_alc(__FILE__,__LINE__,(part),(e),reinterpret_cast<void *>(mem),(s))
 #define MM_DEBUG_LOCAL_ALLOC(n,e,node,mem,s)			\
-    _mm_dbg_local_alc(__FILE__,__LINE__,(n),(e),(node),(mem),(s))
+    _mm_dbg_local_alc(__FILE__,__LINE__,(n),(e),(node),reinterpret_cast<void *>(mem),(s))
 #define MM_DEBUG_DEL(mem,s) 	 	 	\
-    _mm_dbg_del(__FILE__,__LINE__,(mem),(s))
+    _mm_dbg_del(__FILE__,__LINE__,reinterpret_cast<void *>(mem),(s))
 
 namespace {
 
@@ -71,9 +73,25 @@ static std::recursive_mutex _mm_dbg_mux;
 static std::set<void *> _mm_dbg_current;
 
 static void
+_mm_allocations() {
+    std::cerr << "MM_DEBUG: remaining allocations list:\n";
+    for( auto I : _mm_dbg_current ) {
+	std::cerr << "MM_DEBUG: remaining allocation: " << I << "\n";
+    }
+}
+
+static void
 _mm_dbg_alc( const char * file, unsigned lineno, const char * s,
 	     const char * amethod, void * mem ) {
     std::unique_lock<std::recursive_mutex> guard( _mm_dbg_mux );
+
+    static bool first = true;
+    if( first ) {
+	if( std::atexit( _mm_allocations ) != 0 )
+	    std::cerr << "MM_DEBUG: registration of exit handler failed\n";
+	first = false;
+    }
+    
     std::cerr << "MM_DEBUG:" << file << ':' << lineno
 	      << ": @=" << mem << " allocate-" << amethod << " reason: ";
     if( s )
