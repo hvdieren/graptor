@@ -366,8 +366,10 @@ public:
     void del() {
 	edges.del();
 	starts.del();
-	if( weights )
+	if( weights ) {
 	    weights->del();
+	    delete weights;
+	}
     }
     template<typename Remapper>
     void import( const GraphCSx & Gcsc,
@@ -512,12 +514,12 @@ public:
 	    allocateInterleaved();
 	    if( Gcsc.getWeights() != nullptr )
 		weights = new mm::buffer<float>(
-		    mv, numa_allocation_interleaved() );
+		    mv, numa_allocation_interleaved(), "Graptor/CSC weights" );
 	} else {
 	    allocateLocal( allocation );
 	    if( Gcsc.getWeights() != nullptr )
 		weights = new mm::buffer<float>(
-		    mv, numa_allocation_local( allocation ) );
+		    mv, numa_allocation_local( allocation ), "Graptor/CSC weights" );
 	}
 
 	// Now that we know that the degree bits are available, encode degrees.
