@@ -21,7 +21,6 @@ protected:
     // In v = remap[w], v is the new vertex ID, w is the old one
     mmap_ptr<lVID> remap;
     mmap_ptr<lVID> reverse;
-    mmap_ptr<lVID> m_alloc;
     lEID * w;                // Number of edges per partition
 
 public:
@@ -29,7 +28,6 @@ public:
 
     const lVID *getRemap() const { return remap.get(); }
     const lVID *getReverse() const { return reverse.get(); }
-    const lVID *getAlloc() const { return m_alloc.get(); }
     const lEID *getW() const { return w; }
 
     std::pair<const lVID *,const lVID *> maps() const {
@@ -48,7 +46,6 @@ public:
     void del() {
 	remap.del( "VEBOReorder - remap" );
 	reverse.del( "VEBOReorder - reverse" );
-	m_alloc.del( "VEBOReorder - m_alloc" );
 	if( w )
 	    delete[] w;
     }
@@ -67,7 +64,6 @@ public:
 
 	remap.allocate( next, numa_allocation_interleaved() );
 	reverse.allocate( next, numa_allocation_interleaved() );
-	m_alloc.allocate( next, numa_allocation_interleaved() );
 
 	std::cerr << "ReorderDegreeSort: vertices: " << n
 		  << " extended to: " << next << "\n";
@@ -80,7 +76,7 @@ public:
 	for( VID v=n; v < next; ++v )
 	    reverse[v] = v;
 	
-	// Invert reverse array. Set m_alloc.
+	// Invert reverse array.
 	std::fill( remap.get(), &remap.get()[next], ~(VID)0 );
 	parallel_for( VID v=0; v < next; ++v ) {
 	    assert( remap.get()[reverse.get()[v]] == ~(VID)0 );
@@ -130,10 +126,6 @@ public:
 class VEBOReorder : public VEBOReorderState<VID,EID> {
     // In w = reverse[v], v is the new vertex ID, w is the old one
     // In v = remap[w], v is the new vertex ID, w is the old one
-    // mmap_ptr<VID> remap;
-    // mmap_ptr<VID> reverse;
-    // mmap_ptr<VID> m_alloc;
-    // EID * w;                // Number of edges per partition
 
 public:
     VEBOReorder() { }
@@ -166,21 +158,16 @@ public:
 	    remap.allocate( n, numa_allocation_interleaved() );
 
 	    // Initialise partitioner
-	    // partitionBalanceEdges( csc, part );
 	    partitionBalanceEdges( csc, gtraits_getoutdegree<GraphCSx>( csc ),
 				   part, maxVL );
 		
-	    //reverse.Interleave_allocate( n );
-	    //m_alloc.Interleave_allocate( n );
 	    reverse.allocate( n, numa_allocation_interleaved() );
-	    m_alloc.allocate( n, numa_allocation_interleaved() );
 	    map_partitionL( part, [&]( int p ) { 
 		    VID s = part.start_of( p );
 		    VID e = part.start_of( p+1 );
 		    for( VID v=s; v < e; ++v ) {
 			remap[v] = v;
 			reverse[v] = v;
-			m_alloc[v] = p;
 		    }
 		} );
 	} else {
@@ -430,13 +417,13 @@ private:
 	VID max_nwpad = n + P * pmul; // upper bound on padding
 
 	// 1. Build chains of vertices with the same degree
-	mmap_ptr<VID> mm_first, mm_next, mm_histo;
+	mmap_ptr<VID> mm_first, mm_next, mm_histo, mm_alloc;
 	mm_first.allocate( n, numa_allocation_interleaved() );
-	m_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
+	mm_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
 	mm_next.allocate( n, numa_allocation_interleaved() );
 	mm_histo.allocate( n, numa_allocation_interleaved() );
 	VID * first = mm_first.get();
-	VID * last = m_alloc.get();
+	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
 	parallel_for( VID v=0; v < n; ++v ) {
@@ -895,6 +882,7 @@ private:
 	mm_first.del( "VEBOReorder - mm_first" );
 	mm_next.del( "VEBOReorder - mm_next" );
 	mm_histo.del( "VEBOReorder - mm_histo" );
+	mm_alloc.del( "VEBOReorder - mm_alloc" );
 
 	std::cerr << "VEBO: done.\n";
     }
@@ -915,13 +903,13 @@ private:
 	VID max_nwpad = n + P * pmul; // upper bound on padding
 
 	// 1. Build chains of vertices with the same degree
-	mmap_ptr<VID> mm_first, mm_next, mm_histo;
+	mmap_ptr<VID> mm_first, mm_next, mm_histo, mm_alloc;
 	mm_first.allocate( n, numa_allocation_interleaved() );
-	m_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
+	mm_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
 	mm_next.allocate( n, numa_allocation_interleaved() );
 	mm_histo.allocate( n, numa_allocation_interleaved() );
 	VID * first = mm_first.get();
-	VID * last = m_alloc.get();
+	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
 	parallel_for( VID v=0; v < n; ++v ) {
@@ -1243,6 +1231,7 @@ private:
 	mm_first.del( "VEBOReorder - mm_first" );
 	mm_next.del( "VEBOReorder - mm_next" );
 	mm_histo.del( "VEBOReorder - mm_histo" );
+	mm_alloc.del( "VEBOReorder - mm_alloc" );
 
 	std::cerr << "VEBO: done.\n";
     }
@@ -1257,10 +1246,6 @@ public:
 private:
     // In w = reverse[v], v is the new vertex ID, w is the old one
     // In v = remap[w], v is the new vertex ID, w is the old one
-    // mmap_ptr<VID> remap;
-    // mmap_ptr<VID> reverse;
-    // mmap_ptr<VID> m_alloc;
-    // EID * w;                // Number of edges per partition
 
 public:
     VEBOReorderSIMD() { }
@@ -1309,11 +1294,7 @@ public:
 	    // final partition - note: we balance edges, so no impact on balance
 	    part.appendv( next-n );
 		
-	    // reverse.Interleave_allocate( next );
-	    // m_alloc.Interleave_allocate( next );
-	    // remap.Interleave_allocate( next );
 	    reverse.allocate( next, numa_allocation_interleaved() );
-	    m_alloc.allocate( next, numa_allocation_interleaved() );
 	    remap.allocate( next, numa_allocation_interleaved() );
 	    map_partitionL( part, [&]( int p ) { 
 		    VID s = part.start_of( p );
@@ -1321,7 +1302,6 @@ public:
 		    for( VID v=s; v < e; ++v ) {
 			remap[v] = v;
 			reverse[v] = v;
-			m_alloc[v] = p;
 		    }
 		} );
 	} else {
@@ -1504,17 +1484,13 @@ private:
 	int P = gP * maxVL;                 // Total partitions
 
 	// 1. Build chains of vertices with the same degree
-	mmap_ptr<VID> mm_first, mm_next, mm_histo;
-	// mm_first.Interleave_allocate( n );
-	// m_alloc.Interleave_allocate( n );
-	// mm_next.Interleave_allocate( n );
-	// mm_histo.Interleave_allocate( n );
+	mmap_ptr<VID> mm_first, mm_next, mm_histo, mm_alloc;
 	mm_first.allocate( n, numa_allocation_interleaved() );
-	m_alloc.allocate( n, numa_allocation_interleaved() );
+	mm_alloc.allocate( n, numa_allocation_interleaved() );
 	mm_next.allocate( n, numa_allocation_interleaved() );
 	mm_histo.allocate( n, numa_allocation_interleaved() );
 	VID * first = mm_first.get();
-	VID * last = m_alloc.get();
+	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
 	parallel_for( VID v=0; v < n; ++v )
