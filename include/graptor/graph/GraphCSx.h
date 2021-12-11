@@ -62,9 +62,9 @@ class GraphCSx {
     VID n;
     VID nmaxdeg;
     EID m;
-    mmap_ptr<EID> index;
-    mmap_ptr<VID> edges;
-    mmap_ptr<VID> degree;
+    mm::buffer<EID> index;
+    mm::buffer<VID> edges;
+    mm::buffer<VID> degree;
     bool symmetric;
 
     mm::buffer<float> * weights;
@@ -110,6 +110,10 @@ public:
 	index.del();
 	edges.del();
 	degree.del();
+	if( weights ) {
+	    weights->del();
+	    delete weights;
+	}
     }
     template<typename vertex>
     GraphCSx( const wholeGraph<vertex> & WG, int allocation )
@@ -998,9 +1002,12 @@ public:
 private:
     void allocate( const numa_allocation & alloc ) {
 	// Note: only interleaved and local supported
-	index.allocate( n+1, alloc );
-	edges.allocate( m, alloc );
-	degree.allocate( n, alloc );
+	// index.allocate( n+1, alloc );
+	// edges.allocate( m, alloc );
+	// degree.allocate( n, alloc );
+	new (&index) mm::buffer<EID>( n+1, alloc, "CSx index" );
+	new (&edges) mm::buffer<VID>( m, alloc, "CSx edges" );
+	new (&degree) mm::buffer<VID>( n, alloc, "CSx degree" );
     }
 
     void allocateInterleaved() {
