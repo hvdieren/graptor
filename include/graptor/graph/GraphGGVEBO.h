@@ -119,13 +119,30 @@ public:
 	std::cerr << "Remapping CSR...\n";
 	csr_act.import( Gcsr, remap.maps() );
 
-	// Setup EID remapper based on remapped (padded) vertices
-	EIDRemapper eid_remapper( csr_act );
-
 	// Create COO partitions in parallel
 #if GG_ALWAYS_MEDIUM
 	std::cerr << "Skipping COO partitions...\n";
+
+	// Cleanup / indicate non-existant
+	delete[] coo;
+	coo = nullptr;
+
+	// set up edge partitioner - determines how to allocate edge properties
+	EID * counts = part.edge_starts();
+	EID ne = 0;
+	EID * idx = csc_act.getIndex();
+	for( unsigned short p=0; p < npart; ++p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID pe = idx[ve] - idx[vs];
+	    counts[p] = ne;
+	    ne += pe;
+	}
+	counts[npart] = ne;
 #else
+	// Setup EID remapper based on remapped (padded) vertices
+	EIDRemapper eid_remapper( csr_act );
+
 	std::cerr << "Creating and remapping COO partitions...\n";
 	map_partitionL( part, [&]( int p ) {
 #if GGVEBO_COO_CSC_ORDER
@@ -159,9 +176,11 @@ public:
 	remap.del();
 	csr_act.del();
 	csc_act.del();
-	for( int p=0; p < part.get_num_partitions(); ++p )
-	    coo[p].del();
-	delete[] coo;
+	if( coo ) {
+	    for( int p=0; p < part.get_num_partitions(); ++p )
+		coo[p].del();
+	    delete[] coo;
+	}
 	coo = nullptr;
 	csr = nullptr;
 	csc = nullptr;

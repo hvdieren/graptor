@@ -670,6 +670,7 @@ private:
 	    part.as_array()[0] = u[0];
 	    for( int p=1; p < P; ++p ) {
 		part.as_array()[p] = u[p];
+		part.inuse_as_array()[p] = u[p];
 		s[p] = s[p-1] + u[p-1];
 	    }
 	    if( nwpad % pmul ) {
