@@ -214,10 +214,6 @@ public:
     // This graph only supports scalar processing in our system as destinations
     // are not laid out in a way that excludes conflicts across vector lanes
     // in the COO representation.
-    static constexpr unsigned short getMaxVLCOO() { return 1; }
-    static constexpr unsigned short getMaxVLCSC() { return 1; }
-    static constexpr unsigned short getVLCOOBound() { return 1; }
-    static constexpr unsigned short getVLCSCBound() { return 1; }
     static constexpr unsigned short getPullVLBound() { return 1; }
     static constexpr unsigned short getPushVLBound() { return 1; }
     static constexpr unsigned short getIRegVLBound() { return 1; }

@@ -329,9 +329,9 @@ public:
     VID originalID( VID v ) const { return remap.originalID( v ); }
     VID remapID( VID v ) const { return remap.remapID( v ); }
 
+    // This would be for internal use, if needed at all
     unsigned short getMaxVL() const { return maxVL; }
-    static constexpr unsigned short getVLCOOBound() { return VLUpperBound; }
-    static constexpr unsigned short getVLCSCBound() { return VLUpperBound; }
+
     static constexpr unsigned short getPullVLBound() { return VLUpperBound; }
     static constexpr unsigned short getPushVLBound() { return VLUpperBound; }
     static constexpr unsigned short getIRegVLBound() { return VLUpperBound; }
