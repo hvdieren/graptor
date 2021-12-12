@@ -205,9 +205,6 @@ public:
 	*/
     }
 
-/*
-*/
-
 private:
     struct pstate {
 	VID n;
@@ -221,12 +218,15 @@ private:
 	    // Assume that initially all w[i] are zero
 	}
 
-	int place( VID d ) {
-	    return d > 0 ? place_nzdeg( d ) : place_zdeg();
+	void place( VID d ) {
+	    if( d > 0 )
+		place_nzdeg( d );
+	    else
+		place_zdeg();
 	}
 
 	// Place a vertex with degree d, assuming d > 0
-	int place_nzdeg( VID d ) {
+	void place_nzdeg( VID d ) {
 	    int pmin = 0, pmin2 = 1;
 	    if( w[pmin] > w[pmin2] )
 		std::swap( pmin, pmin2 );
@@ -251,8 +251,6 @@ private:
 
 	    // Track Delta
 	    Delta = w[pmax] - w[pmin2];
-
-	    return pmin;
 	}
 
 	void convert_zdeg() {
@@ -294,8 +292,6 @@ private:
 
 	    // Track delta
 	    Delta = u[pmax] - u[pmin2];
-
-	    return pmin;
 	}
 
 	
@@ -356,18 +352,27 @@ private:
 	VID vlast = v;
 	for( int p=0; p < P; ++p ) {
 	    int kp = u[p] - du[p]; // number to place
+	    if( kp == 0 )
+		continue;
+	    
+	    // Vertices are already on a linked list. Need to walk that list
+	    // and link sections of it onto the per-partition list. However,
+	    // all internal links in the section remain as they are.
+	    VID plast_p = plast[p];
+	    next[plast_p] = v;
 	    for( int i=0; i < kp; ++i ) {
-		next[plast[p]] = v;
-		plast[p] = v;
+		// next[plast[p]] = v;
+		plast_p = v;
 		v = next[v];
 	    }
+	    plast[p] = plast_p;
 	}
 	assert( v == ~(VID)0 );
     }
 
     void vebo( const GraphCSx &csc, partitioner & part, unsigned short maxVL,
 	       bool intlv, unsigned short pmul ) {
-	if( pmul > 1 && intlv == false && maxVL == 1 ) {
+	if( intlv == false && maxVL == 1 ) {
 	    vebo_graptor( csc, part, pmul );
 	    return;
 	}
@@ -867,6 +872,7 @@ private:
 	std::cerr << "VEBO: done.\n";
     }
 
+    // This method specialises VEBO to the cases of GraphGrind and Graptor.
     void vebo_graptor( const GraphCSx &csc, partitioner & part,
 		       unsigned short pmul ) {
 	timer tm;
@@ -877,8 +883,8 @@ private:
 	VID n = csc.numVertices();         // Number of vertices
 	int P = part.get_num_partitions(); // Total partitions
 
-	std::cerr << "VEBO: parameters (Graptor version): pmul=" << pmul
-		  << " n=" << n << " P=" << P << "\n";
+	std::cerr << "VEBO (GraphGrind+Graptor version): parameters: pmul="
+		  << pmul << " n=" << n << " P=" << P << "\n";
 
 	VID max_nwpad = n + P * pmul; // upper bound on padding
 
@@ -900,12 +906,17 @@ private:
 
 	std::cerr << "VEBO: setup: " << tm.next() << "\n";
 
+	// Create bins of same-degree vertices. Organise them in a linked list
+	// following their original order in the graph (i.e., the linked lists
+	// are sorted by increasing degree). The sort order is important to
+	// maintain locality that is present in the graph; otherwise would be
+	// easy to parallelise.
 	const EID * idx = csc.getIndex();
 	EID dmax = 0;
 	for( VID v=0; v < n; ++v ) {
 	    VID d = idx[v+1] - idx[v];
 
-	    if( __builtin_expect( histo[d] == 0, 0 ) ) { // first occurence of degree
+	    if( histo[d] == 0 ) { // first occurence of degree
 		first[d] = last[d] = v; // initialise 'linked list' for degree
 		histo[d] = 1;
 		if( dmax < d ) // track maximum degree seen
@@ -919,10 +930,10 @@ private:
 
 	std::cerr << "VEBO: binning: " << tm.next() << "\n";
 
-	// 2. Place vertices
+	// 2. Assign vertices to partitions. Create per-partition linked lists
+	//    of vertices in the process.
 	VID * pfirst = &next[n];
 	VID * plast = new VID[P];
-
 	EID *w = new EID[P];
 	VID *u = new VID[P];
 	VID *du = new VID[P];
@@ -961,14 +972,18 @@ private:
 	    // start doing this from d_crit onwards, and it will be possible
 	    // to obtain this, except perhaps for the final partition.
 	    VID nv = 0;
-	    VID d_crit = dmax;
-	    for( VID d=0; d <= dmax; ++d ) {
-		nv += histo[d];
-		if( nv >= P * ( pmul - 1 ) ) {
-		    d_crit = d;
-		    break;
+	    VID d_crit;
+	    if( pmul > 1 ) {
+		d_crit = dmax;
+		for( VID d=0; d <= dmax; ++d ) {
+		    nv += histo[d];
+		    if( nv >= P * ( pmul - 1 ) ) {
+			d_crit = d;
+			break;
+		    }
 		}
-	    }
+	    } else
+		d_crit = 0;
 	    std::cerr << "VEBO: critical d: " << d_crit << "\n";
 
 	    // Assign vertices to partitions
@@ -989,10 +1004,12 @@ private:
 		// where vertices are placed.
 		std::copy( &u[0], &u[P], &du[0] );
 
-		for( VID j=0; j < k; ++j ) {
-		    // place vertex in least-loaded partition, while tracking
-		    // statistics on the spread of the loads
+		VID j=0;
+		while( j < k ) {
+		    // place vertex in least-loaded partition,
+		    // while tracking statistics on the spread of the loads
 		    load.place( d );
+		    ++j;
 
 		    // TODO: an alternative idea is to place a large number
 		    //       of vertices at once if load.Delta > d. The idea
@@ -1000,8 +1017,7 @@ private:
 		    //       for some K > 0, then surely at least K vertices
 		    //       will be placed in the least-loaded partition.
 		    //       As such, we can safely place K vertices at once.
-		    if( load.Delta <= d && ((k-j-1) % P) == 0 ) {
-			++j;
+		    if( load.Delta <= d && ((k-j) % P) == 0 ) {
 			// Remaining vertices are distributed equally over all
 			// partitions
 			// The scale-free property implies that most of the
@@ -1020,7 +1036,7 @@ private:
 		// Rebalance such that partitions hold a multiple of pmul
 		// vertices.
 		// Assumes P > 1 and pmul > 1.
-		if( d <= d_crit ) {
+		if( pmul > 1 && d <= d_crit ) {
 		    VID mv = std::min( u[0] % pmul, u[0] - du[0] );
 		    u[0] -= mv;
 		    w[0] -= mv * d;
@@ -1044,10 +1060,10 @@ private:
 
 	std::cerr << "VEBO: placement: " << tm.next() << "\n";
 
-	// 3. Setup for relabelling vertices
+	// 3. Determine partition sizes
 	VID *s = du; // reuse array
 	VID nwpad = n;
-	if( P > 1 ) {
+	if( pmul > 1 && P > 1 ) {
 	    // Already shifted vertices through. Calculate and record
 	    // vertices/partition (including padding) and inuse-vertices
 	    // (not including padding)
@@ -1081,6 +1097,21 @@ private:
 
 	    // Aggregate values
 	    part.as_array()[P] = nwpad;
+	    part.compute_starts_inuse(); // same as s[]
+	} else if( pmul == 1 && P > 1 ) {
+	    s[0] = 0;
+	    part.as_array()[0] = u[0];
+	    for( int p=1; p < P; ++p ) {
+		part.as_array()[p] = u[p];
+		part.inuse_as_array()[p] = u[p];
+		s[p] = s[p-1] + u[p-1];
+	    }
+
+	    std::cerr << "VEBO: calculated nwpad: " << nwpad << "\n";
+
+	    // Aggregate values
+	    part.as_array()[P] = nwpad;
+	    part.inuse_as_array()[0] = u[0];
 	    part.compute_starts_inuse(); // same as s[]
 	} else {
 	    s[0] = 0;
@@ -1123,6 +1154,8 @@ private:
 	    s[p] = seq;
 	}
 
+	// Note: if pmul == 1, then padding vertices appear strictly
+	//       in the final partition only.
 	VID vpad = n;
 	for( VID p=0; p < P; ++p ) {
 	    while( s[p] != part.start_of( p+1 ) )
