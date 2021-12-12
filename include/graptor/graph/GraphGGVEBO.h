@@ -252,7 +252,11 @@ public:
     }
 
     static constexpr bool is_privatized( graph_traversal_kind gtk ) {
+#if OWNER_READS
+	return gtk == graph_traversal_kind::gt_push;
+#else
 	return gtk == graph_traversal_kind::gt_pull;
+#endif
     }
 
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
