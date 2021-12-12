@@ -1,6 +1,6 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_GRAPHGGVEBO_H
-#define GRAPHGRIND_GRAPH_GRAPHGGVEBO_H
+#ifndef GRAPTOR_GRAPH_GRAPHGGVEBO_H
+#define GRAPTOR_GRAPH_GRAPHGGVEBO_H
 
 #include "graptor/mm.h"
 #include "graptor/partitioner.h"
@@ -144,6 +144,7 @@ public:
 	EIDRemapper eid_remapper( csr_act );
 
 	std::cerr << "Creating and remapping COO partitions...\n";
+#if 0
 	map_partitionL( part, [&]( int p ) {
 #if GGVEBO_COO_CSC_ORDER
 		createCOOPartitionFromCSC( Gcsr.numVertices(),
@@ -155,6 +156,9 @@ public:
 					   eid_remapper );
 #endif
 	    } );
+#else
+	createCOOPartitionsFromCSR();
+#endif
 	eid_remapper.finalize( part );
 	// eid_retriever = eid_remapper.create_retriever();
 
@@ -385,8 +389,103 @@ private:
 	el.hilbert_sort();
 #endif
     }
+    void createCOOPartitionsFromCSR() {
+	// In w = remap.first[v], v is the new vertex ID, w is the old one
+	// In v = remap.second[w], v is the new vertex ID, w is the old one
+
+	// Short-hands
+	VID n = csr->numVertices();
+	EID *csc_idx = csc->getIndex();
+	EID *idx = csr->getIndex();
+	VID *edge = csr->getEdges();
+	unsigned P = part.get_num_partitions();
+
+	// 1. Determine how many edges each partition will receive. Can be
+	//    inferred from partition boundaries (sources) and CSC index
+	//    structure, and create COO data structures
+	for( unsigned p=0; p < P; ++p ) {
+	    // Range of destination vertices to include
+	    VID rangeLow = part.start_of(p);
+	    VID rangeHi = part.end_of(p);
+	    EID n_edges = csc_idx[rangeHi] - csc_idx[rangeLow];
+
+	    // Create COO data structures
+	    new ( &coo[p] )
+		ThisGraphCOO( n, n_edges, part.numa_node_of( p ),
+			      csc->getWeights() );
+	}
+	
+	// 3. Considering a parallel assignment of edges based on the
+	//    partitioner, determine how many edges will be sent to each
+	//    COO partition from each CSR partition (P x P info)
+	constexpr unsigned wP = 64 / sizeof(EID);
+	unsigned wPm = P % wP;
+	unsigned L = wPm == 0 ? P : ( P + wP - wPm );
+	EID * p2p = new EID[L*P]();
+	parallel_for( unsigned p=0; p < P; ++p ) {
+	    VID vs = part.start_of(p);
+	    VID ve = part.end_of(p);
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    for( EID e=es; e < ee; ++e ) {
+		unsigned q = part.part_of( edge[e] );
+		p2p[L*p+q]++;
+	    }
+	}
+
+	// Scan across all p for each q to determine the insertion points
+	// in the edge lists.
+	parallel_for( unsigned q=0; q < P; ++q ) {
+	    EID s = 0;
+	    for( unsigned p=0; p < P; ++p ) {
+		EID t = p2p[L*p+q];
+		p2p[L*p+q] = s;
+		s += t;
+	    }
+
+	    // Correctness check
+	    assert( s == coo[q].numEdges() );
+	}
+
+	// 4. Assign edges in parallel
+	// Convenience defs
+	const float * const Gweights = csr->getWeights()
+	    ? csr->getWeights()->get() : nullptr;
+	if( Gweights ) {
+	    parallel_for( unsigned p=0; p < P; ++p ) {
+		VID vs = part.start_of(p);
+		VID ve = part.end_of(p);
+		for( VID v=vs; v < ve; ++v ) {
+		    EID es = idx[v];
+		    EID ee = idx[v+1];
+		    for( EID e=es; e < ee; ++e ) {
+			unsigned q = part.part_of( edge[e] );
+			EID k = p2p[L*p+q]++;
+			coo[q].setEdge( k, v, edge[e], Gweights[e] );
+		    }
+		}
+	    }
+	} else {
+	    parallel_for( unsigned p=0; p < P; ++p ) {
+		VID vs = part.start_of(p);
+		VID ve = part.end_of(p);
+		for( VID v=vs; v < ve; ++v ) {
+		    EID es = idx[v];
+		    EID ee = idx[v+1];
+		    for( EID e=es; e < ee; ++e ) {
+			unsigned q = part.part_of( edge[e] );
+			EID k = p2p[L*p+q]++;
+			coo[q].setEdge( k, v, edge[e] );
+		    }
+		}
+	    }
+	}
+
+	// Edges are now stored in CSR traversal order
+	delete[] p2p;
+    }
 };
 
 
-#endif // GRAPHGRIND_GRAPH_GRAPHGGVEBO_H
+#endif // GRAPTOR_GRAPH_GRAPHGGVEBO_H
 

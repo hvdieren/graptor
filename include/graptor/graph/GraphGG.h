@@ -1,6 +1,6 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_GRAPHGG_H
-#define GRAPHGRIND_GRAPH_GRAPHGG_H
+#ifndef GRAPTOR_GRAPH_GRAPHGG_H
+#define GRAPTOR_GRAPH_GRAPHGG_H
 
 // This class is not up to date with the latest requirements around
 // - frontier selection: getPullVLBound, select_traversal, etc
@@ -143,4 +143,4 @@ public:
 using GraphGG = GraphGG_tmpl<GraphCOO>;
 using GraphGGIntlv = GraphGG_tmpl<GraphCOOIntlv>;
 
-#endif // GRAPHGRIND_GRAPH_GRAPHGG_H
+#endif // GRAPTOR_GRAPH_GRAPHGG_H

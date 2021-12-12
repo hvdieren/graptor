@@ -1,6 +1,6 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_GRAPHCOO_H
-#define GRAPHGRIND_GRAPH_GRAPHCOO_H
+#ifndef GRAPTOR_GRAPH_GRAPHCOO_H
+#define GRAPTOR_GRAPH_GRAPHCOO_H
 
 #include "graptor/mm.h"
 #include "graptor/mm/mm.h"
@@ -186,8 +186,15 @@ public:
     }
 
     void setEdge( EID e, VID s, VID d ) {
+	assert( 0 <= e && e < m );
 	src[e] = s;
 	dst[e] = d;
+    }
+    void setEdge( EID e, VID s, VID d, float w ) {
+	assert( 0 <= e && e < m );
+	src[e] = s;
+	dst[e] = d;
+	weights->get()[e] = w;
     }
 
     VID numVertices() const { return n; }
@@ -357,4 +364,4 @@ private:
     }
 };
 
-#endif // GRAPHGRIND_GRAPH_GRAPHCOO_H
+#endif // GRAPTOR_GRAPH_GRAPHCOO_H
