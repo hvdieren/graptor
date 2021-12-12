@@ -138,11 +138,6 @@ public:
     static constexpr unsigned short getMaxVLCSC() { return 1; }
     static constexpr unsigned short getVLCOOBound() { return 1; }
     static constexpr unsigned short getVLCSCBound() { return 1; }
-
-    // Really, we could be true/false or false/true, depending on frontier.
-    // Main point is that a frontier bitmask is unlikely to be useful
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
 };
 
 using GraphGG = GraphGG_tmpl<GraphCOO>;

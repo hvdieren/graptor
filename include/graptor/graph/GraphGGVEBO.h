@@ -222,21 +222,6 @@ public:
     static constexpr unsigned short getPushVLBound() { return 1; }
     static constexpr unsigned short getIRegVLBound() { return 1; }
 
-    // Really, we could be true/false or false/true, depending on frontier.
-    // This choice affects:
-    // - whether we use a frontier bitmask (unlikely to be useful)
-    // - whether we use an unbacked frontier
-#if GG_ALWAYS_MEDIUM
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return false; }
-#elif GG_ALWAYS_DENSE
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
-#else
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
-#endif
-
     graph_traversal_kind select_traversal(
 	bool fsrc_strong,
 	bool fdst_strong,

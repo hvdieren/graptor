@@ -358,24 +358,6 @@ public:
 	return gtk == graph_traversal_kind::gt_pull;
     }
 
-    static constexpr bool getRndRd() {
-	if constexpr( GraptorConfig<Mode>::is_csc )
-	    return true;
-	else {
-#if GRAPTOR_CSR_INDIR
-	    return true;
-#else
-	    return false;
-#endif
-	}
-    }
-    static constexpr bool getRndWr() {
-	if constexpr( GraptorConfig<Mode>::is_csc )
-	    return false;
-	else
-	    return true;
-    }
-
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
 
     bool isSymmetric() const { return getCSR().isSymmetric(); }
