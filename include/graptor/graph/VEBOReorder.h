@@ -4,6 +4,7 @@
 
 #include "graptor/mm.h"
 #include "graptor/graph/remap.h"
+#include "graptor/graph/partitioning.h"
 #include "graptor/graph/CGraphCSx.h"
 
 #ifndef VEBO_DISABLE

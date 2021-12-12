@@ -11,9 +11,20 @@
 #include <algorithm>
 
 #include "graptor/mm.h"
+#include "graptor/frontier.h"
+
+constexpr unsigned short VLUpperBound = ~(unsigned short)0;
+
+#include "graptor/graph/EIDRemapper.h"
+#include "graptor/graph/VEBOReorder.h"
+#include "graptor/graph/partitioning.h"
 
 #include "graptor/graph/CGraphCSx.h"
-#include "graptor/graph/EIDRemapper.h"
+#include "graptor/graph/GraphCOO.h"
+#include "graptor/graph/GraphGG.h"
+#include "graptor/graph/GraphGGVEBO.h"
+#include "graptor/graph/GraphCSx.h"
+
 
 // TODO:
 // - General:
@@ -24,12 +35,6 @@
 //       executed that way. Benefits to storage size (index array CSC-like).
 //       Are there benefits to COO?
 
-
-constexpr unsigned short VLUpperBound = ~(unsigned short)0;
-
-#include "graptor/graph/GraphCSx.h"
-#include "graptor/graph/partitioning.h"
-#include "graptor/frontier.h"
 
 
 class GraphCSxSlice {
@@ -936,500 +941,6 @@ public:
     static constexpr bool getRndWr() { return true; }
 };
 
-class GraphCOO {
-    VID n;
-    EID m;
-    mmap_ptr<VID> src;
-    mmap_ptr<VID> dst;
-    mm::buffer<float> * weights;
-
-public:
-    GraphCOO() { }
-    GraphCOO( VID n_, EID m_, int allocation, bool weights = false )
-	: n( n_ ), m( m_ ), weights( nullptr ) {
-	if( allocation == -1 )
-	    allocateInterleaved( weights );
-	else
-	    allocateLocal( allocation, weights );
-    }
-    template<typename vertex>
-    GraphCOO( const wholeGraph<vertex> & WG,
-	      const partitioner & part, int p )
-	: n( WG.numVertices() ), weights( nullptr ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	EID num_edges = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    num_edges += V[i].getInDegree();
-
-	m = num_edges;
-	allocateLocal( part.numa_node_of( p ) );
-	
-        EID k = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-            for( VID j=0; j < V[i].getInDegree(); ++j ) {
-                VID d = V[i].getInNeighbor( j );
-		src[k] = d;
-		dst[k] = i;
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		k++;
-	    }
-	}
-	assert( k == num_edges );
-
-#if EDGES_HILBERT
-	hilbert_sort();
-#else
-	CSR_sort();
-#endif
-    }
-    GraphCOO( const GraphCSx & Gcsr, int allocation )
-	: n( Gcsr.numVertices() ), m( Gcsr.numEdges() ), weights( nullptr ) {
-	if( allocation == -1 )
-	    allocateInterleaved( Gcsr.getWeights() != nullptr );
-	else
-	    allocateLocal( allocation, Gcsr.getWeights() != nullptr );
-	
-        EID k = 0;
-        for( VID i=0; i < n; i++ ) {
-	    VID deg = Gcsr.getDegree(i);
-	    const VID * ngh = &Gcsr.getEdges()[Gcsr.getIndex()[i]];
-	    const float * w
-		= Gcsr.getWeights()
-		? &Gcsr.getWeights()->get()[Gcsr.getIndex()[i]]
-		: nullptr;
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		src[k] = i;
-		dst[k] = d;
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		if( weights )
-		    weights->get()[k] = w[j];
-		k++;
-	    }
-	}
-	assert( k == m );
-
-#if EDGES_HILBERT
-	hilbert_sort();
-#else
-	CSR_sort();
-#endif
-    }
-	
-    GraphCOO( const GraphCSx & Gcsc,
-	      const partitioner & part, int p )
-	: n( Gcsc.numVertices() ), weights( nullptr ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	EID num_edges = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    num_edges += Gcsc.getDegree(i);
-
-	m = num_edges;
-	allocateLocal( part.numa_node_of( p ), Gcsc.getWeights() != nullptr );
-	
-	// Temporary info - outdegree of inverted edges - later insertion pos
-	// to aid insertion in order sorted by source
-	mmap_ptr<EID> pos( n, numa_allocation_interleaved() );
-	std::fill( &pos[0], &pos[n], EID(0) );
-
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-	    VID deg = Gcsc.getDegree(i);
-	    const VID * ngh = &Gcsc.getEdges()[Gcsc.getIndex()[i]];
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		++pos[d];
-	    }
-	}
-
-	EID s = 0;
-	for( VID v=0; v < n; ++v ) {
-	    EID tmp = pos[v];
-	    pos[v] = s;
-	    s += tmp;
-	}
-	assert( s == num_edges );
-	
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-	    VID deg = Gcsc.getDegree(i);
-	    const VID * ngh = &Gcsc.getEdges()[Gcsc.getIndex()[i]];
-	    const float * w
-		= Gcsc.getWeights()
-		? &Gcsc.getWeights()->get()[Gcsc.getIndex()[i]]
-		: nullptr;
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		EID k = pos[d]++;
-		src[k] = d;
-		dst[k] = i;
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		if( weights )
-		    weights->get()[k] = w[j];
-		k++;
-	    }
-	}
-
-	pos.del();
-    }
-
-
-    void del() {
-	src.del();
-	dst.del();
-	if( weights ) {
-	    weights->del();
-	    delete weights;
-	}
-    }
-
-    void CSR_sort() {
-	//assert( 0 && "NYI" );
-    }
-
-    void transpose() {
-	std::swap( src, dst );
-    }
-
-public:
-    VID *getSrc() { return src.get(); }
-    const VID *getSrc() const { return src.get(); }
-    VID *getDst() { return dst.get(); }
-    const VID *getDst() const { return dst.get(); }
-    float *getWeights() {
-	return weights ? weights->get() : nullptr;
-    }
-    const float *getWeights() const {
-	return weights ? weights->get() : nullptr;
-    }
-
-    void setEdge( EID e, VID s, VID d ) {
-	src[e] = s;
-	dst[e] = d;
-    }
-
-    VID numVertices() const { return n; }
-    EID numEdges() const { return m; }
-
-private:
-    // Align assuming AVX-512
-    void allocateInterleaved( bool aw = false ) {
-	// src.Interleave_allocate( m, 64 );
-	// dst.Interleave_allocate( m, 64 );
-	src.allocate( m, 64, numa_allocation_interleaved() );
-	dst.allocate( m, 64, numa_allocation_interleaved() );
-	if( aw )
-	    weights = new mm::buffer<float>(
-		m, numa_allocation_interleaved(), "CSx weights" );
-	else
-	    weights = nullptr;
-    }
-    void allocateLocal( int numa_node, bool aw = false ) {
-	// src.local_allocate( m, 64, numa_node );
-	// dst.local_allocate( m, 64, numa_node );
-	src.allocate( m, 64, numa_allocation_local( numa_node ) );
-	dst.allocate( m, 64, numa_allocation_local( numa_node ) );
-	if( aw )
-	    weights = new mm::buffer<float>(
-		m, numa_allocation_local( numa_node ), "CSx weights" );
-	else
-	    weights = nullptr;
-    }
-};
-
-class GraphCOOIntlv {
-    VID n;
-    EID m;
-    bool trp;
-    mmap_ptr<VID> edges;
-
-public:
-    GraphCOOIntlv() { }
-    GraphCOOIntlv( VID n_, EID m_, int allocation )
-	: n( n_ ), m( m_ ), trp( false ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-    }
-    GraphCOOIntlv( const GraphCSx & Gcsr, int allocation )
-	: n( Gcsr.numVertices() ), m( Gcsr.numEdges() ), trp( false ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	
-        EID k = 0;
-        for( VID i=0; i < n; i++ ) {
-	    VID deg = Gcsr.getDegree(i);
-	    const VID * ngh = &Gcsr.getEdges()[Gcsr.getIndex()[i]];
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		edges[k*2] = i;
-		edges[k*2+1] = d;
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		k++;
-	    }
-	}
-	assert( k == m );
-
-#if EDGES_HILBERT
-	hilbert_sort();
-#else
-	CSR_sort();
-#endif
-    }
-	
-    GraphCOOIntlv( const GraphCSx & Gcsc,
-		   const partitioner & part, int p )
-	: n( Gcsc.numVertices() ), trp( false ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	EID num_edges = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    num_edges += Gcsc.getDegree(i);
-
-	m = num_edges;
-	allocateLocal( part.numa_node_of( p ) );
-	
-	// Temporary info - outdegree of inverted edges - later insertion pos
-	// to aid insertion in order sorted by source
-	mmap_ptr<EID> pos( n, numa_allocation_interleaved() );
-	std::fill( &pos[0], &pos[n], EID(0) );
-
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-	    VID deg = Gcsc.getDegree(i);
-	    const VID * ngh = &Gcsc.getEdges()[Gcsc.getIndex()[i]];
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		++pos[d];
-	    }
-	}
-
-	EID s = 0;
-	for( VID v=0; v < n; ++v ) {
-	    EID tmp = pos[v];
-	    pos[v] = s;
-	    s += tmp;
-	}
-	assert( s == num_edges );
-	
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-	    VID deg = Gcsc.getDegree(i);
-	    const VID * ngh = &Gcsc.getEdges()[Gcsc.getIndex()[i]];
-            for( VID j=0; j < deg; ++j ) {
-		VID d = ngh[j];
-		EID k = pos[d]++;
-		edges[2*k] = d;   // src
-		edges[2*k+1] = i; // dst
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		k++;
-	    }
-	}
-
-	pos.del();
-    }
-
-    void del() {
-	edges.del();
-    }
-
-    void CSR_sort() {
-	//assert( 0 && "NYI" );
-    }
-
-    void transpose() { trp = !trp; }
-    bool is_transposed() const { return trp; }
-
-public:
-    void setEdge( EID e, VID src, VID dst ) {
-	assert( !trp );
-	edges[2*e] = src;
-	edges[2*e+1] = dst;
-    }
-    const VID * getEdge( EID e ) const {
-	return &edges[2*e];
-    }
-
-    const VID * getEdges() const { return edges.get(); }
-    VID * getEdges() { return edges.get(); }
-
-    VID numVertices() const { return n; }
-    EID numEdges() const { return m; }
-
-private:
-    // Align assuming AVX-512
-    void allocateInterleaved() {
-	// edges.Interleave_allocate( 2*m, 64 );
-	edges.allocate( 2*m, 64, numa_allocation_interleaved() );
-    }
-    void allocateLocal( int numa_node ) {
-	// edges.local_allocate( 2*m, 64, numa_node );
-	edges.allocate( 2*m, 64, numa_allocation_local( numa_node ) );
-    }
-};
-
-
-template<typename COOType>
-class GraphGG_tmpl {
-    GraphCSx * csr, * csc; // for transpose
-    GraphCSx csr_act, csc_act;
-    COOType * coo;
-    partitioner part;
-
-public:
-    template<class vertex>
-    GraphGG_tmpl( const wholeGraph<vertex> & WG,
-		  int npart, bool balance_vertices )
-	: csr( &csr_act ),
-	  csc( std::is_same<vertex,symmetricVertex>::value
-	       ? &csr_act : &csc_act ),
-	  csr_act( WG, -1 ),
-	  csc_act( std::is_same<vertex,symmetricVertex>::value ? 0 : WG.n,
-		   std::is_same<vertex,symmetricVertex>::value ? 0 : WG.m, -1 ),
-	  coo( new COOType[npart] ),
-	  part( npart, WG.numVertices() ) {
-	// Setup CSR and CSC
-	if( !std::is_same<vertex,symmetricVertex>::value ) {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_act.import( WG );
-	    WGc->transpose();
-	}
-	
-	// Decide what partition each vertex goes into
-	if( balance_vertices )
-	    partitionBalanceDestinations( WG, part ); 
-	else
-	    partitionBalanceEdges( WG, part ); 
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ) {
-		COOType & el = coo[p];
-		new ( &el ) COOType( WG, part, p );
-	    } );
-    }
-    GraphGG_tmpl( const GraphCSx & Gcsr,
-		  int npart, bool balance_vertices )
-	: csr( &csr_act ),
-	  csc( Gcsr.isSymmetric() ? &csr_act : &csc_act ),
-	  csr_act( Gcsr, -1 ),
-	  csc_act( Gcsr.isSymmetric() ? 0 : Gcsr.numVertices(),
-		   Gcsr.isSymmetric() ? 0 : Gcsr.numEdges(), -1 ),
-	  coo( new COOType[npart] ),
-	  part( npart, Gcsr.numVertices() ) {
-	// Setup CSR and CSC
-	std::cerr << "Transposing CSR...\n";
-	const GraphCSx * csc_tmp_ptr = &csc_act;
-	if( Gcsr.isSymmetric() )
-	    csc_tmp_ptr = &Gcsr;
-	else
-	    csc_act.import_transpose( Gcsr );
-	const GraphCSx & csc_tmp = *csc_tmp_ptr;
-	
-	// Decide what partition each vertex goes into
-	if( balance_vertices )
-	    partitionBalanceDestinations( Gcsr, part ); 
-	else
-	    partitionBalanceEdges( csc_tmp, part ); 
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ) {
-		COOType & el = coo[p];
-		new ( &el ) COOType( csc_tmp, part, p );
-	    } );
-
-	for( unsigned p=0; p < npart; ++p ) {
-	    std::cerr << "partition " << p
-		      << ": s=" << part.start_of( p )
-		      << ": e=" << part.end_of( p )
-		      << ": nv=" << ( part.end_of( p ) - part.start_of( p ) )
-		      << ": ne=" << coo[p].numEdges()
-		      << "\n";
-	}
-    }
-
-
-    void del() {
-	csr_act.del();
-	csc_act.del();
-	for( int p=0; p < part.get_num_partitions(); ++p )
-	    coo[p].del();
-	delete[] coo;
-	coo = nullptr;
-	csr = nullptr;
-	csc = nullptr;
-    }
-
-    void fragmentation() const {
-	// TODO
-    }
-
-public:
-    VID numVertices() const { return csr_act.numVertices(); }
-    EID numEdges() const { return csr_act.numEdges(); }
-
-    bool transposed() const { return csr != &csr_act; }
-    void transpose() {
-	std::swap( csc, csr );
-	int np = part.get_num_partitions();
-	for( int p=0; p < np; ++p )
-	    coo[p].transpose();
-    }
-
-    const partitioner & get_partitioner() const { return part; }
-
-    const GraphCSx & getCSC() const { return *csc; }
-    const GraphCSx & getCSR() const { return *csr; }
-    const COOType & get_edge_list_partition( int p ) const { return coo[p]; }
-
-    VID originalID( VID v ) const { return v; }
-    VID remapID( VID v ) const { return v; }
-
-    VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
-
-    // This graph only supports scalar processing in our system as destinations
-    // are not laid out in a way that excludes conflicts across vector lanes
-    // in the COO representation.
-    // unsigned short getMaxVLCOO() const { return 1; }
-    // unsigned short getMaxVLCSC() const { return VLUpperBound; }
-    // static constexpr unsigned short getVLCOOBound() { return 1; }
-    // static constexpr unsigned short getVLCSCBound() { return VLUpperBound; }
-
-    static constexpr unsigned short getMaxVLCOO() { return 1; }
-    static constexpr unsigned short getMaxVLCSC() { return 1; }
-    static constexpr unsigned short getVLCOOBound() { return 1; }
-    static constexpr unsigned short getVLCSCBound() { return 1; }
-
-    // Really, we could be true/false or false/true, depending on frontier.
-    // Main point is that a frontier bitmask is unlikely to be useful
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
-};
-
-using GraphGG = GraphGG_tmpl<GraphCOO>;
-using GraphGGIntlv = GraphGG_tmpl<GraphCOOIntlv>;
-
-#include "graptor/graph/VEBOReorder.h"
 
 class GraphVEBOPartCSR {
     GraphCSx csr; // only for calculating statistics (to be removed)
@@ -2033,381 +1544,266 @@ private:
     reorder_type remap;
 };
 
-
-// Passes PageRank validation
-class GraphGGVEBO {
-#if GGVEBO_COOINTLV
-    using ThisGraphCOO = GraphCOOIntlv;
-#else
-    using ThisGraphCOO = GraphCOO;
-#endif
-    // using EIDRetriever = CSxEIDRetriever<VID,EID>;
-    // using EIDRemapper = CSxEIDRemapper<VID,EID>;
-    using EIDRemapper = NullEIDRemapper<VID,EID>;
-    using EIDRetriever = IdempotentEIDRetriever<VID,EID>;
-
-    GraphCSx * csr, * csc; // for transpose
-    GraphCSx csr_act, csc_act;
-    ThisGraphCOO * coo;
-    partitioner part;
-    VEBOReorder remap;
-    EIDRetriever eid_retriever;
+class GraphCSxSIMD {
+    VID n, nv;
+    EID m, mv;
+    unsigned short maxVL;
+    mmap_ptr<EID> index;
+    mmap_ptr<EID> mindex;
+    mmap_ptr<VID> edges;
 
 public:
-    template<class vertex>
-    GraphGGVEBO( const wholeGraph<vertex> & WG, int npart )
-	: csr( &csr_act ),
-	  csc( std::is_same<vertex,symmetricVertex>::value
-	       ? &csr_act : &csc_act ),
-	  csr_act( WG.n, WG.m, -1, WG.isSymmetric() ),
-	  csc_act( std::is_same<vertex,symmetricVertex>::value ? 0 : WG.n,
-		   std::is_same<vertex,symmetricVertex>::value ? 0 : WG.m, -1 ),
-	  coo( new ThisGraphCOO[npart] ),
-	  part( npart, WG.numVertices() ) {
-
-#if OWNER_READS
-	assert( WG.isSymmetric() && "OWNER_READS requires symmetric graphs" );
-#endif
-
-	// Setup temporary CSC, try to be space-efficient
-	GraphCSx & csc_tmp = csr_act;
-	if( std::is_same<vertex,symmetricVertex>::value )
-	    csc_tmp.import( WG );
-	else {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_tmp.import( WG );
-	    WGc->transpose();
-	}
-
-	// Calculate remapping table
-	remap = VEBOReorder( csc_tmp, part );
-
-	// Setup CSR
-	std::cerr << "Remapping CSR...\n";
-	csr_act.import( WG, remap.maps() );
-
-	// Setup CSC
-	std::cerr << "Remapping CSC...\n";
-	if( !std::is_same<vertex,symmetricVertex>::value ) {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_act.import( WG, remap.maps() );
-	    WGc->transpose();
-	}
-	
-	// Create COO partitions in parallel
-	std::cerr << "Creating and remapping COO partitions...\n";
-	map_partitionL( part, [&]( int p ) {
-#if GGVEBO_COO_CSC_ORDER
-		createCOOPartitionFromCSC( WG.numVertices(),
-					   p, part.numa_node_of( p ) );
-#else
-		createCOOPartitionFromCSR( WG.numVertices(),
-					   p, p / part.numa_node_of( p ) );
-#endif
-	    } );
-	std::cerr << "GraphGGVEBO loaded\n";
-    }
-
-    GraphGGVEBO( const GraphCSx & Gcsr, int npart )
-	: csr( &csr_act ),
-	  csc( &csc_act ),
-	  csr_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric(),
-		   Gcsr.getWeights() != nullptr ),
-	  csc_act( Gcsr.numVertices(), Gcsr.numEdges(), -1, Gcsr.isSymmetric(),
-		   Gcsr.getWeights() != nullptr  ),
-	  coo( new ThisGraphCOO[npart] ),
-	  part( npart, Gcsr.numVertices() ) {
-
-#if OWNER_READS
-	assert( Gcsr.isSymmetric() && "OWNER_READS requires symmetric graphs" );
-#endif
-
-	// Setup temporary CSC, try to be space-efficient
-	std::cerr << "Transposing CSR...\n";
-	const GraphCSx * csc_tmp_ptr = &csr_act;
-	if( Gcsr.isSymmetric() )
-	    csc_tmp_ptr = &Gcsr;
-	else
-	    csr_act.import_transpose( Gcsr );
-	const GraphCSx & csc_tmp = *csc_tmp_ptr;
-
-	// Calculate remapping table
-	remap = VEBOReorder( csc_tmp, part );
-
-	// Setup CSC
-	std::cerr << "Remapping CSC...\n";
-	csc_act.import( csc_tmp, remap.maps() );
-	
-	// Setup CSR (overwrites csc_tmp)
-	// TODO: if symmetric, we don't need a different copy for CSR and CSC
-	std::cerr << "Remapping CSR...\n";
-	csr_act.import( Gcsr, remap.maps() );
-
-	// Setup EID remapper based on remapped (padded) vertices
-	EIDRemapper eid_remapper( csr_act );
-
-	// Create COO partitions in parallel
-#if GG_ALWAYS_MEDIUM
-	std::cerr << "Skipping COO partitions...\n";
-#else
-	std::cerr << "Creating and remapping COO partitions...\n";
-	map_partitionL( part, [&]( int p ) {
-#if GGVEBO_COO_CSC_ORDER
-		createCOOPartitionFromCSC( Gcsr.numVertices(),
-					   p, part.numa_node_of( p ),
-					   eid_remapper );
-#else
-		createCOOPartitionFromCSR( Gcsr.numVertices(),
-					   p, part.numa_node_of( p ),
-					   eid_remapper );
-#endif
-	    } );
-	eid_remapper.finalize( part );
-	// eid_retriever = eid_remapper.create_retriever();
-
-	// set up edge partitioner - determines how to allocate edge properties
-	EID * counts = part.edge_starts();
-	EID ne = 0;
-	for( unsigned short p=0; p < npart; ++p ) {
-	    counts[p] = ne;
-	    ne += coo[p].numEdges();
-	}
-	counts[npart] = ne;
-#endif // GG_ALWAYS_MEDIUM
-
-	std::cerr << "GraphGGVEBO loaded\n";
-    }
-
-
+    GraphCSxSIMD() { }
     void del() {
-	remap.del();
-	csr_act.del();
-	csc_act.del();
-	for( int p=0; p < part.get_num_partitions(); ++p )
-	    coo[p].del();
-	delete[] coo;
-	coo = nullptr;
-	csr = nullptr;
-	csc = nullptr;
+	mindex.del();
+	index.del();
+	edges.del();
     }
+    template<typename vertex>
+    void import( const wholeGraph<vertex> & WG,
+		 VID lo, VID hi, unsigned short maxVL_,
+		 std::pair<const VID *, const VID *> remap,
+		 int allocation ) {
+	// This is written to be a CSC-style import, i.e., WG is transposed,
+	// lo/hi applied to 'sources'.
+	// Calculate dimensions of SIMD representation
+	maxVL = maxVL_;
+	n = WG.numVertices();
+	// m = WG.numEdges();
+	m = 0;
+	for( nv=lo; nv < hi; nv++ )
+	    m += WG.V[remap.first[nv]].getOutDegree();
+	mv = 0;
+	for( nv=lo; nv < hi; nv += maxVL ) {
+	    mv += maxVL * WG.V[remap.first[nv]].getOutDegree();
+	}
+	nv -= lo;
+	assert( nv >= (hi-lo) && nv < (hi-lo) + maxVL );
+	assert( mv >= m ); // && mv < m + (hi-lo) * maxVL );
+	    
+	// Allocate data structures
+	if( allocation == -1 )
+	    allocateInterleaved();
+	else
+	    allocateLocal( allocation );
 
-    void fragmentation() const {
-	std::cerr << "GraphGGVEBO:\n";
-	getCSR().fragmentation();
-	getCSC().fragmentation();
-	std::cerr << "COO partitions:\ntotal-size: "
-		  << ( numEdges()*2*sizeof(VID) ) << "\n";
-    }
-
-public:
-    VID numVertices() const { return csr_act.numVertices(); }
-    EID numEdges() const { return csr_act.numEdges(); }
-
-    bool isSymmetric() const { return csr_act.isSymmetric(); }
-
-    bool transposed() const { return csr != &csr_act; }
-    void transpose() {
-	std::swap( csc, csr );
-	int np = part.get_num_partitions();
-	for( int p=0; p < np; ++p )
-	    coo[p].transpose();
-    }
-
-    const partitioner & get_partitioner() const { return part; }
-    const EIDRetriever & get_eid_retriever() const { return eid_retriever; }
-
-    const GraphCSx & getCSC() const { return *csc; }
-    const GraphCSx & getCSR() const { return *csr; }
-    const ThisGraphCOO & get_edge_list_partition( int p ) const {
-	return coo[p];
-    }
-    PartitionedCOOEIDRetriever<VID,EID>
-    get_edge_list_eid_retriever( int p ) const {
-#if GGVEBO_COO_CSC_ORDER
-	static_assert( false,
-		       "EID retrievers are incorrect for COO in CSC ORDER" );
-#endif 
-	return PartitionedCOOEIDRetriever<VID,EID>( part.edge_start_of( p ) );
-    }
-
-    VID originalID( VID v ) const { return remap.originalID( v ); }
-    VID remapID( VID v ) const { return remap.remapID( v ); }
-
-    auto get_remapper() const { return remap.remapper(); }
-
-    // This graph only supports scalar processing in our system as destinations
-    // are not laid out in a way that excludes conflicts across vector lanes
-    // in the COO representation.
-    static constexpr unsigned short getMaxVLCOO() { return 1; }
-    static constexpr unsigned short getMaxVLCSC() { return 1; }
-    static constexpr unsigned short getVLCOOBound() { return 1; }
-    static constexpr unsigned short getVLCSCBound() { return 1; }
-    static constexpr unsigned short getPullVLBound() { return 1; }
-    static constexpr unsigned short getPushVLBound() { return 1; }
-    static constexpr unsigned short getIRegVLBound() { return 1; }
-
-    // Really, we could be true/false or false/true, depending on frontier.
-    // This choice affects:
-    // - whether we use a frontier bitmask (unlikely to be useful)
-    // - whether we use an unbacked frontier
-#if GG_ALWAYS_MEDIUM
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return false; }
-#elif GG_ALWAYS_DENSE
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
-#else
-    static constexpr bool getRndRd() { return true; }
-    static constexpr bool getRndWr() { return true; }
-#endif
-
-    graph_traversal_kind select_traversal(
-	bool fsrc_strong,
-	bool fdst_strong,
-	bool adst_strong,
-	bool record_strong,
-	frontier F,
-	bool is_sparse ) const {
-
-	if( is_sparse )
-	    return graph_traversal_kind::gt_sparse;
-
-#if GG_ALWAYS_MEDIUM
-#if OWNER_READS
-	return graph_traversal_kind::gt_push;
-#else
-	return graph_traversal_kind::gt_pull;
-#endif
-#endif
-
-	// threshold not configurable
-	EID nactv = (EID)F.nActiveVertices();
-	EID nacte = F.nActiveEdges();
-	EID threshold2 = numEdges() / 2;
-	if( nactv + nacte <= threshold2 ) {
-#if OWNER_READS
-	    return graph_traversal_kind::gt_push;
-#else
-	    return graph_traversal_kind::gt_pull;
-#endif
-	} else
-	    return graph_traversal_kind::gt_ireg;
-    }
-
-    static constexpr bool is_privatized( graph_traversal_kind gtk ) {
-	return gtk == graph_traversal_kind::gt_pull;
-    }
-
-    VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
-    VID getOutNeighbor( VID v, VID pos ) const { return getCSR().getNeighbor( v, pos ); }
-
-    const VID * getOutDegree() const { return getCSR().getDegree(); }
-
-public:
-    GraphCSx::vertex_iterator part_vertex_begin( const partitioner & part, unsigned p ) const {
-	return csc->vertex_begin( part.start_of( p ) );
-    }
-    GraphCSx::vertex_iterator part_vertex_end( const partitioner & part, unsigned p ) const {
-	return csc->vertex_begin( part.end_of( p ) );
-    }
-
-private:
-    void createCOOPartitionFromCSC( VID n, int p, int allocation,
-				    EIDRemapper & eid_remapper ) {
 	// In w = remap.first[v], v is the new vertex ID, w is the old one
 	// In v = remap.second[w], v is the new vertex ID, w is the old one
+	// assert( n == WG.n && m == WG.m ); -- obvious
+	const vertex * V = WG.V.get();
 
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	EID *idx = csc->getIndex();
-	VID *edge = csc->getEdges();
+	VID maxdeg = V[remap.first[0]].getOutDegree();
+	VID * buf = new VID[maxdeg];
 
-	EID num_edges = idx[rangeHi] - idx[rangeLow];
-
-	ThisGraphCOO & el = coo[p];
-	new ( &el ) GraphCOO( n, num_edges, allocation );
-	
-        EID k = 0;
-        for( VID v=rangeLow; v < rangeHi; v++ ) {
-	    VID deg = idx[v+1] - idx[v];
-            for( VID j=0; j < deg; ++j ) {
-		el.setEdge( k, edge[idx[v]+j], v );
-		eid_remapper.set( edge[idx[v]+j], v, idx[rangeLow]+k );
-#ifdef WEIGHTED
-		wgh[k] = ...;
+	EID nxt = 0;
+	for( VID v=lo; v < lo+nv; v += maxVL ) {
+	    VID deg = V[remap.first[v]].getOutDegree();
+	    index[(v-lo)/maxVL] = std::min( nxt, mv ); // nxt > mv only when deg=0
+	    VID mlodeg = deg;
+	    for( unsigned short l=0; l < maxVL; ++l ) { // vector lane
+		VID vv = v + l;
+		EID lnxt = nxt + l;
+		if( vv < n ) {
+		    VID ww = remap.first[vv];
+		    VID ldeg = V[ww].getOutDegree();
+		    assert( ldeg <= deg );
+		    if( ldeg < mlodeg ) // track first SIMD group w/ mask
+			mlodeg = ldeg;
+		    // VID buf[ldeg];
+		    assert( ldeg <= maxdeg );
+		    for( VID j=0; j < ldeg; ++j )
+			buf[j] = remap.second[V[ww].getOutNeighbor(j)];
+		    std::sort( &buf[0], &buf[ldeg] );
+		    for( VID j=0; j < ldeg; ++j ) {
+			edges[lnxt] = buf[j];
+			lnxt += maxVL;
+		    } 
+		    for( VID j=ldeg; j < deg; ++j ) {
+			edges[lnxt] = ~(VID)0;
+			lnxt += maxVL;
+		    }
+		} else {
+		    mlodeg = 0;
+		    VID ww = ~(VID)0;
+		    for( VID j=0; j < deg; ++j ) {
+			edges[lnxt] = ~(VID)0;
+			lnxt += maxVL;
+		    } 
+		}
+	    }
+	    mindex[(v-lo)/maxVL] = index[(v-lo)/maxVL] + maxVL * mlodeg;
+	    nxt += maxVL * deg;
+	}
+	assert( nxt == mv );
+	// for( unsigned short l=0; l < maxVL; ++l )
+	// index[nv-maxVL+l] = mv;
+	index[nv/maxVL] = mv;
+	mindex[nv/maxVL] = mv;
+	delete[] buf;
+    }
+    void import( const GraphCSx & Gcsc,
+		 VID lo, VID hi, unsigned short maxVL_,
+		 std::pair<const VID *, const VID *> remap,
+		 int allocation ) {
+	// This is written to be a CSC-style import, i.e., WG is transposed,
+	// lo/hi applied to 'sources'.
+	// Calculate dimensions of SIMD representation
+	maxVL = maxVL_;
+	n = Gcsc.numVertices();
+	const EID * idx = Gcsc.getIndex();
+	const VID * edg = Gcsc.getEdges();
+#if 0
+	m = 0;
+	for( nv=lo; nv < hi; nv++ ) {
+	    VID r = remap.first[nv];
+	    m += idx[r+1] - idx[r];
+	}
+	mv = 0;
+	for( nv=lo; nv < hi; nv += maxVL ) {
+	    VID r = remap.first[nv];
+	    mv += maxVL * ( idx[r+1] - idx[r] );
+	}
 #endif
-		k++;
+	m = 0;
+	mv = 0;
+	for( nv=lo; nv < hi; nv += maxVL ) {
+	    VID deg = 0;
+
+	    VID r = remap.first[nv];
+	    VID d0 = idx[r+1] - idx[r];
+	    m += d0;
+	    mv += maxVL * d0;
+
+	    for( unsigned short l=1; l < maxVL; ++l ) {
+		VID r = remap.first[nv+l];
+		VID d = r < n ? idx[r+1] - idx[r] : 0;
+		m += d;
+		assert( d <= d0 );
 	    }
 	}
-	assert( k == num_edges );
+	nv -= lo;
+	assert( nv >= (hi-lo) && nv < (hi-lo) + maxVL );
+	assert( mv >= m ); // && mv < m + (hi-lo) * maxVL );
+	    
+	// Allocate data structures
+	if( allocation == -1 )
+	    allocateInterleaved();
+	else
+	    allocateLocal( allocation );
 
-	// Edges are now stored in CSC traversal order
-#if EDGES_HILBERT
-	el.hilbert_sort();
-#else
-	el.CSR_sort();
-#endif
-    }
-    void createCOOPartitionFromCSR( VID n, int p, int allocation,
-				    EIDRemapper & eid_remapper ) {
 	// In w = remap.first[v], v is the new vertex ID, w is the old one
 	// In v = remap.second[w], v is the new vertex ID, w is the old one
+	// assert( n == WG.n && m == WG.m ); -- obvious
 
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.end_of(p); // part.start_of(p+1);
-	
-	// Short-hands
-	EID *csc_idx = csc->getIndex();
-	EID *idx = csr->getIndex();
-	VID *edge = csr->getEdges();
+	VID maxdeg = idx[remap.first[0]+1] - idx[remap.first[0]];
+	VID * buf = new VID[maxdeg];
 
-	EID num_edges = csc_idx[rangeHi] - csc_idx[rangeLow];
+	EID nxt = 0;
+	for( VID v=lo; v < lo+nv; v += maxVL ) {
+	    VID r = remap.first[v];
+	    VID deg = r < n ? idx[r+1] - idx[r] : 0;
+	    index[(v-lo)/maxVL] = std::min( nxt, mv ); // nxt > mv only when deg=0
+	    VID mlodeg = deg;
+	    for( unsigned short l=0; l < maxVL; ++l ) { // vector lane
+		VID vv = v + l;
+		EID lnxt = nxt + l;
+		if( vv < n ) {
+		    VID ww = remap.first[vv];
+		    VID ldeg = ww < n ? idx[ww+1] - idx[ww] : 0;
+		    assert( ldeg <= deg );
+		    if( ldeg <= mlodeg ) // track first SIMD group w/ mask
+			mlodeg = ldeg;
+		    // VID buf[ldeg];
+		    assert( ldeg <= maxdeg );
+		    for( VID j=0; j < ldeg; ++j )
+			buf[j] = remap.second[edg[idx[ww]+j]];
+		    std::sort( &buf[0], &buf[ldeg] );
+		    for( VID j=0; j < ldeg; ++j ) {
+			edges[lnxt] = buf[j];
+			lnxt += maxVL;
+		    } 
+		    for( VID j=ldeg; j < deg; ++j ) {
+			edges[lnxt] = ~(VID)0;
+			lnxt += maxVL;
+		    }
+		} else {
+		    mlodeg = 0;
+		    VID ww = ~(VID)0;
+		    for( VID j=0; j < deg; ++j ) {
+			edges[lnxt] = ~(VID)0;
+			lnxt += maxVL;
+		    } 
+		}
+	    }
+	    mindex[(v-lo)/maxVL] = index[(v-lo)/maxVL] + maxVL * mlodeg;
+	    nxt += maxVL * deg;
+	}
+	assert( nxt == mv );
+	// for( unsigned short l=0; l < maxVL; ++l )
+	// index[nv-maxVL+l] = mv;
+	index[nv/maxVL] = mv;
+	mindex[nv/maxVL] = mv;
+	delete[] buf;
+    }
 
-	ThisGraphCOO & el = coo[p];
-	new ( &el ) ThisGraphCOO( n, num_edges, allocation, csc->getWeights() );
-
-	// std::cerr << "COO from CSR: n=" << n << " p=" << p
-	// << " alloc=" << allocation << " nE=" << num_edges << "\n";
-
-	// Convenience defs
-	const bool has_weights = el.getWeights() != nullptr;
-	float * const Tweights = has_weights ? el.getWeights() : nullptr;
-	assert( ( ( csr->getWeights() != nullptr ) || !has_weights )
-		&& "expecting weights in graph" );
-	const float * const Gweights = csr->getWeights()
-	    ? csr->getWeights()->get() : nullptr;
-
-        EID k = 0;
-        for( VID v=0; v < n; v++ ) {
-	    VID deg = idx[v+1] - idx[v];
-            for( VID j=0; j < deg; ++j ) {
-		VID d = edge[idx[v]+j];
-		if( rangeLow <= d && d < rangeHi ) {
-		    el.setEdge( k, v, d );
-		    eid_remapper.set( v, d, csc_idx[rangeLow]+k );
-#ifdef WEIGHTED
-		    wgh[k] = ...;
-#endif
-		    if( has_weights )
-			Tweights[k] = Gweights[idx[v]+j];
-		    k++;
+    template<typename Remapper>
+    void validate( const GraphCSx & Gcsr,
+		   VID s, VID e,
+		   const Remapper & remapper ) {
+	EID ne = 0;
+	for( VID vv=s; vv < e; vv += maxVL ) {
+	    for( unsigned short l=0; l < maxVL; ++l ) {
+		VID v = vv + l;
+		VID Gv = remapper.origID( v );
+		for( EID i=index[(v-s)/16]+l; i < index[((v-s)/16)+1]+l; i += maxVL ) {
+		    VID u = edges[i];
+		    if( u != ~(VID)0 ) {
+			VID Gu = remapper.origID( u );
+			assert( Gcsr.hasEdge( Gu, Gv ) );
+			++ne;
+		    }
 		}
 	    }
 	}
-	assert( k == num_edges );
+	assert( ne == m );
+    }
 
-	// Edges are now stored in CSR traversal order
-#if EDGES_HILBERT
-	el.hilbert_sort();
-#endif
+public:
+    EID *getIndex() { return index.get(); }
+    const EID *getIndex() const { return index.get(); }
+    const EID *getMaskIndex() const { return mindex.get(); }
+    VID *getEdges() { return edges.get(); }
+    const VID *getEdges() const { return edges.get(); }
+
+    VID numVertices() const { return n; }
+    EID numEdges() const { return m; }
+
+    VID numSIMDVertices() const { return nv; }
+    EID numSIMDEdges() const { return mv; }
+
+    unsigned short getMaxVL() const { return maxVL; }
+
+private:
+    void allocateInterleaved() {
+	assert( nv % maxVL == 0 );
+	// mindex.Interleave_allocate( nv/maxVL+1, sizeof(VID)*maxVL );
+	// index.Interleave_allocate( nv/maxVL+1, sizeof(VID)*maxVL );
+	// edges.Interleave_allocate( mv, sizeof(VID)*maxVL );
+	mindex.allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_allocation_interleaved() );
+	index.allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_allocation_interleaved() );
+	edges.allocate( mv, sizeof(VID)*maxVL, numa_allocation_interleaved() );
+    }
+    void allocateLocal( int numa_node ) {
+	assert( nv % maxVL == 0 );
+	// mindex.local_allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_node );
+	// index.local_allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_node );
+	// edges.local_allocate( mv, sizeof(VID)*maxVL, numa_node );
+	mindex.allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_allocation_local( numa_node ) );
+	index.allocate( nv/maxVL+1, sizeof(VID)*maxVL, numa_allocation_local( numa_node ) );
+	edges.allocate( mv, sizeof(VID)*maxVL, numa_allocation_local( numa_node ) );
     }
 };
+
 
 template<bool doVEBO = true>
 class GraphVEBOSlimSell_template {
@@ -2596,80 +1992,6 @@ public:
 
 using GraphSlimSell = GraphVEBOSlimSell_template<false>;
 using GraphVEBOSlimSell = GraphVEBOSlimSell_template<true>;
-
-class GraphVEBOSlimSellHybrid {
-    GraphCSxHybrid * csc;
-    GraphCSx csr; // used only for calculating active vertices -- TODO
-    VEBOReorder remap;
-    partitioner part;
-    unsigned short maxVL;
-
-public:
-    template<class vertex>
-    GraphVEBOSlimSellHybrid( const wholeGraph<vertex> & WG,
-			     int npart, unsigned short maxVL_,
-			     VID split )
-	: csc( new GraphCSxHybrid[npart] ),
-	  csr( WG.n, WG.m, -1 ),
-	  part( npart, WG.numVertices() ),
-	  maxVL( maxVL_ ) {
-	// Setup temporary CSC
-	wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	WGc->transpose();
-	GraphCSx csc_tmp( WG, -1 );
-
-	// Calculate remapping table. Do not use the feature to interleave
-	// subsequent destinations over per-lane partitions.
-	remap = VEBOReorder( csc_tmp, part, 1, false, maxVL );
-
-	// Setup CSC partitions
-	map_partitionL( part, [&]( int p ) {
-		new (&csc[p]) GraphCSxHybrid();
-		csc[p].import( WG, part.start_of(p), part.start_of(p+1),
-			       maxVL, split, remap.maps(),
-			       part.numa_node_of( p ) );
-	    } );
-	WGc->transpose();
-
-	// Setup CSR
-	csr.import( WG, remap.maps() );
-
-	// Clean up intermediates
-	csc_tmp.del();
-    }
-
-    void del() {
-	csr.del();
-	for( int p=0; p < part.get_num_partitions(); ++p )
-	    csc[p].del();
-	delete[] csc;
-	csc = nullptr;
-	remap.del();
-    }
-
-public:
-    VID numVertices() const { return csr.numVertices(); }
-    EID numEdges() const { return csr.numEdges(); }
-    // VID numSIMDVertices() const { return csc.numSIMDVertices(); }
-    // EID numSIMDEdges() const { return csc.numSIMDEdges(); }
-
-    bool transposed() const { return false; }
-    void transpose() { assert( 0 && "Not supported" ); }
-
-    const GraphCSx & getCSR() const { return csr; }
-    const GraphCSxHybrid & getCSC( int p ) const { return csc[p]; }
-
-    const partitioner & get_partitioner() const { return part; }
-
-    VID originalID( VID v ) const { return remap.originalID( v ); }
-    VID remapID( VID v ) const { return remap.remapID( v ); }
-
-    unsigned short getMaxVL() const { return maxVL; }
-    static constexpr unsigned short getVLCOOBound() { return VLUpperBound; }
-    static constexpr unsigned short getVLCSCBound() { return VLUpperBound; }
-
-    VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
-};
 
 #include "graptor/graph/CGraphCSxSIMDDegree.h"
 #include "graptor/graph/CGraphVEBOGraptor.h"
