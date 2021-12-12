@@ -45,14 +45,6 @@ struct helper<GraphSlimSell> {
     }
 };
 
-template<>
-struct helper<GraphGGVEBOSIMD> {
-    static GraphGGVEBOSIMD createGraph( const GraphCSx & G, commandLine & P,
-					int npart, int maxVL ) {
-	return GraphGGVEBOSIMD( G, npart, maxVL );
-    }
-};
-
 using GraphVEBOGraptorT = GraphVEBOGraptor<GRAPTOR_MODE>;
 
 using GraphVEBOGraptorPullDataParNotCached =
