@@ -336,43 +336,6 @@ private:
 	VID vlast = v;
 	for( int p=0; p < P; ++p ) {
 	    int kp = u[p] - du[p]; // number to place
-#if 0
-	    if( d == 0 && pmul != 1 && p < P-1 ) {
-		// Special case:
-		// Ensure vertices per partition is multiple of pmul
-		// This is required for applying VEBO to SlimSell/CSxSIMD
-		// while retaining aligned vector load/store to destination
-		// arrays.
-		int ndiff = u[p] % pmul;
-		if( ndiff != 0 ) {
-		    // Try to get vertices from later partitions
-		    if( kp < ndiff ) {
-			int mv = pmul - kp - 1; // move this many vertices to p
-			for( int q=p+1; q < P; ++q ) {
-			    int kq = u[q] - du[q]; // number to place
-			    if( kq >= mv ) {
-				u[q] -= mv;
-				u[p] += mv;
-				mv -= mv;
-				ndiff = u[p] % pmul;
-				break;
-			    } else {
-				u[q] -= kq;
-				u[p] += kq;
-				mv -= kq;
-				ndiff = u[p] % pmul;
-			    }
-			}
-			kp = u[p] - du[p];
-		    }
-
-		    assert( kp >= ndiff && "Need movable vertices" );
-		    u[p] -= ndiff; // move some vertices to next partition
-		    kp -= ndiff;
-		    u[p+1] += ndiff;
-		}
-	    }
-#endif
 	    for( int i=0; i < kp; ++i ) {
 		a[v] = p;
 		vlast = v;
@@ -381,6 +344,24 @@ private:
 	}
 	assert( v == ~(VID)0 );
 	return vlast;
+    }
+    void place_vertices_linked( int P, VID *first, VID *next,
+				VID *plast, int d,
+				VID *u, VID *du ) {
+	// currently processing vertices of degree d
+	// du is the number of vertices per partition before starting degree d
+	// u is the number of vertices per partition after degree d
+	VID v = first[d];
+	VID vlast = v;
+	for( int p=0; p < P; ++p ) {
+	    int kp = u[p] - du[p]; // number to place
+	    for( int i=0; i < kp; ++i ) {
+		next[plast[p]] = v;
+		plast[p] = v;
+		v = next[v];
+	    }
+	}
+	assert( v == ~(VID)0 );
     }
 
     void vebo( const GraphCSx &csc, partitioner & part, unsigned short maxVL,
@@ -903,7 +884,7 @@ private:
 	mmap_ptr<VID> mm_first, mm_next, mm_histo, mm_alloc;
 	mm_first.allocate( n, numa_allocation_interleaved() );
 	mm_alloc.allocate( max_nwpad, numa_allocation_interleaved() );
-	mm_next.allocate( n, numa_allocation_interleaved() );
+	mm_next.allocate( n + P, numa_allocation_interleaved() );
 	mm_histo.allocate( n, numa_allocation_interleaved() );
 	VID * first = mm_first.get();
 	VID * last = mm_alloc.get();
@@ -937,19 +918,24 @@ private:
 	std::cerr << "VEBO: binning: " << tm.next() << "\n";
 
 	// 2. Place vertices
+	VID * pfirst = &next[n];
+	VID * plast = new VID[P];
+
 	EID *w = new EID[P];
 	VID *u = new VID[P];
 	VID *du = new VID[P];
+	std::fill( &pfirst[0], &pfirst[P], ~VID(0) );
+	std::iota( &plast[0], &plast[P], n );
 	std::fill( &w[0], &w[P], EID(0) );
 	std::fill( &u[0], &u[P], VID(0) );
 
 	pstate load( P, u, w );
 
-	VID *a = last; // reuse array
-
 	if( P == 1 ) {
 	    u[0] = n;
 	    w[0] = csc.numEdges();
+
+	    assert( 0 && "Not yet updated" );
 
 	    // Link all vertex lists together
 	    VID d = dmax;
@@ -965,8 +951,6 @@ private:
 		    next[vlast] = first[d];
 		vlast = last[d];
 	    } while( d-- > 0 ); // loops over d == 0 as well
-
-	    std::fill( &a[0], &a[n], 0 ); // important: a aliases last
 	} else { // P > 1
 	    // Identify the lowest degree for which
 	    // ( #vertices at degree <= d ) <= P*(pmul-1)
@@ -987,16 +971,11 @@ private:
 
 	    // Assign vertices to partitions
 	    VID d = dmax;
-	    VID vlast = ~(VID)0;
 	    do {
 		// Place vertices with degree d
 		VID k = histo[d];
 		if( k == 0 )
 		    continue; // no vertices with degree d
-
-		// Trick: chain all vertex lists together
-		if( vlast != ~(VID)0 )
-		    next[vlast] = first[d];
 
 		// Transition from balancing edge counts to vertex counts
 		if( d == 0 )
@@ -1027,7 +1006,7 @@ private:
 			// vertices are handled by this loop
 			if( j < k ) {
 			    int r = (k-j) / P;
-			    for( int p=0; p < P; ++p ) {
+			    for( VID p=0; p < P; ++p ) {
 				u[p] += r;
 				w[p] += r * d;
 			    }
@@ -1038,8 +1017,8 @@ private:
 
 		// Rebalance such that partitions hold a multiple of pmul
 		// vertices.
-		// Assumes P > 1.
-		if( pmul > 1 && d <= d_crit ) {
+		// Assumes P > 1 and pmul > 1.
+		if( d <= d_crit ) {
 		    VID mv = std::min( u[0] % pmul, u[0] - du[0] );
 		    u[0] -= mv;
 		    w[0] -= mv * d;
@@ -1057,27 +1036,13 @@ private:
 		// Now determine which vertices are placed in each partition.
 		// We aim to retain spatial locality by placing vertices in
 		// the order they appear in the linked lists
-		vlast = place_vertices( P, first, next, a, d, u, du, pmul );
+		place_vertices_linked( P, first, next, plast, d, u, du );
 	    } while( d-- > 0 ); // loops over d == 0 as well
 	}
 
-	// Assumption: u[p] = |{v: a[v] == p}|
-/*
-	{
-	    std::fill( &du[0], &du[P], (VID)0 );
-	    VID v = first[dmax];
-	    for( VID i=0; i < n; ++i, v=next[v] ) {
-		assert( ~v != 0 );
-		du[a[v]]++;
-	    }
-	    for( unsigned p=0; p < P; ++p )
-		assert( du[p] == u[p] );
-	}
-*/
-
 	std::cerr << "VEBO: placement: " << tm.next() << "\n";
 
-	// 3. Relabel vertices
+	// 3. Setup for relabelling vertices
 	VID *s = du; // reuse array
 	VID nwpad = n;
 	if( P > 1 ) {
@@ -1139,66 +1104,22 @@ private:
 	assert( part.start_of(P) == nwpad );
 	assert( n <= nwpad );
 
-	std::cerr << "VEBO: assignment to partitions: " << tm.next() << "\n";
+	std::cerr << "VEBO: partition boundaries: " << tm.next() << "\n";
 
 	// Now create remapping array
-	// Could parallelise this if previously we wired up linked list
-	// per partition, in which case we could handle partitions in parallel
-
-	// Assumption: u[p] = |{v: a[v] == p}|
-	/*
-	{
-	    VID * du = new unsigned[P+1];
-	    std::fill( &du[0], &du[P], (VID)0 );
-	    // for( VID v=0; v < n; ++v ) {
-	    VID v = first[dmax];
-	    for( VID i=0; i < n; ++i, v=next[v] ) {
-		du[a[v]]++;
-	    }
-	    for( unsigned p=0; p < P; ++p ) {
-		assert( du[p] == u[p] );
-	    }
-	    delete[] du;
-	}
-	*/
-
+	// Can parallelise this as previously we wired up linked list
+	// per partition, and we can handle partitions in parallel.
 	// Place vertices to partition in order of decreasing degree.
-	// Balance partitions out if a partition is full. This should be
-	// infrequent as it can happen only near the end of allocation.
-#if 0
-	VID v = first[dmax];
 	VID *remap_p = remap.get();
-	for( VID i=0; i < n; ++i, v=next[v] ) {
-	    assert( v != ~(VID)0 );
-	    assert( a[v] != ~(VID)0 );
-	    // Move vertices over to next partition if current partition
-	    // is full. Partitions may have been shrunk so their vertex
-	    // count is a multiple of pmul.
-	    while( s[a[v]] == part.start_of( a[v]+1 ) ) {
-		assert( 0 && "should be avoided" );
-		// Override allocation to have multiples of pmul / partition
-		std::cerr << "v=" << v << " overflows partition " << a[v]
-			  << " move to next\n";
-		a[v]++;
-		// assert( idx[v+1] - idx[v] < 2 ); -- typically even 0
+	parallel_for( VID p=0; p < P; ++p ) {
+	    VID seq = s[p];
+	    if( plast[p] != n+p ) {
+		for( VID v=pfirst[p]; v != plast[p]; v=next[v] )
+		    remap_p[v] = seq++;
+		remap_p[plast[p]] = seq++;
 	    }
-	    remap_p[v] = s[a[v]]++;
-	    a[v] = ~(VID)0;
+	    s[p] = seq;
 	}
-#else
-	VID v = first[dmax];
-	VID *remap_p = remap.get();
-	for( VID i=0; i < n; ++i, v=next[v] ) {
-	    // assert( v != ~(VID)0 );
-	    // assert( a[v] != ~(VID)0 );
-	    // Move vertices over to next partition if current partition
-	    // is full. Partitions may have been shrunk so their vertex
-	    // count is a multiple of pmul.
-	    // assert( s[a[v]] != part.start_of( a[v]+1 ) );
-	    remap_p[v] = s[a[v]]++;
-	    a[v] = ~(VID)0;
-	}
-#endif
 
 	VID vpad = n;
 	for( VID p=0; p < P; ++p ) {
@@ -1207,21 +1128,15 @@ private:
 	}
 	assert( vpad == part.get_vertex_range() );
 
+	// Correctness test
 	for( VID p=0; p < P; ++p ) {
 	    assert( s[p] == part.start_of( p+1 )
 		    && "Need to fill all partitions" );
 	}
 
-	// Correctness test
-	/*
-	for( VID v=0; v < n; ++v ) {
-	    VID w = remap_p[v];
-	    assert( a[v] == part.part_of(w) );
-	}
-	*/
-	
 	std::cerr << "VEBO: remapping array: " << tm.next() << "\n";
 
+	delete[] plast;
 	delete[] w;
 	delete[] u;
 	delete[] du; // frees also s
