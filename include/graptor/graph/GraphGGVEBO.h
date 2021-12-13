@@ -156,11 +156,11 @@ public:
 					   eid_remapper );
 #endif
 	    } );
+	eid_remapper.finalize( part );
+	// eid_retriever = eid_remapper.create_retriever();
 #else
 	createCOOPartitionsFromCSR();
 #endif
-	eid_remapper.finalize( part );
-	// eid_retriever = eid_remapper.create_retriever();
 
 	// set up edge partitioner - determines how to allocate edge properties
 	EID * counts = part.edge_starts();
@@ -417,7 +417,8 @@ private:
 	
 	// 3. Considering a parallel assignment of edges based on the
 	//    partitioner, determine how many edges will be sent to each
-	//    COO partition from each CSR partition (P x P info)
+	//    COO partition from each CSR partition (P x P info).
+	//    Align counters on block boundaries to minimise false sharing.
 	constexpr unsigned wP = 64 / sizeof(EID);
 	unsigned wPm = P % wP;
 	unsigned L = wPm == 0 ? P : ( P + wP - wPm );
