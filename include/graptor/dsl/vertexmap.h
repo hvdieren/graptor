@@ -240,6 +240,7 @@ struct AppendVOpToEOp
 
     static constexpr frontier_mode new_frontier = EOperator::new_frontier;
     static constexpr bool is_scan = IsScan;
+    static constexpr bool defines_frontier = EOperator::defines_frontier;
     static constexpr bool may_omit_frontier_rd =
 	EOperator::may_omit_frontier_rd;
     static constexpr bool may_omit_frontier_wr =
@@ -270,11 +271,16 @@ struct AppendVOpToEOp
 	return expr::make_seq( eop.vertexop( d ), vop( d ) );
     }
 
-    auto get_ptrset() {
+    template<typename PSet>
+    auto get_ptrset( const PSet & pset ) const {
 	auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
 	return map_merge(
-	    eop.get_ptrset(),
+	    eop.get_ptrset( pset ),
 	    expr::extract_pointer_set( vop( v ) ) );
+    }
+
+    auto get_ptrset() const { // TODO - redundant
+	return get_ptrset( expr::create_map() );
     }
 
     bool is_true_src_frontier() const { return eop.is_true_src_frontier(); }
