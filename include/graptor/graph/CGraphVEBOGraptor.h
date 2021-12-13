@@ -60,7 +60,8 @@ public:
 	  part( npart, Gcsr.numVertices() ),
 	  minVL( minVL_ ),
 	  maxVL( maxVL_ ),
-	  maxdiff( maxdiff_ ) {
+	  maxdiff( maxdiff_ ),
+	  m_weights( nullptr ) {
 
 	// Setup temporary CSC, try to be space-efficient
 	std::cerr << "Transposing CSR...\n";
@@ -217,8 +218,11 @@ public:
 	
 	// Setup EID retriever - map vertices to EID index
 	// WARNING: UNTESTED
-	m_weights = new mm::buffer<float>(
-	    ne, numa_allocation_edge_partitioned( part ), "Graptor weights" );
+	if( csc_tmp->getWeights() )
+	    m_weights = new mm::buffer<float>(
+		ne, numa_allocation_edge_partitioned( part ),
+		"Graptor weights" );
+
 	// eid_retriever.init( part.get_vertex_range(), maxVL );
 	map_partitionL( part, [&]( int p ) {
 /* Disable EID Retriever code
