@@ -106,7 +106,7 @@ static inline void GraptorCSCDataParCached(
 	    // EID smax = std::min( s + EID(deg) * VL, nvec );
 	    EID smax = s + EID(deg) * VL;
 
-	    // std::cerr << "SIMD group v0=" << vdst.at(0) << " s=" << s << " deg=" << deg << " nvec=" << nvec << " - new\n";
+	    // std::cerr << "SIMD group v0=" << sdst.at(0) << " s=" << s << " deg=" << deg << " nvec=" << nvec << " - new\n";
 
 	    // Should do extract_source only first time, rest should
 	    // be raw source data (no degree encoded)
@@ -156,7 +156,7 @@ static inline void GraptorCSCDataParCached(
 	    && s < nvec );
 
 	// std::cerr << "SIMD group END s=" << s << " code="
-	// << code << " vdst.at(0)=" << vdst.at(0) << "\n";
+	// << code << " sdst.at(0)=" << sdst.at(0) << "\n";
 
 	// for( unsigned short l=0; l < VL; ++l ) {
 	    // if( output.at(l) )
@@ -181,7 +181,6 @@ static inline void GraptorCSCDataParCached(
 	}
 
 	cache_commit( env, vcaches, c, m /*, mpack*/ );
-	// vdst.set_unsafe( vdst + vstep );
 	sdst += sstep;
     }
 
