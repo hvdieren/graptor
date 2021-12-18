@@ -610,5 +610,4 @@ private:
     }
 };
 
-
 #endif // GRAPTOR_GRAPH_CGRAPHCSXSIMDDEGREEMIXED_H

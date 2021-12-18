@@ -2,7 +2,7 @@
 #ifndef GRAPTOR_GRAPH_CGRAPHVEBOGRAPTOR_H
 #define GRAPTOR_GRAPH_CGRAPHVEBOGRAPTOR_H
 
-#include "graptor/graph/CGraphCSx.h"
+#include "graptor/graph/GraphCSx.h"
 #include "graptor/graph/VEBOReorder.h"
 #include "graptor/graph/GraptorDef.h"
 #include "graptor/graph/CGraphCSxSIMDDegree.h"
@@ -10,6 +10,7 @@
 #include "graptor/graph/CGraphCSxSIMDDegreeMixed.h"
 #include "graptor/graph/CGraphCSRSIMDDegreeMixed.h"
 #include "graptor/graph/CGraphCSxSIMDDegreeDeltaMixed.h"
+#include "graptor/graph/GraptorDataParPull.h"
 #include "graptor/frontier.h"
 
 struct GraptorEIDRetriever {
@@ -55,13 +56,15 @@ public:
 		      unsigned short minVL_,
 		      unsigned short maxVL_,
 		      VID maxdiff_ )
-	: csc( new GraphPartitionType[npart] ),
+	: // csc( new GraphPartitionType[npart] ),
 	  csr(), // csr( Gcsr.numVertices(), Gcsr.numEdges(), -1 ),
 	  part( npart, Gcsr.numVertices() ),
 	  minVL( minVL_ ),
 	  maxVL( maxVL_ ),
 	  maxdiff( maxdiff_ ),
 	  m_weights( nullptr ) {
+	timer tm;
+	tm.start();
 
 	// Setup temporary CSC, try to be space-efficient
 	std::cerr << "Transposing CSR...\n";
@@ -75,6 +78,57 @@ public:
 				    Gcsr.getWeights() != nullptr );
 	    csc_tmp->import_transpose( Gcsr );
 	}
+	std::cerr << "Transpose: " << tm.next() << "\n";
+
+	// Newly optimised version
+	if constexpr ( GraptorConfig<Mode>::is_csc
+		       && GraptorConfig<Mode>::is_datapar ) {
+	    // Calculate remapping table.
+	    remap = VEBOReorder( *csc_tmp, part, 1, false, maxVL );
+	    std::cerr << "VEBO total: " << tm.next() << "\n";
+
+	    std::cerr << "Highest-degree vertex: deg=" << csc_tmp->max_degree()
+		      << "...\n";
+	    csc_tmp->setMaxDegreeVertex( csc_tmp->findHighestDegreeVertex() );
+
+	    // Setup CSR
+	    std::cerr << "Reorder CSR...\n";
+	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1,
+				 Gcsr.isSymmetric(),
+				 Gcsr.getWeights() != nullptr );
+	    csr.import_expand( Gcsr, part, remap.remapper() );
+	    std::cerr << "Reorder CSR: " << tm.next() << "\n";
+
+	    // Setup CSC partitions
+	    std::cerr << "Graptor: "
+		      << " n=" << Gcsr.numVertices()
+		      << " e=" << Gcsr.numEdges()
+		      << "\n";
+
+	    GraptorDataParPullBuilder<float,Mode> builder;
+	    builder.build( csr, part, maxVL );
+
+	    csc = static_cast<GraphPartitionType *>( builder.slabs );
+
+	    if( Gcsr.getWeights() ) {
+		m_weights = new mm::buffer<float>;
+		*m_weights = builder.weights;
+	    }
+	    std::cerr << "Graptor build: " << tm.next() << "\n";
+
+	    // Clean up intermediates
+	    if( !Gcsr.isSymmetric() && csc_tmp ) {
+		csc_tmp->del();
+		delete csc_tmp;
+	    }
+	    std::cerr << "Graptor temporaries cleanup: " << tm.next() << "\n";
+	    return;
+	}
+	assert( 0 && "NYI" );
+
+#if 0
+	else
+	    csc = new GraphPartitionType[npart];
 
 	if constexpr ( GraptorConfig<Mode>::is_csc ) {
 	    // Calculate remapping table. Do not use the feature to interleave
@@ -255,6 +309,7 @@ public:
 	    csc_tmp->del();
 	    delete csc_tmp;
 	}
+#endif
     }
     void del() {
 	csr.del();
@@ -277,10 +332,11 @@ public:
 	    std::cerr << "\t" << p << "\t"
 		      << " nv=" << csc[p].numSIMDVertices()
 		      << " mv=" << csc[p].numSIMDEdges()
-		      << " mv2=" << csc[p].numSIMDEdgesDeg2()
-		      << " mv1=" << csc[p].numSIMDEdgesDeg1()
-		      << " inactd1=" << csc[p].numSIMDEdgesInvDelta1()
-		      << " inactdpar=" << csc[p].numSIMDEdgesInvDeltaPar();
+		// << " mv2=" << csc[p].numSIMDEdgesDeg2()
+		// << " mv1=" << csc[p].numSIMDEdgesDeg1()
+		// << " inactd1=" << csc[p].numSIMDEdgesInvDelta1()
+		// << " inactdpar=" << csc[p].numSIMDEdgesInvDeltaPar()
+		;
 #if GRAPTOR_CSR_INDIR
 	    if constexpr( !GraptorConfig<Mode>::is_csc )
 		std::cerr << " indir_nnz=" << csc[p].getRedirNNZ();
