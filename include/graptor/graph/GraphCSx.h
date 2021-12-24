@@ -17,6 +17,8 @@
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/remap.h"
 
+void partitionBalanceEdges( const GraphCSx & Gcsc, partitioner &part );
+
 enum class graph_traversal_kind {
     gt_sparse = 0,
     gt_pull = 1,
@@ -295,22 +297,45 @@ public:
 		  << tm.next() << "\n";
 	
 	// 3. Fill out edge array (parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
-	    VID w = remap.origID( v );
-	    EID nxt = index[v];
-	    VID deg = w < norig ? Gcsr.index[w+1] - Gcsr.index[w] : 0;
-	    EID off = w < norig ? Gcsr.index[w] : 0;
-	    for( VID j=0; j < deg; ++j ) {
-		edges[nxt] = remap.remapID( Gcsr.edges[off+j] );
-		if( has_weights )
-		    Tweights[nxt] = Gweights[off+j];
-		++nxt;
+	if( has_weights ) {
+	    // Rather than copying weights prior to paired_sort, could also
+	    // merge into the remapping step in paired_sort to avoid the
+	    // additional copy.
+	    parallel_for( VID v=0; v < n; ++v ) {
+		VID w = remap.origID( v );
+		if( w < norig ) {
+		    EID nxt = index[v];
+		    EID js = Gcsr.index[w];
+		    EID je = Gcsr.index[w+1];
+		    EID deg = je - js;
+		    if( deg > 0 )
+			std::copy( &Gweights[js], &Gweights[je],
+				   &Tweights[nxt] );
+		    for( EID j=js; j < je; ++j )
+			edges[nxt+(j-js)] = remap.remapID( Gcsr.edges[j] );
+
+		    if( w & 1 )
+			paired_sort( &edges[nxt], &edges[nxt+deg], &Tweights[nxt] );
+		}
 	    }
-	    if( has_weights )
-		paired_sort( &edges[index[v]], &edges[nxt],
-			     &Tweights[index[v]] );
-	    else
-		std::sort( &edges[index[v]], &edges[nxt] );
+	} else {
+	    parallel_for( VID v=0; v < n; ++v ) {
+		VID w = remap.origID( v );
+		if( w < norig ) {
+		    EID nxt = index[v];
+		    EID js = Gcsr.index[w];
+		    EID je = Gcsr.index[w+1];
+		    EID deg = je - js;
+		    for( EID j=js; j < je; ++j ) {
+			edges[nxt+(j-js)] = remap.remapID( Gcsr.edges[j] );
+			// heap_insert( &edges[nxt], j-js, 
+			// remap.remapID( Gcsr.edges[j] ) );
+		    }
+		    if( deg > 1 )
+			std::sort( &edges[nxt], &edges[nxt+deg] );
+			// heap_sort( &edges[nxt], &edges[nxt+deg] );
+		}
+	    }
 	}
 
 	std::cerr << "GraphCSx::import_expand: remapping edges and weights: "
@@ -322,26 +347,34 @@ public:
 		  << tm.next() << "\n";
     }
     void import_transpose( const GraphCSx & Gcsr ) {
+	import_transpose_partitioned( Gcsr, 32 );
+	return;
+
+	timer tm;
+	tm.start();
+	
 	assert( n == Gcsr.numVertices() );
 	assert( m == Gcsr.numEdges() );
 
 	mmap_ptr<EID> aux( n+1, numa_allocation_interleaved() );
+	std::cerr << "transpose: setup: " << tm.next() << "\n";
 
-	std::cerr << "transpose: init\n";
 	parallel_for( VID v=0; v < n+1; ++v )
 	    aux[v] = 0;
+	std::cerr << "transpose: init: " << tm.next() << "\n";
 
-	std::cerr << "transpose: count edges\n";
+	// This loop could have better cache usage with VID aux[] instead of EID
 	parallel_for( EID i=0; i < m; ++i )
 	    __sync_fetch_and_add( &aux[Gcsr.edges[i]], 1 );
+	std::cerr << "transpose: count edges: " << tm.next() << "\n";
 
-	std::cerr << "transpose: scan (seq)\n";
 	index[0] = 0;
 	for( VID s=0; s < n; ++s ) {
 	    index[s+1] = index[s] + aux[s];
 	    aux[s] = index[s];
 	}
 	assert( index[n] == m );
+	std::cerr << "transpose: scan (seq): " << tm.next() << "\n";
 
 	float * w = nullptr, * wg = nullptr;
 	if( weights ) {
@@ -350,11 +383,15 @@ public:
 	    assert( w && wg );
 	}
 
-	std::cerr << "transpose: place\n";
 	parallel_for( VID s=0; s < n; ++s ) {
 	    EID i = Gcsr.index[s];
 	    EID j = Gcsr.index[s+1];
 	    for( ; i < j; ++i ) {
+		// Lots of contention on the counters for vertices with
+		// many in-edges (in-hubs) -> privatize those counters?
+		// Need per-partition index values, so per-partition degrees,
+		// but we cannot identify these vertices without knowing
+		// their degrees. Identify by out-degree?
 		auto idx = __sync_fetch_and_add( &aux[Gcsr.edges[i]], 1 );
 		edges[idx] = s;
 
@@ -362,8 +399,13 @@ public:
 		    w[idx] = wg[i];
 	    }
 	}
+	std::cerr << "transpose: place: " << tm.next() << "\n";
 
-	std::cerr << "transpose: sort\n";
+	// Because we are doing a transpose and keeping VIDs the same (no
+	// remapping), sorting would be unnecessary in a sequential
+	// implementation (insert sources in order traversed).
+	// So in a partitioned transpose, with pre-defined per-partition
+	// insertion points, we don't need sorting either.
 	parallel_for( VID s=0; s < n; ++s ) {
 	    assert( aux[s] == index[s+1] );
 	    if( w )
@@ -372,10 +414,164 @@ public:
 	    else
 		std::sort( &edges[index[s]], &edges[index[s+1]] );
 	}
+	std::cerr << "transpose: sort: " << tm.next() << "\n";
 
 	aux.del();
 	build_degree();
+	std::cerr << "transpose: build degree: " << tm.next() << "\n";
     }
+
+    void import_transpose_partitioned( const GraphCSx & Gcsr, unsigned P ) {
+	timer tm;
+	tm.start();
+	
+	assert( n == Gcsr.numVertices() );
+	assert( m == Gcsr.numEdges() );
+	assert( P >= 1 );
+
+	partitioner part( P, n );
+	partitionBalanceEdges( Gcsr, part );
+	std::cerr << "transpose: create partitioner: " << tm.next() << "\n";
+
+	// Lots of space, but this will be hypersparse. Should we first
+	// figure out the per-partition sparsity pattern?
+	mm::buffer<VID> * ctrs = new mm::buffer<VID>[P];
+	for( unsigned p=0; p < P; ++p )
+	    new ( &ctrs[p] ) mm::buffer<VID>(
+		n+1, numa_allocation_local( part.numa_node_of( p ) ) );
+	// mm::buffer<EID> xref( m, numa_allocation_interleaved() );
+	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
+	std::cerr << "transpose: setup: " << tm.next() << "\n";
+
+	parallel_for( unsigned p=0; p < P; ++p )
+	    std::fill( &ctrs[p][0], &ctrs[p][n+1], VID(0) );
+	std::cerr << "transpose: init: " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned p ) {
+	    VID * const ctrs_p = ctrs[p].get();
+	    const VID * const g_edges = Gcsr.getEdges();
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = Gcsr.index[vs];
+	    EID ee = Gcsr.index[ve];
+	    for( EID e=es; e < ee; ++e ) {
+		// xref[e] = // but seq - only one partition (for now)
+		xref[e] =
+		    ctrs_p[g_edges[e]]++;
+	    }
+	} );
+	std::cerr << "transpose: count edges: " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned q ) {
+	    VID vs = part.start_of( q );
+	    VID ve = part.end_of( q );
+	    for( VID v=vs; v < ve; ++v ) {
+		VID deg = 0;
+		for( unsigned p=0; p < P; ++p ) {
+		    VID pdeg = ctrs[p][v];
+		    // This conditional avoids *a lot* of memory traffic
+		    // due to the hypersparsity of per-partition info.
+		    // Omitting the store when ctrs[p][v] == 0 is correct, as
+		    // this indicates no edges were mapped here, and we will
+		    // not read this location in the future
+		    if( pdeg != 0 ) {
+			ctrs[p][v] = deg;
+			deg += pdeg;
+		    }
+		}
+		index[v] = (EID)deg;
+	    }
+	} );
+	std::cerr << "transpose: reduce degree: " << tm.next() << "\n";
+
+	EID off = 0;
+	for( VID s=0; s < n; ++s ) {
+	    EID deg = index[s];
+	    index[s] = off;
+	    off += deg;
+	}
+	index[n] = off;
+	assert( index[n] == m );
+	std::cerr << "transpose: scan (seq): " << tm.next() << "\n";
+
+/*
+	map_partition( part, [&]( unsigned p ) {
+	    VID * const ctrs_p = ctrs[p].get();
+	    const VID * const g_edges = Gcsr.getEdges();
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = Gcsr.index[vs];
+	    EID ee = Gcsr.index[ve];
+	    for( EID e=es; e < ee; ++e ) {
+		VID u = g_edges[e];
+		// xref[e] += index[u] + ctrs_p[u];
+		xref[e] = index[u] + ctrs_p[u]++;
+	    }
+	} );
+	std::cerr << "transpose: cross-ref: " << tm.next() << "\n";
+*/
+
+	float * w = nullptr, * wg = nullptr;
+	if( weights ) {
+	    w = weights->get();
+	    wg = Gcsr.weights->get();
+	    assert( w && wg );
+	}
+
+	map_partition( part, [&]( unsigned p ) {
+	    VID * const ctrs_p = ctrs[p].get();
+	    const VID * const g_edges = Gcsr.getEdges();
+	    const EID * const g_index = Gcsr.getIndex();
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    for( VID v=vs; v < ve; ++v ) {
+		EID es = g_index[v];
+		EID ee = g_index[v+1];
+		for( EID e=es; e < ee; ++e ) {
+		    VID u = g_edges[e];
+		    // VID off = ctrs_p[u]++;
+		    // VID off = xref[e];
+		    VID off = xref[e] + ctrs_p[u]; // avoids random writes
+		    EID idx = index[u] + off;
+		    // EID idx = xref[e];
+		    edges[idx] = v;
+
+		    if( w )
+			w[idx] = wg[e];
+		}
+	    }
+	} );
+	std::cerr << "transpose: place: " << tm.next() << "\n";
+
+	// Because we are doing a transpose and keeping VIDs the same (no
+	// remapping), sorting would be unnecessary in a sequential
+	// implementation (insert sources in order traversed).
+	// So in a partitioned transpose, with pre-defined per-partition
+	// insertion points, we don't need sorting either.
+	// Note that this is true even if the adjacency lists of the CSR are
+	// not sorted!
+	parallel_for( VID s=0; s < n; ++s ) {
+	    // assert( index[s] + (EID)ctrs[P-1][s] == index[s+1] );
+	    assert( std::is_sorted( &edges[index[s]], &edges[index[s+1]] ) );
+/*
+	    assert( index[s] + (EID)ctrs[0][s] == index[s+1] );
+	    if( w )
+		paired_sort( &edges[index[s]], &edges[index[s+1]],
+			     &w[index[s]] );
+	    else
+		std::sort( &edges[index[s]], &edges[index[s+1]] );
+*/
+	}
+	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
+
+	xref.del();
+	for( unsigned p=0; p < P; ++p )
+	    ctrs[p].del();
+	delete[] ctrs;
+	build_degree();
+	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+    }
+
 /*
     void import_transpose_expand( const GraphCSx & Gcsr ) {
 	assert( n >= Gcsr.numVertices() );
