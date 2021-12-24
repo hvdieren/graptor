@@ -106,7 +106,7 @@ public:
 		      << "\n";
 
 	    GraptorDataParPullBuilder<float,Mode> builder;
-	    builder.build( csr, part, maxVL );
+	    builder.build( csr, *csc_tmp, part, maxVL, remap.remapper() );
 
 	    csc = static_cast<GraphPartitionType *>( builder.slabs );
 
