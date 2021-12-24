@@ -108,30 +108,30 @@ struct GraptorDataParPullBuilder {
     mm::buffer<WeightT> weights;
 
 public:
+    template<typename Remapper>
     void
     build( const GraphCSx & rcsr,	//!< Remapped CSR
+	   const GraphCSx & csc,	//!< Original CSC
 	   partitioner & part,		//!< Partitioning of destinations
-	   unsigned short maxVL 	//!< Maximum vector length supported
+	   unsigned short maxVL, 	//!< Maximum vector length supported
+	   const Remapper & remap	//!< Remapping vertices
 	) {
-	if( rcsr.isSymmetric() )
-	    build_symmetric( rcsr, part, maxVL );
-	else
-	    build_asymmetric( rcsr, part, maxVL );
-    }
-	   
-private:
-    void
-    build_symmetric( const GraphCSx & rcsr,	//!< Remapped CSR
-		     partitioner & part,	//!< Partitioning destinations
-		     unsigned short maxVL 	//!< Maximum vector length
-	) {
+	timer tm;
+	tm.start();
+	
 	// 0. Short-hands
 	const unsigned P = part.get_num_partitions();
 	const VID n = rcsr.numVertices();
 
 	// 1. Calculate size of each partition as the sum of degrees of
 	//    every maxVL-th vertex.
-	EID * e_per_p = edges_per_partition_from_csr( rcsr, part, maxVL );
+	EID * e_per_p;
+	if( rcsr.isSymmetric() )
+	    e_per_p = edges_per_partition_from_csc( rcsr, part, maxVL );
+	else
+	    e_per_p = edges_per_partition_from_original_csc(
+		csc, part, maxVL, remap );
+	std::cerr << "Graptor: per-partition edge count: " << tm.next() << "\n";
 
 	// Edge partitions have not been initialised yet
 	EID * counts = part.edge_starts();
@@ -153,18 +153,36 @@ private:
 	for( unsigned p=0; p < P; ++p ) {
 	    new ( &slabs[p] )
 		GraptorDataParPullPartition<WeightT>(
-		    n, part.start_of( p ), e_per_p[p], maxVL,
+		    part.end_of( p ) - part.start_of( p ),
+		    part.start_of( p ), e_per_p[p], maxVL,
 		    part.numa_node_of( p ),
 		    &weights[part.edge_start_of( p )] );
 	}
+	std::cerr << "Graptor: allocation: " << tm.next() << "\n";
 
 	// 3. Fill out edges and weights. Assume that edges are sorted
 	//    in rcsr, so we only need to copy.
+	if( rcsr.isSymmetric() )
+	    copy_edges_from_csc( rcsr, part, maxVL );
+	else
+	    copy_edges_from_original_csc( csc, part, maxVL, remap );
+	std::cerr << "Graptor: copy edges and weights: " << tm.next() << "\n";
+
+	// 4. Clean up.
+	delete[] e_per_p;
+	std::cerr << "Graptor: cleanup: " << tm.next() << "\n";
+    }
+
+    void
+    copy_edges_from_csc( const GraphCSx & rcsc,	//!< Remapped CSC
+			 partitioner & part,	//!< Partitioning destinations
+			 unsigned short maxVL 	//!< Maximum vector length
+	) {
 	map_partition( part, [&]( unsigned p ) {
-	    const VID * redges = rcsr.getEdges();
-	    const EID * rindex = rcsr.getIndex();
-	    const WeightT * rweights = rcsr.getWeights()
-		? rcsr.getWeights()->get() : nullptr;
+	    const VID * redges = rcsc.getEdges();
+	    const EID * rindex = rcsc.getIndex();
+	    const WeightT * rweights = rcsc.getWeights()
+		? rcsc.getWeights()->get() : nullptr;
 
 	    VID * pedges = slabs[p].getEdges();
 	    WeightT * pweights = slabs[p].getWeights();
@@ -229,22 +247,184 @@ private:
 		}
 	    }
 	} );
-
-	// 4. Clean up.
-	delete[] e_per_p;
     }
 
+    template<typename Remapper>
+    void
+    copy_edges_from_original_csc(
+	const GraphCSx & csc,	//!< Remapped CSC
+	partitioner & part,	//!< Partitioning destinations
+	unsigned short maxVL, 	//!< Maximum vector length
+	const Remapper & remap	//!< Remapping vertices
+	) {
+	// This does not leave the adjacency lists in a sorted state...
+	map_partition( part, [&]( unsigned p ) {
+	    const VID norig = csc.numVertices();
+	    const VID * redges = csc.getEdges();
+	    const EID * rindex = csc.getIndex();
+	    const WeightT * rweights = csc.getWeights()
+		? csc.getWeights()->get() : nullptr;
+
+	    VID * pedges = slabs[p].getEdges();
+	    WeightT * pweights = slabs[p].getWeights();
+
+	    constexpr unsigned short DegreeBits = GRAPTOR_DEGREE_BITS;
+	    const unsigned short dbpl = BitsPerLane<DegreeBits>( maxVL );
+	    const VID absent = (VID(1)<<(sizeof(VID)*8-dbpl)) - 1;
+	    const VID dmax = VID(1) << (dbpl*maxVL);
+
+	    const VID vs = part.start_of( p );
+	    const VID ve = part.end_of( p );
+	    EID pe = 0;
+
+	    const VID max_v = remap.origID(0);
+	    const VID max_deg = rindex[max_v+1] - rindex[max_v];
+	    std::pair<VID,WeightT> * buf = new
+		std::pair<VID,WeightT>[max_deg * EID(maxVL)];
+
+	    for( VID v=vs; v < ve; v += maxVL ) {
+		VID vv = remap.origID( v );
+		if( vv >= norig )
+		    continue;
+		
+#if 0
+		EID deg = rindex[vv+1] - rindex[vv];
+		for( EID d=0; d < deg; ++d ) {
+		    // Determine encoded bits
+		    VID enc;
+		    if( GraptorConfig<Mode>::is_cached 
+			&& (d % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2-1))) != 0 )
+			enc = 0;
+		    else {
+			if( d+1 == deg ) {
+#if GRAPTOR_STOP_BIT_HIGH
+			    enc = dmax/2;
+#else
+			    enc = 1;
+#endif
+			} else {
+			    VID deg3 = (deg - d - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+			    if( deg3 > (dmax/2-1) )
+				deg3 = dmax/2-1;
+#if GRAPTOR_STOP_BIT_HIGH
+			    enc = deg3;
+#else
+			    enc = deg3 << 1;
+#endif
+			}
+		    }
+
+		    // Set source vertices and add encoded bits
+		    for( unsigned l=0; l < maxVL; ++l ) {
+			VID b = enc & ( ( VID(1) << dbpl ) - 1 );
+			enc = enc >> dbpl;
+
+			VID vl = remap.origID( v+l );
+			if( vl < norig && rindex[vl]+d < rindex[vl+1] ) {
+			    VID u = remap.remapID( redges[rindex[vl]+d] );
+			    u &= absent;
+			    u |= b << ( sizeof(VID) * 8 - dbpl );
+			    pedges[pe] = u;
+
+			    if( rweights )
+				pweights[pe] = rweights[rindex[vl]+d];
+			} else {
+			    // No need to set a weight in this case
+			    VID u = absent;
+			    u |= b << ( sizeof(VID) * 8 - dbpl );
+			    pedges[pe] = u;
+			}
+
+			++pe;
+		    }
+		}
+#else
+		for( unsigned l=0; l < maxVL; ++l ) {
+		    VID vl = remap.origID( v+l );
+		    EID deg = vl < norig ? rindex[vl+1] - rindex[vl] : 0;
+		    auto * lbuf = &buf[max_deg * EID(l)];
+		    // Gather source vertices
+		    for( EID d=0; d < deg; ++d ) {
+			lbuf[d].first = remap.remapID( redges[rindex[vl]+d] );
+			if( rweights )
+			    lbuf[d].second = rweights[rindex[vl]+d];
+		    }
+
+		    // Sort
+		    std::sort( &lbuf[0], &lbuf[deg] );
+		}
+
+		// Set source vertices
+		EID deg = rindex[vv+1] - rindex[vv];
+		for( EID d=0; d < deg; ++d ) {
+		    // Determine encoded bits
+		    VID enc;
+		    if( GraptorConfig<Mode>::is_cached 
+			&& (d % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2-1))) != 0 )
+			enc = 0;
+		    else {
+			if( d+1 == deg ) {
+#if GRAPTOR_STOP_BIT_HIGH
+			    enc = dmax/2;
+#else
+			    enc = 1;
+#endif
+			} else {
+			    VID deg3 = (deg - d - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+			    if( deg3 > (dmax/2-1) )
+				deg3 = dmax/2-1;
+#if GRAPTOR_STOP_BIT_HIGH
+			    enc = deg3;
+#else
+			    enc = deg3 << 1;
+#endif
+			}
+		    }
+
+		    // Set source vertices and add encoded bits
+		    for( unsigned l=0; l < maxVL; ++l ) {
+			VID b = enc & ( ( VID(1) << dbpl ) - 1 );
+			enc = enc >> dbpl;
+
+			VID vl = remap.origID( v+l );
+			if( vl < norig && rindex[vl]+d < rindex[vl+1] ) {
+			    VID u = buf[EID(l) * max_deg + d].first;
+			    u &= absent;
+			    u |= b << ( sizeof(VID) * 8 - dbpl );
+			    pedges[pe] = u;
+
+			    if( rweights )
+				pweights[pe] = buf[EID(l) * max_deg + d].second;
+			} else {
+			    // No need to set a weight in this case
+			    VID u = absent;
+			    u |= b << ( sizeof(VID) * 8 - dbpl );
+			    pedges[pe] = u;
+			}
+
+			++pe;
+		    }
+		}
+#endif
+	    }
+
+	    delete[] buf;
+	} );
+	// std::cerr << "Graptor: WARNING: adjacency lists have not been sorted\n";
+    }
+
+
     EID *
-    edges_per_partition_from_csr(
-	const GraphCSx & rcsr,		//!< Remapped CSR
+    edges_per_partition_from_csc(
+	const GraphCSx & rcsc,		//!< Remapped CSC
 	const partitioner & part,	//!< Partitioning of destinations
 	unsigned short maxVL 		//!< Maximum vector length supported
 	) {
 	// Calculate size of each partition as the sum of degrees of
 	// every maxVL-th vertex.
 	const unsigned P = part.get_num_partitions();
-	const VID n = rcsr.numVertices();
-	const VID * degree = rcsr.getDegree();
+	const VID n = rcsc.numVertices();
+	const VID * degree = rcsc.getDegree();
 	EID * e_per_p = new EID[P];
 	map_partition( part, [&]( unsigned p ) {
 	    VID vs = part.start_of( p );
@@ -257,12 +437,31 @@ private:
 	return e_per_p;
     }
 
-    void
-    build_asymmetric( const GraphCSx & rcsr,	//!< Remapped CSR
-		      partitioner & part,	//!< Partitioning destinations
-		      unsigned short maxVL 	//!< Maximum vector length
+    template<typename Remapper>
+    EID *
+    edges_per_partition_from_original_csc(
+	const GraphCSx & csc,		//!< Original CSC
+	const partitioner & part,	//!< Partitioning of destinations
+	unsigned short maxVL, 		//!< Maximum vector length supported
+	const Remapper & remap		//!< Remapping vertices
 	) {
-	assert( 0 && "NYI" );
+	// Calculate size of each partition as the sum of degrees of
+	// every maxVL-th vertex.
+	const unsigned P = part.get_num_partitions();
+	const VID n = csc.numVertices();
+	const VID * degree = csc.getDegree();
+	EID * e_per_p = new EID[P];
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID ne = 0;
+	    for( VID v=vs; v < ve; v += maxVL ) {
+		VID vv = remap.origID( v );
+		ne += (EID)degree[vv];
+	    }
+	    e_per_p[p] = ne;
+	} );
+	return e_per_p;
     }
 };
 
