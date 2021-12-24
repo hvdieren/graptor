@@ -66,7 +66,10 @@ public:
 	timer tm;
 	tm.start();
 
-	// Setup temporary CSC, try to be space-efficient
+	// Setup temporary CSC, try to be space-efficient.
+	// Note that we do not require the full CSC per se; we could get by
+	// with only knowing the in-edge count per vertex for performing VEBO,
+	// then construct the pull-based Graptor from CSR
 	std::cerr << "Transposing CSR...\n";
 	GraphCSx * csc_tmp;
 	if( Gcsr.isSymmetric() ) {
