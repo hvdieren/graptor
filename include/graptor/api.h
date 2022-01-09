@@ -1992,7 +1992,7 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
  *
  * Memory is allocated at construction time and has to be freed explicitly
  * by calling #del.
- * Memory allocation proceeds using a vertex-balanced partitioned allocation.
+ * Memory allocation proceeds using a balanced partitioned allocation.
  * The array size as well as the dimensions of partitioning are taken
  * from the partitioner object supplied to the constructor.
  *
