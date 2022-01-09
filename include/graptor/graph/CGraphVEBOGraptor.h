@@ -13,6 +13,11 @@
 #include "graptor/graph/GraptorDataParPull.h"
 #include "graptor/frontier.h"
 
+// TODO
+// - Reconsider VEBO, map top 8 high-degree vertices in same partition
+//   to minimise padding, then map each 8 successive high-degree vertices
+//   in same partition.
+
 struct GraptorEIDRetriever {
     mmap_ptr<EID> edge_offset;
     unsigned short logVL;
