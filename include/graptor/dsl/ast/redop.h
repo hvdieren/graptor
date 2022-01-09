@@ -700,7 +700,7 @@ struct redop_max {
     // Unit is expressed using the data_type of the left argument
     template<typename T>
     static constexpr auto unit() {
-	return numeric_limits<typename T::element_type>::min();
+	return numeric_limits<typename T::element_type>::lowest();
     }
 
     template<typename E1, typename E2>
