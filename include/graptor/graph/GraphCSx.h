@@ -747,24 +747,43 @@ public:
     void writeToTextFile( const std::string & ofile ) {
 	ofstream file( ofile, ios::out | ios::trunc );
 
-	file << ( weights ? "WeightedAdjacencyGraph\n" : "AdjacencyGraph\n" );
-	file << (uint64_t)n << "\n"
-	     << (uint64_t)m << "\n";
+	constexpr size_t THRESHOLD = size_t(1) << 32; // 4 GiB
+	std::stringstream buffer;
 
-	for( VID v=0; v < n; ++v )
-	    file << index[v] << '\n';
+	buffer << ( weights ? "WeightedAdjacencyGraph\n" : "AdjacencyGraph\n" );
+	buffer << (uint64_t)n << "\n"
+	       << (uint64_t)m << "\n";
 
-	for( EID e=0; e < m; ++e )
-	    file << edges[e] << '\n';
+	for( VID v=0; v < n; ++v ) {
+	    if( (size_t)buffer.tellp() >= THRESHOLD ) {
+		file << buffer.rdbuf();
+		std::stringstream().swap(buffer);
+	    }
+	    buffer << index[v] << '\n';
+	}
+
+	for( EID e=0; e < m; ++e ) {
+	    if( (size_t)buffer.tellp() >= THRESHOLD ) {
+		file << buffer.rdbuf();
+		std::stringstream().swap(buffer);
+	    }
+	    buffer << edges[e] << '\n';
+	}
 
 	if( weights ) {
 	    float * w = weights->get();
-	    file.precision( std::numeric_limits<float>::max_digits10 );
-	    file << std::fixed;
-	    for( EID e=0; e < m; ++e )
-		file << w[e] << '\n';
+	    buffer.precision( std::numeric_limits<float>::max_digits10 );
+	    buffer << std::fixed;
+	    for( EID e=0; e < m; ++e ) {
+		if( (size_t)buffer.tellp() >= THRESHOLD ) {
+		    file << buffer.rdbuf();
+		    std::stringstream().swap(buffer);
+		}
+		buffer << w[e] << '\n';
+	    }
 	}
 	    
+	file << buffer.rdbuf();
 	file.close();
     }
 
