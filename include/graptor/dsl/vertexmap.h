@@ -89,6 +89,10 @@
 // - create accum array, and replace
 // ... for now, put this in programming model
 
+// TODO:
+// - vertexmap should parallelize with balanced vertex counts, not balanced
+//   edge counts
+
 template<unsigned short VL, typename VID>
 VID roundupVL( VID n ) {
     return n == 0 ? n : n - (n - 1) % VL + VL - 1;
@@ -754,7 +758,7 @@ private:
 	//
 	// Current status; AddConstant + SeqSum: constant not in register but
 	//  loaded from memory on each iteration
-	
+
 	// Map
 	map_partitionL( part, [&]( int p ) {
 	      // auto pp = simd_vector<VID,VL>::template s_set1inc<true>(
@@ -861,7 +865,7 @@ struct step_vmap_sparse {
 	if constexpr ( Operator::is_filter ) {
 	    execute_filter( part );
 	} else if constexpr ( Operator::is_scan )
-	    assert( 0 && "NYI" );
+	    execute_scan( part );
 	else
 	    execute_map( part );
 
@@ -901,6 +905,43 @@ private:
 	vmap_record_time<Operator>( tm.next() );
 #endif
     }
+
+    void execute_scan( const partitioner & part ) {
+	vmap_report<Operator,1>( std::cout, "vmap_sparse/scan:" );
+#if VMAP_TIMING
+	timer tm;
+	tm.start();
+#endif
+
+	// TODO: sparse vscan could make use of gather/scatter
+	// TODO: this is a very simplistic sequential implementation
+	// TODO: add caching of accumulator variable
+	static constexpr unsigned short VL = 1; // sparse, thus scalar
+	auto expr0 = op( expr::value<simd::ty<VID,VL>,expr::vk_vid>() );
+
+	auto l_cache = expr::extract_local_vars( expr0, expr::cache<>() );
+	auto expr1 = expr::rewrite_caches<expr::vk_zero>( expr0, l_cache );
+
+	auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+
+	auto expr = rewrite_internal( expr1 );
+
+
+	VID nactv = fref.nActiveVertices();
+	const VID * f_array = fref.getSparse();
+	/*parallel_*/for( VID i=0; i < nactv; ++i ) {
+	    VID v = f_array[i];
+	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
+	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
+	    auto c = cache_create( env, l_cache, m );
+	    env.evaluate( c, m, expr );
+	}
+
+#if VMAP_TIMING
+	vmap_record_time<Operator>( tm.next() );
+#endif
+    }
+    
     
     void execute_filter( const partitioner & part ) {
 	vmap_report<Operator,1>( std::cout, "vmap_sparse:" );
