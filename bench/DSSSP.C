@@ -35,6 +35,18 @@ using expr::_1;
 #define VARIANT 0
 #endif
 
+#ifndef DENSE_COPY
+#define DENSE_COPY 1 // bad default
+#endif
+
+#ifndef SP_THRESHOLD
+#define SP_THRESHOLD -1
+#endif
+
+#ifndef NUM_BUCKETS
+#define NUM_BUCKETS 127
+#endif
+
 struct BF_customfp_config {
     static constexpr size_t bit_size = 16;
 };
@@ -50,10 +62,9 @@ using SFloatTy = float;
 using EncCur = array_encoding<FloatTy>;
 using EncNew = array_encoding<FloatTy>;
 using EncEdge = array_encoding<FloatTy>;
-#elif VARIANT == 1
+#elif VARIANT == 1 || VARIANT == 11
 using FloatTy = float;
 // using SFloatTy = scustomfp<false,7,9,true,6>;
-// using SFloatTy = scustomfp<false,8,8,true,0>;
 using SFloatTy = scustomfp<false,5,11,true,15>;
 using EncCur = array_encoding_wide<SFloatTy>;
 using EncNew = EncCur;
@@ -64,9 +75,15 @@ using SFloatTy = vcustomfp<cfp_cfg>;
 using EncCur = array_encoding<SFloatTy>;
 using EncNew = EncCur;
 using EncEdge = array_encoding<FloatTy>;
-#elif VARIANT == 3
+#elif VARIANT == 3 || VARIANT == 13
 using FloatTy = float;
-using SFloatTy = scustomfp<false,7,9,true,11>;
+using SFloatTy = scustomfp<false,5,11,true,21>;
+using EncCur = array_encoding_wide<SFloatTy>;
+using EncNew = EncCur;
+using EncEdge = array_encoding<FloatTy>;
+#elif VARIANT == 4 || VARIANT == 14
+using FloatTy = float;
+using SFloatTy = scustomfp<false,5,11,true,30>;
 using EncCur = array_encoding_wide<SFloatTy>;
 using EncNew = EncCur;
 using EncEdge = array_encoding<FloatTy>;
@@ -124,8 +141,10 @@ public:
 	: GA( _GA ), info_buf( 60 ),
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	  cur_dist( GA.get_partitioner(), "current distance" ),
+	  cur_dist_final( GA.get_partitioner(), "current distance (final)" ),
 #endif
 	  new_dist( GA.get_partitioner(), "new distance" ),
+	  new_dist_final( GA.get_partitioner(), "new distance (final)" ),
 	  edge_weight( GA.get_partitioner(), "edge weight" ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -142,16 +161,31 @@ public:
 	    std::cerr << "LEVEL_ASYNC=" << LEVEL_ASYNC << "\n";
 	    std::cerr << "CONVERGENCE=" << CONVERGENCE << "\n";
 	    std::cerr << "MEMO=" << MEMO << "\n";
+	    std::cerr << "VARIANT=" << VARIANT << "\n";
+	    std::cerr << "DENSE_COPY=" << DENSE_COPY << "\n";
+	    std::cerr << "SP_THRESHOLD=" << SP_THRESHOLD << "\n";
 	    std::cerr << "sizeof(FloatTy)=" << sizeof(FloatTy) << "\n";
 	    std::cerr << "sizeof(SFloatTy)=" << sizeof(SFloatTy) << "\n";
+	    std::cerr << "NUM_BUCKETS=" << NUM_BUCKETS << "\n";
 	    std::cerr << "delta=" << delta << "\n";
+#if VARIANT != 2
+	    using ft = fp_traits<SFloatTy>;
+	    std::cerr << "FP: sign bit=" << ft::sign_bit << "\n";
+	    std::cerr << "FP: exponent bits=" << ft::exponent_bits << "\n";
+	    std::cerr << "FP: mantissa bits=" << ft::mantissa_bits << "\n";
+	    std::cerr << "FP: exponent truncated=" << ft::exponent_truncated << "\n";
+	    std::cerr << "FP: can hold zero=" << ft::maybe_zero << "\n";
+	    std::cerr << "FP: exponent bias=" << ft::exponent_bias << "\n";
+#endif
 	}
     }
     ~DSSSP() {
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	cur_dist.del();
+	cur_dist_final.del();
 #endif
 	new_dist.del();
+	new_dist_final.del();
 	edge_weight.del();
     }
 
@@ -191,13 +225,14 @@ public:
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	assert( cur_dist.get_ptr() );
+	assert( cur_dist_final.get_ptr() );
 #endif
 
-#if VARIANT == 2
+#if VARIANT == 2 || VARIANT >= 10
 	// Analyse exponent range of edge weights, and infer floating-point
 	// format.
 	FloatTy f_min = std::numeric_limits<FloatTy>::max();
-	FloatTy f_max = -std::numeric_limits<FloatTy>::max();
+	FloatTy f_max = std::numeric_limits<FloatTy>::lowest();
 	bool f_neg = false;
 	bool f_zero = false;
 	expr::array_ro<FloatTy,VID,var_min> a_min( &f_min );
@@ -253,7 +288,7 @@ public:
 	// this is an exceptional case and we may detect and handle it, or
 	// assume that the smallest path length can be 0.
 	// Here, we require that 0 and infinity are correctly represented.
-#if VARIANT == 1 || VARIANT == 3
+#if VARIANT != 0 && VARIANT != 2
 	std::cout << "Smallest float: " << SFloatTy::min().get()
 		  << " = " << (float)SFloatTy::min() << "\n";
 	std::cout << "Largest float: " << SFloatTy::max().get()
@@ -268,7 +303,7 @@ public:
 	// Ensure we can at least encode the value 1.0
 	f_max = std::max( f_max, 1.0f );
 
-	cfp_cfg::set_param( f_min, f_max, f_neg, f_zero, false );
+	cfp_cfg::set_param( f_min, f_max, f_neg, /*f_zero*/true, false );
 	auto vz = typename EncCur::stored_type(0.0f);
 	std::cout << "Configuration (0.0f value): "
 		  << vz << " -> " << (float)vz << "\n";
@@ -278,6 +313,11 @@ public:
 	auto vh = typename EncCur::stored_type(0.5f);
 	std::cout << "Configuration (0.5f value): "
 		  << vh << " -> " << (float)vh << "\n";
+#endif
+
+#if VARIANT >= 10
+	FloatTy e_min = f_min;
+	FloatTy e_max = f_max;
 #endif
 
 	static_assert( std::is_same_v<EdgeTy,FloatTy>,
@@ -290,7 +330,7 @@ public:
 #if VARIANT == 0
 		auto inf = expr::constant_val2<SFloatTy>(
 		    v, std::numeric_limits<SFloatTy>::infinity() );
-#elif VARIANT == 1 || VARIANT == 3
+#elif VARIANT != 2
 		auto inf = expr::constant_val2<SFloatTy>(
 		    v, SFloatTy::max() );
 #else
@@ -311,7 +351,7 @@ public:
 
 	// Create bucket structure
 	buckets<VID,bucket_fn>
-	    bkts( n, 127, bucket_fn( new_dist.get_ptr(), delta ) );
+	    bkts( n, NUM_BUCKETS, bucket_fn( new_dist.get_ptr(), delta ) );
 
 	// Place start vertex in first bucket
 	bkts.insert( start, 0 );
@@ -328,29 +368,16 @@ public:
 		info_buf[iter].dump( iter );
 	}
 
+#if VARIANT >= 10
+	FloatTy p_min = std::numeric_limits<FloatTy>::max();
+	FloatTy p_max = std::numeric_limits<FloatTy>::lowest();
+#endif
+
 	++iter;
 
 	while( !bkts.empty() ) {  // iterate until all vertices visited
 	    frontier F = bkts.next_bucket();
 	    F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
-
-#if VARIANT == 3
-	    f_max = -std::numeric_limits<FloatTy>::max();
-	    make_lazy_executor( part )
-		.vertex_scan( [&]( auto v ) {
-		    auto z =
-			expr::value<simd::ty<VID,decltype(v)::VL>,expr::vk_zero>();
-		    auto inf = expr::constant_val2<FloatTy>(
-			v, (FloatTy)SFloatTy::max() );
-		    return expr::set_mask( cur_dist[v] != inf,
-					   a_max[z].max( cur_dist[v] ) );
-		} )
-		.materialize();
-	    // std::cout << "Shortest path: " << f_min << "\n";
-	    // std::cout << "Longest path: " << f_max << "\n";
-	    if( f_max >= f_min * 256 )
-		break;
-#endif
 
 	    // Traverse edges, remove duplicate live destinations.
 	    frontier output;
@@ -360,15 +387,12 @@ public:
 	    auto filter_strength = api::strong;
 #endif
 
-	    auto bkt_fn = [&]( auto d ) {
-		auto z = 
-		    expr::value<simd::ty<VID,decltype(d)::VL>,expr::vk_zero>();
-		return expr::cast<VID>( d / a_delta[z] );
-	    };
-
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
+#if SP_THRESHOLD >= 0
+		api::config( api::frac_threshold( SP_THRESHOLD ) ),
+#endif
 #if DEFERRED_UPDATE
 		// TODO: Do we apply the deferred update function in sparse
 		//       edgemap?
@@ -415,6 +439,45 @@ public:
 	    }
 #endif
 
+#if VARIANT >= 10
+	    bool needs_break = false;
+	    {
+		// Note that p_max should be over-estimated because a long
+		// path may shorten over time
+		expr::array_ro<FloatTy,VID,var_min> a_min( &p_min );
+		expr::array_ro<FloatTy,VID,var_max> a_max( &p_max );
+		make_lazy_executor( part )
+		    .vertex_scan( output, [&]( auto v ) {
+			auto z =
+			    expr::value<simd::ty<VID,decltype(v)::VL>,expr::vk_zero>();
+			auto inf = expr::constant_val2<FloatTy>(
+			    v, (FloatTy)SFloatTy::max() );
+			auto w = expr::cast<FloatTy>( cur_dist[v] );
+			return expr::set_mask(
+			    w != inf && w != _0,
+			    expr::make_seq(
+				a_min[z].min( w ),
+				a_max[z].max( w ) ) );
+		} )
+		.materialize();
+		using ft = fp_traits<SFloatTy>;
+		FloatTy ep_max = p_max + e_max;
+		if( ep_max >= e_min * (FloatTy)(1<<(SFloatTy::mantissa_bits-2))
+		    ) {
+		    std::cout << "Break out of low-precision loop because:\n";
+		    std::cout << "   shortest path: " << p_min << "\n";
+		    std::cout << "   longest path: " << p_max << "\n";
+		    std::cout << "   largest weight: " << e_min << "\n";
+		    std::cout << "   smallest weight: " << e_max << "\n";
+		    std::cout << "   worst-case path: " << ep_max << "\n";
+		    std::cout << "   mantissa bits: " << ft::mantissa_bits
+			      << "\n";
+		    needs_break = true;
+		}
+	    }
+#endif
+
+
 /*
 	    for( VID v=0; v < 128; ++v ) {
 		std::cerr << ' ' << (float)new_dist[v];
@@ -425,7 +488,11 @@ public:
 	    bkts.update_buckets( part, output );
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    if( output.getType() == frontier_type::ft_unbacked || 1 ) {
+	    if( output.getType() == frontier_type::ft_unbacked
+#if DENSE_COPY
+		|| 1
+#endif
+		) {
 		make_lazy_executor( part )
 		    .vertex_map( [&]( auto v ) {
 			return cur_dist[v] = new_dist[v];
@@ -461,109 +528,107 @@ public:
 	    output.del();
 
 	    ++iter;
+
+#if VARIANT >= 10
+	    if( needs_break )
+		break;
+#endif
 	}
-
-#if VARIANT == 3
-	if( false && !bkts.empty() ) {  // need a second phase
+	
+	// Copy to wider weights.
+	make_lazy_executor( part )
+	    .vertex_map( [&]( auto v ) {
+		return expr::make_seq(
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    api::vertexprop<FloatTy,VID,var_cur2> cur_dist2(
-		GA.get_partitioner(), "current distance (2)" );
+		    cur_dist_final[v] = cur_dist[v],
 #endif
-	    api::vertexprop<FloatTy,VID,var_new2> new_dist2(
-		GA.get_partitioner(), "new distance (2)" );
+		    new_dist_final[v] = new_dist[v] );
+	    } )
+	    .materialize();
 
-	    make_lazy_executor( part )
-		.vertex_map( [&]( auto v ) {
-		    return expr::make_seq(
-			cur_dist2[v] = cur_dist[v],
-			new_dist2[v] = new_dist[v] );
-		} )
-		.materialize();
+#if VARIANT >= 10
+	// need a second phase
+	while( !bkts.empty() ) {  // iterate until all vertices visited
+	    frontier F = bkts.next_bucket();
+	    F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
 
-	    while( !bkts.empty() ) {  // iterate until all vertices visited
-		timer tm_iter;
-		tm_iter.start();
-
-		frontier F = bkts.next_bucket();
-		F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
-
-		// Traverse edges, remove duplicate live destinations.
-		frontier output;
+	    // Traverse edges, remove duplicate live destinations.
+	    frontier output;
 #if UNCOND_EXEC
-		auto filter_strength = api::weak;
+	    auto filter_strength = api::weak;
 #else
-		auto filter_strength = api::strong;
+	    auto filter_strength = api::strong;
 #endif
-		api::edgemap(
-		    GA, 
+
+	    // TODO: config to not calculate nactv, nacte?
+	    api::edgemap(
+		GA, 
 #if DEFERRED_UPDATE
-		    // We need to know the frontier always in order to
-		    // place vertices in buckets
-		    api::record( output,
-				 [&] ( auto d ) {
-				     return cur_dist2[d] != new_dist2[d]; },
-				 api::strong ),
+		// TODO: Do we apply the deferred update function in sparse
+		//       edgemap?
+		api::record( output,
+			     [&] ( auto d ) {
+			     return cur_dist_final[d] != new_dist_final[d]; },
+			     api::strong ),
 #else
-		    api::record( output, api::reduction, api::strong ),
+		// Do not allow unbacked frontiers
+		api::record( output, api::reduction, api::strong ),
 #endif
-		    api::filter( filter_strength, api::src, F ),
-		    api::relax( [&]( auto s, auto d, auto e ) {
+		api::filter( filter_strength, api::src, F ),
+		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
-			return new_dist2[d].min( new_dist2[s] + edge_weight[e] );
+		    return new_dist_final[d].min( new_dist_final[s] + edge_weight[e] );
 #else
-			return new_dist2[d].min( cur_dist2[s] + edge_weight[e] );
+		    return new_dist_final[d].min( cur_dist_final[s] + edge_weight[e] );
 #endif
-				} )
-		    ).materialize();
+		} )
+		).materialize();
+
+	    bkts.update_buckets( part, output );
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-		if( output.getType() == frontier_type::ft_unbacked || 1 ) {
-		    make_lazy_executor( part )
-			.vertex_map( [&]( auto v ) {
-			    return cur_dist2[v] = new_dist2[v];
-			} )
-			.materialize();
-		} else {
-		    make_lazy_executor( part )
-			.vertex_map( output, [&]( auto v ) {
-			    return cur_dist2[v] = new_dist2[v];
-			} )
-			.materialize();
-		}
+	    if( output.getType() == frontier_type::ft_unbacked
+#if DENSE_COPY
+		|| 1
 #endif
-		bkts.update_buckets( part, output );
+		) {
+		make_lazy_executor( part )
+		    .vertex_map( [&]( auto v ) {
+			return cur_dist_final[v] = new_dist_final[v];
+		    } )
+		    .materialize();
+	    } else {
+		make_lazy_executor( part )
+		    .vertex_map( output, [&]( auto v ) {
+			return cur_dist_final[v] = new_dist_final[v];
+		    } )
+		    .materialize();
+	    }
+	    // maintain_copies( part, output, cur_dist.get_ptr(),
+	    // new_dist.get_ptr() );
+#endif
 
-		active += output.nActiveVertices();
+	    active += output.nActiveVertices();
 
-		if( itimes ) {
-		    info_buf.resize( iter+1 );
-		    info_buf[iter].density = F.density( GA.numEdges() );
-		    info_buf[iter].nactv = F.nActiveVertices();
-		    info_buf[iter].nacte = F.nActiveEdges();
-		    info_buf[iter].delay = tm_iter.next();
-		    if( debug )
-			info_buf[iter].dump( iter );
-		}
-
-		// Cleanup old frontier
-		F.del();
-		F = output;
-
-		++iter;
+	    if( itimes ) {
+		info_buf.resize( iter+1 );
+		info_buf[iter].density = F.density( GA.numEdges() );
+		info_buf[iter].nactv = F.nActiveVertices();
+		info_buf[iter].nacte = F.nActiveEdges();
+		info_buf[iter].delay = tm_iter.next();
+		info_buf[iter].meps = 
+		    float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
+		if( debug )
+		    info_buf[iter].dump( iter );
 	    }
 
-	    make_lazy_executor( part )
-		.vertex_map( [&]( auto v ) {
-		    return expr::make_seq(
-			cur_dist[v] = cur_dist2[v],
-			new_dist[v] = new_dist2[v] );
-		} )
-		.materialize();
+	    // Cleanup frontier
+	    F.del();
+	    output.del();
 
-	    cur_dist2.del();
-	    new_dist2.del();
+	    ++iter;
 	}
-#endif // VARIANT == 3
+#endif // VARIANT >= 10
     }
 
     void post_process( stat & stat_buf ) {
@@ -599,7 +664,7 @@ public:
 	VID n = GA.numVertices();
 
 	FloatTy shortest, longest;
-	std::tie( shortest, longest ) = find_min_max( GA, new_dist );
+	std::tie( shortest, longest ) = find_min_max( GA, new_dist_final );
 
 	stat_buf.shortest = shortest;
 	stat_buf.longest = longest;
@@ -629,8 +694,10 @@ private:
     FloatTy delta;
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
     api::vertexprop<FloatTy,VID,var_cur,EncCur> cur_dist;
+    api::vertexprop<FloatTy,VID,var_cur2,EncCur> cur_dist_final;
 #endif
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
+    api::vertexprop<FloatTy,VID,var_new2,EncNew> new_dist_final;
     api::edgeprop<FloatTy,EID,expr::vk_eweight,EncEdge> edge_weight;
     std::vector<info> info_buf;
 };
