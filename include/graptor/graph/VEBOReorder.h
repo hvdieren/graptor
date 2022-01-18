@@ -211,22 +211,60 @@ private:
 	VID *u;
 	EID *w;
 	int pmax;
+	int popen;
 	EID Delta;
 
 	pstate( VID n_, VID *u_, EID *w_ )
-	    : n( n_ ), u( u_ ), w( w_ ), pmax( 0 ), Delta( 0 ) {
+	    : n( n_ ), u( u_ ), w( w_ ), pmax( 0 ), popen( -1 ), Delta( 0 ) {
 	    // Assume that initially all w[i] are zero
 	}
 
-	void place( VID d ) {
+	int place( VID d ) {
 	    if( d > 0 )
-		place_nzdeg( d );
+		return place_nzdeg( d );
 	    else
-		place_zdeg();
+		return place_zdeg();
+	}
+
+	int place_packed( VID d, int pmul ) {
+	    if( popen >= 0 && u[popen] % pmul != 0 ) {
+		place_at( d, popen );
+		return popen;
+	    } else {
+		int p = place( d );
+		popen = p;
+		return p;
+	    }
+	}
+	
+	int place_at( VID d, int p ) {
+	    int pmin = 0;
+	    for( int i=1; i < n; ++i ) {
+		if( d > 0 ) {
+		    if( w[pmin] > w[i] )
+			pmin = i;
+		} else {
+		    if( u[pmin] > u[i] )
+			pmin = i;
+		}
+	    }
+
+	    w[p] += d;
+	    u[p]++;
+
+	    // Track highest loaded partition
+	    if( w[p] > w[pmax] )
+		pmax = p;
+
+	    // Track Delta
+	    if( p != pmin )
+		Delta = w[pmax] - w[pmin];
+
+	    return p;
 	}
 
 	// Place a vertex with degree d, assuming d > 0
-	void place_nzdeg( VID d ) {
+	int place_nzdeg( VID d ) {
 	    int pmin = 0, pmin2 = 1;
 	    if( w[pmin] > w[pmin2] )
 		std::swap( pmin, pmin2 );
@@ -251,6 +289,8 @@ private:
 
 	    // Track Delta
 	    Delta = w[pmax] - w[pmin2];
+
+	    return pmin;
 	}
 
 	void convert_zdeg() {
@@ -292,6 +332,8 @@ private:
 
 	    // Track delta
 	    Delta = u[pmax] - u[pmin2];
+
+	    return pmin;
 	}
 
 	
@@ -373,7 +415,7 @@ private:
     void vebo( const GraphCSx &csc, partitioner & part, unsigned short maxVL,
 	       bool intlv, unsigned short pmul ) {
 	if( intlv == false && maxVL == 1 ) {
-	    vebo_graptor( csc, part, pmul );
+	    vebo_graptor<true>( csc, part, pmul );
 	    return;
 	}
 	
@@ -873,6 +915,8 @@ private:
     }
 
     // This method specialises VEBO to the cases of GraphGrind and Graptor.
+    // packed == true: new version with better packing of high-degree vertices.
+    template<bool packed>
     void vebo_graptor( const GraphCSx &csc, partitioner & part,
 		       unsigned short pmul ) {
 	timer tm;
@@ -1008,7 +1052,10 @@ private:
 		while( j < k ) {
 		    // place vertex in least-loaded partition,
 		    // while tracking statistics on the spread of the loads
-		    load.place( d );
+		    if constexpr ( packed )
+			load.place_packed( d, pmul );
+		    else
+			load.place( d );
 		    ++j;
 
 		    // TODO: an alternative idea is to place a large number
