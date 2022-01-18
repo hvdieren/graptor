@@ -1087,7 +1087,7 @@ private:
 		    VID mv = std::min( u[0] % pmul, u[0] - du[0] );
 		    u[0] -= mv;
 		    w[0] -= mv * d;
-		    for( unsigned p=1; p < P; ++p ) {
+		    for( unsigned p=1; p < P-1; ++p ) {
 			u[p] += mv;
 			w[p] += mv * d;
 			mv = std::min( u[p] % pmul, u[p] - du[p] );
