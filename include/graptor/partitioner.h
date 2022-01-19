@@ -100,6 +100,34 @@ public:
 	}
 	return p;
     }
+    static partitioner_template
+    vertex_balanced( VID np, VID elm, int roundup = 1 ) {
+	partitioner_template p( np, elm );
+
+	VID remaining = elm;
+	for( PID i=0; i < p.num_partitions; ++i ) {
+	    VID avg_cnt = remaining / ( p.num_partitions - i );
+	    VID cnt_i = avg_cnt;
+	    if( cnt_i % roundup != 0 )
+		cnt_i += roundup - ( cnt_i % roundup );
+	    if( cnt_i > remaining )
+		cnt_i = remaining;
+	    remaining -= cnt_i;
+	    
+	    p.counts[i] = cnt_i;
+	    p.starts[i] = i == 0 ? 0 : p.starts[i-1] + p.counts[i-1];
+	    p.nzcounts[i] = cnt_i;
+	    p.inuse[i] = cnt_i;
+	    p.estarts[i] = 0;
+	}
+
+	p.starts[p.num_partitions] = elm;
+	p.nzcounts[p.num_partitions] = elm;
+	p.inuse[p.num_partitions] = elm;
+	p.estarts[p.num_partitions] = 0;
+
+	return p;
+    }
     const partitioner_template & operator = ( const partitioner_template & p )
     {
         if( counts )
