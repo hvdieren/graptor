@@ -1123,9 +1123,6 @@ private:
 		    }
 		}
 
-		// if constexpr ( packed )
-		// load.close( d );
-
 		// Rebalance such that partitions hold a multiple of pmul
 		// vertices.
 		// Assumes P > 1 and pmul > 1.
@@ -1151,7 +1148,10 @@ private:
 	    } while( d-- > 0 ); // loops over d == 0 as well
 	}
 
-	std::cerr << "VEBO: placement: " << tm.next() << "\n";
+	std::cerr << "VEBO: placement (sequential, heap";
+	if constexpr( packed )
+	    std::cerr << ", packed@" << pmul;
+	std::cerr << "): " << tm.next() << "\n";
 
 	// 3. Determine partition sizes
 	VID *s = du; // reuse array
