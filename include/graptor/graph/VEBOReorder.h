@@ -2,6 +2,8 @@
 #ifndef GRAPHGRIND_GRAPH_VEBOREORDER_H
 #define GRAPHGRIND_GRAPH_VEBOREORDER_H
 
+#include <queue>
+
 #include "graptor/mm.h"
 #include "graptor/graph/remap.h"
 #include "graptor/graph/partitioning.h"
@@ -206,6 +208,32 @@ public:
     }
 
 private:
+    template<typename T>
+    struct pstate_cmp {
+	pstate_cmp( T * v ) : m_v( v ) { }
+	bool operator() ( VID x, VID y ) const {
+	    // Simple comparator, leaves positioning of partitions with few
+	    // vertices up to the heap implementation, typically at
+	    // p = 2**k - 2
+	    // return m_v[x] > m_v[y];
+	    // Ensures least-vertex partitions are at the low numbers
+	    // return m_v[x] > m_v[y] || ( m_v[x] == m_v[y] && x > y );
+	    // Spread least-vertex partitions around over the range of
+	    // all partition numbers. They end up in partitions with the
+	    // most number of trailing zeros
+	    if( m_v[x] > m_v[y] )
+		return true;
+	    else if( m_v[x] < m_v[y] )
+		return false;
+	    else {
+		unsigned int rx = bit_reverse( x );
+		unsigned int ry = bit_reverse( y );
+		return rx > ry;
+	    }
+	}
+	T * m_v;
+    };
+    
     struct pstate {
 	VID n;
 	VID *u;
@@ -213,42 +241,64 @@ private:
 	int pmax;
 	int popen;
 	EID Delta;
+	std::priority_queue<EID,std::vector<EID>,pstate_cmp<EID>> w_heap;
+	std::priority_queue<VID,std::vector<VID>,pstate_cmp<VID>> u_heap;
 
 	pstate( VID n_, VID *u_, EID *w_ )
-	    : n( n_ ), u( u_ ), w( w_ ), pmax( 0 ), popen( -1 ), Delta( 0 ) {
+	    : n( n_ ), u( u_ ), w( w_ ), pmax( 0 ), popen( -1 ), Delta( 0 ),
+	      w_heap( pstate_cmp<EID>( w ) ), u_heap( pstate_cmp<VID>( u ) ) {
 	    // Assume that initially all w[i] are zero
+
+	    // Don't initialise the u_heap until convert_zdeg is called
+	    for( VID v=0; v < n; ++v )
+		w_heap.push( v );
 	}
 
+	template<bool reinsert=true>
 	int place( VID d ) {
 	    if( d > 0 )
-		return place_nzdeg( d );
+		return place_nzdeg<reinsert>( d );
 	    else
-		return place_zdeg();
+		return place_zdeg<reinsert>();
 	}
 
 	int place_packed( VID d, int pmul ) {
-	    if( popen >= 0 && u[popen] % pmul != 0 ) {
-		place_at( d, popen );
-		return popen;
-	    } else {
-		int p = place( d );
-		popen = p;
-		return p;
-	    }
-	}
-	
-	int place_at( VID d, int p ) {
-	    int pmin = 0;
-	    for( int i=1; i < n; ++i ) {
-		if( d > 0 ) {
-		    if( w[pmin] > w[i] )
-			pmin = i;
+	    if( popen >= 0 ) {
+		if( u[popen] % pmul != 0 ) {
+		    place_at( d, popen );
+		    return popen;
 		} else {
-		    if( u[pmin] > u[i] )
-			pmin = i;
+		    // Reinsert, then search any partition
+		    close( d );
 		}
 	    }
 
+	    popen = place<false>( d );
+	    return popen;
+	}
+
+	void close( VID d ) {
+	    if( popen >= 0 ) {
+		if( d > 0 )
+		    w_heap.push( popen );
+		else
+		    u_heap.push( popen );
+		popen = -1;
+	    }
+	}
+
+	int place_at( VID d, int p ) {
+	    if( d > 0 )
+		return place_at_nzdeg( d, p );
+	    else
+		return place_at_zdeg( p );
+	}
+
+	
+	int place_at_nzdeg( VID d, int p ) {
+	    // p is not currently in the heap
+	    // do not update Delta as it will not impact on our decisions
+	    // until the partition is closed with a multiple of pmul
 	    w[p] += d;
 	    u[p]++;
 
@@ -256,29 +306,29 @@ private:
 	    if( w[p] > w[pmax] )
 		pmax = p;
 
-	    // Track Delta
-	    if( p != pmin )
-		Delta = w[pmax] - w[pmin];
+	    return p;
+	}
+
+	int place_at_zdeg( int p ) {
+	    // p is not currently in the heap
+	    // do not update Delta as it will not impact on our decisions
+	    // until the partition is closed with a multiple of pmul
+	    u[p]++;
+
+	    // Track highest loaded partition
+	    if( u[p] > u[pmax] )
+		pmax = p;
 
 	    return p;
 	}
 
+
 	// Place a vertex with degree d, assuming d > 0
+	template<bool reinsert>
 	int place_nzdeg( VID d ) {
-	    int pmin = 0, pmin2 = 1;
-	    if( w[pmin] > w[pmin2] )
-		std::swap( pmin, pmin2 );
-	    for( int i=2; i < n; ++i ) {
-		if( w[pmin] > w[i] ) {
-		    pmin2 = pmin;
-		    pmin = i;
-		} else if( w[pmin2] >= w[i] )
-		    pmin2 = i;
-	    }
-	    // pmin is the least-loaded partition, pmin2 is
-	    // the second least-loaded partition, possibly
-	    // equally loaded to pmin.
-	    assert( pmin != pmin2 );
+	    // Get the least-loaded partition and remove it from the heap
+	    int pmin = w_heap.top();
+	    w_heap.pop();
 
 	    w[pmin] += d;
 	    u[pmin]++;
@@ -287,41 +337,32 @@ private:
 	    if( w[pmin] > w[pmax] )
 		pmax = pmin;
 
+	    // Re-insert into heap
+	    if constexpr ( reinsert )
+		w_heap.push( pmin );
+
 	    // Track Delta
-	    Delta = w[pmax] - w[pmin2];
+	    Delta = w[pmax] - w[w_heap.top()];
 
 	    return pmin;
 	}
 
 	void convert_zdeg() {
 	    // Now start tracking delta
-	    int pmin = 0;
 	    pmax = 0;
-	    for( int i=1; i < n; ++i ) {
-		if( u[pmin] > u[i] )
-		    pmin = i;
+	    for( int i=0; i < n; ++i ) {
+		u_heap.push( i );
 		if( u[pmax] < u[i] )
 		    pmax = i;
 	    }
-	    Delta = u[pmax] - u[pmin];
+	    Delta = u[pmax] - u[u_heap.top()];
 	}
 
 	// Place a vertex with degree d, assuming d == 0
+	template<bool reinsert>
 	int place_zdeg() {
-	    int pmin = 0, pmin2 = 1;
-	    if( w[pmin] > w[pmin2] )
-		std::swap( pmin, pmin2 );
-	    for( int i=2; i < n; ++i ) {
-		if( u[pmin] > u[i] ) {
-		    pmin2 = pmin;
-		    pmin = i;
-		} else if( u[pmin] == u[i] )
-		    pmin2 = i;
-	    }
-	    // pmin is the least-loaded partition, pmin2 is
-	    // the second least-loaded partition, possibly
-	    // equally loaded to pmin.
-	    assert( pmin != pmin2 );
+	    int pmin = u_heap.top();
+	    u_heap.pop();
 
 	    // no need to update w[], vertex has zero degree
 	    u[pmin]++;
@@ -330,13 +371,15 @@ private:
 	    if( u[pmin] > u[pmax] )
 		pmax = pmin;
 
+	    // Re-insert into heap
+	    if constexpr ( reinsert )
+		u_heap.push( pmin );
+
 	    // Track delta
-	    Delta = u[pmax] - u[pmin2];
+	    Delta = u[pmax] - u[u_heap.top()];
 
 	    return pmin;
 	}
-
-	
     };
 
     VID place_vertices_simd( int P, int gP, int vP,
@@ -1079,6 +1122,9 @@ private:
 			break;
 		    }
 		}
+
+		// if constexpr ( packed )
+		// load.close( d );
 
 		// Rebalance such that partitions hold a multiple of pmul
 		// vertices.
