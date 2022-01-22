@@ -752,23 +752,33 @@ using is_filter_for_dst = is_filter_for<filter_entity::dst,T>;
  * Definition of parameters expressing how to record new frontier
  ************************************************************************/
 enum class frontier_record {
-    frontier_true,
-    frontier_reduction,
-    frontier_method
+    frontier_true = 0,
+    frontier_reduction = 1,
+    frontier_method = 2,
+    frontier_reduction_or_method = 3
 };
 
 template<frontier_record R>
 struct frontier_record_argument {
     static constexpr frontier_record value = R;
-
-    static_assert( value != frontier_record::frontier_method,
-		   "this case covered differently" );
 };
 
 static constexpr auto all_true =
     frontier_record_argument<frontier_record::frontier_true>();
 static constexpr auto reduction =
     frontier_record_argument<frontier_record::frontier_reduction>();
+static constexpr auto reduction_or_method =
+    frontier_record_argument<frontier_record::frontier_reduction_or_method>();
+
+constexpr auto operator | ( frontier_record l, frontier_record r ) {
+    return frontier_record( (int)l | (int)r );
+}
+
+template<frontier_record L, frontier_record R>
+constexpr auto operator | ( frontier_record_argument<L> &&,
+			    frontier_record_argument<R> && ) {
+    return frontier_record_argument<L | R>();
+}
 
 template<typename T>
 struct is_frontier_record : public std::false_type { };
@@ -1112,7 +1122,6 @@ struct arg_record {
     static_assert( record != frontier_record::frontier_method, "required" );
 
     arg_record( frontier & f ) : m_frontier( f ) { };
-    // arg_record( frontier && f ) : m_frontier( f ) { };
 
     template<typename EMapConfig, bool IsPriv, typename Operator>
     auto record_and_count( const VID * degree, Operator op ) {
@@ -1137,24 +1146,34 @@ private:
 
 // Strong/weak here implies unbacked or not? Better to replace with other terms
 // to make it more clear
-template<filter_strength S, typename Fn>
+template<filter_strength S, frontier_record M, typename Fn>
 struct arg_record_m {
     static constexpr filter_strength strength = S;
-    static constexpr frontier_record record = frontier_record::frontier_method;
+    static constexpr frontier_record record = M;
     static constexpr bool may_be_unbacked = strength == filter_strength::weak;
+
+    static_assert( record == frontier_record::frontier_method
+		   || record == frontier_record::frontier_reduction_or_method,
+		   "this class is designed for frontier using method" );
 
     arg_record_m( frontier & f, Fn method )
 	: m_frontier( f ), m_method( method ) { }
 
     template<typename EMapConfig, bool IsPriv, typename Operator>
     auto record_and_count( const VID * degree, Operator op ) {
-	static_assert( record == frontier_record::frontier_method,
-		       "specialised class" );
-	auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
-	auto ptrset = expr::extract_pointer_set( m_method( d ) );
-	return arg_record_method_op<
-	    EMapConfig,IsPriv,Operator,Fn,decltype(ptrset)>(
-		op, m_frontier, degree, m_method, ptrset );
+	// method: use method
+	// reduction_or_method: use method if push (not privatized destinations)
+	if constexpr ( record == frontier_record::frontier_method || !IsPriv ) {
+	    auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
+	    auto ptrset = expr::extract_pointer_set( m_method( d ) );
+	    return arg_record_method_op<
+		EMapConfig,IsPriv,Operator,Fn,decltype(ptrset)>(
+		    op, m_frontier, degree, m_method, ptrset );
+	} else {
+	    // As per arg_record / reduction
+	    return arg_record_reduction_op<EMapConfig,IsPriv,Operator>(
+		op, m_frontier, degree );
+	}
     }
 
     template<frontier_type ftype>
@@ -1198,45 +1217,39 @@ template<typename Fn,
 	 typename Strength = filter_strength_argument<filter_strength::strong>>
 std::enable_if_t<
     is_active<Fn>::value && is_filter_strength<Strength>::value,
-    arg_record_m<Strength::value,Fn>>
+    arg_record_m<Strength::value,frontier_record::frontier_method,Fn>>
 record( frontier & f,
 	Fn && fn,
 	Strength s = strong ) {
-    return arg_record_m<Strength::value,Fn>( f, std::forward<Fn>( fn ) );
+    return arg_record_m<Strength::value,frontier_record::frontier_method,Fn>(
+	f, std::forward<Fn>( fn ) );
 }
 	     
-#if 0
-template<typename... Args>
-auto record( Args &&... args ) {
-    if constexpr( check_arguments_3<is_filter_strength,is_frontier_record,
-		  is_frontier,Args...>::value ) {
-	return arg_record<
-	    get_argument_type_t<is_filter_strength,decltype(strong),Args...>::value,
-	    get_argument_type_t<is_frontier_record,decltype(reduction),Args...>::value>(
-		get_argument_value<is_frontier,missing_record_argument>(
-		    args... ) );
-    } else if constexpr ( check_arguments_3<is_filter_strength,
-			  is_frontier,is_active,Args...>::value ) {
-	auto & f = get_argument_value<is_frontier,missing_filter_argument>(
-	    args... );
-	auto & m = get_argument_value<is_active,missing_record_argument>(
-	    args... );
-	return arg_record_m<
-	    get_argument_type_t<is_filter_strength,decltype(strong),
-				Args...>::value,decltype(m)>( f, m );
-    } else
-	; // static_assert( false, "unexpected argument(s) supplied" );
+template<typename Record,
+	 typename Fn,
+	 typename Strength = filter_strength_argument<filter_strength::strong>>
+std::enable_if_t<
+    is_active<Fn>::value && is_filter_strength<Strength>::value,
+    arg_record_m<Strength::value,Record::value,Fn>>
+record( frontier & f,
+	Record r,
+	Fn && fn,
+	Strength s = strong ) {
+    static_assert( Record::value == frontier_record::frontier_method
+		   || Record::value == frontier_record::frontier_reduction_or_method,
+		   "Require a method option in this interface variant" );
+    return arg_record_m<Strength::value,Record::value,Fn>(
+	f, std::forward<Fn>( fn ) );
 }
-#endif
-
+	     
 template<typename T>
 struct is_record : public std::false_type { };
 
 template<filter_strength S, frontier_record R>
 struct is_record<arg_record<S,R>> : public std::true_type { };
 
-template<filter_strength S, typename Fn>
-struct is_record<arg_record_m<S,Fn>> : public std::true_type { };
+template<filter_strength S, frontier_record R, typename Fn>
+struct is_record<arg_record_m<S,R,Fn>> : public std::true_type { };
 
 /************************************************************************
  * Defintion of configuration option
@@ -1837,21 +1850,22 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 			   missing_record_argument> ) {
 		frontier & G = record.get_frontier( GA );
 		
-		// Do sparse edgemap and construct new frontier. Note that
-		// if a new frontier is constructed using a method, we will
-		// not currently use the method.
+		// Do sparse edgemap and construct new frontier.
+		// The current edgemap implementations (at least CSR) use
+		// the record method, or reduction.
 		if constexpr ( record.record == frontier_record::frontier_true )
 		    G = csr_sparse_no_f(
 			config,
 			GA.getCSR(), GA.get_eid_retriever(), F, sparse_op );
-		else if constexpr( record.record == frontier_record::frontier_reduction )
+		else if constexpr (
+		    record.record == frontier_record::frontier_reduction
+		    || record.record ==
+		    frontier_record::frontier_reduction_or_method )
 		    G = csr_sparse_with_f(
 			config,
 			GA.getCSR(), GA.get_eid_retriever(),
 			GA.get_partitioner(), F, sparse_op );
 		else if constexpr( record.record == frontier_record::frontier_method ) {
-		    // Ignore the method (strong assumption on prog model) ...
-		    // assert( 0 && "NYI" );
 		    G = csr_sparse_with_f(
 			config,
 			GA.getCSR(), GA.get_eid_retriever(),
@@ -1910,7 +1924,10 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 		else if constexpr ( record.record == frontier_record::frontier_reduction )
 		    G = csc_sparse_aset_with_f(
 			config, GA.getCSR(), part, scalar_op, F );
-		else if constexpr ( record.record == frontier_record::frontier_method ) {
+		else if constexpr (
+		    record.record == frontier_record::frontier_method
+		    || record.record ==
+		    frontier_record::frontier_reduction_or_method ) {
 		    const VID * degree = GA.getOutDegree();
 		    auto record_op = record.template
 			record_and_count<cfg_scalar,true>( degree, scalar_op );
