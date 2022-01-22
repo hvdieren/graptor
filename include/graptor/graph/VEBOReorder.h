@@ -1114,12 +1114,20 @@ private:
 			// vertices are handled by this loop
 			if( j < k ) {
 			    int r = (k-j) / P;
+			    bool cont = false;
+			    if( pmul > 1 && ( r % pmul ) != 0 ) {
+				r -= r % pmul;
+				cont = true;
+			    }
 			    for( VID p=0; p < P; ++p ) {
 				u[p] += r;
 				w[p] += r * d;
 			    }
-			}
-			break;
+			    j += r * P;
+			    if( !cont )
+				break;
+			} else
+			    break;
 		    }
 		}
 
