@@ -153,6 +153,11 @@ public:
 	start = GA.remapID( P.getOptionLongValue( "-start", 0 ) );
 	delta = P.getOptionDoubleValue( "-sssp:delta", 1.0 );
 
+	if( GA.getWeights() == nullptr ) {
+	    std::cerr << "DSSSP requires edge weights. Terminating.\n";
+	    exit( 1 );
+	}
+
 	static bool once = false;
 	if( !once ) {
 	    once = true;
@@ -394,9 +399,10 @@ public:
 		api::config( api::frac_threshold( SP_THRESHOLD ) ),
 #endif
 #if DEFERRED_UPDATE
-		// TODO: Do we apply the deferred update function in sparse
-		//       edgemap?
+		// Allow for (sparse) push to use reduction update to inform
+		// frontier rather than using the method.
 		api::record( output,
+			     api::reduction_or_method,
 			     [&] ( auto d ) {
 			     return cur_dist[d] != new_dist[d]; },
 			     api::strong ),
@@ -413,6 +419,7 @@ public:
 #endif
 		} )
 		).materialize();
+			   
 
 #if ( !LEVEL_ASYNC || DEFERRED_UPDATE ) && 0
 	    // A sparse frontier that cannot be automatically converted due to
