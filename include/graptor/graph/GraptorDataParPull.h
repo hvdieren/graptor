@@ -52,6 +52,7 @@ private:
     VID nv;	//!< Number of SIMD groups of vertices (n rounded up to maxVL)
     VID vlo;    //!< First vertex of slab
     EID mv;	//!< Number of SIMD groups of edges worth sizeof(VID)*VL bytes
+    EID mpad;   //!< Number of padding edge entries
     unsigned short maxVL;
     mm::buffer<VID> edges;
     WeightT * const weights;
@@ -66,7 +67,7 @@ public:
 				 unsigned numa_node,
 				 WeightT * const weights_ )
 	: n( n_ ), nv( n_ + ( (-n_) % maxVL_ ) ), vlo( vlo_ ),
-	  mv( mv_ * maxVL_ ),
+	  mv( mv_ * maxVL_ ), mpad( 0 ),
 	  maxVL( maxVL_ ),
 	  edges( mv_ * maxVL_, numa_allocation_local( numa_node ) ),
 	  weights( weights_ ) {
@@ -89,6 +90,8 @@ public:
 
     VID numSIMDVertices() const { return nv; }
     EID numSIMDEdges() const { return mv; }
+    EID numPaddingEdges() const { return mpad; }
+    void setNumPaddingEdges( EID mpad_ ) { mpad = mpad_; }
 
     // Compatibility with GraphCSxSIMDDegreeMixed
     EID numSIMDEdgesDelta1() const { return 0; }
@@ -98,6 +101,7 @@ public:
     unsigned short getDegreeBits() const { return (DegreeBits+maxVL-1)/maxVL; }
     unsigned short getDegreeShift() const {
 	return sizeof(VID)*8 - getDegreeBits();
+
     }
 };
 
@@ -195,6 +199,7 @@ public:
 	    const VID vs = part.start_of( p );
 	    const VID ve = part.end_of( p );
 	    EID pe = 0;
+	    EID mpad = 0;
 	    for( VID v=vs; v < ve; v += maxVL ) {
 		EID deg = rindex[v+1] - rindex[v];
 		for( EID d=0; d < deg; ++d ) {
@@ -240,12 +245,14 @@ public:
 			    VID u = absent;
 			    u |= b << ( sizeof(VID) * 8 - dbpl );
 			    pedges[pe] = u;
+			    ++mpad;
 			}
 
 			++pe;
 		    }
 		}
 	    }
+	    slabs[p].setNumPaddingEdges( mpad );
 	} );
     }
 
@@ -276,6 +283,7 @@ public:
 	    const VID vs = part.start_of( p );
 	    const VID ve = part.end_of( p );
 	    EID pe = 0;
+	    EID mpad = 0;
 
 	    const VID max_v = remap.origID(0);
 	    const VID max_deg = rindex[max_v+1] - rindex[max_v];
@@ -400,6 +408,7 @@ public:
 			    VID u = absent;
 			    u |= b << ( sizeof(VID) * 8 - dbpl );
 			    pedges[pe] = u;
+			    ++mpad;
 			}
 
 			++pe;
@@ -408,9 +417,9 @@ public:
 #endif
 	    }
 
+	    slabs[p].setNumPaddingEdges( mpad );
 	    delete[] buf;
 	} );
-	// std::cerr << "Graptor: WARNING: adjacency lists have not been sorted\n";
     }
 
 
