@@ -1021,17 +1021,10 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
 
-    unsigned char * p = new unsigned char[sizeof(EID)*m*2];
-    EID * degrees = reinterpret_cast<EID *>( &p[0] );
-    EID * index = reinterpret_cast<EID *>( &p[sizeof(EID)*m] );
-
-    // Calculate degrees
+    // Calculate maximum number of activated out-edges
     EID outEdgeCount = 0;
-    for( VID i=0; i < m; ++i ) {
-	index[i] = idx[s[i]];
-	degrees[i] = idx[s[i]+1] - idx[s[i]];
-	outEdgeCount += degrees[i];
-    }
+    for( VID i=0; i < m; ++i )
+	outEdgeCount += idx[s[i]+1] - idx[s[i]];
 
     if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
 	outEdgeCount += m; // Add in m vertices in old frontier
@@ -1069,15 +1062,15 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     EID nacte = 0;
     for( VID k = 0; k < m; k++ ) {
 	VID v = s[k];
-	VID d = degrees[k];
-	const VID * out = &edge[index[k]];
+	VID d = idx[s[k]+1] - idx[s[k]];
+	const VID * out = &edge[idx[s[k]]];
 
 	// Sequential, so dump in sequential locations in outEdges[]
 	auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
 
 	for( VID j=0; j < d; j++ ) {
 	    // EID seid = eid_retriever.get_edge_eid( v, j );
-	    EID seid = index[k]+j;
+	    EID seid = idx[s[k]]+j;
 	    auto dst = simd::template load_from<simd::ty<VID,1>>( &out[j] );
 	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	    auto m = expr::create_value_map_new<1>(
@@ -1095,7 +1088,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 			add = true;
 		    }
 		} else
-			add = true;
+		    add = true;
 
 		if( add ) {
 		    outEdges[nactv++] = dst;
@@ -1111,8 +1104,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 
     // Add in vertices in old_frontier, if not present yet
     if constexpr ( emap_do_add_in_frontier_out<Operator>::value ) {
+	static_assert( zerof, "missing code for !zerof" );
 	for( VID r=0; r < m; ++r )
-	    if( zf[s[r]] == (VID)-1 )
+	    if( !zf[s[r]] )
 		outEdges[nactv++] = s[r];
     }
 
@@ -1125,14 +1119,239 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 	}
     }
 
+    // TODO: edge count is wrong in case of !zerof because
+    //       new frontier may contain same vertex multiple times.
     frontier new_frontier
 	= frontier::sparse( GA.numVertices(), nactv, outEdges );
     new_frontier.setActiveCounts( nactv, nacte );
 
-    // Clean up and return
-    delete[] p;
-    
     return new_frontier;
+}
+
+template<bool zerof, typename config, typename Operator>
+frontier csr_sparse_with_f_seq_fusion(
+    config & cfg,
+    const GraphCSx & GA,
+    const partitioner & part,
+    frontier actv,
+    std::vector<VID> & unprocessed,
+    bool * zf,
+    Operator op ) {
+    const EID * idx = GA.getIndex();
+    VID m = actv.nActiveVertices();
+    VID * s = actv.getSparse();
+
+    // Calculate maximum number of activated out-edges
+    EID outEdgeCount = 0;
+    for( VID i=0; i < m; ++i )
+	outEdgeCount += idx[s[i]+1] - idx[s[i]];
+    if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
+	outEdgeCount += m; // Add in m vertices in old frontier
+
+    // Reserve space to store the activated vertices. As we don't know if
+    // we will process them immediately with the fused operation, or if we
+    // will postpone processing them, we reserve space for them twice.
+    VID *outEdges = new VID[outEdgeCount];
+    unprocessed.reserve( unprocessed.size() + outEdgeCount );
+
+    // CSR requires no check that destination is active.
+    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+    auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    // auto fexpr0 = op.fusion( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto fexpr0 = expr::value<simd::ty<bool,1>,expr::vk_true>();
+
+    // Append. TODO: ensure short-circuit evaluation in scalar execution
+    // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
+    auto vexpr1 = vexpr0 && uexpr0;
+    // auto vexpr1 = vexpr0;
+
+    // Rewrite local variables
+    auto l_cache_v = expr::extract_local_vars( vexpr1, expr::cache<>() );
+    auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache_v );
+
+    auto l_cache_f = expr::extract_local_vars( fexpr0, expr::cache<>() );
+    auto fexpr2 = expr::rewrite_caches<expr::vk_zero>( fexpr0, l_cache_f );
+
+    auto l_cache = expr::cache_cat( l_cache_v, l_cache_f );
+
+    // Match vector lengths and move masks
+    auto vexpr = expr::rewrite_mask_main( vexpr2 );
+    auto fexpr = expr::rewrite_mask_main( fexpr2 );
+
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	GA.getWeights() ? GA.getWeights()->get() : nullptr );
+					 
+    auto env = expr::eval::create_execution_environment_with(
+	op.get_ptrset( ew_pset ), l_cache, vexpr, fexpr );
+
+    tuple<> c; // empty cache
+
+    const VID *edge = GA.getEdges();
+
+    VID nactv = 0;
+    for( VID k = 0; k < m; k++ ) {
+	VID v = s[k];
+	VID d = idx[s[k]+1] - idx[s[k]];
+	const VID * out = &edge[idx[s[k]]];
+
+	// Sequential, so dump in sequential locations in outEdges[]
+	auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	for( VID j=0; j < d; j++ ) {
+	    // EID seid = eid_retriever.get_edge_eid( v, j );
+	    EID seid = idx[s[k]]+j;
+	    auto dst = simd::template load_from<simd::ty<VID,1>>( &out[j] );
+	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
+	    auto m = expr::create_value_map_new<1>(
+		expr::create_entry<expr::vk_dst>( dst ),
+		expr::create_entry<expr::vk_edge>( eid ),
+		expr::create_entry<expr::vk_src>( src ) );
+
+	    // Set evaluator to use atomics
+	    auto ret = env.template evaluate<true>( c, m, vexpr );
+
+	    if( ret.value().data() ) {
+		// Query whether to process immediately
+		auto immediate_val = env.evaluate( c, m, fexpr );
+		bool immediate = immediate_val.value().data() ? true : false;
+
+		VID dst = out[j];
+
+		if( immediate ) {
+		    // Process now, no need to set in zero-flags
+		    outEdges[nactv++] = dst;
+		} else {
+		    // Include in unprocessed list, of not already done so
+		    unsigned char flg = 1;
+		    if( !__sync_fetch_and_or( (unsigned char *)&zf[dst], flg ) )
+			unprocessed.push_back( dst );
+		}
+	    }
+	}
+    }
+
+    // assert( nactv <= outEdgeCount );
+
+    // Add in vertices in old_frontier, if not present yet
+    if constexpr ( emap_do_add_in_frontier_out<Operator>::value ) {
+	static_assert( zerof, "missing code for !zerof" );
+	// static_assert( false, "questionable if this is safe here" );
+	for( VID r=0; r < m; ++r )
+	    if( !zf[s[r]] )
+		outEdges[nactv++] = s[r];
+    }
+
+    // TODO: edge count is wrong in case of !zerof because
+    //       new frontier may contain same vertex multiple times.
+    frontier new_frontier
+	= frontier::sparse( GA.numVertices(), nactv, outEdges );
+    // We don't really care how many edges are activated, just duplicate
+    // number of activated vertices to have zero/non-zero status
+    new_frontier.setActiveCounts( nactv, (EID)nactv );
+
+    return new_frontier;
+}
+
+
+template<bool zerof, typename config, typename Operator>
+std::vector<VID> csr_sparse_with_f_seq_fusion_driver(
+    config & cfg,
+    const GraphCSx & GA,
+    const partitioner & part,
+    frontier actv,
+    bool * zf,
+    Operator op ) {
+    // Assumptions
+    static_assert( zerof, "Assuming presence of joint flag array for now" );
+
+    std::vector<VID> unprocessed;
+    bool first = true;
+    
+    // Repeat until work depleted
+    while( !actv.isEmpty() ) {
+	// F.first = vertices amenable for further processing
+	// F.second = vertices not amenable for immediate processing
+	frontier F = csr_sparse_with_f_seq_fusion<zerof>(
+	    cfg, GA, part, actv, unprocessed, zf, op );
+
+	// We are done with this
+	if( first )
+	    first = false;
+	else
+	    actv.del();
+
+	// Next, process F.first
+	actv = F;
+    }
+
+    if( !first )
+	actv.del();
+
+    return unprocessed;
+}
+
+
+template<bool zerof, typename config, typename EIDRetriever, typename Operator>
+static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
+    config & cfg,
+    const GraphCSx & GA,
+    const EIDRetriever & eid_retriever,
+    const partitioner & part,
+    frontier & old_frontier,
+    bool * zf,
+    Operator op ) {
+
+    if( !cfg.is_parallel() )
+	return csr_sparse_with_f_seq<zerof>(
+	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
+
+    // Split the list of active vertices over the number of threads, and
+    // have each thread run through multiple iterations until complete.
+    VID m = old_frontier.nActiveVertices();
+    VID * s = old_frontier.getSparse();
+
+    VID num_threads = graptor_num_threads();
+    std::vector<VID> * F = new std::vector<VID>[num_threads]();
+    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	VID from = ( t * m ) / num_threads;
+	VID to = t == num_threads ? m : ( (t + 1) * m ) / num_threads;
+	frontier f = frontier::sparse( GA.numVertices(), to-from, &s[from] );
+	f.setActiveCounts( to-from, to-from );
+	F[t] = csr_sparse_with_f_seq_fusion_driver<zerof>(
+	    cfg, GA, part, f, zf, op );
+	// do not delete frontier f; doesn't own data
+    }
+
+    // Restore zero frontier to all zeros; do not access old frontiers copied
+    // in as we did not set their flag in the loop above
+    if constexpr ( zerof ) {
+	// TODO: this might miss out those vertices already processed
+	parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	    VID outEdgeCount = F[t].size();
+	    VID * outEdges = &F[t][0];
+	    for( VID k=0; k < outEdgeCount; ++k )
+		zf[outEdges[k]] = false;
+	}
+    }
+
+    // Tally all activated vertices
+    VID nactv = 0;
+    for( uint32_t t=0; t < num_threads; ++t )
+	nactv += F[t].size();
+    
+    // Merge all the resultant frontiers (copy - could do in parallel)
+    frontier merged = frontier::sparse( GA.numVertices(), nactv );
+    s = merged.getSparse();
+    for( uint32_t t=0; t < num_threads; ++t ) {
+	s = std::copy( F[t].begin(), F[t].end(), s );
+    }
+
+    // Cleanup. Deletes contents of vectors also.
+    delete[] F;
+
+    return merged;
 }
 
 
@@ -1310,6 +1529,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
 	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
     }
+
+    // return csr_sparse_with_f_fusion<zerof>(
+    // cfg, GA, eid_retriever, part, old_frontier, zf, op );
 
     if( m < 1024 || !cfg.is_parallel() )
 	return csr_sparse_with_f_seq<zerof>(
@@ -1489,7 +1711,7 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    if( __builtin_expect( d < 1000, 1 ) ) {
-		process_csr_sparse<false,false,false>(
+		process_csr_sparse<true,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
 		    nullptr, nullptr, env, vexpr );
 	    } else {
