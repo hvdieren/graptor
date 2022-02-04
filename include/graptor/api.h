@@ -378,7 +378,7 @@ template<typename T>
 constexpr bool is_threshold_v = is_threshold<T>::value;
 
 /**=====================================================================*
- * Defintion of filters
+ * Definition of filters
  *
  * Filtering of inactive lanes can be done in following ways:
  *   1. Apply a mask on all computations on that lane
