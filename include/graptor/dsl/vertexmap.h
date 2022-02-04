@@ -301,6 +301,8 @@ struct AppendVOpToEOp
     }
 
     auto get_config() const { return eop.get_config(); }
+
+    frontier & get_frontier() { return eop.get_frontier(); }
 };
 
 
