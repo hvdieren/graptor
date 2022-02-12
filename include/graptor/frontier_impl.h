@@ -368,6 +368,8 @@ inline std::ostream & operator << ( std::ostream & os, const frontier & F ) {
 	    os << "frontier [S] #" << nv << ":";
 	    for( VID v=0; v < nv && v < 200; ++v )
 		os << ' ' << f[v];
+	    if( nv >= 200 )
+		os << " ...";
 	    return os;
 	}
     }
