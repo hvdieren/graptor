@@ -291,6 +291,7 @@ public:
 		GA,
 #if DEFERRED_UPDATE
 		api::record( output,
+			     api::reduction_or_method, 
 			     [&] ( auto d ) { return IDs[d] != prevIDs[d]; },
 			     api::strong ),
 #else
