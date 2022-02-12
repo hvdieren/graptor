@@ -3,166 +3,11 @@
 #define GRAPTOR_API_H
 
 #include "graptor/dsl/ast/decl.h"
+#include "graptor/api/utils.h"
 
 class frontier;
 
 namespace api {
-
-namespace { // anonymous
-
-/************************************************************************
- * Auxiliary for validating argument types.
- * Each condition should evaluate to true at most once.
- ************************************************************************/
-// Zero template conditions - there may not be any arguments
-template<typename... Args>
-struct check_arguments_0 : public std::false_type { };
-
-template<>
-struct check_arguments_0<> : public std::true_type { };
-
-// One template condition
-template<template<typename> class C0, typename... Args>
-struct check_arguments_1;
-
-template<template<typename> class C0>
-struct check_arguments_1<C0> : public std::true_type { };
-
-template<template<typename> class C0, typename Arg0, typename... Args>
-struct check_arguments_1<C0,Arg0,Args...> {
-    static constexpr bool value =
-	C0<std::decay_t<Arg0>>::value && check_arguments_0<Args...>::value;
-};
-
-// Two template conditions
-template<template<typename> class C0, template<typename> class C1,
-	 typename... Args>
-struct check_arguments_2;
-
-template<template<typename> class C0, template<typename> class C1>
-struct check_arguments_2<C0,C1> : public std::true_type { };
-
-template<template<typename> class C0, template<typename> class C1,
-	 typename Arg0, typename... Args>
-struct check_arguments_2<C0,C1,Arg0,Args...> {
-    static constexpr bool value =
-	( C0<std::decay_t<Arg0>>::value
-	  && check_arguments_1<C1,Args...>::value )
-	|| ( C1<std::decay_t<Arg0>>::value
-	     && check_arguments_1<C0,Args...>::value );
-};
-
-// Three template conditions
-template<template<typename> class C0, template<typename> class C1,
-	 template<typename> class C2, typename... Args>
-struct check_arguments_3;
-
-template<template<typename> class C0, template<typename> class C1,
-	 template<typename> class C2>
-struct check_arguments_3<C0,C1,C2> : public std::true_type { };
-
-template<template<typename> class C0, template<typename> class C1,
-	 template<typename> class C2,
-	 typename Arg0, typename... Args>
-struct check_arguments_3<C0,C1,C2,Arg0,Args...> {
-    static constexpr bool value =
-	( C0<std::decay_t<Arg0>>::value
-	  && check_arguments_2<C1,C2,Args...>::value )
-	|| ( C1<std::decay_t<Arg0>>::value
-	     && check_arguments_2<C0,C2,Args...>::value )
-	|| ( C2<std::decay_t<Arg0>>::value
-	     && check_arguments_2<C0,C1,Args...>::value );
-};
-
-/************************************************************************
- * Auxiliary for identifying if an argument type is present
- ************************************************************************/
-template<template<typename> class C, typename... Args>
-struct has_argument : public std::false_type { };
-
-template<template<typename> class C, typename Arg, typename... Args>
-struct has_argument<C,Arg,Args...> {
-    static constexpr bool value =
-	C<std::decay_t<Arg>>::value || has_argument<C,Args...>::value;
-};
-
-template<template<typename> class C, typename... Args>
-constexpr bool has_argument_v = has_argument<C,Args...>::value;
-
-/************************************************************************
- * Auxiliary for picking up the first type argument that meets a specific
- * constraint.
- ************************************************************************/
-template<typename... Args>
-struct _pack { };
-
-template<template<typename> class C0, typename Default, typename Pack,
-	 typename Enable = void>
-struct get_argument_type_helper;
-
-template<template<typename> class C0, typename Default>
-struct get_argument_type_helper<C0,Default,_pack<>> {
-    using type = Default;
-};
-
-template<template<typename> class C0, typename Default,
-	 typename Arg0, typename... Args>
-struct get_argument_type_helper<C0,Default,_pack<Arg0,Args...>,
-				std::enable_if_t<C0<std::decay_t<Arg0>>::value>> {
-    using type = std::decay_t<Arg0>;
-};
-
-template<template<typename> class C0, typename Default,
-	 typename Arg0, typename... Args>
-struct get_argument_type_helper<C0,Default,_pack<Arg0,Args...>,
-				std::enable_if_t<!C0<std::decay_t<Arg0>>::value>> {
-    using type =
-	typename get_argument_type_helper<C0,Default,_pack<Args...>>::type;
-};
-
-template<template<typename> class C0, typename Default, typename... Args>
-using get_argument_type = get_argument_type_helper<C0,Default,_pack<Args...>>;
-
-template<template<typename> class C0, typename Default, typename... Args>
-using get_argument_type_t =
-    typename get_argument_type<C0,Default,Args...>::type;
-
-/************************************************************************
- * Auxiliary for picking up the first argument value whose type meets a
- * specific constraint.
- ************************************************************************/
-template<template<typename> class C0, typename MissingTy>
-MissingTy & get_argument_value() {
-    static MissingTy missing;
-    return missing;
-}
-
-template<template<typename> class C0, typename MissingTy,
-	 typename Arg0, typename... Args>
-auto & get_argument_value( Arg0 & arg0, Args &... args ) {
-    if constexpr ( C0<std::decay_t<Arg0>>::value )
-	return arg0;
-    else
-	return get_argument_value<C0,MissingTy>( args... );
-}
-
-} // namespace anonymous
-
-/************************************************************************
- * Auxiliary for testing an argument is a frontier or active condition
- ************************************************************************/
-template<typename T>
-using is_frontier = std::is_same<T,frontier>;
-
-template<typename T>
-constexpr bool is_frontier_v = is_frontier<T>::value;
-
-template<typename Fn>
-using is_active =
-    std::is_invocable<Fn,expr::value<simd::ty<VID,1>,expr::vk_dst>>;
-
-template<typename T>
-constexpr bool is_active_v = is_active<T>::value;
 
 /************************************************************************
  * Definition of parameters expressing strength of filters
@@ -1327,7 +1172,7 @@ template<parallelism_spec P, unsigned short VL, typename threshold_type>
 struct is_config<arg_config<P,VL,threshold_type>> : public std::true_type { };
 
 /************************************************************************
- * Defintion of relax method
+ * Definition of relax method
  ************************************************************************/
 template<typename Fn>
 using is_relax_method =
@@ -1403,6 +1248,11 @@ template<typename Fn, typename Vo>
 struct is_relax<arg_relax_vop<Fn,Vo>> : public std::true_type { };
 
 /************************************************************************
+ * Definition of fusion method
+ ************************************************************************/
+#include "graptor/api/fusion.h"
+
+/************************************************************************
  * Construct conventional operator class
  ************************************************************************/
 template<typename Rlx,
@@ -1410,6 +1260,7 @@ template<typename Rlx,
 	 typename Fdst,
 	 typename Adst,
 	 typename Rec,
+	 typename Fus,
 	 typename Cfg>
 struct op_def {
     static constexpr frontier_mode new_frontier =
@@ -1434,12 +1285,13 @@ struct op_def {
     static constexpr bool new_frontier_dense = false; // to be removed
 
     op_def( Rlx && relax, Fsrc && filter_src, Fdst && filter_dst,
-	    Adst && active_dst, Rec && record, Cfg && config )
+	    Adst && active_dst, Rec && record, Fus && fusion, Cfg && config )
 	: m_relax( std::forward<Rlx>( relax ) ),
 	  m_filter_src( std::forward<Fsrc>( filter_src ) ),
 	  m_filter_dst( std::forward<Fdst>( filter_dst ) ),
 	  m_active_dst( std::forward<Adst>( active_dst ) ),
 	  m_record( std::forward<Rec>( record ) ),
+	  m_fusion( std::forward<Fus>( fusion ) ),
 	  m_config( std::forward<Cfg>( config ) ) { }
 
     template<typename VIDSrc, typename VIDDst, typename EIDEdge>
@@ -1487,14 +1339,24 @@ struct op_def {
 	return expr::set_mask( m, e );
     }
 
+    template<typename VIDDst>
+    auto fusionop( VIDDst d ) const {
+	auto dd = expr::remove_mask( d );
+	auto m = expr::get_mask_cond( d );
+	auto e = m_fusion.fusionop( dd );
+	return expr::set_mask( m, e );
+    }
+
     template<typename PSet>
     auto get_ptrset( const PSet & pset ) const {
 	auto s = expr::value<simd::ty<VID,1>,expr::vk_src>();
 	auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
 	auto e = expr::value<simd::ty<EID,1>,expr::vk_edge>();
 	return map_merge(
-	    expr::extract_pointer_set_with( pset, relax( s, d, e ) ),
-	    expr::extract_pointer_set( vertexop( d ) ) );
+	    map_merge(
+		expr::extract_pointer_set_with( pset, relax( s, d, e ) ),
+		expr::extract_pointer_set( vertexop( d ) ) ),
+	    expr::extract_pointer_set( fusionop( d ) ) );
     }
 
     auto get_ptrset() const { // TODO - redundant
@@ -1615,6 +1477,7 @@ private:
     Fdst m_filter_dst;
     Adst m_active_dst;
     Rec m_record;
+    Fus m_fusion;
     Cfg m_config;
 };
 
@@ -1623,20 +1486,23 @@ template<typename Rlx,
 	 typename Fdst,
 	 typename Adst,
 	 typename Rec,
+	 typename Fus,
 	 typename Cfg>
 auto op_create( Rlx && rlx, Fsrc && fsrc, Fdst && fdst, Adst && adst,
-		Rec && rec, Cfg && cfg ) {
+		Rec && rec, Fus && fus, Cfg && cfg ) {
     return op_def<std::decay_t<Rlx>,
 		  std::decay_t<Fsrc>,
 		  std::decay_t<Fdst>,
 		  std::decay_t<Adst>,
 		  std::decay_t<Rec>,
+		  std::decay_t<Fus>,
 		  std::decay_t<Cfg>>(
 		      std::forward<std::decay_t<Rlx>>( rlx ),
 		      std::forward<std::decay_t<Fsrc>>( fsrc ),
 		      std::forward<std::decay_t<Fdst>>( fdst ),
 		      std::forward<std::decay_t<Adst>>( adst ),
 		      std::forward<std::decay_t<Rec>>( rec ),
+		      std::forward<std::decay_t<Fus>>( fus ),
 		      std::forward<std::decay_t<Cfg>>( cfg ) );
 }
 
@@ -1799,6 +1665,8 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 	get_argument_value<is_filter_method,missing_filter_argument>( args... );
     auto record =
 	get_argument_value<is_record,missing_record_argument>( args... );
+    auto fusion =
+	get_argument_value<is_fusion,missing_fusion_argument>( args... );
 
     auto config
 	= get_argument_value<is_config,missing_config_argument>( args... );
@@ -1810,7 +1678,7 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 
     // Build operator
     auto op = op_create( relax, filter_src, filter_dst, active_dst, record,
-			 config );
+			 fusion, config );
     using Operator = decltype(op);
 
     // Analyse operator
