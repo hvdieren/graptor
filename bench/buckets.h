@@ -220,7 +220,7 @@ public:
 	: m_range( n ), m_open_buckets( open_buckets ), m_fn( fn ),
 	  m_cur_bkt( 0 ), m_cur_range( 0 ), m_elems( 0 ) {
 	// Create a set of buckets
-	m_buckets = new bucket<ID>[m_open_buckets+1];
+	m_buckets = new bucket<ID>[m_open_buckets+1]();
     }
 
     ~buckets() {
@@ -232,7 +232,7 @@ public:
 
     bool empty() const { return m_elems == 0; }
 
-    ID get_current_bucket() const { return m_cur_range + m_cur_bkt + 1; }
+    ID get_current_bucket() const { return m_cur_range + m_cur_bkt; }
 
 /*
     need to consider reinsertion cost -> especially if in dense traversal
@@ -243,6 +243,31 @@ public:
 
     frontier __attribute__((noinline)) next_bucket() {
 	while( true ) {
+	    // If we run out of buckets, refill
+	    if( m_cur_bkt == m_open_buckets ) {
+		using namespace std;
+		// Assumption: all buckets are empty except for the final one
+		bucket<ID> reassign;
+
+		swap( reassign, m_buckets[m_open_buckets] );
+		m_cur_range += m_open_buckets;
+		m_cur_bkt = 0; // actual bucket is m_cur_range + m_cur_bkt
+		
+		assert( m_elems == reassign.size() );
+		m_elems = 0;
+		update_buckets( reassign );
+
+		// TODO: at this pointm we may desire to remove duplicates
+		//       to reduce numbers.
+		// TODO: initially, only need to insert degree-1 vertices,
+		//       others will be added as we go along (wavefront).
+		// std::cerr << "split open bucket; m_elems=" << m_elems << "\n";
+
+		// In case we dropped all elements during re-assignment
+		if( m_elems == 0 )
+		    return frontier::empty();
+	    }
+
 	    // Re-do current bucket if not empty (some elements changed, and
 	    // remained in current bucket)
 	    if( !m_buckets[m_cur_bkt].empty() ) {
@@ -294,19 +319,6 @@ public:
 
 	    // Progress to next bucket
 	    ++m_cur_bkt;
-
-	    // If we run out of buckets, refill
-	    if( m_cur_bkt == m_open_buckets ) {
-		using namespace std;
-		// Assumption: all buckets are empty except for the final one
-		bucket<ID> reassign;
-		swap( reassign, m_buckets[m_open_buckets] );
-		assert( m_elems == reassign.size() );
-		m_elems = 0;
-		m_cur_range += m_open_buckets;
-		m_cur_bkt = 0;
-		update_buckets( reassign );
-	    }
 	}
     }
 
@@ -358,6 +370,8 @@ public:
 	}
 	default: UNREACHABLE_CASE_STATEMENT;
 	}
+	// std::cerr << "m_cur_bkt=" << m_cur_bkt << "\n";
+	// std::cerr << "m_elems=" << m_elems << "\n";
     }
     
 private:
@@ -409,9 +423,14 @@ private:
 		if( id == ~(ID)0 )
 		    continue;
 
+		if( bkt == ~(ID)0 )
+		    continue;
+
 		ID b = slot( bkt );
 		lhist[b]++;
 		idb[v] = b;
+
+		// std::cerr << "insert id=" << id << " into bkt=" << bkt << " slot=" << b << "\n";
 	    }
 	} );
 	
@@ -443,6 +462,9 @@ private:
 		// ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
+		    continue;
+
+		if( bkt == ~(ID)0 )
 		    continue;
 
 		// ID b = slot( bkt );
@@ -508,6 +530,9 @@ private:
 		if( id == ~(ID)0 )
 		    continue;
 
+		if( bkt == ~(ID)0 )
+		    continue;
+
 		ID b = slot( bkt );
 		lhist[b]++;
 		idb[v] = b;
@@ -542,6 +567,9 @@ private:
 		// ID id = fn.get( v );
 
 		if( id == ~(ID)0 )
+		    continue;
+
+		if( bkt == ~(ID)0 )
 		    continue;
 
 		// ID b = slot( bkt );
@@ -588,6 +616,9 @@ private:
 	    std::tie( id, bkt ) = fn( i );
 
 	    if( id == ~(ID)0 )
+		continue;
+
+	    if( bkt == ~(ID)0 )
 		continue;
 
 	    ID b = slot( bkt );
