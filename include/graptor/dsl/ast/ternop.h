@@ -13,6 +13,7 @@ struct ternop : public expr_base {
 		   "vector lengths must match" );
 
     using data_type = typename E3::data_type; // E1 is conditional for iif
+    using type = typename data_type::member_type;
     static constexpr unsigned short VL = E1::VL;
     using arg1_type = E1;
     using arg2_type = E2;
