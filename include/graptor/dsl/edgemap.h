@@ -11,6 +11,7 @@
 
 #include <immintrin.h>
 
+#include "graptor/frontier.h"
 #include "graptor/target/vector.h"
 #include "graptor/dsl/simd_vector.h"
 #include "graptor/dsl/ast.h"
@@ -37,6 +38,9 @@
 #include "graptor/dsl/emap/GraptorCSRVPushNotCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParNotCached.h"
+
+#include "graptor/frontier_impl.h"
+#include "graptor/api/fusion.h"
 
 template<typename EMapConfig, typename GraphType, typename EdgeOperator>
 static inline void emap_push(
@@ -70,10 +74,11 @@ static std::ostream & emap_report_dyn( std::ostream & os, Operator op ) {
 	return os;
 
     printed = true;
-    
+
     return EMapConfig::report( std::cout )
 	<< " Operator { is_scan: " << Operator::is_scan
-	// << ", is_idempotent: " << Operator::is_idempotent
+	<< ", is_idempotent: " << expr::is_idempotent_op<Operator>::value
+	<< ", fusion: " << api::has_fusion_op_v<Operator>
 	<< " } config { is_parallel: " << op.get_config().is_parallel()
 	<< ", maxVL: " << op.get_config().max_vector_length()
 	<< ", s/d threshold: " << op.get_config().get_threshold()
@@ -1159,8 +1164,7 @@ frontier csr_sparse_with_f_seq_fusion(
 			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-    // auto fexpr0 = op.fusion( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-    auto fexpr0 = expr::value<simd::ty<bool,1>,expr::vk_true>();
+    auto fexpr0 = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
 
     // Append. TODO: ensure short-circuit evaluation in scalar execution
     // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
@@ -1186,7 +1190,8 @@ frontier csr_sparse_with_f_seq_fusion(
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr, fexpr );
 
-    tuple<> c; // empty cache
+    auto mi = expr::create_value_map_new<1>();
+    auto c = cache_create( env, l_cache, mi );
 
     const VID *edge = GA.getEdges();
 
@@ -1220,12 +1225,31 @@ frontier csr_sparse_with_f_seq_fusion(
 		VID dst = out[j];
 
 		if( immediate ) {
-		    // Process now, no need to set in zero-flags
-		    outEdges[nactv++] = dst;
+		    // Process now. Differentiate idempotent operators
+		    // to avoid the repeated processing book-keeping.
+		    if constexpr (
+			expr::is_idempotent<decltype(vexpr)>::value ) {
+			// A vertex may be processed multiple times, by
+			// multiple threads, possibly concurrently.
+			// Multiple threads may insert the vertex in their
+			// active list, then concurrent processing may occur.
+			outEdges[nactv++] = dst;
+		    } else {
+			// A vertex may first be unprocessed,
+			// then on a later edge become immediately ready.
+			// Record differently.
+			unsigned char flg = 2;
+			unsigned char old
+			    = __sync_fetch_and_or( (unsigned char *)&zf[dst], flg );
+			if( ( old & flg ) == 0 )
+			    outEdges[nactv++] = dst;
+		    }
 		} else {
-		    // Include in unprocessed list, of not already done so
+		    // Include in unprocessed list, if not already done so
 		    unsigned char flg = 1;
-		    if( !__sync_fetch_and_or( (unsigned char *)&zf[dst], flg ) )
+		    unsigned char old
+			= __sync_fetch_and_or( (unsigned char *)&zf[dst], flg );
+		    if( ( old & flg ) == 0 )
 			unprocessed.push_back( dst );
 		}
 	    }
@@ -1327,12 +1351,20 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
     if constexpr ( zerof ) {
-	// TODO: this might miss out those vertices already processed
-	parallel_for( uint32_t t=0; t < num_threads; ++t ) {
-	    VID outEdgeCount = F[t].size();
-	    VID * outEdges = &F[t][0];
-	    for( VID k=0; k < outEdgeCount; ++k )
-		zf[outEdges[k]] = false;
+	if constexpr ( expr::is_idempotent_op<Operator>::value ) {
+	    // Vertices already processed leave no info in zf[]
+	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+		VID outEdgeCount = F[t].size();
+		VID * outEdges = &F[t][0];
+		for( VID k=0; k < outEdgeCount; ++k )
+		    zf[outEdges[k]] = false;
+	    }
+	} else {
+	    // Vertices already processed leave info in zf[] that is not
+	    // easily cleared.
+	    VID n = GA.numVertices();
+	    parallel_for( VID v=0; v < n; ++v )
+		zf[v] = false;
 	}
     }
 
@@ -1340,7 +1372,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
     VID nactv = 0;
     for( uint32_t t=0; t < num_threads; ++t )
 	nactv += F[t].size();
-    
+
     // Merge all the resultant frontiers (copy - could do in parallel)
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
@@ -1351,6 +1383,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
     // Cleanup. Deletes contents of vectors also.
     delete[] F;
 
+    merged.setActiveCounts( nactv, nactv );
     return merged;
 }
 
@@ -1451,7 +1484,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_old(
     // timer tmd;
     // tmd.start();
     VID nextM = 0;
-    if constexpr ( expr::is_idempotent<decltype(vexpr)>::value && false ) { // TEMP
+    if constexpr ( expr::is_idempotent<decltype(vexpr)>::value ) {
 	// Operation is idempotent, i.e., we are allowed to process each
 	// edge multiple times. No need to remove duplicates. We will filter
 	// 'empty' slots (marked -1).
@@ -1530,8 +1563,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
     }
 
-    // return csr_sparse_with_f_fusion<zerof>(
-    // cfg, GA, eid_retriever, part, old_frontier, zf, op );
+    if constexpr ( api::has_fusion_op_v<Operator> )
+	return csr_sparse_with_f_fusion<zerof>(
+	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
 
     if( m < 1024 || !cfg.is_parallel() )
 	return csr_sparse_with_f_seq<zerof>(
