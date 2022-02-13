@@ -38,6 +38,10 @@
 #define INITID 0
 #endif
 
+#ifndef FUSION
+#define FUSION 1
+#endif
+
 using LabelTy = VID;
 
 enum variable_name {
@@ -211,6 +215,7 @@ public:
 	    std::cerr << "CONVERGENCE=" << CONVERGENCE << "\n";
 	    std::cerr << "MEMO=" << MEMO << "\n";
 	    std::cerr << "INITID=" << INITID << "\n";
+	    std::cerr << "FUSION=" << FUSION << "\n";
 	}
     }
     ~CCv() {
@@ -303,6 +308,9 @@ public:
 			     [&] ( auto d ) {
 				 return IDs[d] != expr::zero_val(d);
 			     } ),
+#endif
+#if FUSION
+		api::fusion( [&]( auto d ) { return expr::true_val( d ); } ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC

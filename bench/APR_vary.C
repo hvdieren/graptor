@@ -34,6 +34,10 @@
 #define SCALE_CONTRIB 1
 #endif
 
+#ifndef VARIANT
+#define VARIANT 2046
+#endif
+
 enum variable_name {
     var_pr = 0,
     var_contrib = 1,

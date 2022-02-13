@@ -32,7 +32,7 @@
 #endif
 
 #ifndef VARIANT
-#define VARIANT 10
+#define VARIANT 13
 #endif
 
 // mis_state_t (int) storage

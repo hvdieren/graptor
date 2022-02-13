@@ -30,8 +30,12 @@
 #endif
 #define CONVERGENCE 0
 
-#ifdef SWITCH_DYNAMIC
+#ifndef SWITCH_DYNAMIC
 #define SWITCH_DYNAMIC 0
+#endif
+
+#ifndef VARIANT
+#define VARIANT 4620
 #endif
 
 #if 0
