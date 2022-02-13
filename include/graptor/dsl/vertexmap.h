@@ -259,6 +259,9 @@ struct AppendVOpToEOp
     template<typename VIDDst>
     auto update( VIDDst d ) { return eop.update( d ); }
 
+    template<typename VIDDst>
+    auto fusionop( VIDDst d ) { return eop.fusionop( d ); }
+
 /*
     template<typename VIDDst>
     auto different( VIDDst d ) { return eop.different( d ); }
