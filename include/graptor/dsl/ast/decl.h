@@ -407,6 +407,15 @@ template<typename E>
 struct is_indexed_by_dst : is_indexed_by_vk<expr::vk_dst,E> { };
 
 template<typename Expr>
+struct is_constant_false : std::false_type { };
+
+template<typename Tr>
+struct is_constant_false<value<Tr,vk_false>> : std::true_type { };
+
+template<typename E, typename M>
+struct is_constant_false<binop<E,M,binop_mask>> : is_constant_false<E> { };
+
+template<typename Expr>
 struct is_constant_true : std::false_type { };
 
 template<typename Tr>
