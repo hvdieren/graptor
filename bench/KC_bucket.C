@@ -11,8 +11,8 @@ using expr::_0;
 using expr::_1;
 
 // By default set options for highest performance
-#ifndef ACTIVE
-#define ACTIVE 1
+#ifndef FUSION
+#define FUSION 1
 #endif
 
 enum variable_name {
@@ -59,6 +59,7 @@ public:
 	static bool once = false;
 	if( !once ) {
 	    once = true;
+	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "num_buckets=" << num_buckets << "\n";
 	}
     }
@@ -121,9 +122,17 @@ public:
 
 	largestCore = 0;
 	iter = 0;
-	while( todo > 0 ) { // iterate until all vertices visited
+#if FUSION
+	while( !bkts.empty() ) // cannot count todo as needed with fusion
+#else
+	while( todo > 0 ) // iterate until all vertices visited
+#endif
+	{
+
+#if !FUSION
 	    assert( !bkts.empty() );
-	// while( !bkts.empty() ) {
+#endif
+	
 	    timer tm_iter;
 	    tm_iter.start();
 
@@ -193,6 +202,19 @@ public:
 		GA,
 		api::filter( api::src, api::strong, unique ),
 		api::record( output, api::reduction, api::strong ),
+#if FUSION
+		api::fusion( [&]( auto v ) {
+		    auto cK = expr::constant_val( coreness[v], K );
+		    return expr::let<var_let>(
+			coreness[v],
+			[&]( auto k ) {
+			    return expr::make_seq(
+				coreness[v] = expr::add_predicate(
+				    cK, k == _0 && degrees[v] <= cK ),
+				k == _0 && degrees[v] <= cK );
+			} );
+		} ),
+#endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // Note: constant_val copies over the mask of s
 		    auto cK = expr::constant_val( degrees[d], K );
@@ -211,6 +233,7 @@ public:
 
 	    // std::cerr << "output: " << output << "\n";
 	    // print( std::cerr, part, degrees );
+	    // print( std::cerr, part, coreness );
 	    // std::cerr << "todo: " << todo << "\n";
 
 	    bkts.update_buckets( part, output );
