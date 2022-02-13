@@ -35,10 +35,6 @@ using expr::_1;
 #define VARIANT 0
 #endif
 
-#ifndef DENSE_COPY
-#define DENSE_COPY 1 // bad default
-#endif
-
 #ifndef SP_THRESHOLD
 #define SP_THRESHOLD -1
 #endif
@@ -169,7 +165,6 @@ public:
 	    std::cerr << "CONVERGENCE=" << CONVERGENCE << "\n";
 	    std::cerr << "MEMO=" << MEMO << "\n";
 	    std::cerr << "VARIANT=" << VARIANT << "\n";
-	    std::cerr << "DENSE_COPY=" << DENSE_COPY << "\n";
 	    std::cerr << "SP_THRESHOLD=" << SP_THRESHOLD << "\n";
 	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "sizeof(FloatTy)=" << sizeof(FloatTy) << "\n";
@@ -505,11 +500,7 @@ public:
 	    bkts.update_buckets( part, output );
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    if( output.getType() == frontier_type::ft_unbacked
-#if DENSE_COPY
-		|| 1
-#endif
-		) {
+	    if( output.getType() == frontier_type::ft_unbacked ) {
 		make_lazy_executor( part )
 		    .vertex_map( [&]( auto v ) {
 			return cur_dist[v] = new_dist[v];
@@ -604,11 +595,7 @@ public:
 	    bkts.update_buckets( part, output );
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-	    if( output.getType() == frontier_type::ft_unbacked
-#if DENSE_COPY
-		|| 1
-#endif
-		) {
+	    if( output.getType() == frontier_type::ft_unbacked ) {
 		make_lazy_executor( part )
 		    .vertex_map( [&]( auto v ) {
 			return cur_dist_final[v] = new_dist_final[v];
@@ -621,8 +608,6 @@ public:
 		    } )
 		    .materialize();
 	    }
-	    // maintain_copies( part, output, cur_dist.get_ptr(),
-	    // new_dist.get_ptr() );
 #endif
 
 	    active += output.nActiveVertices();
