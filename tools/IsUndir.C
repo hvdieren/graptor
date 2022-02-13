@@ -10,10 +10,16 @@ bool hasEdge( GraphCSx & G, VID src, VID dst ) {
     const EID * idx = G.getIndex();
     const VID * edge = G.getEdges();
 
+#if 0
     for( EID i=idx[src]; i < idx[src+1]; ++i )
 	if( edge[i] == dst )
 	    return true;
     return false;
+#else
+    const VID * pos
+	= std::lower_bound( &edge[idx[src]], &edge[idx[src+1]], dst );
+    return pos != &edge[idx[src+1]];
+#endif
 }
 
 int main( int argc, char *argv[] ) {
