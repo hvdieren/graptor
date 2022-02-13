@@ -3,6 +3,7 @@
 #define GRAPTOR_API_FUSION_H
 
 #include "graptor/api/utils.h"
+#include "graptor/dsl/ast/decl.h"
 
 class frontier;
 
@@ -30,7 +31,9 @@ struct arg_fusion {
 struct missing_fusion_argument {
     template<typename VIDDst>
     auto fusionop( VIDDst d ) const {
-	return expr::value<simd::ty<bool,1>,expr::vk_true>();
+	// A value of false indicates that a vertex cannot be processed
+	// immediately in the fused operation, hence it disables fusion.
+	return expr::value<simd::ty<bool,VIDDst::VL>,expr::vk_false>();
     }
 };
 
@@ -55,10 +58,9 @@ struct is_fusion<arg_fusion<Fn>> : public std::true_type { };
 template<typename Op>
 struct has_fusion_op {
     static constexpr bool value = 
-	!std::is_same_v<
+	!expr::is_constant_false<
 	decltype(((Op*)nullptr)->fusionop(
-		     expr::value<simd::ty<VID,1>,expr::vk_dst>() )),
-	expr::value<simd::ty<bool,1>,expr::vk_true>()>;
+		     expr::value<simd::ty<VID,1>,expr::vk_dst>() ))>::value;
 };
 
 template<typename Op>
