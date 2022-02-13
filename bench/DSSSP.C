@@ -43,8 +43,8 @@ using expr::_1;
 #define SP_THRESHOLD -1
 #endif
 
-#ifndef NUM_BUCKETS
-#define NUM_BUCKETS 127
+#ifndef FUSION
+#define FUSION 1
 #endif
 
 struct BF_customfp_config {
@@ -138,7 +138,9 @@ template <class GraphType>
 class DSSSP {
 public:
     DSSSP( GraphType & _GA, commandLine & P )
-	: GA( _GA ), info_buf( 60 ),
+	: GA( _GA ),
+	  num_buckets( P.getOptionLongValue( "-sssp:buckets", 127 ) ),
+	  info_buf( 60 ),
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	  cur_dist( GA.get_partitioner(), "current distance" ),
 	  cur_dist_final( GA.get_partitioner(), "current distance (final)" ),
@@ -169,9 +171,10 @@ public:
 	    std::cerr << "VARIANT=" << VARIANT << "\n";
 	    std::cerr << "DENSE_COPY=" << DENSE_COPY << "\n";
 	    std::cerr << "SP_THRESHOLD=" << SP_THRESHOLD << "\n";
+	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "sizeof(FloatTy)=" << sizeof(FloatTy) << "\n";
 	    std::cerr << "sizeof(SFloatTy)=" << sizeof(SFloatTy) << "\n";
-	    std::cerr << "NUM_BUCKETS=" << NUM_BUCKETS << "\n";
+	    std::cerr << "num_buckets=" << num_buckets << "\n";
 	    std::cerr << "delta=" << delta << "\n";
 #if VARIANT != 2
 	    using ft = fp_traits<SFloatTy>;
@@ -356,7 +359,7 @@ public:
 
 	// Create bucket structure
 	buckets<VID,bucket_fn>
-	    bkts( n, NUM_BUCKETS, bucket_fn( new_dist.get_ptr(), delta ) );
+	    bkts( n, num_buckets, bucket_fn( new_dist.get_ptr(), delta ) );
 
 	// Place start vertex in first bucket
 	bkts.insert( start, 0 );
@@ -411,6 +414,13 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
+#if FUSION
+		api::fusion( [&]( auto d ) {
+		    auto threshold = expr::constant_val2<FloatTy>(
+			d, delta * (FloatTy)(1+bkts.get_current_bucket()) );
+		    return new_dist[d] <= threshold;
+		} ),
+#endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
 		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
@@ -694,6 +704,7 @@ public:
 
 private:
     const GraphType & GA;
+    int num_buckets;
     bool itimes, debug, calculate_active;
     int iter;
     VID start, active;
