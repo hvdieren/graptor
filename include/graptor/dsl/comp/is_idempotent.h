@@ -142,6 +142,17 @@ struct is_idempotent {
     static constexpr bool value = D::value && D::seen_mod <= 1;
 };
 
+template<typename Operator>
+struct is_idempotent_op {
+    static constexpr bool value = is_idempotent<
+	decltype(
+	    ((Operator*)nullptr)
+	    ->relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+		     expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+		     expr::value<simd::ty<EID,1>,expr::vk_edge>() ))>
+	::value;
+};
+
 } // namespace expr
 
 #endif // GRAPTOR_DSL_COMP_IS_IDEMPOTENT_H
