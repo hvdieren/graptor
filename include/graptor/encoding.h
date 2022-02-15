@@ -513,6 +513,7 @@ struct array_encoding_bit {
     storeu( storage_type * base, index_type idx,
 	    typename Tr::type raw ) {
 	if constexpr ( Tr::VL == 1 ) {
+	    using UTr = simd::ty<storage_type,Tr::VL>;
 	    stored_type value( raw );
 	    bool success;
 	    do {
@@ -521,7 +522,11 @@ struct array_encoding_bit {
 		auto u = stored_traits<factor>::setlane( m, value, idx % factor );
 		// A CAS is necessary as two threads may modify different bits
 		// of the same byte concurrently
-		success = cas<Tr>( &base[idx/factor], m, u );
+		// TODO: should be able to avoid this under the right conditions
+		// e.g. vertexmap with partition-boundaries that are multiples
+		// of 8.
+		success = array_encoding<storage_type>::template cas<UTr>(
+		    &base[idx/factor], m, u );
 	    } while( !success );
 	} else {
 	    // A CAS is necessary as two threads may modify different bits
