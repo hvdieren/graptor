@@ -42,6 +42,10 @@
 #define FUSION 1
 #endif
 
+#ifndef PRESET_ZERO
+#define PRESET_ZERO 1
+#endif
+
 using LabelTy = VID;
 
 enum variable_name {
@@ -143,6 +147,7 @@ public:
 	    std::cerr << "MEMO=" << MEMO << "\n";
 	    std::cerr << "INITID=" << INITID << "\n";
 	    std::cerr << "FUSION=" << FUSION << "\n";
+	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
 	}
     }
     ~CCv() {
@@ -198,17 +203,45 @@ public:
 	    .materialize();
 #endif
 
-	// Create initial frontier
-	frontier F = frontier::all_true( n, m );
+	iter = 0;
+
+	timer tm_iter;
+	tm_iter.start();
+
+#if PRESET_ZERO
+	// Create frontier
+	frontier G = frontier::sparse(
+	    n, GA.getCSR().getDegree(0),
+	    const_cast<VID *>(
+		&(GA.getCSR().getEdges())[GA.getCSR().getIndex()[0]] ) );
+
+	assert( IDs[0] == 0 && "Assumption about initialisation" );
+	make_lazy_executor( part )
+	    .vertex_map( G, [&]( auto vid ) {
+		return IDs[vid] = expr::zero_val( vid );
+	    } )
+	    .materialize();
+	// Do not delete frontier G, it does not own data
+
+	if( itimes ) {
+	    info_buf.resize( iter+1 );
+	    info_buf[iter].density = G.density( GA.numEdges() );
+	    info_buf[iter].nacte = G.nActiveEdges();
+	    info_buf[iter].nactv = G.nActiveVertices();
+	    info_buf[iter].active = float(1)/float(n);
+	    info_buf[iter].delay = tm_iter.next();
+	    if( debug )
+		info_buf[iter].dump( iter );
+	}
+	++iter;
+#endif
 
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto vid ) { return prevIDs[vid] = IDs[vid]; } )
 	    .materialize();
 
-	iter = 0;
-
-	timer tm_iter;
-	tm_iter.start();
+	// Create frontier
+	frontier F = frontier::all_true( n, m );
 
 	while( !F.isEmpty() ) {  // iterate until IDs converge
 	    // Propagate labels
