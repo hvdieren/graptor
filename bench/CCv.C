@@ -62,65 +62,6 @@ struct CC_Vertex_Count
     }
 };
 
-#if 0
-template <class GraphType>
-void count_components( GraphType &GA, mmap_ptr<LabelTy> &IDs ) {
-    const partitioner &part = GA.get_partitioner();
-    VID n = GA.numVertices();
-    EID m = GA.numEdges();
-
-    // Collect statistics
-    // 1. initialise data
-    mmap_ptr<size_t> count;
-    count.allocate( numa_allocation_partitioned( part ) );
-    expr::array_ro<size_t,VID,0> count_a( count );
-
-    make_lazy_executor( part )
-	.vertex_map( [&]( auto v ) {
-			 return count_a[v] = expr::zero_val( count_a[v] ); } )
-	.materialize();
-
-    // 2. count number of vertices per partition
-    //    set only vertex donating label as active
-    // frontier Frontier = frontier::all_true( part, n, m ); // all active
-    // frontier Frontier = GA.template createValidFrontier<sizeof(VID)>();
-    using traits = gtraits<GraphType>;
-    frontier Frontier = traits::template createValidFrontier<sizeof(VID)>( GA );
-
-    // TODO: immediately use packIndex as toSparse() will do the same
-    frontier components
-	= vertexFilter( GA, Frontier, CC_Vertex_Count( IDs, count ) );
-
-    // 3. get number of components
-    VID ncomponents = components.nActiveVertices();
-    components.toSparse( part );
-    std::cout << "Components: " << ncomponents << "\n";
-
-    // 4. get extreme statistics and check correctness
-    VID * s = components.getSparse();
-    VID largest = 0, smallest = ~VID(0);
-    VID sum = 0;
-    for( VID i=0; i < ncomponents; ++i ) {
-	VID j = s[i];
-	sum += count[j];
-	if( smallest > count[j] )
-	    smallest = count[j];
-	if( largest < count[j] )
-	    largest = count[j];
-    }
-    std::cout << "Check: All vertices accounted for? "
-	      << ( sum == GA.get_partitioner().get_num_vertices() ? "PASS" : "FAIL" )
-	      << " (s=" << sum << '/' << n << '/' << GA.get_partitioner().get_num_vertices() << ")\n";
-    std::cout << "Largest component: " << largest << "\n";
-    std::cout << "Smallest component: " << smallest << "\n";
-    std::cout << "Component zero: " << count[0] << "\n";
-
-    Frontier.del();
-    components.del();
-    count.del();
-}
-#endif
-
 template <class GraphType>
 struct DegreeCmp {
     DegreeCmp( const GraphType & G_ ) : G( G_ ) { }
@@ -131,20 +72,6 @@ struct DegreeCmp {
     }
 private:
     const GraphType & G;
-};
-
-template <class GraphType>
-struct RecodeLabels {
-    const GraphType & GA;
-    const mmap_ptr<VID> & labels;
-
-    RecodeLabels( const GraphType & _GA, const mmap_ptr<VID> & _labels )
-	: GA( _GA ), labels( _labels ) { }
-
-    VID operator() ( VID v ) const {
-	// Each component is represent by the ID of its smalle
-	return GA.originalID( labels[v] );
-    }
 };
 
 template<typename GraphType>
