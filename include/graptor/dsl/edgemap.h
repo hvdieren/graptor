@@ -20,6 +20,7 @@
 #include "graptor/dsl/comp/rewrite_redop_to_store.h"
 #include "graptor/dsl/comp/rewrite_internal.h"
 #include "graptor/dsl/comp/is_idempotent.h"
+#include "graptor/dsl/comp/is_benign_race.h"
 
 #include "graptor/dsl/emap/utils.h"
 #include "graptor/dsl/emap/emap_scan.h"
@@ -306,7 +307,8 @@ void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
 	if constexpr ( once ) { // at least initialise *f
 	    if constexpr ( zerof ) {
 		if( updated ) { // set true
-		    if( __sync_fetch_and_or( (unsigned char *)zf, (unsigned char)1 ) ) {
+		    if( !*zf && __sync_fetch_and_or( (unsigned char *)zf,
+						     (unsigned char)1 ) ) {
 			// already set, don't set twice
 			*f = ~(VID)0;
 		    } else
@@ -750,24 +752,17 @@ public:
     static constexpr bool value = sizeof(test<T>(0)) == sizeof(char);
 };
 
-template<typename Operator, bool V = false>
-struct emap_do_add_in_frontier_out_helper {
-    static constexpr bool value = V;
-};
-
 template<typename Operator, typename Enable = void>
 struct emap_do_add_in_frontier_out
-    : emap_do_add_in_frontier_out_helper<Operator,false> { };
+    : public std::false_type { };
 
 template<typename Operator>
 struct emap_do_add_in_frontier_out<
     Operator,std::enable_if_t<has_add_in_frontier_out<Operator>::value>>
-    : emap_do_add_in_frontier_out_helper<
-    Operator,Operator::add_in_frontier_out> { };
-
+    : public std::integral_constant<bool,Operator::add_in_frontier_out> { };
 
 template<bool zerof, typename EIDRetriever, typename Expr>
-static DBG_NOINLINE VID
+static VID
 process_csr_sparse_seq( const EIDRetriever & eid_retriever,
 			const VID *out, VID deg, VID srcv, VID *frontier,
 			bool *zf, const Expr & e ) {
@@ -830,7 +825,7 @@ process_csr_sparse( const EIDRetriever & eid_retriever,
     }
 }
 
-template<bool setf, bool zerof, typename EIDRetriever,
+template<bool atomic, bool setf, bool zerof, typename EIDRetriever,
 	 typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
@@ -856,7 +851,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = env.template evaluate<true>( c, m, e );
+	auto ret = env.template evaluate<atomic>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
     }
@@ -889,7 +884,7 @@ process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
     }
 }
 
-template<bool setf, bool zerof,
+template<bool atomic, bool setf, bool zerof,
 	 typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const VID *out, EID be,
@@ -916,7 +911,7 @@ process_csr_sparse_parallel( const VID *out, EID be,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = env.template evaluate<true>( c, m, e );
+	auto ret = env.template evaluate<atomic>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
     }
@@ -950,7 +945,7 @@ process_csr_sparse( const EIDRetriever & eid_retriever,
     }
 }
 
-template<bool setf, bool zerof, typename EIDRetriever,
+template<bool atomic, bool setf, bool zerof, typename EIDRetriever,
 	 typename Expr>
 static void
 process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
@@ -975,7 +970,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = expr::evaluate<true>( c, m, e );
+	auto ret = expr::evaluate<atomic>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
     }
@@ -1617,12 +1612,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     const VID *edge = GA.getEdges();
 
+    constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
+
     parallel_for( VID k = 0; k < m; k++ ) {
 	VID v = s[k];
 	EID o = offsets[k];
 	intT d = degrees[k];
 	if( __builtin_expect( d < 1000, 1 ) ) {
-	    process_csr_sparse<true,true,zerof>(
+	    process_csr_sparse<need_atomic,true,zerof>(
 		&edge[idx[v]], idx[v], d, v,
 		&outEdges[o], zf, env, vexpr );
 	} else {
@@ -1630,7 +1627,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	    //       will hardly ever occur, as in the sparse part
 	    //       high-degree vertices may have converged (e.g.
 	    //       PRDelta, maybe not BFS)
-	    process_csr_sparse_parallel<true,zerof>(
+	    process_csr_sparse_parallel<need_atomic,true,zerof>(
 		&edge[idx[v]], idx[v],
 		d, v, &outEdges[o], zf, env, vexpr );
 	}
@@ -1732,6 +1729,8 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 
     const VID *edge = GA.getEdges();
 
+    constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
+
     if constexpr ( !std::decay_t<config>::is_parallel() ) {
 	for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
@@ -1745,14 +1744,14 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    if( __builtin_expect( d < 1000, 1 ) ) {
-		process_csr_sparse<true,false,false>(
+		process_csr_sparse<need_atomic,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
 		    nullptr, nullptr, env, vexpr );
 	    } else {
 		// Note: it is highly likely that running this in parallel
 		//       will hardly ever occur, as in the sparse part high-degree
 		//       vertices may have converged (e.g. PRDelta, maybe not BFS)
-		process_csr_sparse_parallel<false,false>(
+		process_csr_sparse_parallel<need_atomic,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v],
 		    d, v, nullptr, nullptr, env, vexpr );
 	    }

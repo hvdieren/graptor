@@ -65,6 +65,7 @@ struct redop_logicalor {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_logicalor";
@@ -234,6 +235,7 @@ struct redop_bitwiseor {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_bitwiseor";
@@ -421,6 +423,7 @@ struct redop_logicaland {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_logicaland";
@@ -513,6 +516,7 @@ struct redop_min {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_min";
@@ -693,6 +697,7 @@ struct redop_max {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_max";
@@ -867,6 +872,7 @@ struct redop_add {
     };
 
     static constexpr bool is_idempotent = false;
+    static constexpr bool is_benign_race = false; // load-modify-store
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_add";
@@ -1175,6 +1181,7 @@ struct redop_setif {
     };
 
     static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = true; // store-only
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_setif";
