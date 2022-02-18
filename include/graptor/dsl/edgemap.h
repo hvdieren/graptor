@@ -1365,17 +1365,21 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
 
     // Tally all activated vertices
     VID nactv = 0;
-    for( uint32_t t=0; t < num_threads; ++t )
+    VID * inspt = new VID[num_threads];
+    for( uint32_t t=0; t < num_threads; ++t ) {
+	inspt[t] = nactv;
 	nactv += F[t].size();
+    }
 
     // Merge all the resultant frontiers (copy - could do in parallel)
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
-    for( uint32_t t=0; t < num_threads; ++t ) {
-	s = std::copy( F[t].begin(), F[t].end(), s );
+    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
     }
 
     // Cleanup. Deletes contents of vectors also.
+    delete[] inspt;
     delete[] F;
 
     merged.setActiveCounts( nactv, nactv );
