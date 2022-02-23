@@ -1128,7 +1128,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     return new_frontier;
 }
 
-template<bool zerof, typename config, typename Operator>
+template<bool zerof, bool need_strong_checking,
+	 typename config, typename Operator>
 frontier csr_sparse_with_f_seq_fusion(
     config & cfg,
     const GraphCSx & GA,
@@ -1213,8 +1214,11 @@ frontier csr_sparse_with_f_seq_fusion(
 	    auto ret = env.template evaluate<true>( c, m, vexpr );
 
 	    if( ret.value().data() ) {
-		// Query whether to process immediately
-		auto immediate_val = env.evaluate( c, m, fexpr );
+		// Query whether to process immediately. Note: the fusion
+		// operation may have side-effects, and is executed with
+		// atomics. However, it is not executed atomically with the
+		// relax operation!
+		auto immediate_val = env.template evaluate<true>( c, m, fexpr );
 		bool immediate = immediate_val.value().data() ? true : false;
 
 		VID dst = out[j];
@@ -1222,14 +1226,7 @@ frontier csr_sparse_with_f_seq_fusion(
 		if( immediate ) {
 		    // Process now. Differentiate idempotent operators
 		    // to avoid the repeated processing book-keeping.
-		    if constexpr (
-			expr::is_idempotent<decltype(vexpr)>::value ) {
-			// A vertex may be processed multiple times, by
-			// multiple threads, possibly concurrently.
-			// Multiple threads may insert the vertex in their
-			// active list, then concurrent processing may occur.
-			outEdges[nactv++] = dst;
-		    } else {
+		    if constexpr ( need_strong_checking ) {
 			// A vertex may first be unprocessed,
 			// then on a later edge become immediately ready.
 			// Record differently.
@@ -1238,6 +1235,12 @@ frontier csr_sparse_with_f_seq_fusion(
 			    = __sync_fetch_and_or( (unsigned char *)&zf[dst], flg );
 			if( ( old & flg ) == 0 )
 			    outEdges[nactv++] = dst;
+		    } else {
+			// A vertex may be processed multiple times, by
+			// multiple threads, possibly concurrently.
+			// Multiple threads may insert the vertex in their
+			// active list, then concurrent processing may occur.
+			outEdges[nactv++] = dst;
 		    }
 		} else {
 		    // Include in unprocessed list, if not already done so
@@ -1274,7 +1277,8 @@ frontier csr_sparse_with_f_seq_fusion(
 }
 
 
-template<bool zerof, typename config, typename Operator>
+template<bool zerof, bool need_strong_checking,
+	 typename config, typename Operator>
 std::vector<VID> csr_sparse_with_f_seq_fusion_driver(
     config & cfg,
     const GraphCSx & GA,
@@ -1292,8 +1296,12 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_driver(
     while( !actv.isEmpty() ) {
 	// F.first = vertices amenable for further processing
 	// F.second = vertices not amenable for immediate processing
-	frontier F = csr_sparse_with_f_seq_fusion<zerof>(
+	frontier F = csr_sparse_with_f_seq_fusion<zerof,need_strong_checking>(
 	    cfg, GA, part, actv, unprocessed, zf, op );
+
+	// std::cerr << "fused iteration: actv: " << actv << "\n";
+	// std::cerr << "                 F:    " << F << "\n";
+	// std::cerr << "                 #unprocessed: " << unprocessed.size() << "\n";
 
 	// We are done with this
 	if( first )
@@ -1326,6 +1334,19 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
 
+    // Instantiate relax operation only to check if it requires strict exclusion
+    // of replica's of the activated vertices in the immediate or postponed
+    // vertex lists.
+    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			   expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			   expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+    auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto fexpr = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto vexpr = vexpr0 && uexpr0;
+    constexpr bool need_strong_checking
+		  = !( expr::is_idempotent<decltype(fexpr)>::value
+		       && expr::is_idempotent<decltype(vexpr)>::value );
+
     // Split the list of active vertices over the number of threads, and
     // have each thread run through multiple iterations until complete.
     VID m = old_frontier.nActiveVertices();
@@ -1338,7 +1359,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
 	VID to = t == num_threads ? m : ( (t + 1) * m ) / num_threads;
 	frontier f = frontier::sparse( GA.numVertices(), to-from, &s[from] );
 	f.setActiveCounts( to-from, to-from );
-	F[t] = csr_sparse_with_f_seq_fusion_driver<zerof>(
+	F[t] = csr_sparse_with_f_seq_fusion_driver<zerof,need_strong_checking>(
 	    cfg, GA, part, f, zf, op );
 	// do not delete frontier f; doesn't own data
     }
@@ -1346,7 +1367,28 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
     if constexpr ( zerof ) {
-	if constexpr ( expr::is_idempotent_op<Operator>::value ) {
+	if constexpr ( need_strong_checking ) {
+	    // Vertices already processed leave info in zf[] that is not
+	    // easily cleared. So we need to traverse the whole array.
+	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+		// Strange stuff with zf check, compiler erroneously
+		// evading it because it looks like bool(?). Hence the cast.
+		unsigned char * uczf = (unsigned char*)zf;
+		VID outEdgeCount = F[t].size();
+		VID * outEdges = &F[t][0];
+		// If a vertex has been processed immediately, then any copy
+		// introduced previously for postponed processing can be
+		// removed.
+		for( VID k=0; k < outEdgeCount; ++k ) {
+		    if( uczf[outEdges[k]] & (unsigned char)2 )
+			outEdges[k] = ~(VID)0;
+		}
+	    }
+
+	    VID n = GA.numVertices();
+	    parallel_for( VID v=0; v < n; ++v )
+		zf[v] = false;
+	} else {
 	    // Vertices already processed leave no info in zf[]
 	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
 		VID outEdgeCount = F[t].size();
@@ -1354,12 +1396,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
 		for( VID k=0; k < outEdgeCount; ++k )
 		    zf[outEdges[k]] = false;
 	    }
-	} else {
-	    // Vertices already processed leave info in zf[] that is not
-	    // easily cleared.
-	    VID n = GA.numVertices();
-	    parallel_for( VID v=0; v < n; ++v )
-		zf[v] = false;
 	}
     }
 
