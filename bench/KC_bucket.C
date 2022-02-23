@@ -16,32 +16,25 @@ using expr::_1;
 #endif
 
 enum variable_name {
-    var_degrees = 0,
-    var_coreness = 1,
-    var_degrees_ro = expr::aid_graph_degree,
-    var_let = 2,
-    var_ngh = 3
+    var_coreness = 0,
+    var_let = 1,
+    var_ngh = 2,
+    var_degrees_ro = expr::aid_graph_degree
 };
 
 struct bucket_fn {
     using ID = VID;
     
-    bucket_fn( VID * degree, VID * coreness )
-	: m_degree( degree ), m_coreness( coreness ) { }
+    bucket_fn( VID * degree, VID * K )
+	: m_degree( degree ), m_K( K ) { }
 
     VID operator() ( VID v ) const {
-	if( m_coreness[v] != 0 )
-	    return ~(VID)0;
-	else
-	    return m_degree[v];
-    }
-
-    VID get( VID v ) const {
-	return m_degree[v];
+	return v == ~(VID)0 || m_degree[v] < *m_K ? ~(VID)0 : m_degree[v];
     }
     
 private:
-    VID * m_degree, * m_coreness;
+    VID * m_degree;
+    VID * m_K;
 };
 
 template <class GraphType>
@@ -50,7 +43,7 @@ public:
     KCv( GraphType & _GA, commandLine & P )
 	: GA( _GA ),
 	  num_buckets( P.getOptionLongValue( "-kc:buckets", 127 ) ),
-	  coreness( GA.get_partitioner(), "coreness" ),
+	  coreness( GA.get_partitioner(), "count-down degrees / coreness" ),
 	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -87,9 +80,6 @@ public:
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
 
-	api::vertexprop<VID,VID,var_degrees>
-	    degrees( part, "count-down degrees" );
-
 	expr::array_ro<VID, VID, var_degrees_ro> a_degrees_ro(
 	    const_cast<VID *>( GA.getCSR().getDegree() ) );
 
@@ -103,16 +93,16 @@ public:
 		nonzero,  	// record new frontier
 		[&]( auto v ) {
 		    return expr::make_seq(
-			coreness[v] = _0,
-			degrees[v] = a_degrees_ro[v],
-			degrees[v] > _0 );
+			coreness[v] = a_degrees_ro[v],
+			a_degrees_ro[v] > _0 );
 		} )
 	    .materialize();
 
+	VID K = 0;
+
 	// Create bucket structure
 	buckets<VID,bucket_fn>
-	    bkts( n, num_buckets,
-		  bucket_fn( degrees.get_ptr(), coreness.get_ptr() ) );
+	    bkts( n, num_buckets, bucket_fn( coreness.get_ptr(), &K ) );
 
 	// Place each vertex in the bucket corresponding with its degree
 	// ... in parallel
@@ -138,7 +128,7 @@ public:
 
 	    // next_bucket updates current bucket, so do this first...
 	    frontier F = bkts.next_bucket();
-	    VID K = bkts.get_current_bucket();
+	    K = bkts.get_current_bucket();
 	    assert( K >= largestCore );
 
 	    // We don't need to know how many edges there are on F since we
@@ -177,14 +167,7 @@ public:
 		    GA, F, unique,
 		    [&]( auto v ) {
 			auto cK = expr::constant_val( coreness[v], K );
-			return expr::let<var_let>(
-			    coreness[v],
-			    [&]( auto k ) {
-				return expr::make_seq(
-				    coreness[v] = expr::add_predicate(
-					cK, k == _0 ),
-				    k == _0 );
-			    } );
+			return coreness[v] >= cK;
 		    } )
 		.materialize();
 
@@ -194,37 +177,48 @@ public:
 	    // std::cerr << "K: " << K << "\n";
 	    // std::cerr << "F     : " << F << "\n";
 	    // std::cerr << "unique: " << unique << "\n";
-	    // print( std::cerr, part, degrees );
 	    // print( std::cerr, part, coreness );
 
+#if FUSION
+	    frontier output;
+	    api::edgemap(
+		GA,
+		api::config( api::always_sparse ),
+		api::filter( api::src, api::strong, unique ),
+		api::record( output, api::reduction, api::strong ),
+		api::fusion( [&]( auto v ) {
+		    // Requires that RHS of && is evaluated after LHS.
+		    auto cK = expr::constant_val( coreness[v], K );
+		    return coreness[v].count_down( cK );
+		} ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    auto cK = expr::constant_val( coreness[s], K );
+		    return coreness[d] > cK;
+		} )
+		)
+		.materialize();
+#else
 	    frontier output;
 	    api::edgemap(
 		GA,
 		api::filter( api::src, api::strong, unique ),
 		api::record( output, api::reduction, api::strong ),
-#if FUSION
-		api::fusion( [&]( auto v ) {
-		    auto cK = expr::constant_val( coreness[v], K );
-		    return expr::let<var_let>(
-			coreness[v],
-			[&]( auto k ) {
-			    return expr::make_seq(
-				coreness[v] = expr::add_predicate(
-				    cK, k == _0 && degrees[v] <= cK ),
-				k == _0 && degrees[v] <= cK );
-			} );
-		} ),
-#endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // Note: constant_val copies over the mask of s
-		    auto cK = expr::constant_val( degrees[d], K );
-		    return degrees[d] +=
-			expr::add_predicate(
-			    expr::constant_val( s, -1 ),
-			    coreness[d] == _0 );
+		    auto cK = expr::constant_val( s, K );
+		    // We use count_down to K (and never lower) because
+		    // there may be situations where a vertex is sitting at
+		    // degree K+1 and has two or more neighbours whose degree
+		    // is K. Processing those neighbours concurrently may
+		    // push down the degree of the vertex to K-1, however, the
+		    // coreness should still be K. Hence, we use the count_down
+		    // primitive. This is the only way to ensure atomicity
+		    // of the check-larger-than-K-and-subtract operation.
+		    return coreness[d].count_down( cK );
 		} )
 		)
 		.materialize();
+#endif
 
 	    // std::cerr << "unique: " << unique.nActiveVertices() << "\n";
 
@@ -232,7 +226,6 @@ public:
 	    unique.del();
 
 	    // std::cerr << "output: " << output << "\n";
-	    // print( std::cerr, part, degrees );
 	    // print( std::cerr, part, coreness );
 	    // std::cerr << "todo: " << todo << "\n";
 
@@ -252,7 +245,6 @@ public:
 	    output.del();
 	    F.del();
 	}
-	degrees.del();
     }
 
     void post_process( stat & stat_buf ) {
@@ -319,7 +311,8 @@ public:
 		} ).materialize();
 	if( F.nActiveVertices() != 0 ) {
 	    std::cerr << "Validation failed: " << F.nActiveVertices()
-		      << " vertices with zero coreness and non-zero degree\n";
+		      << " vertices with zero coreness and non-zero degree, "
+		      << " or not initialised\n";
 	    // std::cerr << F << "\n";
 	    // print( std::cerr, part, neighbours );
 	    // print( std::cerr, part, coreness );
@@ -345,13 +338,7 @@ public:
 	    )
 	    .vertex_filter( GA, ftrue, F,
 			    [&]( auto v ) {
-				return expr::let<var_let>(
-				    neighbours[v],
-				    [&]( auto n ) {
-					return expr::make_seq(
-					    neighbours[v] = _0, // reset
-					    n + _1 < coreness[v] );
-				    } );
+				return neighbours[v] + _1 < coreness[v];
 			    } )
 	    .materialize();
 
@@ -382,6 +369,10 @@ public:
 	}
 	F.del();
 
+	make_lazy_executor( part )
+	    .vertex_map( [&]( auto v ) { return neighbours[v] = _0; } )
+	    .materialize();
+
 	api::edgemap( GA,
 		      api::relax( [&]( auto s, auto d, auto e ) {
 			  return neighbours[d]
@@ -391,7 +382,6 @@ public:
 	    .vertex_filter( GA, ftrue, F,
 			    [&]( auto v ) {
 				return neighbours[v] > coreness[v];
-				// && coreness[v] < a_degrees[v];
 			    } )
 	    .materialize();
 
