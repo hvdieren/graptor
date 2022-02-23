@@ -260,7 +260,34 @@ public:
 			   &m_addr[m_sidx], o, n )) );
 	}
 	using L = typename add_logical<member_type>::type;
+	// TODO: just return true_mask() case?
 	return r
+	    ? vector<L,1>::true_mask()
+	    : vector<L,1>::false_mask();
+    }
+    template<layout_t Layout_>
+    auto atomic_count_down( vec<vector_traits,Layout_> lim ) {
+	static_assert( VL == 1, "only supported for VL=1" );
+	static_assert( std::is_integral_v<member_type>,
+		       "count-down only makes sense for integral types" );
+
+	using stored_type = typename encoding::stored_type;
+
+	member_type l = lim.at(0); // assumes VL == 1
+	member_type d = traits::setone(); // -1
+	stored_type o;
+	stored_type n;
+	bool r = false;
+	volatile member_type * ptr = &m_addr[m_sidx];
+	do {
+	    o = *ptr;
+	    n = static_cast<stored_type>(
+		static_cast<member_type>( o ) + d );
+	} while( n >= l
+		 && !(r = encoding::template cas<vector_traits>( ptr, o, n )) );
+	using L = typename add_logical<member_type>::type;
+	assert( ( *ptr >= l || o < l ) && "oops, pushed value below threshold" );
+	return o > l && n == l
 	    ? vector<L,1>::true_mask()
 	    : vector<L,1>::false_mask();
     }
