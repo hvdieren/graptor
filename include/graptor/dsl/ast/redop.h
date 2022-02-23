@@ -1024,7 +1024,7 @@ template<typename E>
 auto refop<A,T,VL>::operator += ( E rhs ) {
     return make_redop( *this, rhs, redop_add() );
 }
-
+    
 /*
 template<typename A, typename T, unsigned short VL>
 template<typename E, typename C>
@@ -1033,6 +1033,108 @@ auto refop<A,T,VL>::operator += ( binop<E,C,binop_mask> rhs ) {
 					    redop_add() );
 }
 */
+
+/* redop: count_down
+ */
+struct redop_count_down {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type::prefmask_traits;
+	using cache_type = typename E1::data_type;
+	using infer_type = typename E1::data_type;
+    };
+
+    static constexpr bool is_idempotent = false;
+    static constexpr bool is_benign_race = false; // load-modify-store
+
+    // TODO: should have an ID here instead of string
+    static constexpr char const * name = "redop_count_down";
+
+    template<typename T>
+    static constexpr auto unit() { return typename T::element_type(0); }
+
+    template<typename E1, typename E2>
+    using enable = std::true_type; // enable_if_compatible<U1,U2>;
+
+    template<typename VTr, layout_t Layout1, layout_t Layout2,
+	     typename I, typename Enc, bool NT, typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::lvalue<VTr,I,Enc,NT,Layout1> l,
+				 sb::rvalue<VTr,Layout2> r,
+				 const MPack & mpack ) {
+	// Apply the mask in the addition operation (ALU), perform a full
+	// store. Alternative: only store back relevant values.
+	// Best situation may depend on whether the lvalue is linear or not.
+	auto neg_one = simd::template create_allones<VTr>();
+	if constexpr ( mpack.is_empty() ) {
+	    auto lval = l.value().load();
+	    auto nval = lval + neg_one;
+	    auto ok = lval > r.value();
+	    auto sval = ::iif( ok, lval, nval );
+	    l.value().store( sval );
+	    return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+	} else {
+	    using MTr = typename VTr::prefmask_traits;
+	    auto mask = mpack.template get_mask<MTr>();
+	    if( l.value().is_linear() ) {
+		auto lval = l.value().load();
+		auto nval = lval + neg_one;
+		auto ok = mask && ( lval > r.value() );
+		auto sval = ::iif( ok, lval, nval );
+		l.value().store( sval );
+		return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+	    } else {
+		auto lval = l.value().load( mask );
+		auto nval = lval + neg_one;
+		auto ok = mask && ( lval > r.value() );
+		auto sval = ::iif( ok, lval, nval );
+		l.value().store( sval, mask );
+		return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+	    }
+	}
+    }
+
+    template<typename VTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	// Oops. Maybe the behaviour of redop_add is meaningful?
+	assert( 0 && "Impossible" );
+	if constexpr ( mpack.is_empty() )
+	    return make_rvalue( reduce_add( r.value() ), mpack );
+	else {
+	    // Send an empty mask_pack to indicate an update happened.
+	    // This assumes that the mpack mask is not all-false.
+	    // If the mpack is all-false, then reduce_add should return 0,
+	    // the unit of the additive operation.
+	    auto m = mpack.template get_any<VTr>();
+	    return make_rvalue( reduce_add( r.value(), m ), sb::mask_pack<>() );
+	}
+    }
+
+    template<typename VTr, layout_t Layout1, layout_t Layout2,
+	     typename I, typename Enc, bool NT, typename MPack>
+    static auto
+    evaluate_atomic( sb::lvalue<VTr,I,Enc,NT,Layout1> l,
+		     sb::rvalue<VTr,Layout2> r,
+		     const MPack & mpack ) {
+	static_assert( VTr::VL == 1, "atomics always scalar" );
+	using MTr = typename VTr::prefmask_traits;
+	auto mask = mpack.template get_mask<MTr>();
+	if( mask.data() ) {
+	    auto oval = l.value().atomic_count_down( r.value() );
+	    return make_rvalue( oval, mpack );
+	} else
+	    return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
+				mpack );
+    }
+};
+
+template<typename A, typename T, unsigned short VL>
+template<typename E>
+auto refop<A,T,VL>::count_down( E rhs ) {
+    return redop<self_type,E,redop_count_down>( *this, rhs, redop_count_down() );
+}
+
 
 /* redop: mul
  */

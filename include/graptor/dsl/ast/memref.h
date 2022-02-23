@@ -352,6 +352,9 @@ struct refop : public expr_base {
     template<typename E>
     auto setif( E rhs );
     
+    template<typename E>
+    auto count_down( E rhs );
+    
 private:
     A m_array;
     T m_idx;
