@@ -529,7 +529,7 @@ struct evaluator {
 
     template<typename E1, typename E2, typename C,
 	     typename RedOp, typename MPack>
-   GG_INLINE
+    GG_INLINE
     auto evaluate( const redop<E1,binop<E2,C,binop_predicate>,RedOp> & op,
 		   const MPack & mpack ) {
 	// TODO: do not use levaluate here for the ref when the ref is
