@@ -142,6 +142,7 @@ struct unop_switch_to_vector;
 
 // Pre-declared reduction operations
 struct redop_logicalor;
+template<bool conditional = true>
 struct redop_add;
 struct redop_mul;
 

@@ -233,6 +233,10 @@ public:
     }
     template<layout_t Layout_>
     auto atomic_add( vec<vector_traits,Layout_> val ) {
+	return atomic_add<true>( val );
+    }
+    template<bool conditional, layout_t Layout_>
+    auto atomic_add( vec<vector_traits,Layout_> val ) {
 	static_assert( VL == 1, "only supported for VL=1" );
 	// static_assert( layout != lo_unknown, "cannot do CAS in gather/scatter" );
 
@@ -261,17 +265,19 @@ public:
 	}
 	using L = typename add_logical<member_type>::type;
 	// TODO: just return true_mask() case?
-	return r
-	    ? vector<L,1>::true_mask()
-	    : vector<L,1>::false_mask();
+	if constexpr ( conditional )
+	    return r ? vector<L,1>::true_mask() : vector<L,1>::false_mask();
+	else
+	    return vec<vector_traits,lo_constant>( o );
     }
-    template<layout_t Layout_>
+    template<bool conditional, layout_t Layout_>
     auto atomic_count_down( vec<vector_traits,Layout_> lim ) {
 	static_assert( VL == 1, "only supported for VL=1" );
 	static_assert( std::is_integral_v<member_type>,
 		       "count-down only makes sense for integral types" );
 
 	using stored_type = typename encoding::stored_type;
+	using L = typename add_logical<member_type>::type;
 
 	member_type l = lim.at(0); // assumes VL == 1
 	member_type d = traits::setone(); // -1
@@ -281,15 +287,23 @@ public:
 	volatile member_type * ptr = &m_addr[m_sidx];
 	do {
 	    o = *ptr;
+	    if( o <= l ) {
+		if constexpr ( conditional )
+		    return vector<L,1>::false_mask();
+		else
+		    return vec<vector_traits,lo_constant>( o );
+	    }
 	    n = static_cast<stored_type>(
 		static_cast<member_type>( o ) + d );
-	} while( n >= l
-		 && !(r = encoding::template cas<vector_traits>( ptr, o, n )) );
-	using L = typename add_logical<member_type>::type;
-	assert( ( *ptr >= l || o < l ) && "oops, pushed value below threshold" );
-	return o > l && n == l
-	    ? vector<L,1>::true_mask()
-	    : vector<L,1>::false_mask();
+	} while( !(r = encoding::template cas<vector_traits>( ptr, o, n )) );
+	// assert( ( *ptr >= l || o < l ) && "oops, pushed value below threshold" );
+	if constexpr ( conditional ) {
+	    // previous if( o <= l ) implies o > l // o > l && n == l
+	    return n == l
+		? vector<L,1>::true_mask()
+		: vector<L,1>::false_mask();
+	} else
+	    return vec<vector_traits,lo_constant>( o );
     }
     template<layout_t Layout_>
     auto atomic_setif( vec<vector_traits,Layout_> val ) {

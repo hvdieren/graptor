@@ -628,8 +628,8 @@ private:
 	return expr::make_seq(
 	    expr::make_redop( nactive[z],
 			      expr::iif( m, c0, c1 ),
-			      expr::redop_add() ),
-	    expr::make_redop( vectors[z], c1, expr::redop_add() ) );
+			      expr::redop_add<true>() ),
+	    expr::make_redop( vectors[z], c1, expr::redop_add<true>() ) );
     }
     auto analyze( expr::noop m ) {
 	using Tr1 = simd::ty<VID,1>;
@@ -639,8 +639,8 @@ private:
 	    expr::value<Tr1,expr::vk_pid>() );
 	auto c1 = expr::value<Tr,expr::vk_cstone>();
 	return expr::make_seq(
-	    expr::make_redop( nactive[z], c1, expr::redop_add() ),
-	    expr::make_redop( vectors[z], c1, expr::redop_add() ) );
+	    expr::make_redop( nactive[z], c1, expr::redop_add<true>() ),
+	    expr::make_redop( vectors[z], c1, expr::redop_add<true>() ) );
     }
     template<typename VIDSrc, typename VIDDst, typename Expr>
     auto analyze( VIDSrc s, VIDDst d, Expr e ) {

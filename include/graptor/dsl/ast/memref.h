@@ -355,6 +355,12 @@ struct refop : public expr_base {
     template<typename E>
     auto count_down( E rhs );
     
+    template<typename E>
+    auto count_down_value( E rhs );
+    
+    template<typename E>
+    auto add( E rhs );
+    
 private:
     A m_array;
     T m_idx;

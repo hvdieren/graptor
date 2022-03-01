@@ -863,16 +863,21 @@ auto refop<A,T,VL>::max_if( E rhs, E cond ) {
 
 /* redop: add
  */
+template<bool conditional_>
 struct redop_add {
     template<typename E1, typename E2>
     struct types {
-	using result_type = typename E1::data_type::prefmask_traits;
+	using result_type =
+	    std::conditional_t<conditional_,
+			       typename E1::data_type::prefmask_traits,
+			       typename E1::data_type>;
 	using cache_type = typename E1::data_type;
 	using infer_type = typename E1::data_type;
     };
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool conditional = conditional_;
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_add";
@@ -895,18 +900,28 @@ struct redop_add {
 	if constexpr ( mpack.is_empty() ) {
 	    auto lval = l.value().load();
 	    l.value().store( lval + r.value() );
-	    return make_rvalue( lval.true_mask(), mpack ); // updated values
+	    if constexpr ( conditional )
+		return make_rvalue( lval.true_mask(), mpack ); // updated values
+	    else
+		return make_rvalue( lval, mpack ); // updated values
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
 	    auto mask = mpack.template get_mask<MTr>();
 	    if( l.value().is_linear() ) {
 		auto lval = l.value().load();
 		l.value().store( add( lval, mask, lval, r.value() ) );
+		if constexpr ( conditional )
+		    return make_rvalue( mask, mpack ); // updated values
+		else
+		    return make_rvalue( lval, mpack ); // updated values
 	    } else {
 		auto lval = l.value().load( mask );
 		l.value().store( lval + r.value(), mask );
+		if constexpr ( conditional )
+		    return make_rvalue( mask, mpack ); // updated values
+		else
+		    return make_rvalue( lval, mpack ); // updated values
 	    }
-	    return make_rvalue( mask, mpack ); // updated values
 	}
     }
 
@@ -925,77 +940,6 @@ struct redop_add {
 	}
     }
 
-    
-    
-    template<typename VTr, typename MTr1, typename MTr2, typename I,
-	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
-    static __attribute__((always_inline))
-    auto evaluate( lvalue<VTr,I,MTr1,Enc,NT,LayoutR> l, rvalue<VTr,Layout,MTr2> r ) {
-	// Apply the mask in the addition operation (ALU), perform a full
-	// store. Alternative: only store back relevant values.
-	// Best situation may depend on whether the lvalue is linear or not.
-	auto mask = l.mask() & r.mask();
-	if( l.value().is_linear() ) {
-	    auto lval = l.value().load();
-	    l.value().store( add( lval, mask, lval, r.value() ) );
-	} else {
-	    auto lval = l.value().load(mask);
-	    l.value().store( lval + r.value(), mask );
-	}
-	return make_rvalue( mask ); // updated values
-    }
-
-    template<typename VTr, typename I,
-	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
-    static __attribute__((always_inline))
-    auto evaluate( lvalue<VTr,I,void,Enc,NT,LayoutR> l, rvalue<VTr,Layout,void> r ) {
-	auto lval = l.value().load();
-	l.value().store( lval + r.value() );
-	return make_rvalue( decltype(lval)::true_mask() );
-    }
-
-
-    template<typename VTr, layout_t Layout>
-    static GG_INLINE auto
-    evaluate1( rvalue<VTr,Layout,void> r,
-	      typename std::enable_if<
-	      !std::is_void<VTr>::value>::type * = nullptr ) {
-	return make_rvalue( reduce_add( r.value() ) );
-    }
-    template<typename VTr, typename MTr, layout_t LayoutR, layout_t Layout>
-    static GG_INLINE auto
-    evaluate1( rvalue<VTr,Layout,MTr> r,
-	      typename std::enable_if<
-	       simd::matchVLtt<VTr,MTr>::value>::type * = nullptr ) {
-	return make_rvalue( reduce_add( r.value(), r.mask() ) );
-    }
-
-    template<typename VTr, typename MTr1, typename MTr2, typename I,
-	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
-    static GG_INLINE auto
-    evaluate_atomic( lvalue<VTr,I,MTr1,Enc,NT,LayoutR> l, rvalue<VTr,Layout,MTr2> r,
-		     typename std::enable_if<
-		     simd::matchVLttotu<VTr,MTr1,MTr2,1>::value>::type *
-		     = nullptr ) {
-	auto mask = l.mask() & r.mask();
-	if( mask.data() ) {
-	    auto oval = l.value().atomic_add( r.value() );
-	    return make_rvalue( oval );
-	} else
-	    return make_rvalue( mask );
-    }
-
-    template<typename VTr, typename I,
-	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
-    static GG_INLINE auto
-    evaluate_atomic( lvalue<VTr,I,void,Enc,NT,LayoutR> l, rvalue<VTr,Layout,void> r,
-		     typename std::enable_if<
-		     simd::matchVLtu<VTr,1>::value>::type *
-		     = nullptr ) {
-	auto oval = l.value().atomic_add( r.value() );
-	return make_rvalue( oval );
-    }
-
     template<typename VTr, layout_t Layout1, layout_t Layout2,
 	     typename I, typename Enc, bool NT, typename MPack>
     static auto
@@ -1006,23 +950,33 @@ struct redop_add {
 	using MTr = typename VTr::prefmask_traits;
 	auto mask = mpack.template get_mask<MTr>();
 	if( mask.data() ) {
-	    auto oval = l.value().atomic_add( r.value() );
+	    auto oval = l.value().template atomic_add<conditional>( r.value() );
 	    return make_rvalue( oval, mpack );
-	} else
-	    return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
-				mpack );
+	} else {
+	    if constexpr ( conditional )
+		return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
+				    mpack );
+	    else
+		return make_rvalue( r.value().zero_val(), mpack );
+	}
     }
 };
 
 template<typename E1, typename E2>
 auto add( E1 l, E2 r ) { // E1 must be l-value (levaluate succeeds)
-    return make_redop( l, r, redop_add() );
+    return make_redop( l, r, redop_add<true>() );
 }
 
 template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::operator += ( E rhs ) {
-    return make_redop( *this, rhs, redop_add() );
+    return make_redop( *this, rhs, redop_add<true>() );
+}
+    
+template<typename A, typename T, unsigned short VL>
+template<typename E>
+auto refop<A,T,VL>::add( E rhs ) {
+    return make_redop( *this, rhs, redop_add<false>() );
 }
     
 /*
@@ -1036,16 +990,21 @@ auto refop<A,T,VL>::operator += ( binop<E,C,binop_mask> rhs ) {
 
 /* redop: count_down
  */
+template<bool conditional_>
 struct redop_count_down {
     template<typename E1, typename E2>
     struct types {
-	using result_type = typename E1::data_type::prefmask_traits;
+	using result_type =
+	    std::conditional_t<conditional_,
+			       typename E1::data_type::prefmask_traits,
+			       typename E1::data_type>;
 	using cache_type = typename E1::data_type;
 	using infer_type = typename E1::data_type;
     };
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool conditional = conditional_;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_count_down";
@@ -1072,7 +1031,10 @@ struct redop_count_down {
 	    auto ok = lval > r.value();
 	    auto sval = ::iif( ok, lval, nval );
 	    l.value().store( sval );
-	    return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+	    if constexpr ( conditional )
+		return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+	    else
+		return make_rvalue( lval, mpack );
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
 	    auto mask = mpack.template get_mask<MTr>();
@@ -1082,14 +1044,20 @@ struct redop_count_down {
 		auto ok = mask && ( lval > r.value() );
 		auto sval = ::iif( ok, lval, nval );
 		l.value().store( sval );
-		return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+		if constexpr ( conditional )
+		    return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+		else
+		    return make_rvalue( lval, mpack );
 	    } else {
 		auto lval = l.value().load( mask );
 		auto nval = lval + neg_one;
 		auto ok = mask && ( lval > r.value() );
 		auto sval = ::iif( ok, lval, nval );
 		l.value().store( sval, mask );
-		return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+		if constexpr ( conditional )
+		    return make_rvalue( ok && sval == r.value(), mpack ); // threshold reached
+		else
+		    return make_rvalue( lval, mpack );
 	    }
 	}
     }
@@ -1121,18 +1089,28 @@ struct redop_count_down {
 	using MTr = typename VTr::prefmask_traits;
 	auto mask = mpack.template get_mask<MTr>();
 	if( mask.data() ) {
-	    auto oval = l.value().atomic_count_down( r.value() );
+	    auto oval =
+		l.value().template atomic_count_down<conditional>( r.value() );
 	    return make_rvalue( oval, mpack );
 	} else
-	    return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
-				mpack );
+	    if constexpr ( conditional )
+		return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
+				    mpack );
+	    else
+		return make_rvalue( r.value().zero_val(), mpack );
     }
 };
 
 template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::count_down( E rhs ) {
-    return redop<self_type,E,redop_count_down>( *this, rhs, redop_count_down() );
+    return redop<self_type,E,redop_count_down<true>>( *this, rhs, redop_count_down<true>() );
+}
+
+template<typename A, typename T, unsigned short VL>
+template<typename E>
+auto refop<A,T,VL>::count_down_value( E rhs ) {
+    return redop<self_type,E,redop_count_down<false>>( *this, rhs, redop_count_down<false>() );
 }
 
 
