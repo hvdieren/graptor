@@ -1142,6 +1142,8 @@ frontier csr_sparse_with_f_seq_fusion(
     VID m = actv.nActiveVertices();
     VID * s = actv.getSparse();
 
+    unsigned char * uczf = (unsigned char*)zf;
+
     // Calculate maximum number of activated out-edges
     EID outEdgeCount = 0;
     for( VID i=0; i < m; ++i )
@@ -1153,7 +1155,11 @@ frontier csr_sparse_with_f_seq_fusion(
     // we will process them immediately with the fused operation, or if we
     // will postpone processing them, we reserve space for them twice.
     VID *outEdges = new VID[outEdgeCount];
-    unprocessed.reserve( unprocessed.size() + outEdgeCount );
+    // unprocessed.reserve( unprocessed.size() + outEdgeCount );
+    // Resize rather than reserve to avoid memory allocation checks
+    VID up_count = unprocessed.size();
+    unprocessed.resize( unprocessed.size() + outEdgeCount );
+    VID* up_ptr = unprocessed.data(); // after resize
 
     // CSR requires no check that destination is active.
     auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
@@ -1203,7 +1209,8 @@ frontier csr_sparse_with_f_seq_fusion(
 	for( VID j=0; j < d; j++ ) {
 	    // EID seid = eid_retriever.get_edge_eid( v, j );
 	    EID seid = idx[s[k]]+j;
-	    auto dst = simd::template load_from<simd::ty<VID,1>>( &out[j] );
+	    VID sdst = out[j];
+	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( sdst );
 	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	    auto m = expr::create_value_map_new<1>(
 		expr::create_entry<expr::vk_dst>( dst ),
@@ -1211,6 +1218,7 @@ frontier csr_sparse_with_f_seq_fusion(
 		expr::create_entry<expr::vk_src>( src ) );
 
 	    // Set evaluator to use atomics
+	    // TODO: can drop atomics in case of benign races
 	    auto ret = env.template evaluate<true>( c, m, vexpr );
 
 	    if( ret.value().data() ) {
@@ -1219,11 +1227,9 @@ frontier csr_sparse_with_f_seq_fusion(
 		// atomics. However, it is not executed atomically with the
 		// relax operation!
 		auto immediate_val = env.template evaluate<true>( c, m, fexpr );
-		bool immediate = immediate_val.value().data() ? true : false;
+		int immediate = immediate_val.value().data();
 
-		VID dst = out[j];
-
-		if( immediate ) {
+		if( immediate > 0 ) {
 		    // Process now. Differentiate idempotent operators
 		    // to avoid the repeated processing book-keeping.
 		    if constexpr ( need_strong_checking ) {
@@ -1231,28 +1237,37 @@ frontier csr_sparse_with_f_seq_fusion(
 			// then on a later edge become immediately ready.
 			// Record differently.
 			unsigned char flg = 2;
-			unsigned char old
-			    = __sync_fetch_and_or( (unsigned char *)&zf[dst], flg );
-			if( ( old & flg ) == 0 )
-			    outEdges[nactv++] = dst;
+			unsigned char val = uczf[sdst];
+			if( ( val & flg ) == 0 ) {
+			    unsigned char old
+				= __sync_fetch_and_or( &uczf[sdst], flg );
+			    if( ( old & flg ) == 0 )
+				outEdges[nactv++] = sdst;
+			}
 		    } else {
 			// A vertex may be processed multiple times, by
 			// multiple threads, possibly concurrently.
 			// Multiple threads may insert the vertex in their
 			// active list, then concurrent processing may occur.
-			outEdges[nactv++] = dst;
+			outEdges[nactv++] = sdst;
 		    }
-		} else {
+		} else if( immediate == 0 ) {
 		    // Include in unprocessed list, if not already done so
 		    unsigned char flg = 1;
-		    unsigned char old
-			= __sync_fetch_and_or( (unsigned char *)&zf[dst], flg );
-		    if( ( old & flg ) == 0 )
-			unprocessed.push_back( dst );
+		    unsigned char val = uczf[sdst];
+		    if( ( val & flg ) == 0 ) {
+			unsigned char old
+			    = __sync_fetch_and_or( &uczf[sdst], flg );
+			if( ( old & (unsigned char)3 ) == 0 )
+			    // unprocessed.push_back( sdst );
+			    up_ptr[up_count++] = sdst;
+		    }
 		}
 	    }
 	}
     }
+
+    unprocessed.resize( up_count );
 
     // assert( nactv <= outEdgeCount );
 
@@ -1261,7 +1276,7 @@ frontier csr_sparse_with_f_seq_fusion(
 	static_assert( zerof, "missing code for !zerof" );
 	// static_assert( false, "questionable if this is safe here" );
 	for( VID r=0; r < m; ++r )
-	    if( !zf[s[r]] )
+	    if( !uczf[s[r]] )
 		outEdges[nactv++] = s[r];
     }
 
@@ -1291,7 +1306,7 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_driver(
 
     std::vector<VID> unprocessed;
     bool first = true;
-    
+
     // Repeat until work depleted
     while( !actv.isEmpty() ) {
 	// F.first = vertices amenable for further processing
@@ -1354,6 +1369,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion(
 
     VID num_threads = graptor_num_threads();
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
+
     parallel_for( uint32_t t=0; t < num_threads; ++t ) {
 	VID from = ( t * m ) / num_threads;
 	VID to = t == num_threads ? m : ( (t + 1) * m ) / num_threads;
