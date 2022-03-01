@@ -233,6 +233,7 @@ public:
     bool empty() const { return m_elems == 0; }
 
     ID get_current_bucket() const { return m_cur_range + m_cur_bkt; }
+    ID get_overflow_bucket() const { return m_cur_range + m_open_buckets; }
 
 /*
     need to consider reinsertion cost -> especially if in dense traversal
