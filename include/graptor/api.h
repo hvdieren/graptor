@@ -132,7 +132,8 @@ public:
     frac_threshold( int threshold ) : m_threshold( threshold ) { }
 
     bool is_sparse( VID nactv, EID nacte, EID m ) const {
-	return ( EID(nactv) + nacte ) <= m / EID( 100.0 / (float)m_threshold );
+	return float( EID(nactv) + nacte )
+	    <= float( m ) / ( 100.0 / (float)m_threshold );
     }
 
     bool is_sparse( frontier F, EID m ) const {
