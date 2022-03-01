@@ -270,7 +270,9 @@ public:
 			     } ),
 #endif
 #if FUSION
-		api::fusion( [&]( auto d ) { return expr::true_val( d ); } ),
+		api::fusion( [&]( auto d ) {
+		    return expr::constant_val_one( d );
+		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
