@@ -12,6 +12,8 @@
 #include "check.h"
 #include "unique.h"
 
+using expr::_0;
+
 // By default set options for highest performance
 #ifndef LEVEL_ASYNC
 #define LEVEL_ASYNC 1
@@ -44,6 +46,10 @@
 
 #ifndef PRESET_ZERO
 #define PRESET_ZERO 1
+#endif
+
+#ifndef PUSH_ZERO
+#define PUSH_ZERO 1
 #endif
 
 using LabelTy = VID;
@@ -148,6 +154,7 @@ public:
 	    std::cerr << "INITID=" << INITID << "\n";
 	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
+	    std::cerr << "PUSH_ZERO=" << PUSH_ZERO << "\n";
 	}
     }
     ~CCv() {
@@ -236,6 +243,12 @@ public:
 	++iter;
 #endif
 
+#if PUSH_ZERO
+	// Create bucket structure
+	bool switched_to_fusion = false;
+#endif
+
+
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto vid ) { return prevIDs[vid] = IDs[vid]; } )
 	    .materialize();
@@ -245,102 +258,7 @@ public:
 
 	while( !F.isEmpty() ) {  // iterate until IDs converge
 	    // Propagate labels
-	    frontier output;
-
-#if UNCOND_EXEC
-	    auto filter_strength = api::weak;
-#else
-	    auto filter_strength = api::strong;
-#endif
-	    api::edgemap(
-		GA,
-#if DEFERRED_UPDATE
-		api::record( output,
-			     api::reduction_or_method, 
-			     [&] ( auto d ) { return IDs[d] != prevIDs[d]; },
-			     api::strong ),
-#else
-		api::record( output, api::reduction, api::strong ),
-#endif
-		api::filter( filter_strength, api::src, F ),
-#if CONVERGENCE
-		api::filter( api::weak, api::dst,
-			     [&] ( auto d ) {
-				 return IDs[d] != expr::zero_val(d);
-			     } ),
-#endif
-#if FUSION
-		api::fusion( [&]( auto d ) {
-		    return expr::constant_val_one( d );
-		} ),
-#endif
-		api::relax( [&]( auto s, auto d, auto e ) {
-#if LEVEL_ASYNC
-			return IDs[d].min( IDs[s] );
-#else
-			return IDs[d].min( prevIDs[s] );
-#endif
-		    } )
-		)
-#if DEFERRED_UPDATE || !LEVEL_ASYNC
-		.vertex_map( [&](auto vid) { return prevIDs[vid] = IDs[vid]; } )
-#endif
-		.materialize();
-
-#if 0
-	    std::cerr << "IDs:";
-	    for( VID v=0; v < GA.numVertices(); ++v )
-		std::cerr << ' ' << m_IDs[v];
-	    std::cerr << "\n";
-
-	    if( output.getType() == frontier_type::ft_logical4 && output.getDenseL<4>() ) {
-		VID na = 0;
-		EID va = 0;
-		std::cerr << "output:";
-		for( VID v=0; v < GA.numVertices(); ++v ) {
-		    std::cerr << ( output.getDenseL<4>()[v] ? 1 : 0 );
-		    if( output.getDenseL<4>()[v] ) {
-			++na;
-			va += GA.getOutDegree(v);
-		    }
-		}
-		std::cerr << "\n";
-		std::cerr << " nset=" << na << " nactv=" << output.nActiveVertices() << "\n";
-		std::cerr << " eset=" << va << " nacte=" << output.nActiveEdges() << "\n";
-		// std::cerr << "differ:";
-		// for( VID v=0; v < GA.numVertices(); ++v )
-		// std::cerr << ( m_IDs[v] != m_prevIDs[v] ? 1 : 0 );
-		// std::cerr << "\n";
-		assert( na == output.nActiveVertices() );
-		assert( va == output.nActiveEdges() );
-	    } else if( output.getType() == frontier_type::ft_bool && output.getDense<frontier_type::ft_bool>() ) {
-		VID na = 0;
-		EID va = 0;
-		std::cerr << "output:";
-		for( VID v=0; v < GA.numVertices(); ++v ) {
-		    std::cerr << ( output.getDense<frontier_type::ft_bool>()[v] ? 1 : 0 );
-		    if( output.getDense<frontier_type::ft_bool>()[v] ) {
-			++na;
-			va += GA.getOutDegree(v);
-		    }
-		}
-		std::cerr << "\n";
-		std::cerr << " nset=" << na << " nactv=" << output.nActiveVertices() << "\n";
-		std::cerr << " eset=" << va << " nacte=" << output.nActiveEdges() << "\n";
-		// std::cerr << "differ:";
-		// for( VID v=0; v < GA.numVertices(); ++v )
-		// std::cerr << ( m_IDs[v] != m_prevIDs[v] ? 1 : 0 );
-		// std::cerr << "\n";
-		assert( na == output.nActiveVertices() );
-		assert( va == output.nActiveEdges() );
-	    }
-
-#endif
-
-	    // make_lazy_executor( part )
-	    // .vertex_map( output,
-	    // [&](auto vid) { return prevIDs[vid] = IDs[vid]; } )
-	    // .materialize();
+	    frontier output = emap_step( F, 5 );
 
 	    if( itimes ) {
 		VID active = 0;
@@ -355,29 +273,193 @@ public:
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].active = float(active)/float(n);
 		info_buf[iter].delay = tm_iter.next();
-		if( debug ) {
+		if( debug )
 		    info_buf[iter].dump( iter );
-/*
-		    if( F.nActiveVertices() < 10 ) {
-			F.toSparse( part );
-			const VID * f = F.getSparse();
-			std::cerr << "Frontier:";
-			for( long i=0; i < F.nActiveVertices(); ++i )
-			    std::cerr << " " << GA.originalID( f[i] );
-			std::cerr << "\n";
-		    }
-*/
-		}
 	    }
 
 	    // Cleanup old frontier
 	    F.del();
 	    F = output;
-
 	    iter++;
+
+#if PUSH_ZERO
+	    // If the number of vertices with a zero label is low after one
+	    // iteration of the dense edgemap, then likely we are working
+	    // on a road-network-like graph. In this case, enable bucketing
+	    // where there are two buckets: the bucket with active vertices
+	    // with a zero label, and those vertices with a non-zero label.
+	    // The inactive vertices with a zero label can be ignored (although
+	    // they may not be known in case of an unbacked frontier).
+	    // In combination with fusion, this allows us to first propagate
+	    // the zero label to as many vertices as we can reach, without
+	    // synchronisation in a push-style traversal. Only after this is
+	    // complete will we consider the remaining vertices, i.e., those
+	    // in different clusters.
+	    VID max_deg = GA.getCSR().max_degree();
+	    if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
+		switched_to_fusion = true;
+		break;
+	    }
+#endif
 	}
+	F.del();
+
+#if PUSH_ZERO
+	assert( FUSION && "requires fusion" );
+	frontier ftrue = frontier::all_true( n, m ); // all active
+	if( switched_to_fusion ) {
+	    // If high_penetration is true, the algorithm completed using
+	    // the loop above. Nothing further to do.
+
+	    {  // push through zero labels
+		frontier F = find_zeros();
+		frontier output = emap_step( F, 200 ); // always sparse
+
+		if( itimes ) {
+		    VID active = 0;
+		    if( calculate_active ) { // Warning: expensive, included in time
+			for( VID v=0; v < n; ++v )
+			    if( m_prevIDs[v] != 0 )
+				active++;
+		    }
+		    info_buf.resize( iter+1 );
+		    info_buf[iter].density = F.density( GA.numEdges() );
+		    info_buf[iter].nacte = F.nActiveEdges();
+		    info_buf[iter].nactv = F.nActiveVertices();
+		    info_buf[iter].active = float(active)/float(n);
+		    info_buf[iter].delay = tm_iter.next();
+		    if( debug )
+			info_buf[iter].dump( iter );
+		}
+
+		++iter;
+
+		// Cleanup old frontier
+		F.del();
+		output.del();
+	    }
+
+	    {  // push through non-zero labels
+		frontier F = find_nonzeros();
+		frontier output = emap_step( F, 200 ); // always sparse
+
+		if( itimes ) {
+		    VID active = 0;
+		    if( calculate_active ) { // Warning: expensive, included in time
+			for( VID v=0; v < n; ++v )
+			    if( m_prevIDs[v] != 0 )
+				active++;
+		    }
+		    info_buf.resize( iter+1 );
+		    info_buf[iter].density = F.density( GA.numEdges() );
+		    info_buf[iter].nacte = F.nActiveEdges();
+		    info_buf[iter].nactv = F.nActiveVertices();
+		    info_buf[iter].active = float(active)/float(n);
+		    info_buf[iter].delay = tm_iter.next();
+		    if( debug )
+			info_buf[iter].dump( iter );
+		}
+
+		++iter;
+
+		// Cleanup old frontier
+		F.del();
+		output.del();
+	    }
+	}
+#endif
     }
 
+private:
+    __attribute__((noinline)) // no-inline to save compilation time
+    frontier find_nonzeros() {
+	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
+	VID n = GA.numVertices();
+	EID m = GA.numEdges();
+	frontier ftrue = frontier::all_true( n, m ); // all active
+	frontier nonzeros;
+	make_lazy_executor( GA.get_partitioner() )
+	    .vertex_filter(
+		GA, 	 	 	// graph
+		ftrue,			// check all vertices
+		nonzeros,  		// record new frontier
+		[&]( auto v ) { return IDs[v] != _0; } )
+	    .materialize();
+	ftrue.del();
+	return nonzeros;
+    }
+
+    __attribute__((noinline)) // no-inline to save compilation time
+    frontier find_zeros() {
+	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
+	VID n = GA.numVertices();
+	EID m = GA.numEdges();
+	frontier ftrue = frontier::all_true( n, m ); // all active
+	frontier zeros;
+	make_lazy_executor( GA.get_partitioner() )
+	    .vertex_filter(
+		GA, 	 	 	// graph
+		ftrue,			// check all vertices
+		zeros,  		// record new frontier
+		[&]( auto v ) { return IDs[v] == _0; } )
+	    .materialize();
+	ftrue.del();
+	return zeros;
+    }
+
+    __attribute__((noinline)) // no-inline to save compilation time
+    frontier emap_step( frontier & F, int threshold ) {
+	// Propagate labels
+	frontier output;
+
+	expr::array_ro<LabelTy,VID,var_previds> prevIDs( m_prevIDs );
+	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
+
+#if UNCOND_EXEC
+	auto filter_strength = api::weak;
+#else
+	auto filter_strength = api::strong;
+#endif
+	api::edgemap(
+	    GA,
+	    api::config( api::frac_threshold( threshold ) ),
+#if DEFERRED_UPDATE
+	    api::record( output,
+			 api::reduction_or_method, 
+			 [&] ( auto d ) { return IDs[d] != prevIDs[d]; },
+			 api::strong ),
+#else
+	    api::record( output, api::reduction, api::strong ),
+#endif
+	    api::filter( filter_strength, api::src, F ),
+#if CONVERGENCE
+	    api::filter( api::weak, api::dst,
+			 [&] ( auto d ) {
+			     return IDs[d] != expr::zero_val(d);
+			 } ),
+#endif
+#if FUSION
+	    api::fusion( [&]( auto d ) {
+		return expr::constant_val_one( d );
+	    } ),
+#endif
+	    api::relax( [&]( auto s, auto d, auto e ) {
+#if LEVEL_ASYNC
+		return IDs[d].min( IDs[s] );
+#else
+		return IDs[d].min( prevIDs[s] );
+#endif
+	    } )
+	    )
+#if DEFERRED_UPDATE || !LEVEL_ASYNC
+	    .vertex_map( [&](auto vid) { return prevIDs[vid] = IDs[vid]; } )
+#endif
+	    .materialize();
+
+	return output;
+    }
+
+public:
     void post_process( stat & stat_buf ) {
 	if( itimes ) {
 	    for( int i=0; i < iter; ++i )
@@ -448,94 +530,6 @@ public:
 
 	F.del();
     }
-
-#if 0
-    void validate( frontier & in, frontier & out ) {
-	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
-	frontier F;
-	api::edgemap(
-	    GA,
-	    api::record( F, api::reduction, api::strong ),
-	    api::relax( [&]( auto s, auto d, auto e ) {
-		return expr::make_unop_switch_to_vector( IDs[d] != IDs[s] ); } )
-	    )
-	    .materialize();
-
-	if( F.isEmpty() ) {
-	    std::cerr << "Neighbour check: PASS\n";
-	} else {
-	    std::cerr << "Neighbour check: FAIL; #vertices: "
-		      << F.nActiveVertices() << "\n";
-	    std::cerr << "failures:";
-	    VID n = GA.numVertices();
-	    VID k = std::min( n, (VID)10 ); 
-	    VID l = 0;
-	    for( VID v=0; v < n; ++v )
-		if( F.is_set( v ) ) {
-		    std::cerr << "\n\t" << v << '(' << m_IDs[v]
-			      << ',' << m_prevIDs[v]
-			      << ( in.is_set(v) ? ",in" : ",not-in" )
-			      << ( out.is_set(v) ? ",out" : ",not-out" )
-			      << ')';
-
-		    auto ns = GA.getCSC().neighbour_begin( v );
-		    auto ne = GA.getCSC().neighbour_end( v );
-		    std::cerr << '#' << (ne-ns) << ' ';
-		    VID ll=0;
-		    for( auto ngh=ns; ngh != ne; ++ngh ) {
-			if( m_IDs[*ngh] != m_IDs[v] ) {
-			    std::cerr << *ngh
-				      << '[' << m_IDs[*ngh]
-			      << ',' << m_prevIDs[*ngh]
-			      << ( in.is_set(*ngh) ? ",in" : ",not-in" )
-			      << ( out.is_set(*ngh) ? ",out" : ",not-out" )
-			      << ']';
-			    if( ++ll > 10 )
-				break;
-			}
-		    }
-		    
-		    ++l;
-		    if( l > k )
-			break;
-		}
-	    std::cerr << '\n';
-
-	    {
-		VID v = 641592;
-
-		std::cerr << "extra:";
-		std::cerr << "\n\t" << v << '(' << m_IDs[v]
-			  << ',' << m_prevIDs[v]
-			  << ( F.is_set(v) ? ",in" : ",not-in" )
-			  << ( in.is_set(v) ? ",in" : ",not-in" )
-			  << ( out.is_set(v) ? ",out" : ",not-out" )
-			  << ')';
-
-		auto ns = GA.getCSC().neighbour_begin( v );
-		auto ne = GA.getCSC().neighbour_end( v );
-		std::cerr << '#' << (ne-ns) << ' ';
-		VID ll=0;
-		for( auto ngh=ns; ngh != ne; ++ngh ) {
-		    if( m_IDs[*ngh] != m_IDs[v] ) {
-			std::cerr << *ngh
-				  << '[' << m_IDs[*ngh]
-				  << ',' << m_prevIDs[*ngh]
-				  << ( in.is_set(*ngh) ? ",in" : ",not-in" )
-				  << ( out.is_set(*ngh) ? ",out" : ",not-out" )
-				  << ']';
-			if( ++ll > 10 )
-			    break;
-		    }
-		}
-	    }
-	    std::cerr << '\n';
-	}
-
-	F.del();
-    }
-#endif
-
 
 private:
     const GraphType & GA;
