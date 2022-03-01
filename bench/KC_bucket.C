@@ -9,6 +9,7 @@
 
 using expr::_0;
 using expr::_1;
+using expr::_1s;
 
 // By default set options for highest performance
 #ifndef FUSION
@@ -63,13 +64,16 @@ public:
     struct info {
 	double delay;
 	float density;
-	VID rm_act;
+	VID F_act, rm_act, wakeup_act;
 	VID K;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
 		      << " density: " << density
-		      << " rm_act: " << rm_act << " K: " << K << "\n";
+		      << " F_act: " << F_act
+		      << " rm_act: " << rm_act
+		      << " wakeup_act: " << wakeup_act
+		      << " K: " << K << "\n";
 	}
     };
 
@@ -129,6 +133,7 @@ public:
 	    // next_bucket updates current bucket, so do this first...
 	    frontier F = bkts.next_bucket();
 	    K = bkts.get_current_bucket();
+	    VID overflow_bkt = bkts.get_overflow_bucket();
 	    assert( K >= largestCore );
 
 	    // We don't need to know how many edges there are on F since we
@@ -136,32 +141,12 @@ public:
 	    // non-zero.
 	    F.setActiveCounts( F.nActiveVertices(), F.nActiveVertices() );
 
-	    // Remove duplicate edges. Edges may be multiply represented
-	    // as they may be inserted once per edge in the worst case.
-	    // This is a consequence of not removing vertices from a bucket
-	    // when they move to a different bucket.
-	    if( !F.isEmpty() ) {
-		frontier Fnew
-		    = frontier::sparse( GA.numVertices(), F.nActiveVertices() );
-		removeDuplicates( F.getSparse(), F.nActiveVertices(), part );
-		VID nv_new = sequence::filter(
-		    F.getSparse(), Fnew.getSparse(), F.nActiveVertices(),
-		    ValidVID() );
-		Fnew.setActiveCounts( nv_new, nv_new );
-		F.del();
-		F = Fnew;
-	    }
-
-	    // std::cerr << "F filtered: " << F.nActiveVertices() << "\n";
-	    // std::cerr << "F: " << F << "\n";
+	    // std::cerr << "get buckets: " << tm_iter.next() << "\n";
 
 	    // All vertices in bucket are removed, have coreness K
 	    // Watch out for duplicates in the buckets, as moved vertices
 	    // are not removed from their previous bucket.
 	    frontier unique;
-	    // If vertices are repeated in a sparse frontier, there
-	    // will be a race condition if two threads process the same
-	    // vertex concurrently. Hence, we remove duplicates before.
 	    make_lazy_executor( part )
 		.vertex_filter(
 		    GA, F, unique,
@@ -171,10 +156,40 @@ public:
 		    } )
 		.materialize();
 
+	    // Remove duplicate edges. Edges may be multiply represented
+	    // as they may be inserted once per edge in the worst case.
+	    // This is a consequence of not removing vertices from a bucket
+	    // when they move to a different bucket.
+	    // In principle each vertex should occur in each bucket once,
+	    // however, they may appear multiple times in the overflow bucket.
+	    // Note: we have avoided the need to remove duplicates *by design*.
+	    if( 0 && !unique.isEmpty() ) {
+		frontier Fnew
+		    = frontier::sparse( GA.numVertices(), unique.nActiveVertices() );
+		removeDuplicates( unique.getSparse(), unique.nActiveVertices(), part );
+		VID nv_new = sequence::filter(
+		    unique.getSparse(), Fnew.getSparse(), unique.nActiveVertices(),
+		    ValidVID() );
+		Fnew.setActiveCounts( nv_new, nv_new );
+		VID diff = unique.nActiveVertices() - nv_new;
+		std::cerr << "removed " << diff << " duplicates\n";
+		assert( diff == 0 );
+		unique.del();
+		unique = Fnew;
+	    }
+
+	    // std::cerr << "remove duplicates: " << tm_iter.next() << "\n";
+
+	    // std::cerr << "F filtered: " << F.nActiveVertices() << "\n";
+	    // std::cerr << "F: " << F << "\n";
+
 	    if( !unique.isEmpty() )
 		largestCore = K;
 
+	    // std::cerr << "filter completed vertices: " << tm_iter.next() << "\n";
+
 	    // std::cerr << "K: " << K << "\n";
+	    // std::cerr << "overflow_bkt: " << overflow_bkt << "\n";
 	    // std::cerr << "F     : " << F << "\n";
 	    // std::cerr << "unique: " << unique << "\n";
 	    // print( std::cerr, part, coreness );
@@ -189,7 +204,19 @@ public:
 		api::fusion( [&]( auto v ) {
 		    // Requires that RHS of && is evaluated after LHS.
 		    auto cK = expr::constant_val( coreness[v], K );
-		    return coreness[v].count_down( cK );
+		    auto cO = expr::constant_val( coreness[v], overflow_bkt );
+		    // return coreness[v].count_down( cK );
+		    return expr::let<var_let>(
+			coreness[v].count_down_value( cK ),
+			[&]( auto old ) {
+			    return expr::cast<int>(
+				expr::iif(
+				    old == cK + _1,
+				    expr::iif( old > cO,
+					       _0, // degree below overflow, move
+					       _1s ), // in overflow bucket, stay
+				    _1 ) ); // degree dropped to K
+			} );
 		} ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    auto cK = expr::constant_val( coreness[s], K );
@@ -225,17 +252,23 @@ public:
 	    todo -= unique.nActiveVertices();
 	    unique.del();
 
+	    // std::cerr << "edgemap: " << tm_iter.next() << "\n";
+
 	    // std::cerr << "output: " << output << "\n";
 	    // print( std::cerr, part, coreness );
 	    // std::cerr << "todo: " << todo << "\n";
 
 	    bkts.update_buckets( part, output );
 
+	    // std::cerr << "update buckets: " << tm_iter.next() << "\n";
+
 	    if( itimes ) {
 		info_buf.resize( iter+1 );
 		info_buf[iter].density = unique.density( GA.numEdges() );
-		info_buf[iter].delay = tm_iter.next();
+		info_buf[iter].delay = tm_iter.total();
+		info_buf[iter].F_act = F.nActiveVertices();
 		info_buf[iter].rm_act = unique.nActiveVertices();
+		info_buf[iter].wakeup_act = output.nActiveVertices();
 		info_buf[iter].K = K;
 		if( debug )
 		    info_buf[iter].dump( iter );
