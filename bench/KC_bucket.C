@@ -136,11 +136,6 @@ public:
 	    VID overflow_bkt = bkts.get_overflow_bucket();
 	    assert( K >= largestCore );
 
-	    // We don't need to know how many edges there are on F since we
-	    // only use it in a vertex-filter operation. Simply record
-	    // non-zero.
-	    F.setActiveCounts( F.nActiveVertices(), F.nActiveVertices() );
-
 	    // std::cerr << "get buckets: " << tm_iter.next() << "\n";
 
 	    // All vertices in bucket are removed, have coreness K
