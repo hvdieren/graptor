@@ -113,7 +113,7 @@ struct bucket_fn {
 	: m_dist( dist ), m_delta( delta ) { }
 
     VID operator() ( VID v ) const {
-	return (VID)( ((FloatTy)m_dist[v]) / m_delta );
+	return v == ~(VID)0 ? ~(VID)0 : (VID)( ((FloatTy)m_dist[v]) / m_delta );
     }
 
     template<VID Scale>
@@ -411,9 +411,16 @@ public:
 		api::filter( filter_strength, api::src, F ),
 #if FUSION
 		api::fusion( [&]( auto d ) {
+		    // We are not using the feature to avoid inserting vertices 
+		    // multiple times, especially in the overflow bucket (i.e.,
+		    // return -1 from api::fusion). This is because vertices
+		    // are inserted in the buckets only when they are woken up
+		    // and we cannot tell easily whether a vertex is already
+		    // present in the overflow bucket or not.
 		    auto threshold = expr::constant_val2<FloatTy>(
 			d, delta * (FloatTy)(1+bkts.get_current_bucket()) );
-		    return new_dist[d] <= threshold;
+		    return expr::iif( new_dist[d] <= threshold,
+				      _0, _1 ); // int
 		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
