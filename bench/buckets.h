@@ -76,9 +76,13 @@ public:
     void clear() { m_count = 0; }
 
     frontier as_frontier( ID n ) {
+	// By default, don't worry about how many edges there are on F since we
+	// likely use it only in a vertex-filter operation. Simply record
+	// non-zero.
 	frontier F = frontier::sparse( n, m_count, m_entries );
 	m_entries = nullptr;
 	m_count = m_capacity = 0;
+	F.setActiveCounts( F.nActiveVertices(), F.nActiveVertices() );
 	return F;
     }
 
