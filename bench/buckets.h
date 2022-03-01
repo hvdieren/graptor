@@ -129,6 +129,27 @@ private:
     BucketFn m_fn;
 };
 
+template<typename ID_, typename BktFn>
+struct bucket_updater_all {
+    using ID = ID_;
+    using BucketFn = BktFn;
+
+    bucket_updater_all( ID num, BucketFn fn )
+	: m_num( num ), m_fn( fn ) { }
+
+    VID size() const { return m_num; }
+
+    std::pair<ID,ID> operator() ( ID nth ) const {
+	return std::make_pair( nth, m_fn( nth ) );
+    }
+
+    ID get( ID nth ) const { return nth; }
+    
+private:
+    ID m_num;
+    BucketFn m_fn;
+};
+
 // This assumes that the number of active vertices and edges may not have
 // been calculated.
 template<frontier_type ftype, typename ID_, typename BktFn>
@@ -340,6 +361,11 @@ public:
     void update_buckets( const partitioner & part, frontier & f ) {
 	switch( f.getType() ) {
 	case frontier_type::ft_true:
+	{
+	    bucket_updater_all<ID, BucketFn> upd( m_range, m_fn );
+	    update_buckets_dense( part, upd, upd.size() );
+	    break;
+	}
 	case frontier_type::ft_bit2:
 	case frontier_type::ft_logical1:
 	case frontier_type::ft_logical2:
