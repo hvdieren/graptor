@@ -216,8 +216,9 @@ public:
 #endif
 
 #if PUSH_ZERO
-	VID max_v = GA.getCSR().findHighestDegreeVertex();
-	VID max_deg = GA.getCSR().getDegree( max_v );
+	// VID max_v = GA.getCSR().findHighestDegreeVertex();
+	// VID max_deg = GA.getCSR().getDegree( max_v );
+	frontier zeros;
 #endif
 
 	iter = 0;
@@ -256,6 +257,7 @@ public:
 #if PUSH_ZERO
 	// Create bucket structure
 	bool switched_to_fusion = false;
+	bool have_checked = false;
 #endif
 
 
@@ -300,21 +302,27 @@ public:
 	    // synchronisation in a push-style traversal. Only after this is
 	    // complete will we consider the remaining vertices, i.e., those
 	    // in different clusters.
-	    if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
+	    // if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
+	    if( !have_checked ) { // check at most once
+		zeros = find_zeros();
+		if( zeros.nActiveVertices() * 10 < n ) {
 /*
-	    if(
-#if PRESET_ZERO
-		1 +
-#endif
-		0 == iter && F.density( GA.numEdges() ) < 0.8 ) {
+  if(
+  #if PRESET_ZERO
+  1 +
+  #endif
+  0 == iter && F.density( GA.numEdges() ) < 0.8 ) {
 */
-		// Cleanup old frontier
-		F.del();
-		F = output;
-		iter++;
+		    // Cleanup old frontier
+		    F.del();
+		    F = output;
+		    iter++;
 
-		switched_to_fusion = true;
-		break;
+		    switched_to_fusion = true;
+		    break;
+		}
+		zeros.del();
+		have_checked = true;
 	    }
 #endif
 
@@ -333,7 +341,8 @@ public:
 	    // the loop above. Nothing further to do.
 
 	    {  // push through zero labels
-		frontier F = find_zeros();
+		// frontier F = find_zeros();
+		frontier F = zeros;
 		frontier output = emap_step( F, 200 ); // always sparse
 
 		if( itimes ) {
