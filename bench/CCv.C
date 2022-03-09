@@ -215,6 +215,11 @@ public:
 	    .materialize();
 #endif
 
+#if PUSH_ZERO
+	VID max_v = GA.getCSR().findHighestDegreeVertex();
+	VID max_deg = GA.getCSR().getDegree( max_v );
+#endif
+
 	iter = 0;
 
 	timer tm_iter;
@@ -295,8 +300,6 @@ public:
 	    // synchronisation in a push-style traversal. Only after this is
 	    // complete will we consider the remaining vertices, i.e., those
 	    // in different clusters.
-	    VID max_v = GA.getCSR().findHighestDegreeVertex();
-	    VID max_deg = GA.getCSR().getDegree( max_v );
 	    if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
 /*
 	    if(
