@@ -139,7 +139,12 @@ public:
     buffer_type * reserve( unsigned self_id, unsigned num ) {
 	assert( num < CHUNK && "can reserve at most CHUNK elements" );
 	buffer_type * buf = m_active[self_id];
-	if( !buf || !buf->has_space( num ) ) {
+	// If we don't have a buffer, or the buffer has insufficient space,
+	// or if the amount of parallelism is low, then push out the buffer
+	// and start a new one.
+	if( !buf || !buf->has_space( num )
+	    || ( 4*m_working.load() < 3*m_threads && m_threads > 1
+		 && !buf->is_empty() ) ) {
 	    if( buf )
 		push_buffer( buf, self_id );
 	    m_active[self_id] = buf = queue_type::create_list_node();
@@ -164,20 +169,17 @@ public:
 	}
 
 	// Note we are stealing, for termination detection
-	if( m_working.fetch_add( -1 ) == 0 )
-	    return nullptr;
+	--m_working;
 
 	// Randomly select any buffer.
-	while( true ) {
+	while( m_working.load() != 0 ) {
 	    unsigned id = rand() % m_threads;
 	    if( buffer_type * buf = m_queues[id].pop() ) {
 		++m_working;
 		return buf;
 	    }
-
-	    if( m_working.load() == 0 )
-		return nullptr;
 	}
+	return nullptr;
     }
 
 private:
