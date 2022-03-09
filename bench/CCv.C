@@ -44,12 +44,14 @@ using expr::_0;
 #define FUSION 1
 #endif
 
-#ifndef PRESET_ZERO
-#define PRESET_ZERO 1
+#ifndef PUSH_ZERO
+#undef FUSION
+#define PUSH_ZERO 1
+#define FUSION 1
 #endif
 
-#ifndef PUSH_ZERO
-#define PUSH_ZERO 1
+#ifndef PRESET_ZERO
+#define PRESET_ZERO 1
 #endif
 
 using LabelTy = VID;
@@ -153,9 +155,12 @@ public:
 	    std::cerr << "MEMO=" << MEMO << "\n";
 	    std::cerr << "INITID=" << INITID << "\n";
 	    std::cerr << "FUSION=" << FUSION << "\n";
-	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
 	    std::cerr << "PUSH_ZERO=" << PUSH_ZERO << "\n";
+	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
 	}
+
+	// VID max_deg = GA.getCSR().findHighestDegreeVertex();
+	// GA.getCSR().setMaxDegreeVertex( max_deg );
     }
     ~CCv() {
 	m_IDs.del();
@@ -277,11 +282,6 @@ public:
 		    info_buf[iter].dump( iter );
 	    }
 
-	    // Cleanup old frontier
-	    F.del();
-	    F = output;
-	    iter++;
-
 #if PUSH_ZERO
 	    // If the number of vertices with a zero label is low after one
 	    // iteration of the dense edgemap, then likely we are working
@@ -295,19 +295,37 @@ public:
 	    // synchronisation in a push-style traversal. Only after this is
 	    // complete will we consider the remaining vertices, i.e., those
 	    // in different clusters.
-	    VID max_deg = GA.getCSR().max_degree();
+	    VID max_v = GA.getCSR().findHighestDegreeVertex();
+	    VID max_deg = GA.getCSR().getDegree( max_v );
 	    if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
+/*
+	    if(
+#if PRESET_ZERO
+		1 +
+#endif
+		0 == iter && F.density( GA.numEdges() ) < 0.8 ) {
+*/
+		// Cleanup old frontier
+		F.del();
+		F = output;
+		iter++;
+
 		switched_to_fusion = true;
 		break;
 	    }
 #endif
+
+	    // Cleanup old frontier
+	    F.del();
+	    F = output;
+	    iter++;
 	}
 	F.del();
 
 #if PUSH_ZERO
-	assert( FUSION && "requires fusion" );
-	frontier ftrue = frontier::all_true( n, m ); // all active
 	if( switched_to_fusion ) {
+	    frontier ftrue = frontier::all_true( n, m ); // all active
+
 	    // If high_penetration is true, the algorithm completed using
 	    // the loop above. Nothing further to do.
 

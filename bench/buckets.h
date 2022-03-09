@@ -108,14 +108,15 @@ struct bucket_updater {
     using ID = ID_;
     using BucketFn = BktFn;
 
-    bucket_updater( const ID * lst, ID num, BucketFn fn )
-	: m_lst( lst ), m_num( num ), m_fn( fn ) { }
+    bucket_updater( const ID * lst, ID num, ID cur, ID oflow, BucketFn fn )
+	: m_lst( lst ), m_num( num ), m_cur( cur ), m_oflow( oflow ),
+	  m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
     std::pair<ID,ID> operator() ( ID nth ) const {
 	ID id = m_lst[nth];
-	ID bkt = m_fn( id );
+	ID bkt = m_fn( id, m_cur, m_oflow );
 	return std::make_pair( id, bkt );
     }
 
@@ -126,6 +127,8 @@ struct bucket_updater {
 private:
     const ID * m_lst;
     ID m_num;
+    ID m_cur;
+    ID m_oflow;
     BucketFn m_fn;
 };
 
@@ -134,19 +137,21 @@ struct bucket_updater_all {
     using ID = ID_;
     using BucketFn = BktFn;
 
-    bucket_updater_all( ID num, BucketFn fn )
-	: m_num( num ), m_fn( fn ) { }
+    bucket_updater_all( ID num, ID cur, ID oflow, BucketFn fn )
+	: m_num( num ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
     std::pair<ID,ID> operator() ( ID nth ) const {
-	return std::make_pair( nth, m_fn( nth ) );
+	return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
 
     ID get( ID nth ) const { return nth; }
     
 private:
     ID m_num;
+    ID m_cur;
+    ID m_oflow;
     BucketFn m_fn;
 };
 
@@ -158,9 +163,9 @@ struct bucket_updater_dense {
     using BucketFn = BktFn;
     using L = typename frontier_params<ftype,0>::type;
 
-    bucket_updater_dense( const frontier & f, BucketFn fn )
+    bucket_updater_dense( const frontier & f, ID cur, ID oflow, BucketFn fn )
 	: m_mask( f.template getDense<ftype>() ),
-	  m_num( f.nVertices() ), m_fn( fn ) { }
+	  m_num( f.nVertices() ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
@@ -168,7 +173,7 @@ struct bucket_updater_dense {
 	if( !m_mask[nth] )
 	    return std::make_pair( ~(VID)0, ~(VID)0 );
 	else
-	    return std::make_pair( nth, m_fn( nth ) );
+	    return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
     
 /*
@@ -183,6 +188,8 @@ struct bucket_updater_dense {
 private:
     const L * m_mask;
     ID m_num;
+    ID m_cur;
+    ID m_oflow;
     BucketFn m_fn;
 };
 
@@ -192,9 +199,9 @@ struct bucket_updater_dense<frontier_type::ft_bit, ID_, BktFn> {
     using BucketFn = BktFn;
     using L = typename frontier_params<frontier_type::ft_bit,0>::type;
 
-    bucket_updater_dense( const frontier & f, BucketFn fn )
+    bucket_updater_dense( const frontier & f, ID cur, ID oflow, BucketFn fn )
 	: m_mask( f.template getDense<frontier_type::ft_bit>() ),
-	  m_num( f.nVertices() ), m_fn( fn ) { }
+	  m_num( f.nVertices() ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
@@ -204,12 +211,14 @@ struct bucket_updater_dense<frontier_type::ft_bit, ID_, BktFn> {
 	if( ( ( m_mask[nth / mod] >> ( nth & mask ) ) & 1 ) == 0 )
 	    return std::make_pair( ~(VID)0, ~(VID)0 );
 	else
-	    return std::make_pair( nth, m_fn( nth ) );
+	    return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
     
 private:
     const L * m_mask;
     ID m_num;
+    ID m_cur;
+    ID m_oflow;
     BucketFn m_fn;
 };
 
@@ -281,13 +290,15 @@ public:
 		
 		assert( m_elems == reassign.size() );
 		m_elems = 0;
-		update_buckets( reassign );
+		reassign_buckets( reassign );
 
 		// TODO: at this pointm we may desire to remove duplicates
 		//       to reduce numbers.
 		// TODO: initially, only need to insert degree-1 vertices,
 		//       others will be added as we go along (wavefront).
-		// std::cerr << "split open bucket; m_elems=" << m_elems << "\n";
+		// std::cerr << "split open bucket; current=" << m_cur_bkt
+		//   << " range=" << m_cur_range
+		//   << " m_elems=" << m_elems << "\n";
 
 		// In case we dropped all elements during re-assignment
 		if( m_elems == 0 )
@@ -354,15 +365,24 @@ public:
     }
 
     void update_buckets( const ID * elements, ID num_elements ) {
-	bucket_updater upd( elements, num_elements, m_fn );
+	bucket_updater upd( elements, num_elements,
+			    get_current_bucket(),
+			    get_overflow_bucket(), m_fn );
 	return update_buckets_sparse( upd );
     }
 
+    void initialize_buckets( const partitioner & part, frontier & f ) {
+	update_buckets<true>( part, f );
+    }
+
+    template<bool initialize=false>
     void update_buckets( const partitioner & part, frontier & f ) {
+	ID cur = get_current_bucket();
+	ID oflow = initialize ? ~(ID)0 : get_overflow_bucket();
 	switch( f.getType() ) {
 	case frontier_type::ft_true:
 	{
-	    bucket_updater_all<ID, BucketFn> upd( m_range, m_fn );
+	    bucket_updater_all<ID, BucketFn> upd( m_range, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
@@ -375,27 +395,28 @@ public:
 	case frontier_type::ft_bit:
 	{
 	    bucket_updater_dense<frontier_type::ft_bit, ID, BucketFn>
-		upd( f, m_fn );
+		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
 	case frontier_type::ft_bool:
 	{
 	    bucket_updater_dense<frontier_type::ft_bool, ID, BucketFn>
-		upd( f, m_fn );
+		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
 	case frontier_type::ft_logical4:
 	{
 	    bucket_updater_dense<frontier_type::ft_logical4, ID, BucketFn>
-		upd( f, m_fn );
+		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
 	case frontier_type::ft_sparse:
 	{
-	    bucket_updater upd( f.getSparse(), f.nActiveVertices(), m_fn );
+	    bucket_updater
+		upd( f.getSparse(), f.nActiveVertices(), cur, oflow, m_fn );
 	    update_buckets_sparse( upd );
 	    break;
 	}
@@ -415,8 +436,11 @@ private:
 	    return bkt - m_cur_range;
     }
     
-    void update_buckets( const bucket<ID> & b ) {
-	bucket_updater upd( b.get_ptr(), b.size(), m_fn );
+    void reassign_buckets( const bucket<ID> & b ) {
+	// This is a special version where elements have to be re-inserted
+	// in the overflow bucket, which is otherwise avoided.
+	bucket_updater upd( b.get_ptr(), b.size(),
+			    get_current_bucket(), ~(ID)0, m_fn );
 	update_buckets_sparse( upd );
     }
     
@@ -441,6 +465,8 @@ private:
 	ID * hist = new ID[(np+1) * hsize](); // zero init
 	uint8_t * idb = new uint8_t[num_elements];
 
+	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
+
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
 	map_partition( part, [&]( unsigned p ) {
@@ -460,8 +486,6 @@ private:
 		ID b = slot( bkt );
 		lhist[b]++;
 		idb[v] = b;
-
-		// std::cerr << "insert id=" << id << " into bkt=" << bkt << " slot=" << b << "\n";
 	    }
 	} );
 	
@@ -547,6 +571,8 @@ private:
 	    hsize *= 2;
 	ID * hist = new ID[(np+1) * hsize]();
 	uint8_t * idb = new uint8_t[num_elements];
+
+	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)

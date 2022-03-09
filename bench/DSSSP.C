@@ -112,8 +112,16 @@ struct bucket_fn {
     bucket_fn( SFloatTy * dist, FloatTy delta )
 	: m_dist( dist ), m_delta( delta ) { }
 
-    VID operator() ( VID v ) const {
-	return v == ~(VID)0 ? ~(VID)0 : (VID)( ((FloatTy)m_dist[v]) / m_delta );
+    VID operator() ( VID v, VID cur, VID oflow ) const {
+	if( v == ~(VID)0 )
+	    return ~(VID)0;
+	VID bkt = ((FloatTy)m_dist[v]) / m_delta;
+/*
+	if( bkt >= oflow )
+	    return ~(VID)0;
+	else
+*/
+	    return bkt;
     }
 
     template<VID Scale>
@@ -393,9 +401,6 @@ public:
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
-#if SP_THRESHOLD >= 0
-		api::config( api::frac_threshold( SP_THRESHOLD ) ),
-#endif
 #if DEFERRED_UPDATE
 		// Allow for (sparse) push to use reduction update to inform
 		// frontier rather than using the method.
@@ -410,6 +415,7 @@ public:
 #endif
 		api::filter( filter_strength, api::src, F ),
 #if FUSION
+		api::config( api::always_sparse ),
 		api::fusion( [&]( auto d ) {
 		    // We are not using the feature to avoid inserting vertices 
 		    // multiple times, especially in the overflow bucket (i.e.,
@@ -422,6 +428,10 @@ public:
 		    return expr::iif( new_dist[d] <= threshold,
 				      _0, _1 ); // int
 		} ),
+#else // no FUSION
+#if SP_THRESHOLD >= 0
+		api::config( api::frac_threshold( SP_THRESHOLD ) ),
+#endif
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC

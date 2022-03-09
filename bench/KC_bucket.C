@@ -26,16 +26,19 @@ enum variable_name {
 struct bucket_fn {
     using ID = VID;
     
-    bucket_fn( VID * degree, VID * K )
-	: m_degree( degree ), m_K( K ) { }
+    bucket_fn( VID * degree )
+	: m_degree( degree ) { }
 
-    VID operator() ( VID v ) const {
-	return v == ~(VID)0 || m_degree[v] < *m_K ? ~(VID)0 : m_degree[v];
+    VID operator() ( VID v, VID current, VID overflow ) const {
+	return v == ~(VID)0		// illegal vertex
+	    || m_degree[v] < current	// or processing completed
+	    || m_degree[v] >= overflow	// or already in overflow bucket
+	    ? ~(VID)0			// ... then drop vertex
+	    : m_degree[v];		// ... else this is the bucket
     }
     
 private:
     VID * m_degree;
-    VID * m_K;
 };
 
 template <class GraphType>
@@ -58,7 +61,7 @@ public:
 	}
     }
     ~KCv() {
-	coreness.del();
+		coreness.del();
     }
 
     struct info {
@@ -106,27 +109,31 @@ public:
 
 	// Create bucket structure
 	buckets<VID,bucket_fn>
-	    bkts( n, num_buckets, bucket_fn( coreness.get_ptr(), &K ) );
+	    bkts( n, num_buckets, bucket_fn( coreness.get_ptr() ) );
 
 	// Place each vertex in the bucket corresponding with its degree
 	// ... in parallel
-	bkts.update_buckets( part, nonzero );
+	bkts.initialize_buckets( part, nonzero );
+#if !FUSION
 	VID todo = nonzero.nActiveVertices();
+#endif
 	nonzero.del();
 
 	largestCore = 0;
 	iter = 0;
+
+	while(
 #if FUSION
-	while( !bkts.empty() ) // cannot count todo as needed with fusion
+	    !bkts.empty() // cannot count todo as needed with fusion
 #else
-	while( todo > 0 ) // iterate until all vertices visited
+	    todo > 0 // iterate until all vertices visited
 #endif
-	{
+	    ) {
 
 #if !FUSION
 	    assert( !bkts.empty() );
 #endif
-	
+
 	    timer tm_iter;
 	    tm_iter.start();
 
@@ -135,8 +142,6 @@ public:
 	    K = bkts.get_current_bucket();
 	    VID overflow_bkt = bkts.get_overflow_bucket();
 	    assert( K >= largestCore );
-
-	    // std::cerr << "get buckets: " << tm_iter.next() << "\n";
 
 	    // All vertices in bucket are removed, have coreness K
 	    // Watch out for duplicates in the buckets, as moved vertices
@@ -158,7 +163,8 @@ public:
 	    // In principle each vertex should occur in each bucket once,
 	    // however, they may appear multiple times in the overflow bucket.
 	    // Note: we have avoided the need to remove duplicates *by design*.
-	    if( 0 && !unique.isEmpty() ) {
+	    // There may remain ~0 duplicates, which are harmless.
+	    if( false && !unique.isEmpty() ) {
 		frontier Fnew
 		    = frontier::sparse( GA.numVertices(), unique.nActiveVertices() );
 		removeDuplicates( unique.getSparse(), unique.nActiveVertices(), part );
@@ -175,7 +181,7 @@ public:
 
 	    // std::cerr << "remove duplicates: " << tm_iter.next() << "\n";
 
-	    // std::cerr << "F filtered: " << F.nActiveVertices() << "\n";
+	    // std::cerr << "F: " << F.nActiveVertices() << "\n";
 	    // std::cerr << "F: " << F << "\n";
 
 	    if( !unique.isEmpty() )
@@ -236,7 +242,7 @@ public:
 		    // coreness should still be K. Hence, we use the count_down
 		    // primitive. This is the only way to ensure atomicity
 		    // of the check-larger-than-K-and-subtract operation.
-		    return coreness[d].count_down( cK );
+		    return coreness[d].count_down_value( cK ) > cK;
 		} )
 		)
 		.materialize();
@@ -244,7 +250,9 @@ public:
 
 	    // std::cerr << "unique: " << unique.nActiveVertices() << "\n";
 
+#if !FUSION
 	    todo -= unique.nActiveVertices();
+#endif
 	    unique.del();
 
 	    // std::cerr << "edgemap: " << tm_iter.next() << "\n";
