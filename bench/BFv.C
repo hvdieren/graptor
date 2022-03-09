@@ -3,7 +3,6 @@
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 #include "path.h"
-#include "buckets.h"
 
 using expr::_0;
 using expr::_1;
@@ -37,6 +36,10 @@ using expr::_1;
 
 #ifndef SP_THRESHOLD
 #define SP_THRESHOLD -1
+#endif
+
+#ifndef FUSION
+#define FUSION 1
 #endif
 
 struct BF_customfp_config {
@@ -134,6 +137,7 @@ public:
 	    std::cerr << "MEMO=" << MEMO << "\n";
 	    std::cerr << "VARIANT=" << VARIANT << "\n";
 	    std::cerr << "SP_THRESHOLD=" << SP_THRESHOLD << "\n";
+	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "sizeof(FloatTy)=" << sizeof(FloatTy) << "\n";
 	    std::cerr << "sizeof(SFloatTy)=" << sizeof(SFloatTy) << "\n";
 #if VARIANT != 2
@@ -349,6 +353,11 @@ public:
 #else
 		// Do not allow unbacked frontiers
 		api::record( output, api::reduction, api::strong ),
+#endif
+#if FUSION
+		api::fusion( [&]( auto v ) {
+		    return expr::true_val( v );
+		} ),
 #endif
 		api::filter( filter_strength, api::src, F ),
 		api::relax( [&]( auto s, auto d, auto e ) {
