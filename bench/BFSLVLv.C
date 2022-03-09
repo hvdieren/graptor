@@ -133,15 +133,15 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
-#if FUSION
-		api::fusion( [&]( auto v ) {
-		    return expr::true_val( v );
-		} ),
-#endif
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&]( auto d ) {
 				 return a_level[d] != expr::zero_val(d); } ),
+#endif
+#if FUSION
+		api::fusion( [&]( auto v ) {
+		    return expr::true_val( v );
+		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
