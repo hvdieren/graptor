@@ -158,6 +158,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     bool * zf,
     Operator op ) {
 
+    // TODO: Address initial inefficiency when the initial frontier is
+    // very small, as it will leave many threads idle initially.
     assert( cfg.is_parallel() && "this will execute in parallel" );
 
     // Instantiate relax operation only to check if it requires strict exclusion
@@ -207,10 +209,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		// If a vertex has been processed immediately, then any copy
 		// introduced previously for postponed processing can be
 		// removed.
+		VID nv_new = 0;
 		for( VID k=0; k < outEdgeCount; ++k ) {
-		    if( uczf[outEdges[k]] & (unsigned char)2 )
-			outEdges[k] = ~(VID)0;
+		    if( uczf[outEdges[k]] & (unsigned char)2 ) {
+			; // outEdges[k] = ~(VID)0;
+		    } else
+			outEdges[nv_new++] = outEdges[k];
 		}
+		F[t].resize( nv_new );
 	    }
 
 	    VID n = GA.numVertices();
