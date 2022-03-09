@@ -23,92 +23,9 @@
 #endif
 #define MEMO 0
 
-// Main edge-map operation for BFS using the tropical semi-ring
-struct BFS_Level_F
-{
-    expr::array_ro/*update*/<VID, VID, 0> level;
-#if DEFERRED_UPDATE || !LEVEL_ASYNC
-    expr::array_ro<VID, VID, 1> prev_level;
+#ifndef FUSION
+#define FUSION 1
 #endif
-    VID infinity;
-
-#if DEFERRED_UPDATE || !LEVEL_ASYNC
-    BFS_Level_F(VID* _level, VID* _prev_level, VID _infinity)
-	: level(_level), prev_level(_prev_level), infinity(_infinity) {}
-#else
-    BFS_Level_F(VID* _level, VID _infinity)
-	: level(_level), infinity(_infinity) {}
-#endif
-
-    // Calculate the new frontier through reduction
-    // (almost uniquely sparse CSR and dense CSC cases)
-#if DEFERRED_UPDATE
-    static constexpr frontier_mode new_frontier = fm_calculate;
-#else
-    static constexpr frontier_mode new_frontier = fm_reduction;
-#endif
-    static constexpr bool is_scan = false;
-    static constexpr bool is_idempotent = true;
-    static constexpr bool new_frontier_dense = false;
-
-#if UNCOND_EXEC
-    static constexpr bool may_omit_frontier_rd = true;
-#else
-    static constexpr bool may_omit_frontier_rd = false;
-#endif
-    static constexpr bool may_omit_frontier_wr = true;
-
-    template<typename VIDSrc, typename VIDDst>
-    auto relax( VIDSrc s, VIDDst d ) {
-#if LEVEL_ASYNC
-	return level[d].min( level[s]+expr::constant_val_one(s) );
-#else
-	return level[d].min( prev_level[s]+expr::constant_val_one(s) );
-#endif
-    }
-
-    template<typename VIDDst>
-    auto update( VIDDst d ) {
-#if DEFERRED_UPDATE
-	return level[d] != prev_level[d]; 
-#else
-	return expr::true_val(d);
-#endif
-    }
-
-    template<typename VIDDst>
-    auto different( VIDDst d ) {
-	// TODO: level >= current level
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto active( VIDDst d ) {
-#if CONVERGENCE
-	// return level[d] == expr::constant_val(d, infinity); -- erroneous when LEVEL_ASYNC + UNCOND_EXEC
-	return level[d] != expr::zero_val(d);
-#else
-	return expr::true_val(d);
-#endif
-    }
-
-    template<typename VIDDst>
-    auto vertexop( VIDDst d ) {
-	// TODO: copy new level to prev_level !?
-	return expr::make_noop();
-    }
-};
-
-// Initialise level array
-struct BFS_Init
-{
-    VID* level;
-    VID val;
-    BFS_Init( VID* _level, VID _val ) : level( _level ), val( _val ) { }
-    inline void operator () ( VID i ) {
-	level[i] = val; // ~VID(0);
-    }
-};
 
 template <class GraphType>
 class BFSv {
@@ -127,6 +44,7 @@ public:
 	    std::cerr << "LEVEL_ASYNC=" << LEVEL_ASYNC << "\n";
 	    std::cerr << "CONVERGENCE=" << CONVERGENCE << "\n";
 	    std::cerr << "MEMO=" << MEMO << "\n";
+	    std::cerr << "FUSION=" << FUSION << "\n";
 	}
     }
     ~BFSv() {
@@ -160,11 +78,10 @@ public:
 	expr::array_ro/*update*/<VID, VID, 0> a_level( level );
 
 	// Assign initial labels
-	// vertexMap( part, BFS_Init( level, n+1 ) );
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
-		 return a_level[v]
-		     = expr::constant_val( a_level[v], n+1 ); } )
+		return a_level[v]
+		    = expr::constant_val( a_level[v], n+1 ); } )
 	    .materialize();
 	level[start] = 0;
 
@@ -174,11 +91,10 @@ public:
 
 	expr::array_ro<VID, VID, 1> a_prev_level( prev_level );
 
-	// vertexMap( part, BFS_Init( prev_level, n+1 ) );
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
-		 return a_prev_level[v]
-		     = expr::constant_val( a_prev_level[v], n+1 ); } )
+		return a_prev_level[v]
+		    = expr::constant_val( a_prev_level[v], n+1 ); } )
 	    .materialize();
 	prev_level[start] = 0;
 #endif
@@ -200,21 +116,6 @@ public:
 	    tm_iter.start();
 
 	    // Traverse edges, remove duplicate live destinations.
-#if 0
-#if DEFERRED_UPDATE || !LEVEL_ASYNC
-	    frontier output;
-	    vEdgeMap( GA, F,
-		      output, BFS_Level_F( level, prev_level, n+1 ) )
-		.materialize();
-	    maintain_copies( part, /*output,*/ prev_level, level );
-#else
-	    frontier output;
-	    // TODO: removeDups seems to be a big performance cost
-	    vEdgeMap( GA, F, output, BFS_Level_F( level, n+1 ) )
-	    .materialize();
-#endif
-#else
-
 #if UNCOND_EXEC
 	    auto filter_strength = api::weak;
 #else
@@ -232,6 +133,11 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
+#if FUSION
+		api::fusion( [&]( auto v ) {
+		    return expr::true_val( v );
+		} ),
+#endif
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&]( auto d ) {
@@ -243,41 +149,11 @@ public:
 #else
 		    return a_level[d].min( a_prev_level[s]+expr::constant_val_one(s) );
 #endif
-			    } )
+		} )
 		)
 		.materialize();
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
 	    maintain_copies( part, /*output,*/ prev_level, level );
-#endif
-#endif
-
-#if 0
-	    {
-		output.toDense<logical<4>>(part);
-		logical<4> *nf=output.template getDenseL<4>();
-		std::cerr << "output:";
-		for( VID v=0; v < n; ++v )
-		    std::cerr << ' ' << nf[v];
-		std::cerr << "\n";
-
-		std::cerr << "defer match:";
-		for( VID v=0; v < n; ++v )
-		    if( ( level[v] != prev_level[v] ) == ( nf[v] != 0 ) )
-			std::cerr << '.';
-		    else
-			std::cerr << 'X';
-		std::cerr << "\n";
-
-		std::cerr << "pvlvl:";
-		for( VID v=0; v < n; ++v )
-		    std::cerr << ' ' << prev_level[v];
-		std::cerr << "\n";
-
-		std::cerr << "level:";
-		for( VID v=0; v < n; ++v )
-		    std::cerr << ' ' << level[v];
-		std::cerr << "\n";
-	    }
 #endif
 
 #if BFS_DEBUG
