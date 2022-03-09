@@ -139,7 +139,8 @@ public:
 	
 	VID n = csc.numVertices();
 
-	VID max_deg = csc.max_degree();
+	VID max_v = csc.findHighestDegreeVertex(); // parallel
+	VID max_deg = csc.getDegree( max_v );
 #if VEBO_DISABLE
 	if( true )
 #elif VEBO_FORCE
