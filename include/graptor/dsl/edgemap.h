@@ -273,13 +273,13 @@ step_emap_dense3<GraphType,PushOperator,PullOperator,IRegOperator>::execute(
 
     switch( m_kind ) {
     case graph_traversal_kind::gt_push:
-	m_push.template execute<graph_traversal_kind::gt_push>( part ); 
+	m_push.template execute<graph_traversal_kind::gt_push>( part );
 	break;
     case graph_traversal_kind::gt_pull:
-	m_pull.template execute<graph_traversal_kind::gt_pull>( part ); 
+	m_pull.template execute<graph_traversal_kind::gt_pull>( part );
 	break;
     case graph_traversal_kind::gt_ireg:
-	m_ireg.template execute<graph_traversal_kind::gt_ireg>( part ); 
+	m_ireg.template execute<graph_traversal_kind::gt_ireg>( part );
 	break;
     case graph_traversal_kind::gt_sparse:
 	// nothing to do
@@ -309,8 +309,8 @@ void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
 	if constexpr ( once ) { // at least initialise *f
 	    if constexpr ( zerof ) {
 		if( updated ) { // set true
-		    if( !*zf && __sync_fetch_and_or( (unsigned char *)zf,
-						     (unsigned char)1 ) ) {
+		    if( *zf != 0 || __sync_fetch_and_or( (unsigned char *)zf,
+							 (unsigned char)1 ) ) {
 			// already set, don't set twice
 			*f = ~(VID)0;
 		    } else
@@ -663,7 +663,7 @@ inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
 }
 
 inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
-				   VID * tgt, const partitioner & part ) {
+					  VID * tgt, const partitioner & part ) {
     VID m = (VID) me;
     assert( me == (EID)m && "length of array should be small enough" );
 
@@ -1056,7 +1056,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr );
 
-    tuple<> c; // empty cache
+    // Cache local variables; no need to destruct/commit cache
+    auto mi = expr::create_value_map_new<1>();
+    auto c = cache_create( env, l_cache, mi );
 
     const VID *edge = GA.getEdges();
 
@@ -1166,7 +1168,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
     }
 
-    if constexpr ( api::has_fusion_op_v<Operator> && cfg.is_parallel() )
+    if constexpr ( api::has_fusion_op_v<Operator> )
 	return csr_sparse_with_f_fusion_stealing<zerof>(
 	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
 
