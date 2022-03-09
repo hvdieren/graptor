@@ -7,7 +7,9 @@
 namespace expr {
 
 /**********************************************************************
- * Utility for checking if an expression is idempotent.
+ * Utility for checking if an expression is idempotent, and one for
+ * read-only expressions.
+ *
  * An expression is idempotent if executing it multiple times on exactly
  * the same values (src, dst, mask, ...) yields the same values in memory
  * and in cacheops.
@@ -22,6 +24,9 @@ namespace expr {
  * and we need more careful checks that the update of the first does not
  * affect the other. On other words, it is easier to check if all values
  * read from memory are guaranteed to be the same in each execution.
+ *
+ * An expression is read-only if it contains no operations that alter
+ * the state of memory (redop, storeop).
  **********************************************************************/
 
 namespace detail {
@@ -150,6 +155,32 @@ struct is_idempotent_op {
 	    ->relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
 		     expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 		     expr::value<simd::ty<EID,1>,expr::vk_edge>() ))>
+	::value;
+};
+
+template<typename Expr>
+struct is_readonly {
+    using D = detail::is_idempotent<std::decay_t<Expr>>;
+    static constexpr bool value = D::seen_mod == 0;
+};
+
+template<typename Operator>
+struct is_readonly_op {
+    static constexpr bool value = is_readonly<
+	decltype(
+	    ((Operator*)nullptr)
+	    ->relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+		     expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+		     expr::value<simd::ty<EID,1>,expr::vk_edge>() ))>
+	::value;
+};
+
+template<typename Operator>
+struct is_readonly_fusion_op {
+    static constexpr bool value = is_readonly<
+	decltype(
+	    ((Operator*)nullptr)
+	    ->fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ))>
 	::value;
 };
 
