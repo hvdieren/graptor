@@ -2,7 +2,52 @@
 #ifndef GRAPTOR_DSL_EMAP_WORK_LIST_H
 #define GRAPTOR_DSL_EMAP_WORK_LIST_H
 
+#include <cstdint>
 #include <atomic>
+
+#define DEBUG_WORK_LIST 0
+
+#if DEBUG_WORK_LIST
+namespace {
+    static std::atomic<size_t> n_alloc_full = 0;
+    static std::atomic<size_t> n_alloc_half = 0;
+    static std::atomic<size_t> n_destroy = 0;
+}
+#endif
+
+
+/************************************************************************
+ * Auxiliary for tagged pointers.
+ * https://stackoverflow.com/questions/4825400/cmpxchg16b-correct
+ ************************************************************************/
+namespace types {
+    struct uint128_t {
+        uint64_t lo;
+        uint64_t hi;
+    } __attribute__ (( __aligned__( 16 ) ));
+}
+
+inline bool cas( volatile types::uint128_t * src,
+		 types::uint128_t cmp,
+		 types::uint128_t with ) {
+    // cmp can be by reference so the caller's value is updated on failure.
+
+    // suggestion: use __sync_bool_compare_and_swap and compile with -mcx16 instead of inline asm
+    bool result;
+    __asm__ __volatile__
+    (
+        "lock cmpxchg16b %1\n\t"
+        "setz %0"       // on gcc6 and later, use a flag output constraint instead
+        : "=q" ( result )
+        , "+m" ( *src )
+        , "+d" ( cmp.hi )
+        , "+a" ( cmp.lo )
+        : "c" ( with.hi )
+        , "b" ( with.lo )
+        : "cc", "memory" // compile-time memory barrier.  Omit if you want memory_order_relaxed compile-time ordering.
+    );
+    return result;
+}
 
 /************************************************************************
  * A work_list that organisations work items in a linked list of array
@@ -36,6 +81,11 @@ public:
 	    list_node * l = reinterpret_cast<list_node *>( p );
 	    type * b = reinterpret_cast<type *>( &p[sizeof(list_node)] );
 	    new ( l ) list_node( b, 0 );
+
+#if DEBUG_WORK_LIST
+	    n_alloc_full++;
+#endif
+	    
 	    return l;
 	}
 	static list_node * create( type * buf, size_t fill ) {
@@ -43,25 +93,56 @@ public:
 	    uint8_t * p = new uint8_t[size];
 	    list_node * l = reinterpret_cast<list_node *>( p );
 	    new ( l ) list_node( buf, fill );
+
+#if DEBUG_WORK_LIST
+	    n_alloc_half++;
+#endif
+
 	    return l;
 	}
 	static void destroy( list_node * l ) {
+#if DEBUG_WORK_LIST
+	    n_destroy++;
+#endif
 	    delete[] reinterpret_cast<uint8_t *>( l );
 	}
 
     public:
 	void destroy() { return destroy( this ); }
+
+	static void debug() {
+#if DEBUG_WORK_LIST
+	    size_t check = ( (size_t)n_alloc_full
+			     + (size_t)n_alloc_half
+			     - (size_t)n_destroy );
+	    std::cerr << "n_alloc_full: " << (size_t)n_alloc_full
+		      << " n_alloc_half: " << (size_t)n_alloc_half
+		      << " n_destroy: " << (size_t)n_destroy
+		      << " check: " << check
+		      << "\n";
+	    assert( check == 0 );
+	    n_alloc_full = 0;
+	    n_alloc_half = 0;
+	    n_destroy = 0;
+#endif
+	}
 	
 	const T * begin() const { return m_buf; }
 	const T * end() const { return &m_buf[m_fill]; }
 
-	void push_back( T & value ) { m_buf[m_fill++] = value; }
+	void push_back( T & value ) {
+	    m_buf[m_fill++] = value;
+	    // assert( m_fill <= CHUNK );
+	}
 
 	list_node * get_next() { return m_next; }
 	const list_node * get_next() const { return m_next; }
 	void set_next( list_node * p ) { m_next = p; }
 
-	bool has_space( size_t n ) const { return m_fill + n <= CHUNK; } 
+	bool has_space( size_t n ) const {
+	    return m_fill + n <= CHUNK;
+	    // assert( m_fill <= CHUNK );
+	} 
 	bool is_empty() const { return m_fill == 0; }
 
     protected:
@@ -71,7 +152,7 @@ public:
     };
 
 public:
-    work_list() : m_head( nullptr ) { }
+    work_list() : m_head_tag( { 0, 0 } ) { }
 
     static list_node * create_list_node() {
 	return list_node::create();
@@ -81,13 +162,18 @@ public:
     };
     
     list_node * pop() {
-	list_node * old;
+	types::uint128_t old;
+	types::uint128_t upd;
+	list_node * old_ptr;
 	do {
-	    old = m_head.load();
-	    if( old == nullptr )
+	    old = m_head_tag;
+	    old_ptr = reinterpret_cast<list_node *>( old.lo ); 
+	    if( old_ptr == nullptr )
 		return nullptr;
-	} while( !m_head.compare_exchange_weak( old, old->get_next() ) );
-	return old;
+	    upd.lo = reinterpret_cast<uint64_t>( old_ptr->m_next );
+	    upd.hi = old.hi + 1;
+	} while( !cas( &m_head_tag, old, upd ) );
+	return reinterpret_cast<list_node *>( old.lo );
     }
     void push( list_node * n ) {
 	if( n->is_empty() ) {
@@ -95,15 +181,21 @@ public:
 	    return;
 	}
 
-	list_node * old;
+	types::uint128_t old, upd;
 	do {
-	    old = m_head.load();
-	    n->set_next( old );
-	} while( !m_head.compare_exchange_weak( old, n ) );
+	    old = m_head_tag;
+	    n->m_next = reinterpret_cast<list_node *>( old.lo );
+	    upd.lo = reinterpret_cast<uint64_t>( n );
+	    upd.hi = old.hi + 1;
+	} while( !cas( &m_head_tag, old, upd ) );
+    }
+    bool is_empty() const {
+	return m_head_tag.lo == 0;
     }
 
 private:
-    std::atomic<list_node *> m_head;
+    types::uint128_t m_head_tag;
+    char m_padding[64-sizeof(types::uint128_t)];
 };
 
 /************************************************************************
@@ -126,6 +218,17 @@ public:
 	m_active = new buffer_type *[m_threads];
 	for( unsigned t=0; t < m_threads; ++t )
 	    m_active[t] = nullptr;
+    }
+
+    ~work_stealing() {
+	for( unsigned t=0; t < m_threads; ++t ) {
+	    assert( m_queues[t].is_empty() );
+	    if( m_active[t] ) {
+		assert( m_active[t]->is_empty() );
+		m_active[t]->destroy();
+	    }
+	}
+	buffer_type::debug();
     }
 
     void push( unsigned self_id, type value ) {
@@ -153,7 +256,8 @@ public:
     }
 
     void create_buffer( unsigned self_id, type * buf, size_t fill ) {
-	push_buffer( queue_type::create_list_node( buf, fill ), self_id );
+	if( fill > 0 )
+	    push_buffer( queue_type::create_list_node( buf, fill ), self_id );
     }
 
     buffer_type * steal( unsigned self_id ) {
