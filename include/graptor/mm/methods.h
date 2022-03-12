@@ -88,7 +88,14 @@ struct methods {
     static allocation aligned_allocate( size_t size ) {
 	void * memp;
 	if constexpr ( config::USE_POSIX_MEMALIGN ) {
+#if DMALLOC
+	    // DMALLOC currently does not support memalign; cannot mix
+	    // posix_memalign with free calls.
+	    memp = memalign( config::PAGE_SIZE, size );
+	    int ret = memp == nullptr;
+#else
 	    int ret = posix_memalign( &memp, config::PAGE_SIZE, size );
+#endif
 	    if( ret != 0 ) { // failure
 		std::cerr << __FILE__ << ':'
 			  << __LINE__ << ':'
