@@ -158,6 +158,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     bool * zf,
     Operator op ) {
 
+    if( old_frontier.nActiveVertices() == 0 )
+	return frontier::empty();
+
     // TODO: Address initial inefficiency when the initial frontier is
     // very small, as it will leave many threads idle initially.
     assert( cfg.is_parallel() && "this will execute in parallel" );
@@ -187,7 +190,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 
     parallel_for( uint32_t t=0; t < num_threads; ++t ) {
 	VID from = ( t * m ) / num_threads;
-	VID to = t == num_threads ? m : ( (t + 1) * m ) / num_threads;
+	VID to = t == num_threads-1 ? m : ( (t + 1) * m ) / num_threads;
 	work_queues.create_buffer( t, &s[from], to-from );
 	F[t] =
 	    csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
