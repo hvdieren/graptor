@@ -252,6 +252,7 @@ public:
 		    }
 		}
 	    }
+	    assert( pe == slabs[p].numSIMDEdges() );
 	    slabs[p].setNumPaddingEdges( mpad );
 	} );
     }
@@ -417,11 +418,11 @@ public:
 #endif
 	    }
 
+	    assert( pe == slabs[p].numSIMDEdges() );
 	    slabs[p].setNumPaddingEdges( mpad );
 	    delete[] buf;
 	} );
     }
-
 
     EID *
     edges_per_partition_from_csc(
