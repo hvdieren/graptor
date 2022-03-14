@@ -60,6 +60,29 @@ private:
     const EID * idx;
 };
 
+void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
+    uint8_t * ptr = reinterpret_cast<uint8_t *>( vptr );
+
+    constexpr size_t BLOCK = size_t(128) << 20; // 128 MiB
+    unsigned num_threads = graptor_num_threads();
+    size_t nblock = ( len + BLOCK - 1 ) / BLOCK;
+    parallel_for( unsigned t=0; t < num_threads; ++t ) {
+	size_t blk_from = ( nblock * t ) / num_threads;
+	size_t blk_to = ( nblock * (t+1) ) / num_threads;
+	size_t from = blk_from * BLOCK;
+	size_t to = std::min( blk_to * BLOCK, len );
+	for( size_t b=from; b < to; b += BLOCK ) {
+	    size_t sz = std::min( BLOCK, to - b );
+	    ssize_t res = pread( fd, &ptr[b], sz, off+b );
+	    if( res != sz ) {
+		std::cerr << "Reading file fd='" << fd << "' failed: "
+			  << strerror( errno ) << "\n";
+		exit( 1 );
+	    }
+	}
+    }
+}
+
 class GraphCSx {
     VID n;
     VID nmaxdeg;
@@ -308,6 +331,7 @@ public:
 		    EID js = Gcsr.index[w];
 		    EID je = Gcsr.index[w+1];
 		    EID deg = je - js;
+		    assert( deg <= n );
 		    if( deg > 0 )
 			std::copy( &Gweights[js], &Gweights[je],
 				   &Tweights[nxt] );
@@ -818,6 +842,7 @@ public:
 	file.close();
 	std::cerr << "Reading file done" << std::endl;
 #else
+#if 0
 	// TODO: extend mmap_ptr to mmap a file using specified allocation
 	//       policy. Will avoid current copy of data
 	std::cerr << "Reading (using mmap) file " << ifile << std::endl;
@@ -868,13 +893,53 @@ public:
 	munmap( (void *)data, len );
 	close( fd );
 	std::cerr << "Reading file done" << std::endl;
+#else
+	// Read using read() with large chunks
+	std::cerr << "Reading (using parallel read) file "
+		  << ifile << std::endl;
+	int fd;
+
+	if( (fd = open( ifile.c_str(), O_RDONLY )) < 0 ) {
+	    std::cerr << "Cannot open file '" << ifile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+
+	uint64_t header[8];
+	ssize_t sz = read( fd, (char *)header, sizeof(header) );
+	if( sz != sizeof(header) ) {
+	    std::cerr << "Reading file '" << ifile << "' failed: "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+	    
+	if( header[0] != 2 ) {
+	    std::cerr << "Only accepting version 2 files\n";
+	    exit( 1 );
+	}
+	n = header[2];
+	m = header[3];
+	assert( sizeof(VID) == header[4] );
+	assert( sizeof(EID) == header[5] );
+
+	allocate( alloc );
+
+	parallel_read( fd, sizeof(header), index.get(), sizeof(EID)*n );
+	index[n] = m;
+	parallel_read( fd, sizeof(header)+sizeof(EID)*n, edges.get(), sizeof(VID)*m );
+
+	close( fd );
+	std::cerr << "Reading file done" << std::endl;
+#endif
 #endif
 	build_degree();
     }
 
     void readWeightsFromBinaryFile( const std::string & wfile,
 				    const numa_allocation & alloc ) {
-	std::cerr << "Reading (using mmap) weights file " << wfile << std::endl;
+#if 0
+	std::cerr << "Reading (using mmap) edge weights file "
+		  << wfile << std::endl;
 	int fd;
 
 	if( (fd = open( wfile.c_str(), O_RDONLY )) < 0 ) {
@@ -895,7 +960,27 @@ public:
 	weights = new mm::buffer<float>( (size_t)m, fd, (off_t)0, alloc );
 
 	close( fd );
-	std::cerr << "Reading file done" << std::endl;
+	std::cerr << "Reading edge weights file done" << std::endl;
+#else
+
+	// Read using read() with large chunks
+	std::cerr << "Reading (using parallel read) edge weights file "
+		  << wfile << std::endl;
+	int fd;
+
+	if( (fd = open( wfile.c_str(), O_RDONLY )) < 0 ) {
+	    std::cerr << "Cannot open file '" << wfile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+
+	weights = new mm::buffer<float>( (size_t)m, alloc, "edge weights" );
+
+	parallel_read( fd, 0, weights->get(), sizeof(float)*m );
+
+	close( fd );
+	std::cerr << "Reading edge weights file done" << std::endl;
+#endif
     }
 
 public:
