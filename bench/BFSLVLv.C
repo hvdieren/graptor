@@ -1,6 +1,8 @@
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
+using expr::_1;
+
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
 #define DEFERRED_UPDATE 1
@@ -27,10 +29,21 @@
 #define FUSION 1
 #endif
 
+enum var {
+    var_current = 0,
+    var_previous = 1
+};
+
 template <class GraphType>
 class BFSv {
 public:
-    BFSv( GraphType & _GA, commandLine & P ) : GA( _GA ), info_buf( 60 ) {
+    BFSv( GraphType & _GA, commandLine & P )
+	: GA( _GA ),
+	  a_level( GA.get_partitioner(), "current level" ),
+#if !LEVEL_ASYNC || DEFERRED_UPDATE
+	  a_prev_level( GA.get_partitioner(), "previous level" ),
+#endif
+	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
 	calculate_active = P.getOption( "-cactive" );
@@ -48,7 +61,10 @@ public:
 	}
     }
     ~BFSv() {
-	level.del();
+	a_level.del();
+#if !LEVEL_ASYNC || DEFERRED_UPDATE
+	a_prev_level.del();
+#endif
     }
 
     struct info {
@@ -74,29 +90,21 @@ public:
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
 
-	level.allocate( numa_allocation_partitioned( part ) );
-	expr::array_ro/*update*/<VID, VID, 0> a_level( level );
-
 	// Assign initial labels
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
 		return a_level[v]
 		    = expr::constant_val( a_level[v], n+1 ); } )
 	    .materialize();
-	level[start] = 0;
+	a_level.get_ptr()[start] = 0;
 
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	mmap_ptr<VID> prev_level;
-	prev_level.allocate( numa_allocation_partitioned( part ) );
-
-	expr::array_ro<VID, VID, 1> a_prev_level( prev_level );
-
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
 		return a_prev_level[v]
 		    = expr::constant_val( a_prev_level[v], n+1 ); } )
 	    .materialize();
-	prev_level[start] = 0;
+	a_prev_level.get_ptr()[start] = 0;
 #endif
 
 	// Create initial frontier
@@ -125,6 +133,9 @@ public:
 	    api::edgemap(
 		GA,
 #if DEFERRED_UPDATE
+		// TODO: if not FUSION, compare a_level[d] to iters,
+		//       obviating the need for prev_level
+		// TODO: try reduction_or_method
 		api::record( output,
 			     [&]( auto d ) {
 				 return a_level[d] != a_prev_level[d]; 
@@ -136,14 +147,35 @@ public:
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&]( auto d ) {
-				 return a_level[d] != expr::zero_val(d); } ),
+				 auto cIt = expr::constant_val( d, iter+1 );
+				 return a_level[d] > cIt;
+			     } ),
 #endif
 #if FUSION
 		api::fusion( [&]( auto v ) {
-		    return expr::true_val( v );
+		    // return expr::true_val( v );
+		    auto cTh = expr::constant_val( v, 3*iter+3 );
+		    return a_level[v] <= cTh;
 		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
+		    // TODO: alternative formulation
+		    // Will avoid an add in critical path
+		    // (no fusion only)
+		    // doesn't help performance due to broadcast...
+		    // The check a_level[s] == cur_level amounts to
+		    // strong filtering on api::src.
+		    /*
+		    auto cur_level = expr::constant_val( a_level[s], iter );
+		    auto high_level = expr::constant_val( a_level[s], iter+1 );
+		    return expr::let<3>(
+			a_level[d],
+			[&]( auto old ) {
+			    return a_level[d] = expr::add_predicate(
+				high_level,
+				a_level[s] == cur_level && old > high_level );
+			} );
+		    */
 #if LEVEL_ASYNC
 		    return a_level[d].min( a_level[s]+expr::constant_val_one(s) );
 #else
@@ -153,7 +185,7 @@ public:
 		)
 		.materialize();
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	    maintain_copies( part, /*output,*/ prev_level, level );
+	    maintain_copies( part, output, a_prev_level, a_level );
 #endif
 
 #if BFS_DEBUG
@@ -184,7 +216,7 @@ public:
 		VID active = 0;
 		if( calculate_active ) { // Warning: expensive, included in time
 		    for( VID v=0; v < n; ++v )
-			if( level[v] == ~VID(0) )
+			if( a_level[v] == ~VID(0) )
 			    active++;
 		}
 		info_buf.resize( iter+1 );
@@ -205,9 +237,6 @@ public:
 	}
 
 	F.del();
-#if DEFERRED_UPDATE || !LEVEL_ASYNC
-	prev_level.del();
-#endif
     }
 
     void post_process( stat & stat_buf ) {
@@ -224,8 +253,8 @@ public:
 	// VID longest = iter - 1;
 	VID longest = 0;
 	for( VID v=0; v < n; ++v )
-	    if( longest < level[v] && level[v] < n ) 
-		longest = level[v];
+	    if( longest < a_level[v] && a_level[v] < n ) 
+		longest = a_level[v];
 
 	std::cout << "Longest path from " << start
 		  << " (original: " << GA.originalID( start ) << ") : "
@@ -249,7 +278,10 @@ private:
     bool itimes, debug, calculate_active;
     int iter;
     VID start, active;
-    mmap_ptr<VID> level;
+    api::vertexprop<VID,VID,var_current> a_level;
+#if !LEVEL_ASYNC || DEFERRED_UPDATE
+    api::vertexprop<VID,VID,var_previous> a_prev_level;
+#endif
     std::vector<info> info_buf;
 };
 
