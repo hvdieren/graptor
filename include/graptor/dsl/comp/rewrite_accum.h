@@ -147,7 +147,7 @@ static constexpr
 auto rewrite_privatize_accumulators(
     Expr e, const partitioner & part, Cache & c, PIDExpr p,
     typename std::enable_if<!std::is_same<Cache,cache<>>::value>::type * = nullptr ) {
-    accum_create( part, c );
+    // accum_create( part, c );
     return detail::rewrite_privatize_accumulators( e, c, p );
 }
 

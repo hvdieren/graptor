@@ -114,6 +114,7 @@ static inline void GraptorCSCDataParCached(
 		extractor.extract_source( edata.data() ) );
 
 	    while( s < smax ) {
+		assert( s < nvec );
 		// Check all lanes are active; using cached values.
 		if( !env.evaluate_bool( c, m, aexpr ) ) {
 		    s = smax;
@@ -270,6 +271,7 @@ static inline void emap_pull(
     // Extract accumulators, also on edges. Generate expressions to reduce
     // accumulators
     auto accum = expr::extract_accumulators( make_seq( vop0, m_vexpr0a ) );
+    expr::accum_create( part, accum );
     auto pvop0 = expr::accumulate_privatized_accumulators( v_pid0, accum );
     auto pvopf0 = expr::final_accumulate_privatized_accumulators( v_pid0, accum );
 

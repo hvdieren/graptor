@@ -801,12 +801,13 @@ process_csr_sparse_seq( const EIDRetriever & eid_retriever,
 }
 
 template<bool atomic, bool setf, bool zerof,
-	 typename EIDRetriever, typename Environment, typename Expr>
+	 typename EIDRetriever, typename Cache, typename Environment,
+	 typename Expr>
 static void
 process_csr_sparse( const EIDRetriever & eid_retriever,
 		    const VID *out, VID deg, VID srcv, VID *frontier,
-		    bool *zf, const Environment & env, const Expr & e ) {
-    tuple<> c; // empty cache
+		    bool *zf, Cache & c,
+		    const Environment & env, const Expr & e ) {
 
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
@@ -828,15 +829,14 @@ process_csr_sparse( const EIDRetriever & eid_retriever,
 }
 
 template<bool atomic, bool setf, bool zerof, typename EIDRetriever,
-	 typename Environment, typename Expr>
+	 typename Cache, typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 			     const VID *out, VID deg, VID srcv, VID *frontier,
 			     bool *zf,
+			     Cache & c,
 			     const Environment & env,
 			     const Expr & e ) {
-    tuple<> c; // empty cache
-
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     parallel_for( VID j=0; j < deg; j++ ) {
@@ -860,12 +860,11 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 }
 
 template<bool atomic, bool setf, bool zerof,
-	 typename Environment, typename Expr>
+	 typename Cache, typename Environment, typename Expr>
 static void
 process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
-		    bool *zf, const Environment & env, const Expr & e ) {
-    tuple<> c; // empty cache
-
+		    bool *zf, Cache & c, const Environment & env,
+		    const Expr & e ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     auto src = simd::template create_scalar<simd::ty<VID,1>>( srcv );
@@ -887,15 +886,14 @@ process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
 }
 
 template<bool atomic, bool setf, bool zerof,
-	 typename Environment, typename Expr>
+	 typename Cache, typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const VID *out, EID be,
 			     VID deg, VID srcv, VID *frontier,
 			     bool *zf,
+			     Cache & c, 
 			     const Environment & env,
 			     const Expr & e ) {
-    tuple<> c; // empty cache
-
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     parallel_for( VID j=0; j < deg; j++ ) {
@@ -1146,7 +1144,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     Operator op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
-    EID * degrees = new EID[2*m];
     VID * s = old_frontier.getSparse();
 
     static constexpr bool zerof = true; // !expr::is_idempotent<decltype(vexpr)>::value;
@@ -1186,6 +1183,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     // By definition of sparsity, don't expect this loop to be worthwhile to
     // parallelize.
+    EID * degrees = new EID[2*m];
     if( m > 4096 )
 	parallel_for( VID i=0; i < m; ++i )
 	    degrees[i] = idx[s[i]+1] - idx[s[i]];
@@ -1232,6 +1230,10 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
 
+    // Cache local variables; no need to destruct/commit cache
+    auto mi = expr::create_value_map_new<1>();
+    auto c = cache_create( env, l_cache, mi );
+
     parallel_for( VID k = 0; k < m; k++ ) {
 	VID v = s[k];
 	EID o = offsets[k];
@@ -1239,7 +1241,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	if( __builtin_expect( d < 1000, 1 ) ) {
 	    process_csr_sparse<need_atomic,true,zerof>(
 		&edge[idx[v]], idx[v], d, v,
-		&outEdges[o], zf, env, vexpr );
+		&outEdges[o], zf, c, env, vexpr );
 	} else {
 	    // Note: it is highly likely that running this in parallel
 	    //       will hardly ever occur, as in the sparse part
@@ -1247,7 +1249,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	    //       PRDelta, maybe not BFS)
 	    process_csr_sparse_parallel<need_atomic,true,zerof>(
 		&edge[idx[v]], idx[v],
-		d, v, &outEdges[o], zf, env, vexpr );
+		d, v, &outEdges[o], zf, c, env, vexpr );
 	}
     }
 
@@ -1349,13 +1351,17 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 
     constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
 
+    // Cache local variables; no need to destruct/commit cache
+    auto mi = expr::create_value_map_new<1>();
+    auto c = cache_create( env, l_cache, mi );
+
     if constexpr ( !std::decay_t<config>::is_parallel() ) {
 	for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    process_csr_sparse<false,false,false>(
 		/*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
-		nullptr, nullptr, env, vexpr );
+		nullptr, nullptr, c, env, vexpr );
 	}
     } else {
 	parallel_for( VID k = 0; k < m; k++ ) {
@@ -1364,14 +1370,14 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 	    if( __builtin_expect( d < 1000, 1 ) ) {
 		process_csr_sparse<need_atomic,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
-		    nullptr, nullptr, env, vexpr );
+		    nullptr, nullptr, c, env, vexpr );
 	    } else {
 		// Note: it is highly likely that running this in parallel
 		//       will hardly ever occur, as in the sparse part high-degree
 		//       vertices may have converged (e.g. PRDelta, maybe not BFS)
 		process_csr_sparse_parallel<need_atomic,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v],
-		    d, v, nullptr, nullptr, env, vexpr );
+		    d, v, nullptr, nullptr, c, env, vexpr );
 	    }
 	}
     }
