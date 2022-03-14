@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <atomic>
 
+#define MANUALLY_ALIGNED_ARRAYS 1
 #define DEBUG_WORK_LIST 0
 
 #if DEBUG_WORK_LIST
@@ -196,7 +197,7 @@ public:
 private:
     types::uint128_t m_head_tag;
     char m_padding[64-sizeof(types::uint128_t)];
-};
+} __attribute__ (( __aligned__( 16 ) ));
 
 /************************************************************************
  * A work stealing structure, based on one work_list per thread.
@@ -214,7 +215,22 @@ public:
 
     work_stealing() : m_threads( graptor_num_threads() ),
 		      m_working( m_threads ) {
+#if MANUALLY_ALIGNED_ARRAYS
+	size_t space = sizeof(queue_type)*m_threads+16;
+	m_queues_alloc = new char[space];
+	void * ptr = reinterpret_cast<void *>( m_queues_alloc );
+	m_queues = 
+	    reinterpret_cast<queue_type *>(
+		std::align( 16, sizeof(queue_type)*m_threads, ptr, space ) );
+	for( unsigned t=0; t < m_threads; ++t )
+	    new ( &m_queues[t] ) queue_type();
+#else
 	m_queues = new queue_type[m_threads]();
+#endif
+	// Check alignment to 16 bytes
+	assert( ( reinterpret_cast<intptr_t>( &m_queues[0] ) & intptr_t(0xf) ) == 0 );
+	assert( ( reinterpret_cast<intptr_t>( &m_queues[1] ) & intptr_t(0xf) ) == 0 );
+
 	m_active = new buffer_type *[m_threads];
 	for( unsigned t=0; t < m_threads; ++t )
 	    m_active[t] = nullptr;
@@ -223,11 +239,20 @@ public:
     ~work_stealing() {
 	for( unsigned t=0; t < m_threads; ++t ) {
 	    assert( m_queues[t].is_empty() );
+#if MANUALLY_ALIGNED_ARRAYS
+	    m_queues[t].~queue_type(); // actually default and empty
+#endif
 	    if( m_active[t] ) {
 		assert( m_active[t]->is_empty() );
 		m_active[t]->destroy();
 	    }
 	}
+	delete[] m_active;
+#if MANUALLY_ALIGNED_ARRAYS
+	delete[] m_queues_alloc;
+#else
+	delete[] m_queues;
+#endif
 	buffer_type::debug();
     }
 
@@ -295,6 +320,9 @@ private:
 private:
     unsigned m_threads;
     std::atomic<unsigned> m_working;
+#if MANUALLY_ALIGNED_ARRAYS
+    char * m_queues_alloc;
+#endif
     queue_type * m_queues;
     buffer_type ** m_active;
 };
