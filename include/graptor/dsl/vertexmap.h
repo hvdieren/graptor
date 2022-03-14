@@ -678,6 +678,7 @@ private:
 	auto sexpr0 = op( svid );
 
 	auto accum = expr::extract_accumulators( expr0 );
+	expr::accum_create( part, accum );
 	auto expr1 = expr::rewrite_privatize_accumulators( expr0, part, accum, pid );
 	auto pexpr = expr::accumulate_privatized_accumulators( pid, accum );
 	auto pfexpr = expr::final_accumulate_privatized_accumulators( pid, accum );
@@ -1233,6 +1234,7 @@ struct step_flat_emap {
 	auto sexpr0 = m_op( seid );
 
 	auto accum = expr::extract_accumulators( expr0 );
+	expr::accum_create( part, accum );
 	auto expr1 = expr::rewrite_privatize_accumulators( expr0, part, accum, pid );
 	auto pexpr = expr::accumulate_privatized_accumulators( pid, accum );
 	auto pfexpr = expr::final_accumulate_privatized_accumulators( pid, accum );
@@ -2393,5 +2395,32 @@ constexpr auto make_edge_map_executor(
 	    G, kind, push.step(), pull.step(), ireg.step() ) );
 }
 #endif
+
+/**
+ * \brief Maintain the copies of two vertex properties
+ *
+ * \param part Graph partitioner object
+ * \param change Frontier of changed elements
+ * \param source Vertex property as source for copy
+ * \param dest Vertex property as destination for copy
+ */
+template<typename DstTy, typename SrcTy>
+auto maintain_copies( const partitioner & part, frontier & change,
+		      DstTy & dst, SrcTy & src ) {
+    if( change.getType() == frontier_type::ft_unbacked ) {
+	make_lazy_executor( part )
+	    .vertex_map( [&]( auto v ) {
+		return dst[v] = src[v];
+	    } )
+	    .materialize();
+    } else {
+	make_lazy_executor( part )
+	    .vertex_map( change, [&]( auto v ) {
+		return dst[v] = src[v];
+	    } )
+	    .materialize();
+    }
+}
+
 
 #endif // GRAPHGRIND_DSL_VERTEXMAP_H
