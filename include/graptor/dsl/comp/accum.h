@@ -59,6 +59,7 @@ struct accumulator_info {
     __attribute__((always_inline))
     value_type * accum_create( const partitioner & part ) {
 	constexpr unsigned short VL = orig_redop_type::VL;
+	assert( m_alloc == nullptr && "Avoid double-init / memory leak" );
 	// One vector per cache block. Normally expect that sizeof(value_type)
 	// is power of two
 	// constexpr unsigned blksize = stepping();
@@ -253,7 +254,8 @@ auto accum_reduce_final( PIDType pid, const cache<Cs...> & c,
 template<typename... Cs>
 __attribute__((always_inline))
 inline void accum_create( const partitioner & part, cache<Cs...> & c ) {
-    detail::accum_create<(sizeof...(Cs))-1>( part, c );
+    if constexpr ( sizeof...(Cs) > 0 )
+	detail::accum_create<(sizeof...(Cs))-1>( part, c );
 }
 
 inline void accum_destroy( cache<> & ) { }
