@@ -340,8 +340,8 @@ public:
 	    // If high_penetration is true, the algorithm completed using
 	    // the loop above. Nothing further to do.
 
-	    {  // push through zero labels
-		// frontier F = find_zeros();
+	    // Loop in case fusion not applied
+	    while( !zeros.isEmpty() ) {  // push through zero labels
 		frontier F = zeros;
 		frontier output = emap_step( F, 200 ); // always sparse
 
@@ -366,11 +366,15 @@ public:
 
 		// Cleanup old frontier
 		F.del();
+		zeros = find_zeros( output );
 		output.del();
 	    }
+	    zeros.del();
 
-	    {  // push through non-zero labels
-		frontier F = find_nonzeros();
+	    frontier nonzeros = find_nonzeros();
+	    // Loop in case fusion not applied
+	    while( !nonzeros.isEmpty() ) {  // push through non-zero labels
+		frontier F = nonzeros;
 		frontier output = emap_step( F, 200 ); // always sparse
 
 		if( itimes ) {
@@ -394,47 +398,59 @@ public:
 
 		// Cleanup old frontier
 		F.del();
+		nonzeros = find_nonzeros( output );
 		output.del();
 	    }
+	    nonzeros.del();
 	}
 #endif
     }
 
 private:
     __attribute__((noinline)) // no-inline to save compilation time
-    frontier find_nonzeros() {
+    frontier find_nonzeros( frontier & F ) {
 	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
-	VID n = GA.numVertices();
-	EID m = GA.numEdges();
-	frontier ftrue = frontier::all_true( n, m ); // all active
 	frontier nonzeros;
 	make_lazy_executor( GA.get_partitioner() )
 	    .vertex_filter(
 		GA, 	 	 	// graph
-		ftrue,			// check all vertices
+		F,			// check these vertices only
 		nonzeros,  		// record new frontier
 		[&]( auto v ) { return IDs[v] != _0; } )
 	    .materialize();
-	ftrue.del();
 	return nonzeros;
     }
 
-    __attribute__((noinline)) // no-inline to save compilation time
-    frontier find_zeros() {
-	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
+    frontier find_nonzeros() {
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
 	frontier ftrue = frontier::all_true( n, m ); // all active
+	frontier z = find_nonzeros( ftrue );
+	ftrue.del();
+	return z;
+    }
+
+    __attribute__((noinline)) // no-inline to save compilation time
+    frontier find_zeros( frontier & F ) {
+	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
 	frontier zeros;
 	make_lazy_executor( GA.get_partitioner() )
 	    .vertex_filter(
 		GA, 	 	 	// graph
-		ftrue,			// check all vertices
+		F,			// check these vertices only
 		zeros,  		// record new frontier
 		[&]( auto v ) { return IDs[v] == _0; } )
 	    .materialize();
-	ftrue.del();
 	return zeros;
+    }
+
+    frontier find_zeros() {
+	VID n = GA.numVertices();
+	EID m = GA.numEdges();
+	frontier ftrue = frontier::all_true( n, m ); // all active
+	frontier z = find_zeros( ftrue );
+	ftrue.del();
+	return z;
     }
 
     __attribute__((noinline)) // no-inline to save compilation time
