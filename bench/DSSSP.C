@@ -116,11 +116,9 @@ struct bucket_fn {
 	if( v == ~(VID)0 )
 	    return ~(VID)0;
 	VID bkt = ((FloatTy)m_dist[v]) / m_delta;
-/*
-	if( bkt >= oflow )
+	if( bkt < cur )
 	    return ~(VID)0;
 	else
-*/
 	    return bkt;
     }
 
@@ -205,6 +203,7 @@ public:
 	float density;
 	VID nactv;
 	EID nacte;
+	VID cur_bkt;
 	float meps;
 
 	void dump( int i ) {
@@ -212,7 +211,8 @@ public:
 		      << " density: " << density
 		      << " (E:" << nacte
 		      << ", V:" << nactv
-		      << ") M-edges/s: " << meps
+		      << ") bkt: " << cur_bkt
+		      << " M-edges/s: " << meps
 		      << "\n";
 	}
     };
@@ -373,6 +373,7 @@ public:
 	    info_buf[iter].nactv = 0;
 	    info_buf[iter].nacte = 0;
 	    info_buf[iter].delay = tm_iter.next();
+	    info_buf[iter].cur_bkt = 0;
 	    info_buf[iter].meps = 
 		float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
 	    if( debug )
@@ -388,7 +389,25 @@ public:
 
 	while( !bkts.empty() ) {  // iterate until all vertices visited
 	    frontier F = bkts.next_bucket();
+	    VID cur_bkt = bkts.get_current_bucket();
 	    F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
+
+	    // There will be duplicate vertices in the list and also vertices
+	    // whose distance from the source is less than the current bucket.
+	    // Filter out the vertices that already completed.
+	    // As per GAPBS, we tolerate duplicates.
+	    frontier unique;
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA, F, unique,
+		    [&]( auto v ) {
+			auto threshold = expr::constant_val2<FloatTy>(
+			    v, delta * (FloatTy)cur_bkt );
+			return new_dist[v] >= threshold;
+		    } )
+		.materialize();
+	    F.del();
+	    F = unique;
 
 	    // Traverse edges, remove duplicate live destinations.
 	    frontier output;
@@ -424,7 +443,7 @@ public:
 		    // and we cannot tell easily whether a vertex is already
 		    // present in the overflow bucket or not.
 		    auto threshold = expr::constant_val2<FloatTy>(
-			d, delta * (FloatTy)(1+bkts.get_current_bucket()) );
+			d, delta * (FloatTy)(1+cur_bkt) );
 		    return expr::iif( new_dist[d] <= threshold,
 				      _0, _1 ); // int
 		} ),
@@ -542,6 +561,7 @@ public:
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].delay = tm_iter.next();
+		info_buf[iter].cur_bkt = cur_bkt;
 		info_buf[iter].meps = 
 		    float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
 		if( debug )
