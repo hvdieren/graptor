@@ -390,7 +390,6 @@ public:
 	while( !bkts.empty() ) {  // iterate until all vertices visited
 	    frontier F = bkts.next_bucket();
 	    VID cur_bkt = bkts.get_current_bucket();
-	    F.calculateActiveCounts( GA.getCSR(), part, F.nActiveVertices() );
 
 	    // There will be duplicate vertices in the list and also vertices
 	    // whose distance from the source is less than the current bucket.
