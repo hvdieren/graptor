@@ -142,7 +142,134 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
 		}
 	    }
 	}
-	buffer->destroy();
+	// buffer->destroy();
+	work_queues.finished( self_id, buffer );
+    }
+
+    return unprocessed;
+}
+
+template<bool zerof, bool need_strong_checking,
+	 typename config, typename WorkQueues, typename Operator>
+std::vector<VID> csr_sparse_with_f_seq_fusion(
+    config & cfg,
+    const GraphCSx & GA,
+    const partitioner & part,
+    WorkQueues & work_queues,
+    unsigned self_id,
+    bool * zf,
+    Operator op ) {
+    const EID * idx = GA.getIndex();
+
+    unsigned char * uczf = (unsigned char*)zf;
+
+    // CSR requires no check that destination is active.
+    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+    auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto fexpr0 = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+
+    // Append. TODO: ensure short-circuit evaluation in scalar execution
+    // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
+    auto vexpr1 = vexpr0 && uexpr0;
+    // auto vexpr1 = vexpr0;
+
+    // Rewrite local variables
+    auto l_cache_v = expr::extract_local_vars( vexpr1, expr::cache<>() );
+    auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache_v );
+
+    auto l_cache_f = expr::extract_local_vars( fexpr0, expr::cache<>() );
+    auto fexpr2 = expr::rewrite_caches<expr::vk_zero>( fexpr0, l_cache_f );
+
+    auto l_cache = expr::cache_cat( l_cache_v, l_cache_f );
+
+    // Match vector lengths and move masks
+    auto vexpr = expr::rewrite_mask_main( vexpr2 );
+    auto fexpr = expr::rewrite_mask_main( fexpr2 );
+
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	GA.getWeights() ? GA.getWeights()->get() : nullptr );
+					 
+    auto env = expr::eval::create_execution_environment_with(
+	op.get_ptrset( ew_pset ), l_cache, vexpr, fexpr );
+
+    auto mi = expr::create_value_map_new<1>();
+    auto c = cache_create( env, l_cache, mi );
+
+    const VID *edge = GA.getEdges();
+
+    std::vector<VID> unprocessed;
+    
+    while( auto * buffer = work_queues.steal( self_id ) ) {
+	auto I = buffer->begin();
+	auto E = buffer->end();
+	for( ; I != E; ++I ) {
+	    VID v = *I;
+	    VID d = idx[v+1] - idx[v];
+	    const VID * out = &edge[idx[v]];
+
+	    // Sequential, so dump in sequential locations in outEdges[]
+	    auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	    for( VID j=0; j < d; j++ ) {
+		// EID seid = eid_retriever.get_edge_eid( v, j );
+		EID seid = idx[v]+j;
+		VID sdst = out[j];
+		auto dst = simd::template create_scalar<simd::ty<VID,1>>( sdst );
+		auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
+		auto m = expr::create_value_map_new<1>(
+		    expr::create_entry<expr::vk_dst>( dst ),
+		    expr::create_entry<expr::vk_edge>( eid ),
+		    expr::create_entry<expr::vk_src>( src ) );
+
+		// Set evaluator to use atomics
+		// TODO: can drop atomics in case of benign races
+		auto ret = env.template evaluate<true>( c, m, vexpr );
+
+		if( ret.value().data() ) {
+		    // Query whether to process immediately. Note: the fusion
+		    // operation may have side-effects, and is executed with
+		    // atomics. However, it is not executed atomically with the
+		    // relax operation!
+		    auto immediate_val = env.template evaluate<true>( c, m, fexpr );
+		    int immediate = immediate_val.value().data();
+
+		    if( immediate > 0 ) {
+			// Process now. Differentiate idempotent operators
+			// to avoid the repeated processing book-keeping.
+			if constexpr ( need_strong_checking ) {
+			    // A vertex may first be unprocessed,
+			    // then on a later edge become immediately ready.
+			    // Record differently.
+			    unsigned char flg = 2;
+			    unsigned char val = uczf[sdst];
+			    if( ( val & flg ) == 0 ) {
+				uczf[sdst] |= flg;
+				work_queues.push( self_id, sdst );
+			    }
+			} else {
+			    // A vertex may be processed multiple times, by
+			    // multiple threads, possibly concurrently.
+			    // Multiple threads may insert the vertex in their
+			    // active list, then concurrent processing may occur.
+			    work_queues.push( self_id, sdst );
+			}
+		    } else if( immediate == 0 ) {
+			// Include in unprocessed list, if not already done so
+			unsigned char flg = 1;
+			unsigned char val = uczf[sdst];
+			if( ( val & flg ) == 0 ) {
+			    uczf[sdst] |= flg;
+			    if( ( val & (unsigned char)3 ) == 0 )
+				unprocessed.push_back( sdst );
+			}
+		    }
+		}
+	    }
+	}
+	// buffer->destroy();
+	work_queues.finished( self_id, buffer );
     }
 
     return unprocessed;
@@ -183,18 +310,25 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
 
+    // VID num_threads = m > 1024 ? graptor_num_threads() : 1;
     VID num_threads = graptor_num_threads();
-    work_stealing<VID> work_queues;
+    work_stealing<VID,need_strong_checking> work_queues( num_threads );
     
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
-    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
-	VID from = ( t * m ) / num_threads;
-	VID to = t == num_threads-1 ? m : ( (t + 1) * m ) / num_threads;
-	work_queues.create_buffer( t, &s[from], to-from );
-	F[t] =
-	    csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
-		cfg, GA, part, work_queues, t, zf, op );
+    if( num_threads > 1 ) {
+	parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	    VID from = ( t * m ) / num_threads;
+	    VID to = t == num_threads-1 ? m : ( (t + 1) * m ) / num_threads;
+	    work_queues.create_buffer( t, &s[from], to-from );
+	    F[t] =
+		csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
+		    cfg, GA, part, work_queues, t, zf, op );
+	}
+    } else {
+	work_queues.create_buffer( 0, s, m );
+	F[0] = csr_sparse_with_f_seq_fusion<zerof,need_strong_checking>(
+	    cfg, GA, part, work_queues, 0, zf, op );
     }
 
     // Restore zero frontier to all zeros; do not access old frontiers copied
@@ -214,17 +348,45 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		// removed.
 		VID nv_new = 0;
 		for( VID k=0; k < outEdgeCount; ++k ) {
-		    if( uczf[outEdges[k]] & (unsigned char)2 ) {
-			; // outEdges[k] = ~(VID)0;
-		    } else
-			outEdges[nv_new++] = outEdges[k];
+		    VID v = outEdges[k];
+		    if( !( uczf[v] & (unsigned char)2 ) )
+			outEdges[nv_new++] = v;
+		    uczf[v] = 0;
 		}
 		F[t].resize( nv_new );
 	    }
 
 	    VID n = GA.numVertices();
+/*
 	    parallel_for( VID v=0; v < n; ++v )
 		zf[v] = false;
+*/
+/*
+	    uint64_t * zf64 = reinterpret_cast<uint64_t *>( zf );
+	    VID n64 = n / 8;
+	    parallel_for( VID v=0; v < n64; ++v )
+		zf64[v] = 0;
+	    for( VID v=n64*8; v < n; ++v )
+		zf[v] = false;
+*/
+	    work_queues.shift_processed();
+	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+		while( auto * buffer = work_queues.steal( t ) ) {
+		    auto I = buffer->begin();
+		    auto E = buffer->end();
+		    for( ; I != E; ++I ) {
+			VID v = *I;
+			zf[v] = false;
+		    }
+		    buffer->destroy();
+		}
+	    }
+/*
+	    for( VID v=0; v < n; ++v ) {
+		if( zf[v] != 0 )
+		    std::cerr << "zf[" << v << "]=" << (unsigned int)zf[v] << "\n";
+	    }
+*/
 	} else {
 	    // Vertices already processed leave no info in zf[]
 	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {

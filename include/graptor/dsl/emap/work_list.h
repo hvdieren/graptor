@@ -2,6 +2,7 @@
 #ifndef GRAPTOR_DSL_EMAP_WORK_LIST_H
 #define GRAPTOR_DSL_EMAP_WORK_LIST_H
 
+#include <sched.h>
 #include <cstdint>
 #include <atomic>
 
@@ -60,7 +61,7 @@ inline bool cas( volatile types::uint128_t * src,
  * @param <T> the type of the work items
  * @param <CHUNK_> the number of work items per array buffer
  ************************************************************************/
-template<typename T, unsigned CHUNK_ = 4096>
+template<typename T, unsigned CHUNK_>
 class work_list {
 public:
     using type = T;
@@ -162,6 +163,10 @@ public:
 	return list_node::create( buf, fill );
     };
     
+    void setup( list_node * n ) {
+	m_head_tag.lo = reinterpret_cast<uint64_t>( n );
+    }
+    
     list_node * pop() {
 	types::uint128_t old;
 	types::uint128_t upd;
@@ -205,7 +210,7 @@ private:
  * @param <T> the type of the work items
  * @param <CHUNK_> the number of work items per array buffer
  ************************************************************************/
-template<typename T, unsigned CHUNK_ = 4096>
+template<typename T, bool retain_chunks, unsigned CHUNK_ = 4096-64/sizeof(T)>
 class work_stealing {
 public:
     using type = T;
@@ -213,8 +218,8 @@ public:
     using buffer_type = typename queue_type::list_node;
     static constexpr size_t CHUNK = CHUNK_;
 
-    work_stealing() : m_threads( graptor_num_threads() ),
-		      m_working( m_threads ) {
+    work_stealing( unsigned threads )
+	: m_threads( threads ), m_working( m_threads ), m_processed( nullptr ) {
 #if MANUALLY_ALIGNED_ARRAYS
 	size_t space = sizeof(queue_type)*m_threads+16;
 	m_queues_alloc = new char[space];
@@ -234,6 +239,12 @@ public:
 	m_active = new buffer_type *[m_threads];
 	for( unsigned t=0; t < m_threads; ++t )
 	    m_active[t] = nullptr;
+
+	if constexpr ( retain_chunks ) {
+	    m_processed = new buffer_type *[m_threads];
+	    for( unsigned t=0; t < m_threads; ++t )
+		m_processed[t] = nullptr;
+	}
     }
 
     ~work_stealing() {
@@ -246,8 +257,18 @@ public:
 		assert( m_active[t]->is_empty() );
 		m_active[t]->destroy();
 	    }
+	    if constexpr ( retain_chunks ) {
+		buffer_type * buf = m_processed[t];
+		while( buf != nullptr ) {
+		    buffer_type * nxt = buf->get_next();
+		    buf->destroy();
+		    buf = nxt;
+		}
+	    }
 	}
 	delete[] m_active;
+	if constexpr ( retain_chunks )
+	    delete[] m_processed;
 #if MANUALLY_ALIGNED_ARRAYS
 	delete[] m_queues_alloc;
 #else
@@ -256,6 +277,14 @@ public:
 	buffer_type::debug();
     }
 
+    void finished( unsigned self_id, buffer_type * buf ) {
+	if constexpr ( retain_chunks ) {
+	    buf->set_next( m_processed[self_id] );
+	    m_processed[self_id] = buf;
+	} else
+	    buf->destroy();
+    }
+    
     void push( unsigned self_id, type value ) {
 	reserve( self_id, 1 )->push_back( value );
     }
@@ -272,7 +301,7 @@ public:
 	// and start a new one.
 	if( !buf || !buf->has_space( num )
 	    || ( 4*m_working.load() < 3*m_threads && m_threads > 1
-		 && !buf->is_empty() ) ) {
+	       && !buf->is_empty() ) ) {
 	    if( buf )
 		push_buffer( buf, self_id );
 	    m_active[self_id] = buf = queue_type::create_list_node();
@@ -307,8 +336,17 @@ public:
 		++m_working;
 		return buf;
 	    }
+	    sched_yield();
 	}
 	return nullptr;
+    }
+
+    buffer_type * shift_processed() {
+	for( unsigned t=0; t < m_threads; ++t ) {
+	    m_queues[t].setup( m_processed[t] );
+	    m_processed[t] = nullptr;
+	}
+	m_working = m_threads;
     }
 
 private:
@@ -325,6 +363,7 @@ private:
 #endif
     queue_type * m_queues;
     buffer_type ** m_active;
+    buffer_type ** m_processed;
 };
 
 
