@@ -201,7 +201,10 @@ private:
 
     template<unsigned int bits>
     bool has_bits() const {
-	return ( m_size >> bits ) != 0;
+	if constexpr ( std::is_integral_v<T> )
+	    return ( m_size >> bits ) != 0;
+	else
+	    return m_size > std::pow( 2.0, bits );
     }
 
     template<unsigned int bits>
