@@ -61,6 +61,8 @@ private:
 };
 
 void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
+    timer tm;
+    tm.start();
     uint8_t * ptr = reinterpret_cast<uint8_t *>( vptr );
 
     constexpr size_t BLOCK = size_t(128) << 20; // 128 MiB
@@ -81,6 +83,10 @@ void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
 	    }
 	}
     }
+    double delay = tm.stop();
+    std::cerr << "Read " << pretty_size( len ) << " in "
+	      << delay << " seconds, "
+	      << pretty_size( double(len)/delay ) << "/s\n";
 }
 
 class GraphCSx {
@@ -913,8 +919,8 @@ public:
 	    exit( 1 );
 	}
 	    
-	if( header[0] != 2 ) {
-	    std::cerr << "Only accepting version 2 files\n";
+	if( header[0] != 2 && header[0] != 3 ) {
+	    std::cerr << "Only accepting version 2 or 3 files\n";
 	    exit( 1 );
 	}
 	n = header[2];
@@ -926,7 +932,10 @@ public:
 
 	parallel_read( fd, sizeof(header), index.get(), sizeof(EID)*n );
 	index[n] = m;
-	parallel_read( fd, sizeof(header)+sizeof(EID)*n, edges.get(), sizeof(VID)*m );
+	size_t off = sizeof(header)+sizeof(EID)*n;
+	if( header[0] == 3 )
+	    off += sizeof(EID);
+	parallel_read( fd, off, edges.get(), sizeof(VID)*m );
 
 	close( fd );
 	std::cerr << "Reading file done" << std::endl;
