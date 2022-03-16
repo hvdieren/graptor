@@ -355,8 +355,11 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 #if FUSION
+		// TODO: parameter 0.1 to be tuned similarly to delta in DSSSP
 		api::fusion( [&]( auto v ) {
-		    return expr::true_val( v );
+		    auto inf = expr::constant_val2<FloatTy>(
+			v, std::numeric_limits<FloatTy>::infinity() );
+		    return expr::iif( new_dist[v] < cur_dist[v] * expr::constant_val( cur_dist[v], 0.1 ) && cur_dist[v] != inf, _0, _1 );
 		} ),
 #endif
 		api::filter( filter_strength, api::src, F ),
