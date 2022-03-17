@@ -88,7 +88,7 @@ struct redop_logicalor {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    return make_rvalue( l.value().lor_assign( r.value() ), mpack );
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
@@ -255,7 +255,7 @@ struct redop_bitwiseor {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    return make_rvalue( l.value().bor_assign( r.value() ), mpack );
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
@@ -446,7 +446,7 @@ struct redop_logicaland {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    return make_rvalue( l.value().land_assign( r.value() ), mpack );
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
@@ -542,7 +542,7 @@ struct redop_min {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    auto sel = ( r.value() < lval );
 	    // Note: mask not needed for store - already accounted for in iif()
@@ -720,7 +720,7 @@ struct redop_max {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    auto sel = ( r.value() > lval );
 	    // Note: mask not needed for store - already accounted for in iif()
@@ -897,7 +897,7 @@ struct redop_add {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    l.value().store( lval + r.value() );
 	    if constexpr ( conditional )
@@ -928,7 +928,7 @@ struct redop_add {
     template<typename VTr, layout_t Layout, typename MPack>
     static GG_INLINE auto
     evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
-	if constexpr ( mpack.is_empty() )
+	if constexpr ( MPack::is_empty() )
 	    return make_rvalue( reduce_add( r.value() ), mpack );
 	else {
 	    // Send an empty mask_pack to indicate an update happened.
@@ -1025,7 +1025,7 @@ struct redop_count_down {
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
 	auto neg_one = simd::template create_allones<VTr>();
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    auto nval = lval + neg_one;
 	    auto ok = lval > r.value();
@@ -1067,7 +1067,7 @@ struct redop_count_down {
     evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
 	// Oops. Maybe the behaviour of redop_add is meaningful?
 	assert( 0 && "Impossible" );
-	if constexpr ( mpack.is_empty() )
+	if constexpr ( MPack::is_empty() )
 	    return make_rvalue( reduce_add( r.value() ), mpack );
 	else {
 	    // Send an empty mask_pack to indicate an update happened.
@@ -1147,7 +1147,7 @@ struct redop_mul {
 	// Apply the mask in the addition operation (ALU), perform a full
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    l.value().store( lval * r.value() );
 	    return make_rvalue( lval.true_mask(), mpack ); // updated values
@@ -1281,7 +1281,7 @@ struct redop_setif {
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
 	auto rval = r.value();
-	if constexpr ( mpack.is_empty() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
 	    auto sel = ( lval == decltype(lval)::allones_val() );
 	    auto nval = ::iif( sel, lval, rval );

@@ -6,8 +6,9 @@
 #include <x86intrin.h>
 #include <immintrin.h>
 
-// Integer types
+// Integer types and math
 #include <cstdint>
+#include <cmath>
 
 // I/O
 #include <ostream>

@@ -491,7 +491,7 @@ struct storeop<false,R,T> : public expr_base {
 	    // Store all lanes
 	    l.value().store( v );
 	    return make_rvalue( v.true_mask(), mpack );
-	} else if constexpr ( mpack.template has_mask<MTr>() ) {
+	} else if constexpr ( MPack::template has_mask<MTr>() ) {
 	    auto m = mpack.template get_mask<MTr>();
 
 	    // Store the value conditionally for those lanes enabled by the mask

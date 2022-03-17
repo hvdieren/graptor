@@ -13,7 +13,7 @@ using expr::_1;
 #endif
 
 #ifndef CONVERGENCE
-#define CONVERGENCE 0
+#define CONVERGENCE 1
 #endif
 
 #ifndef LEVEL_ASYNC

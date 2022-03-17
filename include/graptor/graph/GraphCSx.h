@@ -60,7 +60,7 @@ private:
     const EID * idx;
 };
 
-void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
+inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
     timer tm;
     tm.start();
     uint8_t * ptr = reinterpret_cast<uint8_t *>( vptr );

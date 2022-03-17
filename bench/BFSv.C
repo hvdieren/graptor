@@ -27,7 +27,13 @@
 template <class GraphType>
 class BFSv {
 public:
-    BFSv( GraphType & _GA, commandLine & P ) : GA( _GA ), info_buf( 60 ) {
+    BFSv( GraphType & _GA, commandLine & P )
+	: GA( _GA ),
+	  parent( GA.get_partitioner(), "parent" ),
+#if DEFERRED_UPDATE
+	  prev_parent( GA.get_partitioner(), "previous parent" ),
+#endif
+	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
 	calculate_active = P.getOption( "-cactive" );
@@ -45,6 +51,9 @@ public:
     }
     ~BFSv() {
 	parent.del();
+#if DEFERRED_UPDATE
+	prev_parent.del();
+#endif
     }
 
     struct info {
@@ -66,31 +75,20 @@ public:
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
 
-	parent.allocate( numa_allocation_partitioned( part ) );
-
-	expr::array_ro/*update*/<VID, VID, 0> a_parent( parent );
-
 	// Assign initial labels
-	// vertexMap( part, BFS_Init( parent ) );
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
-			     return a_parent[v] = expr::allones_val( v ); } )
+			     return parent[v] = expr::allones_val( v ); } )
 	    .materialize();
 	
-	parent[start] = start;
+	parent.get_ptr()[start] = start;
 
 #if DEFERRED_UPDATE
-	mmap_ptr<VID> prev_parent;
-	prev_parent.allocate( numa_allocation_partitioned( part ) );
-
-	expr::array_ro/*update*/<VID, VID, 1> a_prev_parent( prev_parent );
-
-	// vertexMap( part, BFS_Init( prev_parent ) );
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
-			     return a_prev_parent[v] = expr::allones_val( v ); } )
+			     return prev_parent[v] = expr::allones_val( v ); } )
 	    .materialize();
-	prev_parent[start] = start;
+	prev_parent.get_ptr()[start] = start;
 #endif
 
 	// Create initial frontier
@@ -121,7 +119,7 @@ public:
 #if DEFERRED_UPDATE
 		api::record( output,
 			     [&] ( auto d ) {
-				 return a_parent[d] != a_prev_parent[d]; },
+				 return parent[d] != prev_parent[d]; },
 			     api::strong ),
 #else
 		api::record( output, api::reduction, api::strong ),
@@ -130,7 +128,7 @@ public:
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&] ( auto d ) {
-				 return a_parent[d] == expr::allones_val(d);
+				 return parent[d] == expr::allones_val(d);
 			     } ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -138,24 +136,18 @@ public:
 			// If we call relax while frontier says not included,
 			// then we need to check here, but luckily we know the
 			// frontier from parent[]
-			return a_parent[d].setif(
+			return parent[d].setif(
 			    expr::add_predicate( s,
-						 a_parent[s] != expr::allones_val(d) )
+						 parent[s] != expr::allones_val(d) )
 			    );
 #else
-			return a_parent[d].setif( s );
+			return parent[d].setif( s );
 #endif
 		    } )
 		)
 		.materialize();
 #if DEFERRED_UPDATE
 	    maintain_copies( part, output, prev_parent, parent );
-/*
-	    make_lazy_executor( part )
-		.vertex_map( output,
-			     [&](auto vid) { return a_prev_parent[vid] = a_parent[vid]; } )
-		.materialize();
-*/
 #endif
 
 
@@ -202,9 +194,6 @@ public:
 	}
 
 	F.del();
-#if DEFERRED_UPDATE
-	prev_parent.del();
-#endif
     }
 
     void post_process( stat & stat_buf ) {
@@ -239,7 +228,10 @@ private:
     bool itimes, debug, calculate_active;
     int iter;
     VID start, active;
-    mmap_ptr<VID> parent;
+    api::vertexprop<VID,VID,0> parent;
+#if DEFERRED_UPDATE
+    api::vertexprop<VID,VID,1> prev_parent;
+#endif
     std::vector<info> info_buf;
 };
 

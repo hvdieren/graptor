@@ -412,12 +412,12 @@ public:
     template<typename U = self_type>
     mask_pack( std::enable_if_t<U::num_masks == 0> * = nullptr ) { }
 
-    constexpr bool is_empty() const {
+    static constexpr bool is_empty() {
 	return sizeof...( MTr ) == 0;
     }
     
     template<typename Tr>
-    constexpr bool has_mask() const {
+    static constexpr bool has_mask() {
 	return sizeof...( MTr ) > 0
 	    && detail::get_matching_index<0,Tr,std::tuple<MTr...>>::value >= 0;
     }

@@ -31,11 +31,11 @@ inline uint32_t graptor_num_threads() {
 #if NUMA
 template<typename Fn>
 void map_partitionL( const partitioner & part, Fn fn ) {
-#pragma omp parallel for proc_bind(spread)
+#pragma omp parallel for num_threads(num_numa_node) proc_bind(spread)
     for( unsigned n=0; n < num_numa_node; ++n ) {
 	auto lo = part.numa_start_of(n);
 	auto hi = part.numa_end_of(n);
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
 	for( auto p=lo; p < hi; ++p )
 	    fn( p );
     }
@@ -56,7 +56,7 @@ void map_vertexL( const partitioner & part, Fn fn ) {
     map_partitionL( part, [&]( typename partitioner::PID p ) {
 	auto lo = part.start_of(p);
 	auto hi = part.end_of(p);
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic) proc_bind(master)
 	for( auto v=lo; v < hi; ++v )
 	    fn( v );
     } );
