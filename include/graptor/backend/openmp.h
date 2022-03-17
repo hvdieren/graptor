@@ -25,7 +25,7 @@
 #define parallel_for _Pragma("omp parallel for") for
 
 inline uint32_t graptor_num_threads() {
-    return omp_get_num_threads();
+    return omp_get_max_threads();
 }
 
 #if NUMA
@@ -35,7 +35,7 @@ void map_partitionL( const partitioner & part, Fn fn ) {
     for( unsigned n=0; n < num_numa_node; ++n ) {
 	auto lo = part.numa_start_of(n);
 	auto hi = part.numa_end_of(n);
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static,1) proc_bind(close)
 	for( auto p=lo; p < hi; ++p )
 	    fn( p );
     }
@@ -56,7 +56,6 @@ void map_vertexL( const partitioner & part, Fn fn ) {
     map_partitionL( part, [&]( typename partitioner::PID p ) {
 	auto lo = part.start_of(p);
 	auto hi = part.end_of(p);
-#pragma omp parallel for schedule(dynamic) proc_bind(master)
 	for( auto v=lo; v < hi; ++v )
 	    fn( v );
     } );
