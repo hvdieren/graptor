@@ -33,7 +33,7 @@ struct bucket_fn {
     BID operator() ( VID v, BID current, BID overflow ) const {
 	return v == std::numeric_limits<VID>::max() // illegal vertex
 	    || BID(m_degree[v]) < current	// or processing completed
-	    || BID(m_degree[v]) > overflow	// or already in overflow bucket
+	    || BID(m_degree[v]) >= overflow	// or already in overflow bucket
 	    ? std::numeric_limits<BID>::max() // ... then drop vertex
 	    : BID(m_degree[v]);		// ... else this is the bucket
     }
@@ -264,7 +264,7 @@ public:
 
 	    // std::cerr << "output: " << output << "\n";
 	    // print( std::cerr, part, coreness );
-	    std::cerr << "todo: " << todo << "\n";
+	    // std::cerr << "todo: " << todo << "\n";
 
 	    bkts.update_buckets( part, output );
 
