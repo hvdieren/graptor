@@ -161,10 +161,10 @@ struct bucket_updater_all {
     size_t size() const { return m_num; }
 
     std::pair<ID,BID> operator() ( size_t nth ) const {
-	return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
+	return std::make_pair( ID(nth), m_fn( ID(nth), m_cur, m_oflow ) );
     }
 
-    ID get( size_t nth ) const { return nth; }
+    ID get( size_t nth ) const { return ID(nth); }
     
 private:
     size_t m_num;
@@ -479,14 +479,14 @@ private:
 
     template<typename IterFn>
     void update_buckets_dense( const partitioner & part,
-			       IterFn fn, ID num_elements ) {
+			       IterFn fn, size_t num_elements ) {
 	static constexpr ID BLOCK = 64;
 
 	if( num_elements == 0 )
 	    return;
 
 	// 0. Allocate memory
-	unsigned np = part.get_num_partitions();
+	size_t np = part.get_num_partitions();
 	size_t hsize = ( BLOCK + sizeof(ID) - 1 ) / sizeof(ID);
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
@@ -689,7 +689,7 @@ private:
 
 	// 6. Sanity check (debugging)
 	size_t k = 0;
-	for( ID i=0; i < m_open_buckets+1; ++i )
+	for( BID i=0; i < m_open_buckets+1; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
 
@@ -727,7 +727,7 @@ private:
 
 	// Sanity check (debugging)
 	size_t k = 0;
-	for( ID i=0; i <= m_open_buckets; ++i )
+	for( BID i=0; i <= m_open_buckets; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
     }
