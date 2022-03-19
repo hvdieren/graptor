@@ -630,6 +630,8 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
     static mmap_ptr<VID> flags;
 
+    constexpr VID undef = std::numeric_limits<VID>::max();
+
     VID m = (VID) me;
     assert( me == (EID)m && "length of array should be small enough" );
 
@@ -639,22 +641,23 @@ inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
 	if( flags.get_length() > 0 )
 	    flags.del();
 	flags.allocate( numa_allocation_partitioned( part ) );
-	parallel_for( VID i=0; i<n; i++ ) flags[i] = (VID)-1;
+	parallel_for( VID i=0; i<n; i++ )
+	    flags[i] = undef;
     }
 
     // Figure out which vertices are listed in ids
     parallel_for( VID i=0; i < m; i++ ) {
-	if( ids[i] != (VID)-1 && flags[ids[i]] == (VID)-1 )
-	    CAS( &flags[ids[i]], (VID)-1, i );
+	if( ids[i] != undef && flags[ids[i]] == undef )
+	    CAS( &flags[ids[i]], undef, i );
     }
 
     // Cancel out duplicates
     parallel_for( VID i=0; i < m; i++ ) {
 	if( ids[i] != (VID)-1 ) {
 	    if( flags[ids[i]] == i ) {  // win
-		flags[ids[i]] = (VID)-1; //reset
+		flags[ids[i]] = undef; //reset
 	    } else
-		ids[i] = (VID)-1; // lose
+		ids[i] = undef; // lose
 	}
     }
     // Flags is restored to all -1 now
@@ -666,6 +669,8 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 					  VID * tgt, const partitioner & part ) {
     VID m = (VID) me;
     assert( me == (EID)m && "length of array should be small enough" );
+
+    constexpr VID undef = std::numeric_limits<VID>::max();
 
     if( me > 150000 ) {
 	static mmap_ptr<VID> flags;
@@ -685,9 +690,9 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	VID i = 0;
 	VID t = 0;
 	while( i < m ) {
-	    if( ids[i] == ~VID(0) ) {
+	    if( ids[i] == undef ) {
 		ids[i] = ids[--m];
-	    } else if( flags[ids[i]] == ~VID(0) ) {
+	    } else if( flags[ids[i]] == undef ) {
 		flags[ids[i]] = i;
 		tgt[t++] = ids[i];
 		++i;
@@ -699,7 +704,8 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
     } else if( m > 10 ) {
 	std::sort( &ids[0], &ids[m] );
 
-	if( ids[0] == ~VID(0) ) // Assuming sort is unsigned, ~VID(0) at back
+	assert( !std::is_signed_v<VID> ); // should be ok with signed, double-check
+	if( ids[0] == undef ) // Assuming sort is unsigned, ~VID(0) at back
 	    return 0;
 
 	tgt[0] = ids[0];
@@ -708,7 +714,7 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	for( VID s=1; s < m; ++s ) {
 	    if( ids[s] == ids[s-1] ) {
 		// next
-	    } else if( ids[s] == ~VID(0) ) {
+	    } else if( ids[s] == undef ) {
 		break;
 	    } else {
 		tgt[t++] = ids[s];
@@ -719,7 +725,7 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	// Simplistic algorithm, should work well on very short arrays
 	VID s = 0;
 	while( s < m ) {
-	    if( ids[s] == ~VID(0) )
+	    if( ids[s] == undef )
 		ids[s] = ids[--m];
 	    else
 		++s;
