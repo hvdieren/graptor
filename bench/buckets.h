@@ -1,3 +1,11 @@
+#include <limits>
+
+/************************************************************************
+ * Representation of a single bucket.
+ * Counts of objects are size_t due to potential replication of objects.
+ *
+ * @param <ID_> the type of the objects stored in the bucket
+ ************************************************************************/
 template<typename ID_>
 class bucket {
 public:
@@ -7,7 +15,7 @@ public:
 	: m_entries( nullptr ),
 	  m_capacity( 0 ),
 	  m_count( 0 ) { }
-    bucket( ID capacity_ )
+    bucket( size_t capacity_ )
 	: m_entries( new ID[capacity_] ),
 	  m_capacity( capacity_ ),
 	  m_count( 0 ) { }
@@ -28,7 +36,7 @@ public:
 	return *this;
     }
 
-    void insert( ID xpos, ID val ) {
+    void insert( size_t xpos, ID val ) {
 	m_entries[m_count+xpos] = val;
     }
     void insert( ID val ) {
@@ -45,10 +53,10 @@ public:
 	b.m_count = 0;
     }
 
-    ID filter( ID inc ) {
-	ID l = 0;
-	for( ID k=0; k < inc; ++k ) {
-	    if( m_entries[m_count+k] != ~(ID)0 ) {
+    size_t filter( size_t inc ) {
+	size_t l = 0;
+	for( size_t k=0; k < inc; ++k ) {
+	    if( m_entries[m_count+k] != std::numeric_limits<ID>::max() ) {
 		m_entries[m_count+l] = m_entries[m_count+k];
 		++l;
 	    }
@@ -56,7 +64,7 @@ public:
 	return l;
     }
 
-    void grow( ID inc ) {
+    void grow( size_t inc ) {
 	if( m_count + inc > m_capacity ) {
 	    m_capacity = m_capacity == 0 ? 128 : 2*m_capacity;
 	    while( m_count + inc > m_capacity )
@@ -70,12 +78,13 @@ public:
 	    m_entries = new_entries;
 	}
     }
-    void resize( ID inc ) {
+    void resize( size_t inc ) {
 	m_count += inc;
     }
     void clear() { m_count = 0; }
 
-    frontier as_frontier( ID n ) {
+    //! Convert bucket to frontier and transfer ownership over contents.
+    frontier as_frontier( size_t n ) {
 	// By default, don't worry about how many edges there are on F since we
 	// likely use it only in a vertex-filter operation. Simply record
 	// non-zero.
@@ -87,7 +96,7 @@ public:
     }
 
     bool empty() const { return m_count == 0; }
-    ID size() const { return m_count; }
+    size_t size() const { return m_count; }
     const ID * get_ptr() const { return m_entries; }
 
     friend void swap( bucket<ID> & l, bucket<ID> & r ) {
@@ -99,79 +108,90 @@ public:
 
 private:
     ID * m_entries;
-    ID m_capacity;
-    ID m_count;
+    size_t m_capacity;
+    size_t m_count;
 };
 
-template<typename ID_, typename BktFn>
+/************************************************************************
+ * Functor to help assigning objects to buckets.
+ *
+ * @param <ID_> the type of the objects stored in the bucket
+ * @param <BID_> the identifier type for bucket numbers
+ ************************************************************************/
+template<typename ID_, typename BID_, typename BktFn>
 struct bucket_updater {
     using ID = ID_;
+    using BID = BID_;
     using BucketFn = BktFn;
 
-    bucket_updater( const ID * lst, ID num, ID cur, ID oflow, BucketFn fn )
+    bucket_updater( const ID * lst, size_t num, BID cur, BID oflow,
+		    BucketFn fn )
 	: m_lst( lst ), m_num( num ), m_cur( cur ), m_oflow( oflow ),
 	  m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
-    std::pair<ID,ID> operator() ( ID nth ) const {
+    std::pair<ID,BID> operator() ( size_t nth ) const {
 	ID id = m_lst[nth];
-	ID bkt = m_fn( id, m_cur, m_oflow );
+	BID bkt = m_fn( id, m_cur, m_oflow );
 	return std::make_pair( id, bkt );
     }
 
-    ID get( ID nth ) const {
+    ID get( size_t nth ) const {
 	return m_lst[nth];
     }
     
 private:
     const ID * m_lst;
-    ID m_num;
-    ID m_cur;
-    ID m_oflow;
+    size_t m_num;
+    BID m_cur;
+    BID m_oflow;
     BucketFn m_fn;
 };
 
-template<typename ID_, typename BktFn>
+template<typename ID_, typename BID_, typename BktFn>
 struct bucket_updater_all {
     using ID = ID_;
+    using BID = BID_;
     using BucketFn = BktFn;
 
-    bucket_updater_all( ID num, ID cur, ID oflow, BucketFn fn )
+    bucket_updater_all( size_t num, BID cur, BID oflow, BucketFn fn )
 	: m_num( num ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
-    VID size() const { return m_num; }
+    size_t size() const { return m_num; }
 
-    std::pair<ID,ID> operator() ( ID nth ) const {
+    std::pair<ID,BID> operator() ( size_t nth ) const {
 	return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
 
-    ID get( ID nth ) const { return nth; }
+    ID get( size_t nth ) const { return nth; }
     
 private:
-    ID m_num;
-    ID m_cur;
-    ID m_oflow;
+    size_t m_num;
+    BID m_cur;
+    BID m_oflow;
     BucketFn m_fn;
 };
 
 // This assumes that the number of active vertices and edges may not have
 // been calculated.
-template<frontier_type ftype, typename ID_, typename BktFn>
+template<frontier_type ftype, typename ID_, typename BID_, typename BktFn>
 struct bucket_updater_dense {
     using ID = ID_;
+    using BID = BID_;
     using BucketFn = BktFn;
     using L = typename frontier_params<ftype,0>::type;
 
-    bucket_updater_dense( const frontier & f, ID cur, ID oflow, BucketFn fn )
+    bucket_updater_dense( const frontier & f, BID cur, BID oflow, BucketFn fn )
 	: m_mask( f.template getDense<ftype>() ),
 	  m_num( f.nVertices() ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
-    std::pair<ID,ID> operator() ( ID nth ) const {
+    std::pair<ID,BID> operator() ( size_t nth ) const {
 	if( !m_mask[nth] )
-	    return std::make_pair( ~(VID)0, ~(VID)0 );
+	    return std::make_pair( std::numeric_limits<ID>::max(),
+				   std::numeric_limits<BID>::max() );
 	else
 	    return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
@@ -187,42 +207,45 @@ struct bucket_updater_dense {
     
 private:
     const L * m_mask;
-    ID m_num;
-    ID m_cur;
-    ID m_oflow;
+    size_t m_num;
+    BID m_cur;
+    BID m_oflow;
     BucketFn m_fn;
 };
 
-template<typename ID_, typename BktFn>
-struct bucket_updater_dense<frontier_type::ft_bit, ID_, BktFn> {
+template<typename ID_, typename BID_, typename BktFn>
+struct bucket_updater_dense<frontier_type::ft_bit, ID_, BID_, BktFn> {
     using ID = ID_;
+    using BID = BID_;
     using BucketFn = BktFn;
     using L = typename frontier_params<frontier_type::ft_bit,0>::type;
 
-    bucket_updater_dense( const frontier & f, ID cur, ID oflow, BucketFn fn )
+    bucket_updater_dense( const frontier & f, BID cur, BID oflow, BucketFn fn )
 	: m_mask( f.template getDense<frontier_type::ft_bit>() ),
 	  m_num( f.nVertices() ), m_cur( cur ), m_oflow( oflow ), m_fn( fn ) { }
 
     VID size() const { return m_num; }
 
-    std::pair<ID,ID> operator() ( ID nth ) const {
-	constexpr ID mod = 8 * sizeof(L);
-	constexpr ID mask = mod - 1;
+    std::pair<ID,BID> operator() ( size_t nth ) const {
+	constexpr L mod = 8 * sizeof(L);
+	constexpr L mask = mod - 1;
 	if( ( ( m_mask[nth / mod] >> ( nth & mask ) ) & 1 ) == 0 )
-	    return std::make_pair( ~(VID)0, ~(VID)0 );
+	    return std::make_pair( std::numeric_limits<ID>::max(),
+				   std::numeric_limits<BID>::max() );
 	else
 	    return std::make_pair( nth, m_fn( nth, m_cur, m_oflow ) );
     }
     
 private:
     const L * m_mask;
-    ID m_num;
-    ID m_cur;
-    ID m_oflow;
+    size_t m_num;
+    BID m_cur;
+    BID m_oflow;
     BucketFn m_fn;
 };
 
 
+/*
 template<typename BktFn>
 struct half_bucket_fn {
     using ID = typename BktFn::ID;
@@ -236,11 +259,13 @@ struct half_bucket_fn {
 private:
     BktFn m_fn;
 };
+*/
 
 template<typename ID_, typename BktFn_>
 class buckets {
 public:
     using ID = ID_;
+    using BID = std::make_unsigned_t<ID>;
     using BucketFn = BktFn_;
 
     /* buckets
@@ -266,8 +291,8 @@ public:
 
     bool empty() const { return m_elems == 0; }
 
-    ID get_current_bucket() const { return m_cur_range + m_cur_bkt; }
-    ID get_overflow_bucket() const { return m_cur_range + m_open_buckets; }
+    BID get_current_bucket() const { return m_cur_range + m_cur_bkt; }
+    BID get_overflow_bucket() const { return m_cur_range + m_open_buckets; }
 
 /*
     need to consider reinsertion cost -> especially if in dense traversal
@@ -359,12 +384,12 @@ public:
 	}
     }
 
-    void insert( ID id, ID b ) {
+    void insert( ID id, BID b ) {
 	update_buckets_seq(
 	    [&]( auto i ) { return std::make_pair( id, b ); }, 1 );
     }
 
-    void update_buckets( const ID * elements, ID num_elements ) {
+    void update_buckets( const ID * elements, size_t num_elements ) {
 	bucket_updater upd( elements, num_elements,
 			    get_current_bucket(),
 			    get_overflow_bucket(), m_fn );
@@ -377,12 +402,14 @@ public:
 
     template<bool initialize=false>
     void update_buckets( const partitioner & part, frontier & f ) {
-	ID cur = get_current_bucket();
-	ID oflow = initialize ? ~(ID)0 : get_overflow_bucket();
+	BID cur = get_current_bucket();
+	BID oflow = initialize
+	    ? std::numeric_limits<ID>::max() : get_overflow_bucket();
 	switch( f.getType() ) {
 	case frontier_type::ft_true:
 	{
-	    bucket_updater_all<ID, BucketFn> upd( m_range, cur, oflow, m_fn );
+	    bucket_updater_all<ID, BID, BucketFn>
+		upd( m_range, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
@@ -394,21 +421,21 @@ public:
 	    break;
 	case frontier_type::ft_bit:
 	{
-	    bucket_updater_dense<frontier_type::ft_bit, ID, BucketFn>
+	    bucket_updater_dense<frontier_type::ft_bit, ID, BID, BucketFn>
 		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
 	case frontier_type::ft_bool:
 	{
-	    bucket_updater_dense<frontier_type::ft_bool, ID, BucketFn>
+	    bucket_updater_dense<frontier_type::ft_bool, ID, BID, BucketFn>
 		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
 	}
 	case frontier_type::ft_logical4:
 	{
-	    bucket_updater_dense<frontier_type::ft_logical4, ID, BucketFn>
+	    bucket_updater_dense<frontier_type::ft_logical4, ID, BID, BucketFn>
 		upd( f, cur, oflow, m_fn );
 	    update_buckets_dense( part, upd, upd.size() );
 	    break;
@@ -427,7 +454,7 @@ public:
     }
     
 private:
-    ID slot( ID bkt ) const {
+    BID slot( BID bkt ) const {
 	if( bkt < m_cur_range + m_cur_bkt )
 	    return m_cur_bkt;
 	else if( bkt >= m_cur_range + m_open_buckets )
@@ -440,7 +467,8 @@ private:
 	// This is a special version where elements have to be re-inserted
 	// in the overflow bucket, which is otherwise avoided.
 	bucket_updater upd( b.get_ptr(), b.size(),
-			    get_current_bucket(), ~(ID)0, m_fn );
+			    get_current_bucket(),
+			    std::numeric_limits<BID>::max(), m_fn );
 	update_buckets_sparse( upd );
     }
     
@@ -459,31 +487,33 @@ private:
 
 	// 0. Allocate memory
 	unsigned np = part.get_num_partitions();
-	ID hsize = ( BLOCK + sizeof(ID) - 1 ) / sizeof(ID);
+	size_t hsize = ( BLOCK + sizeof(ID) - 1 ) / sizeof(ID);
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	ID * hist = new ID[(np+1) * hsize](); // zero init
+	size_t * hist = new size_t[(np+1) * hsize](); // zero init
 	uint8_t * idb = new uint8_t[num_elements];
 
 	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
+	static_assert( std::is_same_v<ID,VID>, "implicit assumption" );
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
 	map_partition( part, [&]( unsigned p ) {
 	    VID s = part.start_of( p );
 	    VID e = part.end_of( p );
-	    ID * lhist = &hist[p*hsize];
+	    size_t * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
+		ID id;
+		BID bkt;
 		std::tie( id, bkt ) = fn( v );
 
-		if( id == ~(ID)0 )
+		if( id == std::numeric_limits<ID>::max() )
 		    continue;
 
-		if( bkt == ~(ID)0 )
+		if( bkt == std::numeric_limits<BID>::max() )
 		    continue;
 
-		ID b = slot( bkt );
+		BID b = slot( bkt );
 		lhist[b]++;
 		idb[v] = b;
 	    }
@@ -491,11 +521,11 @@ private:
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each partition / bucket
-	ID * thist = &hist[np * hsize];
-	/*parallel_*/for( ID b=0; b < m_open_buckets+1; ++b ) {
-	    ID t = 0;
+	size_t * thist = &hist[np * hsize];
+	parallel_for( BID b=0; b < m_open_buckets+1; ++b ) {
+	    size_t t = 0;
 	    for( unsigned p=0; p < np; ++p ) {
-		ID u = hist[p*hsize+b];
+		size_t u = hist[p*hsize+b];
 		hist[p*hsize+b] = t;
 		t += u;
 	    }
@@ -503,27 +533,28 @@ private:
 	}
 
 	// 3. Resize buckets to accommodate new elements
-	for( ID b=0; b < m_open_buckets+1; ++b )
+	for( BID b=0; b < m_open_buckets+1; ++b )
 	    m_buckets[b].grow( thist[b] );
 
 	// 4. Insert elements into buckets
 	map_partition( part, [&]( unsigned p ) {
 	    VID s = part.start_of( p );
 	    VID e = part.end_of( p );
-	    ID * lhist = &hist[p*hsize];
+	    size_t * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
+		ID id;
+		BID bkt;
 		std::tie( id, bkt ) = fn( v );
 		// ID id = fn.get( v );
 
-		if( id == ~(ID)0 )
+		if( id == std::numeric_limits<ID>::max() )
 		    continue;
 
-		if( bkt == ~(ID)0 )
+		if( bkt == std::numeric_limits<BID>::max() )
 		    continue;
 
 		// ID b = slot( bkt );
-		ID b = idb[v];
+		BID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -535,14 +566,14 @@ private:
 	} );
 
 	// 5. Update bucket sizes
-	for( ID b=0; b < m_open_buckets+1; ++b ) {
+	for( BID b=0; b < m_open_buckets+1; ++b ) {
 	    m_buckets[b].resize( thist[b] );
 	    m_elems += thist[b];
 	}
 
 	// 6. Sanity check (debugging)
-	ID k = 0;
-	for( ID i=0; i < m_open_buckets+1; ++i )
+	size_t k = 0;
+	for( BID i=0; i < m_open_buckets+1; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
 
@@ -552,45 +583,46 @@ private:
     }
 
     template<typename IterFn>
-    void update_buckets_sparse( IterFn fn, ID num_elements ) {
-	static constexpr ID CHUNK = 4096;
-	static constexpr ID BLOCK = 64;
+    void update_buckets_sparse( IterFn fn, size_t num_elements ) {
+	static constexpr size_t CHUNK = 4096;
+	static constexpr size_t BLOCK = 64;
 
 	if( num_elements == 0 )
 	    return;
 
-	ID np = ( num_elements + CHUNK - 1 ) / CHUNK;
+	size_t np = ( num_elements + CHUNK - 1 ) / CHUNK;
 	if( np < 2 ) {
 	    update_buckets_seq( fn, num_elements );
 	    return;
 	}
 
 	// 0. Allocate memory
-	ID hsize = BLOCK;
+	size_t hsize = BLOCK;
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	ID * hist = new ID[(np+1) * hsize]();
+	size_t * hist = new size_t[(np+1) * hsize]();
 	uint8_t * idb = new uint8_t[num_elements];
 
 	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
-	parallel_for( ID p=0; p < np; ++p ) {
-	    VID s = p * CHUNK;
-	    VID e = std::min( (p+1)*CHUNK, num_elements );
-	    ID * lhist = &hist[p*hsize];
-	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
+	parallel_for( size_t p=0; p < np; ++p ) {
+	    size_t s = p * CHUNK;
+	    size_t e = std::min( (p+1)*CHUNK, num_elements );
+	    size_t * lhist = &hist[p*hsize];
+	    for( size_t v=s; v < e; ++v ) {
+		ID id;
+		BID bkt;
 		std::tie( id, bkt ) = fn( v );
 
-		if( id == ~(ID)0 )
+		if( id == std::numeric_limits<ID>::max() )
 		    continue;
 
-		if( bkt == ~(ID)0 )
+		if( bkt == std::numeric_limits<BID>::max() )
 		    continue;
 
-		ID b = slot( bkt );
+		BID b = slot( bkt );
 		lhist[b]++;
 		idb[v] = b;
 	    }
@@ -598,11 +630,11 @@ private:
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each chunk / bucket
-	ID * thist = &hist[np * hsize];
-	parallel_for( ID b=0; b < m_open_buckets+1; ++b ) {
-	    ID t = 0;
-	    for( unsigned p=0; p < np; ++p ) {
-		ID u = hist[p*hsize+b];
+	size_t * thist = &hist[np * hsize];
+	parallel_for( BID b=0; b < m_open_buckets+1; ++b ) {
+	    size_t t = 0;
+	    for( size_t p=0; p < np; ++p ) {
+		size_t u = hist[p*hsize+b];
 		hist[p*hsize+b] = t;
 		t += u;
 	    }
@@ -610,27 +642,28 @@ private:
 	}
 
 	// 3. Resize buckets to accommodate new elements
-	for( ID b=0; b < m_open_buckets+1; ++b )
+	for( BID b=0; b < m_open_buckets+1; ++b )
 	    m_buckets[b].grow( thist[b] );
 
 	// 4. Insert elements into buckets
-	parallel_for( ID p=0; p < np; ++p ) {
+	parallel_for( size_t p=0; p < np; ++p ) {
 	    VID s = p * CHUNK;
 	    VID e = std::min( (p+1)*CHUNK, num_elements );
-	    ID * lhist = &hist[p*hsize];
+	    size_t * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
-		ID id, bkt;
+		ID id;
+		BID bkt;
 		std::tie( id, bkt ) = fn( v );
 		// ID id = fn.get( v );
 
-		if( id == ~(ID)0 )
+		if( id == std::numeric_limits<ID>::max() )
 		    continue;
 
-		if( bkt == ~(ID)0 )
+		if( bkt == std::numeric_limits<BID>::max() )
 		    continue;
 
 		// ID b = slot( bkt );
-		ID b = idb[v];
+		BID b = idb[v];
 		m_buckets[b].insert( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
@@ -649,13 +682,13 @@ private:
 */
 
 	// 5. Update bucket sizes
-	for( ID b=0; b < m_open_buckets+1; ++b ) {
+	for( BID b=0; b < m_open_buckets+1; ++b ) {
 	    m_buckets[b].resize( thist[b] );
 	    m_elems += thist[b];
 	}
 
 	// 6. Sanity check (debugging)
-	ID k = 0;
+	size_t k = 0;
 	for( ID i=0; i < m_open_buckets+1; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
@@ -666,19 +699,20 @@ private:
     }
 	
     template<typename IterFn>
-    void update_buckets_seq( IterFn fn, ID num_elements ) {
-	ID num_inserted = 0;
-	for( ID i=0; i < num_elements; ++i ) {
-	    ID id, bkt;
+    void update_buckets_seq( IterFn fn, size_t num_elements ) {
+	size_t num_inserted = 0;
+	for( size_t i=0; i < num_elements; ++i ) {
+	    ID id;
+	    BID bkt;
 	    std::tie( id, bkt ) = fn( i );
 
-	    if( id == ~(ID)0 )
+	    if( id == std::numeric_limits<ID>::max() )
 		continue;
 
-	    if( bkt == ~(ID)0 )
+	    if( bkt == std::numeric_limits<BID>::max() )
 		continue;
 
-	    ID b = slot( bkt );
+	    BID b = slot( bkt );
 	    m_buckets[b].insert( id );
 	    ++num_inserted;
 
@@ -691,18 +725,19 @@ private:
 	}
 	m_elems += num_inserted;
 
-	ID k = 0;
+	// Sanity check (debugging)
+	size_t k = 0;
 	for( ID i=0; i <= m_open_buckets; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
     }
 
 private:
-    ID m_range;
-    ID m_open_buckets;
+    BID m_range;
+    BID m_open_buckets;
     BucketFn m_fn;
-    ID m_cur_bkt;
-    ID m_cur_range;
-    ID m_elems;
+    BID m_cur_bkt;
+    BID m_cur_range;
+    size_t m_elems;
     bucket<ID> * m_buckets;
 };
