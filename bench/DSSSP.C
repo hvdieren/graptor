@@ -108,20 +108,22 @@ enum variable_name {
 
 struct bucket_fn {
     using ID = VID;
+    using BID = std::make_unsigned_t<ID>;
     
     bucket_fn( SFloatTy * dist, FloatTy delta )
 	: m_dist( dist ), m_delta( delta ) { }
 
-    VID operator() ( VID v, VID cur, VID oflow ) const {
-	if( v == ~(VID)0 )
-	    return ~(VID)0;
-	VID bkt = ((FloatTy)m_dist[v]) / m_delta;
+    BID operator() ( VID v, BID cur, BID oflow ) const {
+	if( v == std::numeric_limits<VID>::max() )
+	    return std::numeric_limits<BID>::max();
+	BID bkt = ((FloatTy)m_dist[v]) / m_delta;
 	if( bkt < cur )
-	    return ~(VID)0;
+	    return std::numeric_limits<BID>::max();
 	else
 	    return bkt;
     }
 
+/*
     template<VID Scale>
     FloatTy get_scaled( VID v ) const {
 	return (VID)( ((FloatTy)m_dist[v]) / ( m_delta / (FloatTy)Scale ) );
@@ -130,6 +132,7 @@ struct bucket_fn {
     FloatTy get( VID v ) const {
 	return m_dist[v];
     }
+*/
     
 private:
     SFloatTy * m_dist;
@@ -441,6 +444,7 @@ public:
 		    // are inserted in the buckets only when they are woken up
 		    // and we cannot tell easily whether a vertex is already
 		    // present in the overflow bucket or not.
+// TODO: GAPBS runs up to 1000 buckets ahead + sorts those buckets locally in the edgemap
 		    auto threshold = expr::constant_val2<FloatTy>(
 			d, delta * (FloatTy)(1+cur_bkt) );
 		    return expr::iif( new_dist[d] <= threshold,
