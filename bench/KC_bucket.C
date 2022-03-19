@@ -25,16 +25,17 @@ enum variable_name {
 
 struct bucket_fn {
     using ID = VID;
+    using BID = std::make_unsigned_t<ID>;
     
     bucket_fn( VID * degree )
 	: m_degree( degree ) { }
 
-    VID operator() ( VID v, VID current, VID overflow ) const {
-	return v == ~(VID)0		// illegal vertex
-	    || m_degree[v] < current	// or processing completed
-	    || m_degree[v] >= overflow	// or already in overflow bucket
-	    ? ~(VID)0			// ... then drop vertex
-	    : m_degree[v];		// ... else this is the bucket
+    BID operator() ( VID v, BID current, BID overflow ) const {
+	return v == std::numeric_limits<VID>::max() // illegal vertex
+	    || BID(m_degree[v]) < current	// or processing completed
+	    || BID(m_degree[v]) > overflow	// or already in overflow bucket
+	    ? std::numeric_limits<BID>::max() // ... then drop vertex
+	    : BID(m_degree[v]);		// ... else this is the bucket
     }
     
 private:
@@ -136,6 +137,10 @@ public:
 
 	    timer tm_iter;
 	    tm_iter.start();
+
+	    // TODO: once all m_degrees[] are less than/equal to largestCore,
+	    //       computation is complete. Could check for this if we have
+	    //       seen a few (effectively) empty buckets
 
 	    // next_bucket updates current bucket, so do this first...
 	    frontier F = bkts.next_bucket();
@@ -259,7 +264,7 @@ public:
 
 	    // std::cerr << "output: " << output << "\n";
 	    // print( std::cerr, part, coreness );
-	    // std::cerr << "todo: " << todo << "\n";
+	    std::cerr << "todo: " << todo << "\n";
 
 	    bkts.update_buckets( part, output );
 
@@ -391,11 +396,14 @@ public:
 		    if( p[v] ) {
 			std::cerr << "v=" << v << " n[v]=" << neighbours[v]
 				  << " c[v]=" << coreness[v];
-			VID d = GA.getCSR().getDegree( v );
+			VID deg = GA.getCSR().getDegree( v );
+			VID d = std::min( deg, (VID)100 );
 			for( VID i=0; i < d; ++i ) {
 			    VID u = GA.getCSR().getNeighbor( v, i );
 			    std::cerr << ' ' << u << '=' << coreness[u];
 			}
+			if( d != deg )
+			    std::cerr << " [...]";
 			std::cerr << "\n";
 		    }
 		}
@@ -431,11 +439,14 @@ public:
 		    if( p[v] ) {
 			std::cerr << "v=" << v << " n[v]=" << neighbours[v]
 				  << " c[v]=" << coreness[v];
-			VID d = GA.getCSR().getDegree( v );
+			VID deg = GA.getCSR().getDegree( v );
+			VID d = std::min( deg, (VID)100 );
 			for( VID i=0; i < d; ++i ) {
 			    VID u = GA.getCSR().getNeighbor( v, i );
 			    std::cerr << ' ' << u << '=' << coreness[u];
 			}
+			if( d != deg )
+			    std::cerr << " [...]";
 			std::cerr << "\n";
 		    }
 		}
