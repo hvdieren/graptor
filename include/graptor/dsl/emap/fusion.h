@@ -318,8 +318,10 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 
     if( num_threads > 1 ) {
 	parallel_for( uint32_t t=0; t < num_threads; ++t ) {
-	    VID from = ( t * m ) / num_threads;
-	    VID to = t == num_threads-1 ? m : ( (t + 1) * m ) / num_threads;
+	    VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
+	    VID to = std::min( uint64_t(m),
+			       ( uint64_t(t + 1) * uint64_t(m) )
+			       / uint64_t(num_threads) );
 	    work_queues.create_buffer( t, &s[from], to-from );
 	    F[t] =
 		csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
