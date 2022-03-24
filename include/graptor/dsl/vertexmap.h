@@ -2407,7 +2407,11 @@ constexpr auto make_edge_map_executor(
 template<typename DstTy, typename SrcTy>
 auto maintain_copies( const partitioner & part, frontier & change,
 		      DstTy & dst, SrcTy & src ) {
-    if( change.getType() == frontier_type::ft_unbacked ) {
+    bool do_all = change.getType() == frontier_type::ft_unbacked
+	|| change.getType() == frontier_type::ft_true
+	|| change.nActiveVertices() > change.nVertices() / 4;
+
+    if( do_all ) {
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
 		return dst[v] = src[v];
