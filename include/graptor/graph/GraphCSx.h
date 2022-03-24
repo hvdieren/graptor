@@ -1331,6 +1331,37 @@ private:
     }
 };
 
+class GraphCSRAdaptor {
+public:
+    GraphCSRAdaptor( const GraphCSx & csx ) : m_csr( csx ) { }
+
+    const EID *getIndex() const { return m_csr.getIndex(); }
+    const VID *getEdges() const { return m_csr.getEdges(); }
+    const VID *getOutDegree() const { return m_csr.getDegree(); }
+
+    VID numVertices() const { return m_csr.numVertices(); }
+    EID numEdges() const { return m_csr.numEdges(); }
+
+    VID getOutDegree( VID v ) const { return m_csr.getDegree( v ); }
+    VID getOutNeighbor( VID v, VID pos ) const {
+	return m_csr.getNeighbor( v, pos );
+    }
+
+    bool isSymmetric() const { return m_csr.isSymmetric(); }
+
+    bool hasEdge( VID s, VID d ) const { return m_csr.hasEdge( s, d ); }
+    std::pair<bool,float> getEdgeWeight( VID s, VID d ) const {
+	return m_csr.getEdgeWeight( s, d );
+    }
+
+    const mm::buffer<float> * getWeights() const {
+	return m_csr.getWeights();
+    }
+    
+private:
+    const GraphCSx & m_csr;
+};
+
 // Obtaining the degree of a vertex
 template<>
 struct gtraits_getoutdegree<GraphCSx> {
