@@ -18,12 +18,44 @@ constexpr bool is_constant_kind( value_kind vkind ) {
 }
 
 /**
- * constant: a type-less, dimensionless, symbolic constant.
+ * constant: a constant, without vector length specification
+ *
+ * \tparam VKind: what constant is represented
+ * \tparam T: type of the constant, or void if typeless
+ */
+template<value_kind VKind, typename T>
+struct constant;
+
+/**
+ * constant: overload for a typed value that is constant throughout the
+ *           expression.
+ *
+ * \tparam VKind: what constant is represented
+ * \tparam T: type of the constant
+ */
+template<typename T>
+struct constant<vk_any,T> : public expr_base {
+    static constexpr value_kind vkind = vk_any;
+    static constexpr op_codes opcode = op_constant;
+
+    constexpr GG_INLINE constant( T val ) : m_val( val ) { }
+
+    template<typename Tr>
+    auto expand() {
+	return value<Tr, vk_any>( m_val );
+    }
+
+private:
+    T m_val;
+};
+
+/**
+ * constant: overload for a type-less, dimensionless, symbolic constant.
  *
  * \tparam VKind: what constant is represented
  */
 template<value_kind VKind>
-struct constant : public expr_base {
+struct constant<VKind,void> : public expr_base {
     static constexpr value_kind vkind = VKind;
     static constexpr op_codes opcode = op_constant;
 
@@ -48,12 +80,17 @@ struct constant : public expr_base {
     }
 };
 
-static const constant<vk_zero> _0;
-static const constant<vk_cstone> _1;
-static const constant<vk_false> _false;
-static const constant<vk_true> _true;
-static const constant<vk_truemask> _1s;
-static const constant<vk_inc> _0123;
+static const constant<vk_zero,void> _0;
+static const constant<vk_cstone,void> _1;
+static const constant<vk_false,void> _false;
+static const constant<vk_true,void> _true;
+static const constant<vk_truemask,void> _1s;
+static const constant<vk_inc,void> _0123;
+
+template<typename T>
+constexpr auto _c( T val ) {
+    return constant<vk_any,T>( val );
+}
 
 /**
  * Expand a constant into a value given a context that sets the type
@@ -70,7 +107,7 @@ auto expand_cst( Cst c, Expr e ) {
     if constexpr ( c.opcode == op_constant ) {
 	static_assert( !is_constant<Expr>::value,
 		       "cannot infer data_type for constant" );
-	return Cst::template expand<typename Expr::data_type>();
+	return c.template expand<typename Expr::data_type>();
     } else
 	return c;
 }

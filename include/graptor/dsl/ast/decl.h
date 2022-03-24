@@ -86,7 +86,7 @@ struct noop;
 template<typename Tr, value_kind VKind, typename Enable = void>
 struct value;
 
-template<value_kind VKind>
+template<value_kind VKind, typename T = void>
 struct constant;
 
 template<typename E, typename UnOp>
