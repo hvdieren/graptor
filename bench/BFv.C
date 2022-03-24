@@ -121,6 +121,9 @@ public:
 	calculate_active = P.getOption( "-cactive" );
 	est_diam = P.getOptionLongValue( "-sssp:diam", 20 );
 	start = GA.remapID( P.getOptionLongValue( "-start", 0 ) );
+	lo_frac = P.getOptionDoubleValue( "-lo:frac", 0.05 );
+	hi_frac = P.getOptionDoubleValue( "-hi:frac", 0.50 );
+	tgt_frac = P.getOptionDoubleValue( "-tgt:frac", 0.025 );
 
 	if( GA.getWeights() == nullptr ) {
 	    std::cerr << "BF requires edge weights. Terminating.\n";
@@ -140,6 +143,9 @@ public:
 	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "sizeof(FloatTy)=" << sizeof(FloatTy) << "\n";
 	    std::cerr << "sizeof(SFloatTy)=" << sizeof(SFloatTy) << "\n";
+	    std::cerr << "lo_frac=" << lo_frac << "\n";
+	    std::cerr << "hi_frac=" << hi_frac << "\n";
+	    std::cerr << "tgt_frac=" << tgt_frac << "\n";
 #if VARIANT != 2
 	    using ft = fp_traits<SFloatTy>;
 	    std::cerr << "FP: sign bit=" << ft::sign_bit << "\n";
@@ -327,15 +333,77 @@ public:
 
 	++iter;
 
-	while( !F.isEmpty() ) {  // iterate until all vertices visited
+	bool once = false; // true;
+	bool require_dense = false;
+	EID postponed = 0;
+	
+	while( !F.isEmpty() || require_dense ) {  // iterate until all vertices visited
+
+/*
+use delta filtering on output of dense step (delta compared to smallest?)
+in order to avoid redundant work.
+Remember filtered out vertices for the final dense step
+Somehow need a rule to decide when to pick those up...
+if waiting until F is empty, we still need 3-4 dense steps
+
+	       ... raise sp-threshold, would reduce number of dense phases?
+	       but still take time, perhaps save two half dense phases' time.
+	       */
+    
+	    float density = F.density( m );
+	    if( once && density > lo_frac && density < hi_frac
+		&& F.nActiveVertices() > VID(float(n)*tgt_frac)
+		&& postponed < n/2 ) {
+		// Retain only the shortest vertices
+		float threshold = determine_threshold( F, n*tgt_frac );
+
+		// TODO: don't really need filter as the threshold method
+		// has partitioned the data in larger than and less than
+		// We can simply truncate the array
+		frontier filtered;
+		make_lazy_executor( part )
+		    .vertex_filter(
+			GA,
+			F,
+			filtered,
+			[&]( auto v ) {
+			    auto cT
+				= expr::constant_val( new_dist[v], threshold );
+			    return new_dist[v] <= cT;
+			} )
+		    .materialize();
+		std::cerr << "F: v=" << F.nActiveVertices()
+			  <<  " e=" << F.nActiveEdges()
+			  << " d=" << F.density( m )
+			  << "\n";
+		std::cerr << "filtered: v=" << filtered.nActiveVertices()
+			  <<  " e=" << filtered.nActiveEdges()
+			  << " d=" << filtered.density( m )
+			  << "\n";
+		postponed += F.nActiveVertices() - filtered.nActiveVertices();
+		F.del();
+		F = filtered;
+		// Enforce sparse traversal regardless of degrees
+		F.setActiveCounts( F.nActiveVertices(), F.nActiveVertices() );
+		require_dense = true;
+	    } else if( density >= hi_frac ) {
+		once = false;
+	    }
+
 	    // Traverse edges, remove duplicate live destinations.
+	    if( F.density( m ) >= 0.50 )
+		require_dense = false;
+	    else if( F.isEmpty() ) {
+		assert( require_dense );
+		F.del();
+		F = frontier::all_true( n, m );
+	    }
 	    frontier output;
 #if UNCOND_EXEC
 	    auto filter_strength = api::weak;
 #else
 	    auto filter_strength = api::strong;
 #endif
-
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
@@ -348,7 +416,7 @@ public:
 		api::record( output,
 			     api::reduction_or_method,
 			     [&] ( auto d ) {
-			     return cur_dist[d] != new_dist[d]; },
+				 return cur_dist[d] != new_dist[d]; },
 			     api::strong ),
 #else
 		// Do not allow unbacked frontiers
@@ -371,7 +439,7 @@ public:
 #endif
 		} )
 		).materialize();
-			   
+
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	    if( output.getType() == frontier_type::ft_unbacked ) {
 		make_lazy_executor( part )
@@ -392,7 +460,7 @@ public:
 
 	    if( itimes ) {
 		info_buf.resize( iter+1 );
-		info_buf[iter].density = F.density( GA.numEdges() );
+		info_buf[iter].density = F.density( m );
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].delay = tm_iter.next();
@@ -412,6 +480,54 @@ public:
 	F.del();
     }
 
+private:
+    FloatTy determine_threshold( frontier & F, VID target_vertices ) {
+	F.toSparse( GA.get_partitioner() );
+	VID n = F.nActiveVertices();
+	VID * s = F.getSparse();
+	return randomized_select( s, 0, n, target_vertices );
+    }
+
+    VID partition( VID * s, VID p, VID r ) {
+	FloatTy x = new_dist[s[p]];
+	VID i = p-1;
+	VID j = r;
+	while( true ) {
+	    do {
+		--j;
+	    } while( new_dist[s[j]] > x );
+	    do {
+		++i;
+	    } while( new_dist[s[i]] <= x );
+	    if( i < j )
+		std::swap( s[i], s[j] );
+	    else
+		return j;
+	}
+    }
+
+    VID randomized_partition( VID * s, VID p, VID r ) {
+	VID i = p + ( rand() % (r - p) );
+	std::swap( s[i], s[p] );
+	return partition( s, p, r );
+    }
+
+    // i: select i-th smallest value 
+    // p: start index of array
+    // r: end index of array
+    FloatTy randomized_select( VID * s, VID p, VID r, VID i ) {
+	if( p == r ) // only one element
+	    return new_dist[s[p]];
+
+	VID q = randomized_partition( s, p, r );
+	VID k = q - p + 1;
+	if( i <= k )
+	    return randomized_select( s, p, q, i );
+	else
+	    return randomized_select( s, q+1, r, i-k );
+    }
+
+public:
     void post_process( stat & stat_buf ) {
 	if( itimes ) {
 	    for( int i=0; i < iter; ++i )
@@ -477,6 +593,7 @@ private:
 #endif
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
     api::edgeprop<FloatTy,EID,expr::vk_eweight,EncEdge> edge_weight;
+    float lo_frac, hi_frac, tgt_frac;
     std::vector<info> info_buf;
 };
 
