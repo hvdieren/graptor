@@ -502,6 +502,12 @@ private:
 #endif
 	    .materialize();
 
+#if DEFERRED_UPDATE || !LEVEL_ASYNC
+	// The use of a separate copy pass is less efficient than
+	// copying all data immediately when generated
+	// maintain_copies( GA.get_partitioner(), output, prevIDs, IDs );
+#endif
+
 	return output;
     }
 
