@@ -38,6 +38,8 @@ enum array_aid {
     aid_utilization_vectors = -128,
     aid_graph_degree = -144,
     aid_frontier_a = -160,
+    aid_emap_zerof = -176,
+    aid_emap_let = -192,
     aid_priv = -1024 // a very big downward range is required
 };
 
