@@ -299,7 +299,7 @@ static inline void emap_pull(
     auto all_caches
 	= cache_cat( vop_caches, cache_cat( vcaches, vcaches_use ) );
 
-    // Override pointer for vk_eweight with the relevant permuation of the
+    // Override pointer for vk_eweight with the relevant permutation of the
     // weights for the GA graph.
     auto ew_pset = expr::create_map2<expr::vk_eweight>(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );

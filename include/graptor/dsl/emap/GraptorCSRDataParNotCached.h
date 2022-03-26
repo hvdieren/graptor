@@ -2,6 +2,8 @@
 #ifndef GRAPTOR_DSL_EMAP_GRAPTORCSRDATAPARNOTCACHED_H
 #define GRAPTOR_DSL_EMAP_GRAPTORCSRDATAPARNOTCACHED_H
 
+#include "graptor/dsl/ast/memref.h"
+
 template<unsigned short VL, typename GraphType,
 	 typename Extractor,
 	 typename AExpr, typename VExpr, typename MVExpr, typename MRExpr,
@@ -24,11 +26,13 @@ static inline VID GraptorCSRDataParNotCached(
     const Config & config ) {
 
     using vid_type = simd::ty<VID,VL>;
+    using seid_type = simd::ty<EID,1>;
 
     // constexpr unsigned short lgVL = ilog2( VL );
     simd_vector<VID, VL> vstep( (VID)VL );
     VID sidx = 0;
     VID n = GA.numVertices();
+    EID sedge = part.edge_start_of( p );
 
     const simd_vector<VID, VL> vmask( extractor.get_mask() );
 
@@ -43,7 +47,8 @@ static inline VID GraptorCSRDataParNotCached(
 	vmax += VL - ( vmax % VL );
 #endif
 
-    for( EID s=0; s < nvec; s += VL ) {
+    EID s;
+    for( s=0; s < nvec; s += VL ) {
 	// std::cerr << "vidx[0]=" << vidx.at(0) << "\n";
 	// assert( vdst.at(0) < part.end_of(p) );
 	// assert( vdst.at(0) < GA.numVertices() );
@@ -75,11 +80,13 @@ static inline VID GraptorCSRDataParNotCached(
 	// std::cerr << "SIMD sidx=" << sidx << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
 
 	// apply op vsrc, vdst;
+	auto sv = simd::create_scalar<seid_type>( sedge+s );
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_pid>( pvec1 ),
 	    expr::create_entry<expr::vk_src>( vsrc ),
 	    expr::create_entry<expr::vk_mask>( vmask ),
-	    expr::create_entry<expr::vk_dst>( vdst ) );
+	    expr::create_entry<expr::vk_dst>( vdst ),
+	    expr::create_entry<expr::vk_edge>( sv ) );
 	expr::cache<> c;
 	auto mpack = expr::sb::create_mask_pack( vdst != vmask );
 	auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
@@ -97,8 +104,9 @@ static inline VID GraptorCSRDataParNotCached(
     return sidx;
 }
 
-template<unsigned short VL, graptor_mode_t M, typename AExpr, typename VExpr, typename MVExpr,
-	 typename RExpr, typename MRExpr, typename MRExprVOP, typename VCache,
+template<unsigned short VL, graptor_mode_t M,
+	 typename AExpr, typename VExpr, typename MVExpr,
+	 typename RExpr, typename MRExpr, typename VCache,
 	 typename Environment, typename Config>
 static inline void GraptorCSRDataParNotCachedDriver(
     const GraphVEBOGraptor<M> & GA,
@@ -110,14 +118,13 @@ static inline void GraptorCSRDataParNotCachedDriver(
     const MVExpr & m_vexpr,
     const RExpr & rexpr,
     const MRExpr & m_rexpr,
-    const MRExprVOP & m_rexpr_vop,
     const VCache & vcaches,
     const Environment & env,
     const Config & config ) {
     // Get list of edges
     const VID * edge = GP.getEdges();
-    const EID nvec2 = GP.numSIMDEdgesDeg2();
-    const EID nvec1 = GP.numSIMDEdgesDeg1();
+    // const EID nvec2 = GP.numSIMDEdgesDeg2();
+    // const EID nvec1 = GP.numSIMDEdgesDeg1();
     const EID nvec_d1 = GP.numSIMDEdgesDelta1();
     const EID nvec_dpar = GP.numSIMDEdgesDeltaPar();
     const EID nvec = GP.numSIMDEdges();
@@ -144,18 +151,8 @@ static inline void GraptorCSRDataParNotCachedDriver(
 	GA, GP, p, part, extractor, &edge[nvec_d1], nvec_dpar,
 	pvec1, aexpr, vexpr, m_vexpr, m_rexpr, env, config );
 
-/* should be working
-    sidx = csr_dpar_deg2<VL>( GA, GP, p, part,
-			      &edge[nvec_d1+nvec_dpar], nvec2, sidx, pvec,
-			      vexpr, m_vexpr, m_rexpr, m_rexpr_vop, vcaches );
-
-    sidx = csr_dpar_deg1<VL>( GA, GP, p, part,
-			      &edge[nvec_d1+nvec_dpar+nvec2], nvec1, sidx, pvec,
-			      vexpr, m_vexpr, m_rexpr, m_rexpr_vop, vcaches );
-*/
-
     expr::cache<> c;
-    GraptorCSRVertexOp<VL>( env, p, part, rexpr/*m_rexpr_vop*/, c );
+    GraptorCSRVertexOp<VL>( env, p, part, rexpr, c );
 }
 
 
@@ -192,16 +189,17 @@ static inline void emap_push(
     // Vertexop - no mask
     auto vop0 = op.vertexop( v_dst );
     auto accum = expr::extract_accumulators( vop0 );
+    expr::accum_create( part, accum );
     auto vop1 = expr::rewrite_privatize_accumulators( vop0, part, accum, v_pid0 );
     auto pvop0 = expr::accumulate_privatized_accumulators( v_pid0, accum );
     auto pvopf0 = expr::final_accumulate_privatized_accumulators( v_pid0, accum );
 
-    auto vop2 = vop1;
+    auto vop2 = rewrite_internal( vop1 );
 
     // LICM: only inner-most redop needs to be performed inside loop.
     //       the other relates to the new frontier and can be carried over
     //       through registers as opposed to variables.
-    auto vexpr1 = vexpr0;
+    auto vexpr1 = rewrite_internal( vexpr0 );
     auto rexpr1 = vop2;
 
     // It is assumed cache is the same / masked version may have additional
@@ -210,48 +208,29 @@ static inline void emap_push(
 
     // Loop part
     auto vexpr2 = expr::rewrite_caches<expr::vk_src>( vexpr1, vcaches );
-    // auto vexpr2 = vexpr1;
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
-    // using Expr = decltype( vexpr );
 
     // Post-loop part
     auto rexpr2 = expr::rewrite_caches<expr::vk_src>( rexpr1, vcaches );
-    // auto rexpr2 = rexpr1;
     auto rexpr = expr::rewrite_mask_main( rexpr2 );
 
     // Loop termination condition (convergence check)
-    auto aexpr0 = op.active( v_dst );
+    auto aexpr0i = op.active( v_dst );
+    auto aexpr0 = rewrite_internal( aexpr0i );
     auto aexpr1 = expr::make_unop_reduce( aexpr0, expr::redop_logicalor() );
     auto aexpr2 = expr::rewrite_caches<expr::vk_src>( aexpr1, vcaches );
-    // auto aexpr2 = aexpr1;
     auto aexpr = expr::rewrite_mask_main( aexpr2 );
 
-    // LICM: only inner-most redop needs to be performed inside loop.
-    //       the other relates to the new frontier and can be carried over
-    //       through registers as opposed to variables.
-    auto m_vexpr1 = m_vexpr0;
-    // auto m_rexpr0 = nop;
+    auto m_vexpr1 = rewrite_internal( m_vexpr0 );
     auto m_rexpr1 = vop2;
-    // csc_vreduce_ requires these two as separate expressions, one vectorized
-    // and one for scalar execution.
-    // auto m_rexpr1_v = m_rexpr0;
-    auto m_rexpr1_vop = vop2;
 
     // Loop part
     auto m_vexpr2 = expr::rewrite_caches<expr::vk_src>( m_vexpr1, vcaches );
-    // auto m_vexpr2 = m_vexpr1;
     auto m_vexpr = expr::rewrite_mask_main( m_vexpr2 );
 
     // Post-loop part
     auto m_rexpr2 = expr::rewrite_caches<expr::vk_src>( m_rexpr1, vcaches );
-    // auto m_rexpr2 = m_rexpr1;
     auto m_rexpr = expr::rewrite_mask_main( m_rexpr2 );
-    // auto m_rexpr2_v = expr::rewrite_caches<expr::vk_src>( m_rexpr1_v, vcaches );
-    // auto m_rexpr_v = expr::rewrite_mask_main( m_rexpr2_v );
-    auto m_rexpr2_vop
-	= expr::rewrite_caches<expr::vk_src>( m_rexpr1_vop, vcaches );
-    // auto m_rexpr2_vop = m_rexpr1_vop;
-    auto m_rexpr_vop = expr::rewrite_mask_main( m_rexpr2_vop );
 
     // TODO:
     // * strength reduction on division by storedVL
@@ -262,42 +241,26 @@ static inline void emap_push(
     static_assert( Cfg::max_vector_length() >= VL,
 		   "Cannot respect config option of maximum vector length" );
 
+    // Override pointer for vk_eweight with the relevant permutation of the
+    // weights for the GA graph.
+    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	GA.getWeights() ? GA.getWeights()->get() : nullptr );
+					 
     auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), vcaches,
-	vexpr, m_vexpr, rexpr, m_rexpr, m_rexpr_vop,
-	m_rexpr_vop, pvop0, pvopf0 );
+	op.get_ptrset( ew_pset ), vcaches,
+	vexpr, m_vexpr0, rexpr, m_rexpr,
+	pvop0, pvopf0 );
 
     map_partition<Cfg::is_parallel()>( part, [&]( int p ) {
 	    GraptorCSRDataParNotCachedDriver<VL>(
 		GA, p, GA.getCSC( p ), part,
 		aexpr, vexpr, m_vexpr, rexpr, m_rexpr,
-		m_rexpr_vop, vcaches, env, op.get_config() );
+		vcaches, env, op.get_config() );
 	} );
 
     // Scan across partitions
     if constexpr ( Operator::is_scan )
 	emap_scan<VL,VID>( env, part, pvop0, pvopf0 );
-/*
-    if( Operator::is_scan ) {
-	int np = part.get_num_partitions();
-	for( int p=1; p < np; ++p ) {
-	    simd_vector<VID,VL> pp;
-	    pp.set1inc( p*VL );
-	    auto m = expr::create_value_map_new<VL>(
-		expr::create_entry<expr::vk_pid>( pp ) );
-	    expr::cache<> c;
-	    expr::evaluate( c, m, pvop0 );
-	}
-	{
-	    simd_vector<VID,VL> pp;
-	    pp.set1inc0();
-	    auto m = expr::create_value_map_new<VL>(
-		expr::create_entry<expr::vk_pid>( pp ) );
-	    expr::cache<> c;
-	    expr::evaluate( c, m, pvopf0 );
-	}
-    }
-*/
 
     accum_destroy( accum );
 }

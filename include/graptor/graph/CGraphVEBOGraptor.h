@@ -11,6 +11,7 @@
 #include "graptor/graph/CGraphCSRSIMDDegreeMixed.h"
 #include "graptor/graph/CGraphCSxSIMDDegreeDeltaMixed.h"
 #include "graptor/graph/GraptorDataParPull.h"
+#include "graptor/graph/GraptorDataParPush.h"
 #include "graptor/frontier.h"
 
 // TODO
@@ -71,6 +72,14 @@ public:
 	timer tm;
 	tm.start();
 
+	std::cerr << "Graptor: "
+		  << ( GraptorConfig<Mode>::is_csc ? "pull" : "push" )
+		  << ( GraptorConfig<Mode>::is_datapar
+		       ? " data-parallel" : " parallel-per-vertex" )
+		  << ( GraptorConfig<Mode>::is_cached
+		       ? " cached" : " not-cached" )
+		  << "\n";
+
 	// Setup temporary CSC, try to be space-efficient.
 	// Note that we do not require the full CSC per se; we could get by
 	// with only knowing the in-edge count per vertex for performing VEBO,
@@ -123,6 +132,63 @@ public:
 		*m_weights = builder.weights;
 	    }
 	    std::cerr << "Graptor build: " << tm.next() << "\n";
+
+	    // Clean up intermediates
+	    if( !Gcsr.isSymmetric() && csc_tmp ) {
+		csc_tmp->del();
+		delete csc_tmp;
+	    }
+	    std::cerr << "Graptor temporaries cleanup: " << tm.next() << "\n";
+	    return;
+	} else if constexpr ( !GraptorConfig<Mode>::is_csc
+			      && GraptorConfig<Mode>::is_datapar ) {
+	    // Calculate remapping table.
+	    // SIMD version results in less padding
+	    remap = VEBOReorder( *csc_tmp, part, 1, false, maxVL );
+	    // remap = VEBOReorderSIMD<VID,EID>( *csc_tmp, part, 1, false, maxVL );
+	    std::cerr << "VEBO total: " << tm.next() << "\n";
+
+	    std::cerr << "Highest-degree vertex: deg=" << csc_tmp->max_degree()
+		      << "...\n";
+	    csc_tmp->setMaxDegreeVertex( csc_tmp->findHighestDegreeVertex() );
+
+	    // Setup CSR
+	    std::cerr << "Reorder CSR...\n";
+	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1,
+				 Gcsr.isSymmetric(),
+				 Gcsr.getWeights() != nullptr );
+	    csr.import_expand( Gcsr, part, remap.remapper() );
+	    std::cerr << "Reorder CSR: " << tm.next() << "\n";
+
+	    // Setup CSC partitions
+	    std::cerr << "Graptor: "
+		      << " n=" << Gcsr.numVertices()
+		      << " e=" << Gcsr.numEdges()
+		      << "\n";
+
+	    /*
+	    csc = new GraphPartitionType[npart];
+	    map_partitionL( part, [&]( int p ) {
+		assert( part.start_of(p) % maxVL == 0 );
+		new (&csc[p]) GraphPartitionType();
+		csc[p].import( *csc_tmp, part, p,
+			       maxVL, remap.remapper(),
+			       part.numa_node_of( p ) );
+	    } );
+	    std::cerr << "Graptor build: " << tm.next() << "\n";
+	    */
+
+	    GraptorDataParPushBuilder<float,Mode> builder;
+	    builder.build( csr, *csc_tmp, part, maxVL, remap.remapper() );
+
+	    csc = static_cast<GraphPartitionType *>( builder.slabs );
+
+	    if( Gcsr.getWeights() ) {
+		m_weights = new mm::buffer<float>;
+		*m_weights = builder.weights;
+	    }
+	    std::cerr << "Graptor build: " << tm.next() << "\n";
+
 
 	    // Clean up intermediates
 	    if( !Gcsr.isSymmetric() && csc_tmp ) {
@@ -245,6 +311,7 @@ public:
 			  << " n=" << Gcsr.numVertices()
 			  << " e=" << Gcsr.numEdges()
 			  << "\n";
+		csc = new GraphPartitionType[npart];
 		map_partitionL( part, [&]( int p ) {
 			assert( part.start_of(p) % maxVL == 0 );
 			new (&csc[p]) GraphPartitionType();

@@ -89,7 +89,8 @@ struct GraptorConfig<Mode,
 #if VEBO_DISABLE
     using remap_type = VEBOReorderIdempotent<VID,EID>;
 #else
-    using remap_type = VEBOReorderSIMD<VID,EID>;
+    // using remap_type = VEBOReorderSIMD<VID,EID>;
+    using remap_type = VEBOReorder;
 #endif
     static constexpr bool is_csc = false;
     static constexpr bool is_datapar = (((unsigned)Mode) & 2) != 0;
