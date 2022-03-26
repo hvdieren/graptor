@@ -125,13 +125,24 @@ GraptorCSRVertexOp( const Environment & env,
     auto vdst = simd::create_set1inc<VID, VL, false>( lo );
     auto vpid = simd::template create_constant<simd::ty<VID,1>>( VL*(VID)p );
     auto vvstep = simd::create_constant<VID,VL>( (VID)VL );
-    for( VID v=lo; v < hi; v += VL ) {
+    VID v;
+    for( v=lo; v+VL <= hi; v += VL ) {
 	// Evaluate hoisted part of expression.
 	// This will include the count of active
 	// vertices and edges in the new frontier.
 	auto m1 = expr::create_value_map_new2<VL,expr::vk_pid,expr::vk_dst>(
 	    vpid, vdst );
 	env.evaluate( c, m1, e );
+	vdst += vvstep;
+    }
+    if( v < hi ) {
+	// Less than a full vector remaining
+	auto v_dst = expr::value<simd::ty<VID,VL>,expr::vk_dst>();
+	auto v_max = expr::_c( hi );
+	auto m1 = expr::create_value_map_new2<VL,expr::vk_pid,expr::vk_dst>(
+	    vpid, vdst );
+	env.evaluate( c, m1,
+		      expr::set_mask( v_dst < v_max, e ) );
 	vdst += vvstep;
     }
 }
