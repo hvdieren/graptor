@@ -1164,6 +1164,7 @@ public:
     EID numSIMDEdgesDeltaPar() const { return mvdpar; }
     EID numSIMDEdgesDeg1() const { return mv1; }
     EID numSIMDEdgesDeg2() const { return mv2; }
+    EID numPaddingEdges() const { return 0; }
 
     EID numSIMDEdgesInvDelta1() const { return ninvd1; }
     EID numSIMDEdgesInvDeltaPar() const { return ninvdpar; }
