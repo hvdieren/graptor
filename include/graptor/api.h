@@ -665,9 +665,18 @@ struct arg_record_reduction_op {
     auto relax( VIDSrc s, VIDDst d, EIDEdge e ) const {
 	// |= will be evaluated as atomic if !is_priv
 	auto dd = expr::remove_mask( d );
+/*
 	return expr::set_mask(
 	    expr::get_mask_cond( d ),
 	    m_array[dd] |= expr::cast<StoreTy>( m_op.relax( s, dd, e ) )
+	    );
+*/
+	return expr::set_mask(
+	    expr::get_mask_cond( d ),
+	    expr::set_mask(
+		m_op.relax( s, dd, e ),
+		m_array[dd]
+		= expr::value<typename VIDDst::data_type::prefmask_traits,expr::vk_true>() )
 	    );
     }
 
