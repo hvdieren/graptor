@@ -491,7 +491,8 @@ public:
     }
 
     static constexpr bool is_privatized( graph_traversal_kind gtk ) {
-	return gtk == graph_traversal_kind::gt_pull;
+	return gtk == graph_traversal_kind::gt_pull
+	    || gtk == graph_traversal_kind::gt_push; // only dense...
     }
 
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
