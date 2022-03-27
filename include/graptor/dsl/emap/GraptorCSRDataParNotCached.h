@@ -73,8 +73,7 @@ static inline VID GraptorCSRDataParNotCached(
 	auto ma = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_pid>( pvec1 ),
 	    expr::create_entry<expr::vk_src>( vsrc ) );
-	auto rval_output = env.evaluate( c, ma, aexpr );
-	if( rval_output.value().data() != 0 ) {
+	if( env.evaluate_bool( c, ma, aexpr ) ) {
 	    auto vdst = simd::template create_unknown<vid_type>(
 		extractor.extract_source( edata.data() ) );
 
@@ -217,10 +216,8 @@ static inline void emap_push(
     // Frontier check
     auto aexpr0 = op.enabled( v_src );
     auto aexpr1 = rewrite_internal( aexpr0 );
-    auto aexpr2 = expr::make_unop_reduce(
-	expr::make_unop_switch_to_vector( aexpr1 ), expr::redop_logicalor() );
-    auto aexpr3 = expr::rewrite_caches<expr::vk_src>( aexpr2, vcaches );
-    auto aexpr = expr::rewrite_mask_main( aexpr3 );
+    auto aexpr2 = expr::rewrite_caches<expr::vk_src>( aexpr1, vcaches );
+    auto aexpr = expr::rewrite_mask_main( aexpr2 );
     
     auto m_vexpr1 = rewrite_internal( m_vexpr0 );
     auto m_rexpr1 = vop2;
