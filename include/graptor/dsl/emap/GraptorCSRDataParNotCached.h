@@ -73,7 +73,8 @@ static inline VID GraptorCSRDataParNotCached(
 	auto ma = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_pid>( pvec1 ),
 	    expr::create_entry<expr::vk_src>( vsrc ) );
-	if( env.evaluate_bool( c, ma, aexpr ) ) {
+	auto r = env.evaluate( c, ma, aexpr );
+	if( !expr::is_false( r ) ) {
 	    auto vdst = simd::template create_unknown<vid_type>(
 		extractor.extract_source( edata.data() ) );
 
@@ -85,7 +86,8 @@ static inline VID GraptorCSRDataParNotCached(
 		expr::create_entry<expr::vk_mask>( vmask ),
 		expr::create_entry<expr::vk_dst>( vdst ),
 		expr::create_entry<expr::vk_edge>( sv ) );
-	    auto mpack = expr::sb::create_mask_pack( vdst != vmask );
+	    auto mpack = expr::sb::create_mask_pack(
+		vdst != vmask && r.value().asmask() );
 	    auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
 
 	    VID vstep = code == 1 ? VL : 0;
