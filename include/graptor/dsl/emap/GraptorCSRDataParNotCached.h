@@ -47,8 +47,8 @@ static inline VID GraptorCSRDataParNotCached(
 	vmax += VL - ( vmax % VL );
 #endif
 
-    EID s;
-    for( s=0; s < nvec; s += VL ) {
+    EID s = 0;
+    while( s < nvec ) {
 	// std::cerr << "vidx[0]=" << vidx.at(0) << "\n";
 	// assert( vdst.at(0) < part.end_of(p) );
 	// assert( vdst.at(0) < GA.numVertices() );
@@ -68,35 +68,35 @@ static inline VID GraptorCSRDataParNotCached(
 	_mm_prefetch( &edge[s + 256], _MM_HINT_NTA );
 
 	VID code = extractor.extract_degree( edata.data() );
-	auto vdst = simd::template create_unknown<vid_type>(
-	    extractor.extract_source( edata.data() ) );
 
-/*
-	for( unsigned short l=0; l < VL; ++l ) {
-	    assert( vdst.at(l) != ~VID(0) );
-	    assert( vdst.at(l) == (~VID(0))>>1 || GA.getCSR().hasEdge( vsrc.at(l), vdst.at(l) ) );
-	}
-*/
-	// std::cerr << "SIMD sidx=" << sidx << " vsrc[0]=" << vsrc.at(0) << " vdst[0]=" << vdst.at(0) << " code=" << code << "\n";
-
-	// apply op vsrc, vdst;
-	auto sv = simd::create_scalar<seid_type>( sedge+s );
-	auto m = expr::create_value_map_new<VL>(
-	    expr::create_entry<expr::vk_pid>( pvec1 ),
-	    expr::create_entry<expr::vk_src>( vsrc ),
-	    expr::create_entry<expr::vk_mask>( vmask ),
-	    expr::create_entry<expr::vk_dst>( vdst ),
-	    expr::create_entry<expr::vk_edge>( sv ) );
 	expr::cache<> c;
-	auto mpack = expr::sb::create_mask_pack( vdst != vmask );
-	auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
+	auto ma = expr::create_value_map_new<VL>(
+	    expr::create_entry<expr::vk_pid>( pvec1 ),
+	    expr::create_entry<expr::vk_src>( vsrc ) );
+	auto rval_output = env.evaluate( c, ma, aexpr );
+	if( rval_output.value().data() != 0 ) {
+	    auto vdst = simd::template create_unknown<vid_type>(
+		extractor.extract_source( edata.data() ) );
 
-	// VID vstep = ( code & 1 ) << lgVL;
-	VID vstep = code == 1 ? VL : 0;
-// #if GRAPTOR_CSR_INDIR == 0
-	// vidx += simd_vector<VID, VL>( (VID)vstep );
-// #endif
-	sidx += vstep;
+	    // apply op vsrc, vdst;
+	    auto sv = simd::create_scalar<seid_type>( sedge+s );
+	    auto m = expr::create_value_map_new<VL>(
+		expr::create_entry<expr::vk_pid>( pvec1 ),
+		expr::create_entry<expr::vk_src>( vsrc ),
+		expr::create_entry<expr::vk_mask>( vmask ),
+		expr::create_entry<expr::vk_dst>( vdst ),
+		expr::create_entry<expr::vk_edge>( sv ) );
+	    auto mpack = expr::sb::create_mask_pack( vdst != vmask );
+	    auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
+
+	    VID vstep = code == 1 ? VL : 0;
+	    sidx += vstep;
+	    s += VL;
+	} else {
+	    s += VL * ( 1 + ( code >> 1 ) );
+	    VID vstep = ( code & 1 ) ? VL : 0;
+	    sidx += vstep;
+	}
     }
 
     assert( nvec == 0 || sidx == vmax );
@@ -214,13 +214,14 @@ static inline void emap_push(
     auto rexpr2 = expr::rewrite_caches<expr::vk_src>( rexpr1, vcaches );
     auto rexpr = expr::rewrite_mask_main( rexpr2 );
 
-    // Loop termination condition (convergence check)
-    auto aexpr0i = op.active( v_dst );
-    auto aexpr0 = rewrite_internal( aexpr0i );
-    auto aexpr1 = expr::make_unop_reduce( aexpr0, expr::redop_logicalor() );
-    auto aexpr2 = expr::rewrite_caches<expr::vk_src>( aexpr1, vcaches );
-    auto aexpr = expr::rewrite_mask_main( aexpr2 );
-
+    // Frontier check
+    auto aexpr0 = op.enabled( v_src );
+    auto aexpr1 = rewrite_internal( aexpr0 );
+    auto aexpr2 = expr::make_unop_reduce(
+	expr::make_unop_switch_to_vector( aexpr1 ), expr::redop_logicalor() );
+    auto aexpr3 = expr::rewrite_caches<expr::vk_src>( aexpr2, vcaches );
+    auto aexpr = expr::rewrite_mask_main( aexpr3 );
+    
     auto m_vexpr1 = rewrite_internal( m_vexpr0 );
     auto m_rexpr1 = vop2;
 
