@@ -57,6 +57,12 @@ inline unsigned short rt_ilog2( unsigned short a ) {
     return a == 0 ? -1 : _bit_scan_reverse( (unsigned int)a );
 }
 
+template<typename T>
+constexpr T roundup_multiple_pow2( T val, T mult ) {
+    // Round-up val to the next multiple of mult, which is a power of 2.
+    return ( val + mult - 1 ) & ~( mult - 1 );
+}
+
 /*
 template<typename T>
 T ilog2( T t ) {
