@@ -111,14 +111,16 @@ public:
 	std::fill( &redir[nnz], &redir[nnz_alc], n );
 
 	// 5. Allocate edge and weight lists
-	EID e_est = ( ee - es ) * 2; // Estimated number of edges
+	// Estimated number of edges
+	EID e_est = roundup_multiple_pow2( ( ee - es ) * 2, (EID)1024 );
 	new ( &edges ) mm::buffer<VID>(
 	    e_est, numa_allocation_local( numa_node ) );
+	VID * p_edg = edges.get();
 	WeightT * r_wght = nullptr;
-	weights = nullptr;
+	WeightT * p_wght = nullptr;
 	if( rcsr.getWeights() != nullptr ) {
 	    r_wght = rcsr.getWeights()->get();
-	    weights = new WeightT[e_est];
+	    p_wght = weights = new WeightT[e_est];
 	}
 	mv = e_est;
 
@@ -133,6 +135,7 @@ public:
 	VID lo = part.start_of( p );
 	VID hi = part.end_of( p );
 	EID pos = 0;
+	VID ngrow = 0;
 	for( VID i=0; i < nnz; i += VID(maxVL) ) { // for all relevant vertices
 	    EID group_d = 0;
 	    for( VID l=0; l < VID(maxVL); ++l ) { // iterate by maxVL vertices
@@ -141,7 +144,7 @@ public:
 		// Handle padding edges
 		if( v >= n ) {
 		    for( EID d=0; d < group_d; ++d )
-			edges[pos+EID(maxVL)*d+l] = ~(VID)0;
+			p_edg[pos+EID(maxVL)*d+l] = vmask;
 		    continue;
 		}
 
@@ -162,26 +165,31 @@ public:
 			// Increase group_d
 			if( d >= group_d ) {
 			    assert( d == group_d );
-			    for( VID j=0; j < VID(maxVL); ++j )
-				edges[pos+EID(maxVL)*group_d+j] = ~(VID)0;
-			    group_d++;
 			    // Grow storage, reload variables
-			    if( pos + EID(maxVL) * group_d > mv )
+			    if( pos + EID(maxVL) * ( group_d + 1 ) >= mv ) {
 				grow( 4 * ( nnz - i ), numa_node );
+				++ngrow;
+				p_edg = edges.get();
+				p_wght = weights;
+			    }
+			    assert( pos+EID(maxVL)*(group_d+1) <= mv );
+			    for( VID j=0; j < VID(maxVL); ++j )
+				p_edg[pos+EID(maxVL)*group_d+j] = vmask;
+			    group_d++;
 			}
 			
 			// Find slot for w at degree rank d
 			bool found;
 			do {
 			    found = false;
-			    if( edges[pos+EID(maxVL)*d+l] != ~(VID)0 ) { // occupied
+			    if( p_edg[pos+EID(maxVL)*d+l] != vmask ) { // occupied
 				// Position in use, no need to consider again
 				if( start_d == d )
 				    start_d++;
 				found = true;
 			    } else {
 				for( VID j=0; j < l; ++j )
-				    if( edges[pos+EID(maxVL)*d+j] == w ) {
+				    if( p_edg[pos+EID(maxVL)*d+j] == w ) {
 					found = true;
 					break;
 				    }
@@ -190,7 +198,7 @@ public:
 				break;
 			    // We have a conflict, so fill slot with invalid
 			    // code and move up a position.
-			    // p_edg[pos+EID(maxVL)*d+l] = ~(VID)0; // redundant
+			    // p_edg[pos+EID(maxVL)*d+l] = vmask; // redundant
 			    ++d;
 			    // If we require more than group_d slots to store
 			    // the edges for the current group of maxVL sources
@@ -198,19 +206,24 @@ public:
 			    // slots with an invalid code.
 			    if( d >= group_d ) {
 				assert( d == group_d );
-				for( VID j=0; j < VID(maxVL); ++j )
-				    edges[pos+EID(maxVL)*group_d+j] = ~(VID)0;
-				group_d++;
 				// Grow storage, reload variables
-				if( pos + EID(maxVL) * group_d > mv )
+				if( pos + EID(maxVL) * ( group_d + 1 ) >= mv ) {
 				    grow( 4 * ( nnz - i ), numa_node );
+				    p_edg = edges.get();
+				    p_wght = weights;
+				    ++ngrow;
+				}
+				assert( pos+EID(maxVL)*(group_d+1) <= mv );
+				for( VID j=0; j < VID(maxVL); ++j )
+				    p_edg[pos+EID(maxVL)*group_d+j] = vmask;
+				group_d++;
 			    }
 			} while( true );
 
 			// We have now found the right d to store the edge in.
-			edges[pos+EID(maxVL)*d+l] = w;
-			if( weights != nullptr )
-			    weights[pos+EID(maxVL)*d+l] = r_wght[r_idx[v]+k];
+			p_edg[pos+EID(maxVL)*d+l] = w;
+			if( p_wght != nullptr )
+			    p_wght[pos+EID(maxVL)*d+l] = r_wght[r_idx[v]+k];
 
 			// This position has been filled in, so set
 			// helper pointer to next slot
@@ -237,10 +250,10 @@ public:
 		    VID de = deg3 >> (l * dbpl);
 		    de &= ( VID(1) << dbpl ) - 1;
 
-		    VID r = edges[pos+EID(maxVL)*d+l];
+		    VID r = p_edg[pos+EID(maxVL)*d+l];
 		    r &= vmask;
 		    r |= de << ( sizeof(VID) * 8 - dbpl );
-		    edges[pos+EID(maxVL)*d+l] = r;
+		    p_edg[pos+EID(maxVL)*d+l] = r;
 		}
 	    }
 	    
@@ -252,6 +265,9 @@ public:
 	mv = pos; // trim access to array
 	mpad = mv - ( ee - es );
 
+	if( ngrow != 0 )
+	    std::cerr << "grow partition " << p << ' ' << ngrow << " times\n";
+
 	// 7. Cleanup
 	ctrs.del();
     }
@@ -262,7 +278,8 @@ public:
     }
 
     void grow( EID slots, unsigned numa_node ) {
-	slots = ( slots + 1023 ) & 1023; // round up to multiple of 1k slots
+	// round up to multiple of 1k slots
+	slots = roundup_multiple_pow2( slots, (EID)1024 );
 	EID new_mv = mv + slots;
 	mm::buffer<VID> new_edges( new_mv, numa_allocation_local( numa_node ) );
 	std::copy( &edges.get()[0], &edges.get()[mv], &new_edges.get()[0] );
@@ -660,7 +677,7 @@ public:
 				p_edg[pos+EID(maxVL)*group_d+j] = ~(VID)0;
 			    group_d++;
 			    // Grow storage, reload variables
-			    if( pos + EID(maxVL) * group_d > mv ) {
+			    if( pos + EID(maxVL) * group_d >= mv ) {
 				slab.grow( 4 * ( nnz - i ),
 					   part.numa_node_of(p) );
 				mv = slab.numSIMDEdges();
@@ -702,7 +719,7 @@ public:
 				    p_edg[pos+EID(maxVL)*group_d+j] = ~(VID)0;
 				group_d++;
 				// Grow storage, reload variables
-				if( pos + EID(maxVL) * group_d > mv ) {
+				if( pos + EID(maxVL) * group_d >= mv ) {
 				    slab.grow( 4 * ( nnz - i ),
 					       part.numa_node_of(p) );
 				    mv = slab.numSIMDEdges();
