@@ -6,6 +6,7 @@
 
 using expr::_0;
 using expr::_1;
+using expr::_c;
 
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
@@ -40,6 +41,10 @@ using expr::_1;
 
 #ifndef FUSION
 #define FUSION 1
+#endif
+
+#ifndef AVG_DELTA
+#define AVG_DELTA 0
 #endif
 
 struct BF_customfp_config {
@@ -102,8 +107,16 @@ enum variable_name {
     var_new2 = 7,
     var_d = 8,
     var_neg = 10,
-    var_zero = 11
+    var_zero = 11,
+    var_ref = 12
 };
+
+#if AVG_DELTA
+namespace {
+    static api::vertexprop<FloatTy,VID,var_ref,EncNew> * ref_sol = nullptr;
+    static bool have_ref = false;
+}
+#endif
 
 template <class GraphType>
 class BF {
@@ -129,6 +142,25 @@ public:
 	    std::cerr << "BF requires edge weights. Terminating.\n";
 	    exit( 1 );
 	}
+
+	FloatTy scale = P.getOptionDoubleValue( "-scale", 1.0 );
+	if( scale != 1.0 ) {
+	    std::cerr << "Scaling weights by " << scale << "\n";
+	    api::edgemap(
+		GA,
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    return edge_weight[e] *= _c( scale );
+		} ) )
+		.materialize();
+	}
+
+#if AVG_DELTA
+	if( ref_sol == nullptr ) {
+	    ref_sol = new api::vertexprop<FloatTy,VID,var_ref,EncNew>(
+		GA.get_partitioner(), "reference solution" );
+	    have_ref = false;
+	}
+#endif
 
 	static bool once = false;
 	if( !once ) {
@@ -171,6 +203,9 @@ public:
 	VID nactv;
 	EID nacte;
 	float meps;
+#if AVG_DELTA
+	float avg_delta;
+#endif
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
@@ -178,6 +213,9 @@ public:
 		      << " (E:" << nacte
 		      << ", V:" << nactv
 		      << ") M-edges/s: " << meps
+#if AVG_DELTA
+		      << " avg-delta: " << avg_delta
+#endif
 		      << "\n";
 	}
     };
@@ -327,17 +365,20 @@ public:
 	    info_buf[iter].delay = tm_iter.next();
 	    info_buf[iter].meps = 
 		float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
+#if AVG_DELTA
+	    info_buf[iter].avg_delta = avg_distance();
+#endif
 	    if( debug )
 		info_buf[iter].dump( iter );
 	}
 
 	++iter;
 
-	bool once = false; // true;
-	bool require_dense = false;
+	// bool once = false; // true;
+	// bool require_dense = false;
 	EID postponed = 0;
-	
-	while( !F.isEmpty() || require_dense ) {  // iterate until all vertices visited
+
+	while( !F.isEmpty() /* || require_dense */ ) {  // iterate until all vertices visited
 
 /*
 use delta filtering on output of dense step (delta compared to smallest?)
@@ -350,6 +391,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 	       but still take time, perhaps save two half dense phases' time.
 	       */
     
+#if 0
 	    float density = F.density( m );
 	    if( once && density > lo_frac && density < hi_frac
 		&& F.nActiveVertices() > VID(float(n)*tgt_frac)
@@ -389,8 +431,11 @@ if waiting until F is empty, we still need 3-4 dense steps
 	    } else if( density >= hi_frac ) {
 		once = false;
 	    }
+#endif
 
+	    frontier output;
 	    // Traverse edges, remove duplicate live destinations.
+/*
 	    if( F.density( m ) >= 0.50 )
 		require_dense = false;
 	    else if( F.isEmpty() ) {
@@ -398,7 +443,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 		F.del();
 		F = frontier::all_true( n, m );
 	    }
-	    frontier output;
+*/
 #if UNCOND_EXEC
 	    auto filter_strength = api::weak;
 #else
@@ -414,7 +459,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 		// Allow for (sparse) push to use reduction update to inform
 		// frontier rather than using the method.
 		api::record( output,
-			     api::reduction_or_method,
+			     // api::reduction_or_method,
 			     [&] ( auto d ) {
 				 return cur_dist[d] != new_dist[d]; },
 			     api::strong ),
@@ -439,6 +484,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 #endif
 		} )
 		).materialize();
+
 
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	    if( output.getType() == frontier_type::ft_unbacked ) {
@@ -466,6 +512,9 @@ if waiting until F is empty, we still need 3-4 dense steps
 		info_buf[iter].delay = tm_iter.next();
 		info_buf[iter].meps = 
 		    float(info_buf[iter].nacte) / info_buf[iter].delay / 1e6f;
+#if AVG_DELTA
+		info_buf[iter].avg_delta = avg_distance();
+#endif
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
@@ -481,6 +530,30 @@ if waiting until F is empty, we still need 3-4 dense steps
     }
 
 private:
+#if AVG_DELTA
+    float avg_distance() {
+	if( !have_ref )
+	    return 0;
+	
+	double d = 0;
+	expr::array_ro<double,VID,var_d> a_delta( &d );
+	make_lazy_executor( GA.get_partitioner() )
+	    .vertex_scan( [&]( auto v ) {
+		auto z = expr::zero_val( v );
+		auto inf = expr::constant_val2<FloatTy>(
+		    v, std::numeric_limits<FloatTy>::infinity() );
+		return a_delta[z] += expr::cast<double>(
+		    expr::iif( new_dist[v] == inf,
+			       expr::abs( new_dist[v] - (*ref_sol)[v] ),
+			       expr::iif( (*ref_sol)[v] == inf,
+					  (*ref_sol)[v],
+					  _0 ) ) );
+	    } )
+	    .materialize();
+	return d / double( GA.numVertices() );
+    }
+#endif
+    
     FloatTy determine_threshold( frontier & F, VID target_vertices ) {
 	F.toSparse( GA.get_partitioner() );
 	VID n = F.nActiveVertices();
@@ -533,6 +606,14 @@ public:
 	    for( int i=0; i < iter; ++i )
 		info_buf[i].dump( i );
 	}
+#if AVG_DELTA
+	make_lazy_executor( GA.get_partitioner() )
+	    .vertex_map( [&]( auto v ) {
+		return (*ref_sol)[v] = new_dist[v];
+	    } )
+	    .materialize();
+	have_ref = true;
+#endif
     }
 
     static void report( const std::vector<stat> & stat_buf ) {
