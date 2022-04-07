@@ -78,10 +78,10 @@ using index_type_of_size = typename index_type_of_size_select<bytes>::type;
 
 // TODO: these need to be reviewed, made configurable
 // typedef size_t VID;
-// typedef unsigned int VID;
-typedef int32_t VID;
-typedef int64_t EID;
-// typedef size_t EID;
+typedef unsigned int VID;
+// typedef int32_t VID;
+// typedef int64_t EID;
+typedef size_t EID;
 // typedef unsigned int EID;
 
 /***********************************************************************
