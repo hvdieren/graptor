@@ -988,16 +988,16 @@ struct binop_mul {
 };
 
 template<typename E1, typename E2>
-binop<E1,E2,binop_mul> make_mul( E1 l, E2 r ) {
+auto make_mul( E1 l, E2 r,
+	       std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value,
+	       binop<E1,E2,binop_mul>> * = nullptr ) {
     return make_binop( l, r, binop_mul() );
 }
 
 template<typename E1, typename E2>
-typename std::enable_if<is_base_of<expr_base,E1>::value
-&& is_base_of<expr_base,E2>::value,
-			binop<E1,E2,binop_mul>>::type
-operator * ( E1 l, E2 r ) {
-    return make_binop( l, r, binop_mul() );
+auto operator * ( E1 l, E2 r ) -> decltype(make_mul(l,r)) {
+    return make_mul( l, r );
 }
 
 /* binop: add

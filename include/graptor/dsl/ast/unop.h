@@ -1023,6 +1023,8 @@ auto make_unop_invert( Expr e,
 	    return constant<vk_truemask>();
 	else if constexpr ( Expr::vkind == vk_truemask )
 	    return constant<vk_zero>();
+	else if constexpr ( Expr::vkind == vk_any )
+	    return constant<vk_any,typename Expr::type>( ~e.get_value() );
 	else
 	    assert( 0 && "cannot bitwise-invert constant" );
     } else

@@ -47,7 +47,7 @@ static constexpr
 auto make_redop( E1 e1, E2 e2, RedOp op ) {
     if constexpr ( e2.opcode == op_constant ) {
 	using Tr = typename RedOp::template types<E1,E2>::infer_type;
-	return make_redop( e1, E2::template expand<Tr>(), op );
+	return make_redop( e1, e2.template expand<Tr>(), op );
     } else
 	return redop<E1,E2,RedOp>( e1, e2, op );
 }
@@ -678,14 +678,6 @@ auto refop<A,T,VL>::min( E rhs ) {
     return redop<self_type,E,redop_min>( *this, rhs, redop_min() );
 }
 
-/*
-template<typename A, typename T, unsigned short VL>
-template<typename E, typename C>
-auto refop<A,T,VL>::min( E rhs, C cond ) {
-    return redopc<self_type,E,C,redop_min>( *this, rhs, cond, redop_min() );
-}
-*/
-
 /* redop: max
  */
 struct redop_max {
@@ -853,14 +845,6 @@ auto refop<A,T,VL>::max( E rhs ) {
     return redop<self_type,E,redop_max>( *this, rhs, redop_max() );
 }
 
-/*
-template<typename A, typename T, unsigned short VL>
-template<typename E, typename C>
-auto refop<A,T,VL>::max_if( E rhs, E cond ) {
-    return redopc<self_type,E,C,redop_max>( *this, rhs, cond, redop_max() );
-}
-*/
-
 /* redop: add
  */
 template<bool conditional_>
@@ -979,15 +963,6 @@ auto refop<A,T,VL>::add( E rhs ) {
     return make_redop( *this, rhs, redop_add<false>() );
 }
     
-/*
-template<typename A, typename T, unsigned short VL>
-template<typename E, typename C>
-auto refop<A,T,VL>::operator += ( binop<E,C,binop_mask> rhs ) {
-    return redopc<self_type,E,C,redop_add>( *this, rhs.data1(), rhs.data2(),
-					    redop_add() );
-}
-*/
-
 /* redop: count_down
  */
 template<bool conditional_>
@@ -1126,6 +1101,9 @@ struct redop_mul {
 	using infer_type = typename E1::data_type;
     };
 
+    static constexpr bool is_idempotent = false;
+    static constexpr bool is_benign_race = false; // load-modify-store
+
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_mul";
 
@@ -1213,17 +1191,8 @@ struct redop_mul {
 template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::operator *= ( E rhs ) {
-    return redop<self_type,E,redop_mul>( *this, rhs, redop_mul() );
+    return make_redop( *this, rhs, redop_mul() );
 }
-
-/*
-template<typename A, typename T, unsigned short VL>
-template<typename E, typename C>
-auto refop<A,T,VL>::operator *= ( binop<E,C,binop_mask> rhs ) {
-    return redopc<self_type,E,C,redop_mul>( *this, rhs.data1(), rhs.data2(),
-					    redop_mul() );
-}
-*/
 
 template<typename A, typename T, unsigned short VL>
 template<typename E>

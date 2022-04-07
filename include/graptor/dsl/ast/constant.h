@@ -37,6 +37,7 @@ template<typename T>
 struct constant<vk_any,T> : public expr_base {
     static constexpr value_kind vkind = vk_any;
     static constexpr op_codes opcode = op_constant;
+    using type = T; // We do know what type this might be
 
     constexpr GG_INLINE constant( T val ) : m_val( val ) { }
 
@@ -44,6 +45,8 @@ struct constant<vk_any,T> : public expr_base {
     auto expand() {
 	return value<Tr, vk_any>( m_val );
     }
+
+    T get_value() const { return m_val; }
 
 private:
     T m_val;
