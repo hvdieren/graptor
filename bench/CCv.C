@@ -535,7 +535,7 @@ public:
 	    GA,
 	    api::record( F, api::reduction, api::strong ),
 	    api::relax( [&]( auto s, auto d, auto e ) {
-		return expr::make_unop_switch_to_vector( IDs[d] != IDs[s] ); } )
+		return IDs[d] != IDs[s]; } )
 	    )
 	    .materialize();
 
