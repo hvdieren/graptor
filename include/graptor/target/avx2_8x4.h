@@ -73,8 +73,7 @@ public:
 
     static type set1( member_type a ) { return _mm256_set1_epi64x( a ); }
     static itype set1inc( int_type a ) {
-	return add( _mm256_set_epi64x( 0x3, 0x2, 0x1, 0x0 ),
-		    _mm256_set1_epi64x( a ) );
+	return add( set1inc0(), _mm256_set1_epi64x( a ) );
     }
     static itype set1inc0() {
 	return load(
