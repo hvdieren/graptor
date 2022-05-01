@@ -47,7 +47,8 @@ public:
     buffer( size_t elements, numa_allocation_partitioned am,
 	    const char * reason = nullptr )
 	: buffer( am, reason ) {
-	assert( elements == am.get_partitioner().get_vertex_range()
+	assert( ( elements == am.get_partitioner().get_vertex_range()
+		  || elements == am.get_partitioner().get_vertex_range()+1 )
 		&& "presumed allocation of vertex property" );
     }
     buffer( numa_allocation_partitioned am,
