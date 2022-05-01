@@ -1001,6 +1001,9 @@ public:
 
 	timer tm;
 	tm.start();
+
+	using SVID = std::make_signed_t<VID>;
+	using SEID = std::make_signed_t<EID>;
 	
 	assert( n == Gcsr.numVertices() );
 	assert( m == Gcsr.numEdges() );
@@ -1034,13 +1037,14 @@ public:
 	} );
 	mm::buffer<VID> lcnt( n+1, numa_allocation_partitioned( part ) );
 	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
-	mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
+	// mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
 #if 0
 	mm::buffer<VID> rxp( m, numa_allocation_interleaved() );
 #endif
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
 
 	VID next_hi = 0;
+#if 0
 	VID vv;
 	for( vv=0; vv+63 < n; vv += 64 ) {
 	    uint64_t bmp = 0;
@@ -1065,6 +1069,18 @@ public:
 		lcnt[v] = 0;
 	}
 	vkind[vv/64] = bmp;
+#endif
+	VID hibit_mask = VID(1) << ( sizeof(VID)*8-1 );
+	EID hibit_emask = EID(1) << ( sizeof(EID)*8-1 );
+	EID sort_emask = EID(1) << ( sizeof(EID)*8-2 );
+	EID bits_emask = EID(3) << ( sizeof(EID)*8-2 );
+	for( VID v=0; v < n; ++v ) {
+	    bool is_high = idx[v+1] - idx[v] > D;
+	    if( is_high )
+		lcnt[v] = next_hi++ | hibit_mask;
+	    else
+		lcnt[v] = 0;
+	}
 	assert( next_hi == n_high );
 	std::cerr << "transpose: D=" << D << " n_high=" << n_high
 		  << " n=" << n << " m=" << m << "\n";
@@ -1094,9 +1110,8 @@ public:
 	    EID ee = idx[ve];
 	    for( EID e=es; e < ee; ++e ) {
 		VID v = edges[e];
-		// if( idx[v+1] - idx[v] > D )
-		if( ( vkind[v/64] >> (v & 63) ) & 1 )
-		    xref[e] = hcnt[p][lcnt[v]]++;
+		if( (SVID)lcnt[v] < (SVID)0 )
+		    xref[e] = hcnt[p][lcnt[v] & ~hibit_mask]++;
 		else {
 		    // Subject to false sharing as well as conflicts
 		    xref[e] = __sync_fetch_and_add( &lcnt[v], 1 );
@@ -1107,10 +1122,9 @@ public:
 
 	// Do per-vertex vertical scans
 	parallel_for( VID v=0; v < n; ++v ) {
-	    if( ( vkind[v/64] >> (v & 63) ) & 1 ) {
-		// if( idx[v+1] - idx[v] > D ) {
+	    if( (SVID)lcnt[v] < (SVID)0 ) {
 		VID sum = 0;
-		VID vv = lcnt[v];
+		VID vv = lcnt[v] & ~hibit_mask;
 		for( unsigned p=0; p < P; ++p ) {
 		    VID tmp = hcnt[p][vv];
 		    if( tmp != 0 ) { // avoid unnecessary stores
@@ -1129,6 +1143,10 @@ public:
 	for( VID v=0; v < n; ++v ) {
 	    EID deg = tr_idx[v];
 	    tr_idx[v] = ins;
+	    if( (SVID)lcnt[v] < (SVID)0 ) {
+		tr_idx[v] |= hibit_emask;
+		lcnt[v] &= ~hibit_mask;
+	    }
 	    ins += deg;
 	}
 	assert( ins == m );
@@ -1202,59 +1220,25 @@ public:
 	
 #else
 	// Populate adjacency lists
-#if 1
 	map_partition( part, [&]( unsigned p ) {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
 	    EID e = idx[vs];
 	    const auto * hcnt_p = &hcnt[p][0];
 	    for( VID v=vs; v < ve; ++v ) {
-		// EID es = idx[v];
 		EID ee = idx[v+1];
 		for( ; e < ee; ++e ) {
 		    VID u = edges[e];
 		    EID ins = xref[e] + tr_idx[u];
-		    // TODO: (?) store vkind bit in top bit of tr_idx?
-		    if( ( vkind[u/64] >> (u & 63) ) & 1 )
-			ins += hcnt_p[lcnt[u]]; // avoids random writes
+		    if( (SEID)tr_idx[u] < (SEID)0 ) {
+			ins &= ~hibit_emask; // remove flag bit
+			ins += hcnt_p[lcnt[u]]; // avoids random writes to lcnt
+		    }
 		    tr_edges[ins] = v;
 		}
 	    }
 	    assert( e == idx[ve] );
 	} );
-#else
-/*
-	... considering parallelising differently, such that each
-	    partition has write ownership
-	    ... for instance: all partitions scan all edges, but only write
-				  those they own
-      ... or, expanding xrp, also store for each e the owning p
-     ... or, queues to threads that own data
-*/
-	map_partition( part, [&]( unsigned p ) { // markedly slower
-	    VID us = part.start_of( p );
-	    VID ue = part.end_of( p );
-	    EID e = 0;
-	    for( unsigned q=0; q < P; ++q ) {
-		VID vs = part.start_of( q );
-		VID ve = part.end_of( q );
-		const auto * hcnt_q = &hcnt[q][0];
-		for( VID v=vs; v < ve; ++v ) {
-		    EID ee = idx[v+1];
-		    for( ; e < ee; ++e ) {
-			VID u = edges[e];
-			if( u >= us && u < ue ) {
-			    EID ins = xref[e] + tr_idx[u];
-			    if( ( vkind[u/64] >> (u & 63) ) & 1 )
-				ins += hcnt_q[lcnt[u]]; // avoids random writes
-			    tr_edges[ins] = v;
-			}
-		    }
-		}
-	    }
-	} );
-#endif // place variation
-
 #endif // place with pre-study
 	std::cerr << "transpose: place: " << tm.next() << "\n";
 
@@ -1274,9 +1258,12 @@ public:
 	*/
 	parallel_for( VID v=0; v < n; ++v ) {
 	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
-	    if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
+	    // if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
+	    // if( !( (SVID)lcnt[v] < (SVID)0 ) ) {
+	    if( !( (SEID)tr_idx[v] < (SEID)0 ) ) {
+		tr_idx[v] &= ~hibit_emask;
 		EID vs = tr_idx[v];
-		EID ve = tr_idx[v+1];
+		EID ve = tr_idx[v+1] & ~hibit_emask;
 		EID tr_deg = ve - vs;
 		if( tr_deg < 2 ) {
 		} else if( tr_deg == 2 ) { // marginal benefit of special case
@@ -1311,7 +1298,7 @@ public:
 
 	// Cleanup
 	// rxp.del();
-	vkind.del();
+	// vkind.del();
 	xref.del();
 	for( unsigned p=0; p < P; ++p )
 	    hcnt[p].del();
