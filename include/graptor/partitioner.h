@@ -206,13 +206,28 @@ public:
     // Allocate edges
     EID get_edge_range() const	    	    { return estarts[num_partitions]; }
 
-    // Get the number of vertices in a partition
+    // Get the start/end number of vertices in a partition
     VID start_of( PID i ) const 	    { return starts[i]; }
     VID end_of( PID i ) const		    { return starts[i] + inuse[i]; }
 
-    // Get the number of edges in a partition
+    // Get the start/end number of edges in a partition
     EID edge_start_of( PID i ) const 	    { return estarts[i]; }
     EID edge_end_of( PID i ) const	    { return estarts[i+1]; }
+
+    // Get the start/end number of vertices in a partition assuming vertex
+    // balanced partitioning
+    VID start_of_vbal( PID i ) const 	    {
+	const VID P = get_num_partitions();
+	VID vs = ((VID)i) * ( ( get_vertex_range() + (P-1) ) / P );
+	if( vs > get_vertex_range() ) vs = get_vertex_range();
+	return vs;
+    }
+    VID end_of_vbal( PID i ) const	    {
+	const VID P = get_num_partitions();
+	VID ve = ((VID)i+1) * ( ( get_vertex_range() + (P-1) ) / P );
+	if( ve > get_vertex_range() ) ve = get_vertex_range();
+	return ve;
+    }
 
     // Either vertices or edges
     template<bool byV>
