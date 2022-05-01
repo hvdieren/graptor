@@ -638,6 +638,29 @@ public:
     static type gather( const member_type *a, vpair<itype,itype> b );
 
 
+#if __AVX512VL__
+    GG_INLINE
+    static void scatter( member_type *a, __m512i b, type c ) {
+	_mm512_i64scatter_epi32( (int *)a, b, c, W );
+    }
+#endif
+
+    GG_INLINE
+    static void scatter( member_type *a, vpair<itype,itype> b, type c ) {
+#if __AVX512F__
+	assert( 0 && "Use 512-bit scatter with mask" );
+#else
+	a[_mm256_extract_epi64(b.a,0)] = lane0(c);
+	a[_mm256_extract_epi64(b.a,1)] = lane1(c);
+	a[_mm256_extract_epi64(b.a,2)] = lane2(c);
+	a[_mm256_extract_epi64(b.a,3)] = lane3(c);
+	a[_mm256_extract_epi64(b.b,0)] = lane4(c);
+	a[_mm256_extract_epi64(b.b,1)] = lane5(c);
+	a[_mm256_extract_epi64(b.b,2)] = lane6(c);
+	a[_mm256_extract_epi64(b.b,3)] = lane7(c);
+#endif
+    }
+    
     GG_INLINE
     static void scatter( member_type *a, itype b, type c ) {
 #if __AVX512F__
