@@ -41,6 +41,156 @@ operator << ( std::ostream & os, graph_traversal_kind gtk ) {
 	return os << graph_traversal_kind_names[(int)graph_traversal_kind::gt_N];
 }
 
+template<bool IsSorted, typename lVID>
+lVID merge_count( const lVID * ls, const lVID * le,
+		  const lVID * rs, const lVID * re ) {
+    const lVID * l = ls;
+    const lVID * r = rs;
+
+    lVID cnt = 0;
+    while( l != le && r != re ) {
+	if constexpr ( !IsSorted ) {
+	    if( l > ls && *l <= *(l-1) )
+		return std::numeric_limits<lVID>::max();
+	    if( r > rs && *r <= *(r-1) )
+		return std::numeric_limits<lVID>::max();
+	}
+	    
+	if( *l < *r ) {
+	    ++cnt;
+	    ++l;
+	} else if( *l > *r ) {
+	    ++cnt;
+	    ++r;
+	} else {
+	    ++cnt;
+	    ++l;
+	    ++r;
+	}
+    }
+    cnt += ( le - l );
+    cnt += ( re - r );
+    return cnt;
+}
+
+template<typename lVID>
+void merge_place( const lVID * ls, const lVID * le,
+		  const lVID * rs, const lVID * re,
+		  lVID * u ) {
+    const lVID * l = ls;
+    const lVID * r = rs;
+
+    while( l != le && r != re ) {
+	if( *l < *r )
+	    *u++ = *l++;
+	else if( *l > *r )
+	    *u++ = *r++;
+	else {
+	    *u++ = *l;
+	    ++l;
+	    ++r;
+	}
+    }
+    while( l != le )
+	*u++ = *l++;
+    while( r != re )
+	*u++ = *r++;
+}
+
+template<typename T>
+class compact_list {
+public:
+    using member_type = T;
+    using storage_type = int_type_of_size_t<sizeof(T)>; // unsigned type
+    using counter_type = storage_type;
+    static_assert( sizeof(member_type)*2 == sizeof(member_type*),
+		   "assumption on member type" );
+
+private:
+    static constexpr storage_type flag_position = sizeof(storage_type)*8 - 1;
+    static constexpr storage_type direct_mask =
+	storage_type(1) << flag_position;
+    static constexpr storage_type invalid_mask = ~(storage_type)0;
+
+public:
+    compact_list() {
+	// data.direct.f0 = invalid_mask;
+	// data.direct.f1 = invalid_mask;
+	*reinterpret_cast<intptr_t *>( &data.vec ) = ~(intptr_t)0;
+    }
+    ~compact_list() {
+	if( !is_direct() )
+	    delete data.vec;
+    }
+
+    size_t size() const {
+	if( is_direct() ) {
+	    if( data.direct.f0 == invalid_mask )
+		return 0;
+	    else if( data.direct.f1 == invalid_mask )
+		return 1;
+	    else
+		return 2;
+	} else
+	    return data.vec->size();
+    }
+
+    void push_back( member_type v ) {
+	if( is_direct() ) {
+	    if( data.direct.f0 == invalid_mask )
+		data.direct.f0 = v | direct_mask;
+	    else if( data.direct.f1 == invalid_mask )
+		data.direct.f1 = v | direct_mask;
+	    else {
+		// Convert to vector
+		std::vector<member_type> * vec
+		    = new std::vector<member_type>();
+		assert( ( reinterpret_cast<intptr_t>( vec )
+			  & ( intptr_t(1) << (2*8*sizeof(storage_type)-1) )  )
+			== 0 );
+		vec->push_back( get_value( data.direct.f0 ) );
+		vec->push_back( get_value( data.direct.f1 ) );
+		vec->push_back( v );
+		data.vec = vec;
+	    }
+	} else
+	    data.vec->push_back( v );
+    }
+
+    void copy_to( member_type * a ) const {
+	if( is_direct() ) {
+	    if( data.direct.f0 != invalid_mask ) {
+		a[0] = get_value( data.direct.f0 );
+		if( data.direct.f1 != invalid_mask )
+		    a[1] = get_value( data.direct.f1 );
+	    }
+	} else
+	    std::copy( data.vec->cbegin(), data.vec->cend(), a );
+    }
+    
+private:
+    static constexpr member_type get_value( storage_type f ) {
+	return (member_type)( f & ~direct_mask );
+    }
+    static constexpr bool is_direct_value( storage_type f ) {
+	return (f >> flag_position) != 0;
+    }
+    constexpr bool is_direct() const {
+	// check f1 assuming little endian byte order and less likely to
+	// have 1 bit set in highest position
+	return is_direct_value( data.direct.f1 );
+    }
+    
+private:
+    union { 
+	struct {
+	    storage_type f0;
+	    storage_type f1;
+	} direct;
+	std::vector<member_type> * vec;
+    } data;
+};
+
 struct VertexInfo {
     VID v;
     VID degree;
@@ -58,6 +208,18 @@ struct getVDeg {
     }
 private:
     const EID * idx;
+};
+
+template<typename VID, typename EID>
+struct selectVDeg {
+    selectVDeg( const EID * idx_, VID threshold_ )
+	: idx( idx_ ), threshold( threshold_ ) { }
+    VID operator() ( VID v ) {
+	return ( idx[v+1] - idx[v] > threshold ) ? 1 : 0;
+    }
+private:
+    const EID * idx;
+    const VID threshold;
 };
 
 inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
@@ -377,7 +539,10 @@ public:
 		  << tm.next() << "\n";
     }
     void import_transpose( const GraphCSx & Gcsr ) {
-	import_transpose_partitioned( Gcsr, 32 );
+	// import_transpose_partitioned( Gcsr, 128 );
+	// import_transpose_adjacency( Gcsr, 128 );
+	import_transpose_hybrid( Gcsr, 128 );
+	// import_transpose_pull( Gcsr, 128 );
 	return;
 
 	timer tm;
@@ -451,6 +616,68 @@ public:
 	std::cerr << "transpose: build degree: " << tm.next() << "\n";
     }
 
+    static GraphCSx create_union( const GraphCSx & G1, const GraphCSx & G2 ) {
+	// This code ignores weights
+	timer tm;
+	tm.start();
+
+	assert( G1.numVertices() == G2.numVertices() );
+	VID n = G1.numVertices();
+
+	const EID * idx1 = G1.getIndex();
+	const EID * idx2 = G2.getIndex();
+	VID * edges1 = const_cast<VID *>( G1.getEdges() );
+	VID * edges2 = const_cast<VID *>( G2.getEdges() );
+
+	// Step 1: Determine incident edge count per vertex for union
+	mm::buffer<EID> new_idx( n+1, numa_allocation_interleaved() );
+	parallel_for( VID v=0; v < n; ++v ) {
+	    VID cnt = merge_count<false>( &edges1[idx1[v]], &edges1[idx1[v+1]],
+					  &edges2[idx2[v]], &edges2[idx2[v+1]] );
+	    if( cnt == std::numeric_limits<VID>::max() ) {
+		std::sort( &edges1[idx1[v]], &edges1[idx1[v+1]] );
+		std::sort( &edges2[idx2[v]], &edges2[idx2[v+1]] );
+		cnt = merge_count<true>( &edges1[idx1[v]], &edges1[idx1[v+1]],
+					 &edges2[idx2[v]], &edges2[idx2[v+1]] );
+	    }
+	    new_idx[v] = (EID)cnt;
+	}
+	std::cerr << "union: merge-count edges: " << tm.next() << "\n";
+
+	// Step 2: prefix scan
+	EID off = 0;
+	for( VID s=0; s < n; ++s ) {
+	    EID deg = new_idx[s];
+	    new_idx[s] = off;
+	    off += deg;
+	}
+	new_idx[n] = off;
+	std::cerr << "union: scan (seq): " << tm.next() << "\n";
+
+	// Step 3: Construct graph object
+	GraphCSx Gu( n, off, -1, G1.isSymmetric() && G2.isSymmetric() );
+	std::cerr << "union: allocate new graph: " << tm.next() << "\n";
+	
+	// Step 4: Replace index list
+	Gu.index.del();
+	Gu.index = new_idx;
+	std::cerr << "union: initialise indices: " << tm.next() << "\n";
+	
+	// Step 5: Merge again, now placing vertices, and knowing neighbour
+	//         lists are sorted
+	const EID * idx = Gu.getIndex();
+	VID * edges = Gu.getEdges();
+	parallel_for( VID v=0; v < n; ++v ) {
+	    merge_place( &edges1[idx1[v]], &edges1[idx1[v+1]],
+			 &edges2[idx2[v]], &edges2[idx2[v+1]],
+			 &edges[idx[v]] );
+	}
+	std::cerr << "union: merge-place edges: " << tm.next() << "\n";
+	std::cerr << "union: total: " << tm.total() << "\n";
+
+	return Gu;
+    }
+
     void import_transpose_partitioned( const GraphCSx & Gcsr, unsigned P ) {
 	timer tm;
 	tm.start();
@@ -459,9 +686,14 @@ public:
 	assert( m == Gcsr.numEdges() );
 	assert( P >= 1 );
 
+	// TODO: optimise partitioning by doing prefix sum followed by
+	//       binary search to find the vertices closest to the cut points
 	partitioner part( P, n );
 	partitionBalanceEdges( Gcsr, part );
 	std::cerr << "transpose: create partitioner: " << tm.next() << "\n";
+
+	const EID * const g_index = Gcsr.getIndex();
+	const VID * const g_edges = Gcsr.getEdges();
 
 	// Lots of space, but this will be hypersparse. Should we first
 	// figure out the per-partition sparsity pattern?
@@ -469,7 +701,6 @@ public:
 	for( unsigned p=0; p < P; ++p )
 	    new ( &ctrs[p] ) mm::buffer<VID>(
 		n+1, numa_allocation_local( part.numa_node_of( p ) ) );
-	// mm::buffer<EID> xref( m, numa_allocation_interleaved() );
 	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
 
@@ -479,22 +710,19 @@ public:
 
 	map_partition( part, [&]( unsigned p ) {
 	    VID * const ctrs_p = ctrs[p].get();
-	    const VID * const g_edges = Gcsr.getEdges();
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
-	    EID es = Gcsr.index[vs];
-	    EID ee = Gcsr.index[ve];
-	    for( EID e=es; e < ee; ++e ) {
-		// xref[e] = // but seq - only one partition (for now)
-		xref[e] =
-		    ctrs_p[g_edges[e]]++;
-	    }
+	    EID es = g_index[vs];
+	    EID ee = g_index[ve];
+	    for( EID e=es; e < ee; ++e )
+		xref[e] = ctrs_p[g_edges[e]]++;
 	} );
-	std::cerr << "transpose: count edges: " << tm.next() << "\n";
+	std::cerr << "transpose: count: " << tm.next() << "\n";
 
 	map_partition( part, [&]( unsigned q ) {
-	    VID vs = part.start_of( q );
-	    VID ve = part.end_of( q );
+	    VID vs = part.start_of_vbal( q );
+	    VID ve = part.end_of_vbal( q );
+#if 0
 	    for( VID v=vs; v < ve; ++v ) {
 		VID deg = 0;
 		for( unsigned p=0; p < P; ++p ) {
@@ -511,6 +739,42 @@ public:
 		}
 		index[v] = (EID)deg;
 	    }
+#else
+	    constexpr unsigned VL = 8; // MAX_VL
+	    using vid_type = simd::ty<VID,VL>;
+	    using eid_type = simd::ty<EID,VL>;
+	    auto zero = simd::template create_zero<vid_type>();
+	    VID v = vs;
+	    for( ; v+VL <= ve; v += VL ) {
+		auto deg = vid_type::traits::setzero();
+		for( unsigned p=0; p < P; ++p ) {
+		    auto pdeg = vid_type::traits::loadu( &ctrs[p][v] );
+		    if( !vid_type::traits::is_zero( pdeg ) ) {
+			vid_type::traits::storeu( &ctrs[p][v], deg );
+			deg = vid_type::traits::add( deg, pdeg );
+		    }
+		}
+		eid_type::traits::storeu(
+		    &index[v],
+		    conversion_traits<VID,EID,VL>::convert( deg ) );
+	    }
+	    for( ; v < ve; ++v ) {
+		VID deg = 0;
+		for( unsigned p=0; p < P; ++p ) {
+		    VID pdeg = ctrs[p][v];
+		    // This conditional avoids *a lot* of memory traffic
+		    // due to the hypersparsity of per-partition info.
+		    // Omitting the store when ctrs[p][v] == 0 is correct, as
+		    // this indicates no edges were mapped here, and we will
+		    // not read this location in the future
+		    if( pdeg != 0 ) {
+			ctrs[p][v] = deg;
+			deg += pdeg;
+		    }
+		}
+		index[v] = (EID)deg;
+	    }
+#endif
 	} );
 	std::cerr << "transpose: reduce degree: " << tm.next() << "\n";
 
@@ -550,20 +814,16 @@ public:
 
 	map_partition( part, [&]( unsigned p ) {
 	    VID * const ctrs_p = ctrs[p].get();
-	    const VID * const g_edges = Gcsr.getEdges();
-	    const EID * const g_index = Gcsr.getIndex();
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
+	    EID e = g_index[vs];
 	    for( VID v=vs; v < ve; ++v ) {
-		EID es = g_index[v];
+		// EID es = g_index[v];
 		EID ee = g_index[v+1];
-		for( EID e=es; e < ee; ++e ) {
+		for( ; e < ee; ++e ) {
 		    VID u = g_edges[e];
-		    // VID off = ctrs_p[u]++;
-		    // VID off = xref[e];
 		    VID off = xref[e] + ctrs_p[u]; // avoids random writes
 		    EID idx = index[u] + off;
-		    // EID idx = xref[e];
 		    edges[idx] = v;
 
 		    if( w )
@@ -600,7 +860,775 @@ public:
 	delete[] ctrs;
 	build_degree();
 	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+
+	std::cerr << "transpose: total: " << tm.total() << "\n";
     }
+
+    void import_transpose_adjacency( const GraphCSx & Gcsr, unsigned P ) {
+	timer tm;
+	tm.start();
+	
+	assert( n == Gcsr.numVertices() );
+	assert( m == Gcsr.numEdges() );
+	assert( P >= 1 );
+
+	// TODO: optimise partitioning by doing prefix sum followed by
+	//       binary search to find the vertices closest to the cut points
+	partitioner part( P, n );
+	partitionBalanceEdges( Gcsr, part );
+	std::cerr << "transpose: create partitioner: " << tm.next() << "\n";
+
+	const EID * const g_index = Gcsr.getIndex();
+	const VID * const g_edges = Gcsr.getEdges();
+
+	// Lots of space, but this will be hypersparse. Should we first
+	// figure out the per-partition sparsity pattern?
+	using list_type = compact_list<VID>;
+	mm::buffer<list_type> * adj = new mm::buffer<list_type>[P];
+	for( unsigned p=0; p < P; ++p )
+	    new ( &adj[p] ) mm::buffer<list_type>(
+		n, numa_allocation_local( part.numa_node_of( p ) ) );
+	std::cerr << "transpose: setup: " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned p ) {
+	    std::fill( reinterpret_cast<intptr_t *>( &adj[p][0] ),
+		       reinterpret_cast<intptr_t *>( &adj[p][n] ),
+		       ~(intptr_t)0 );
+	    /*
+	    for( VID v=0; v < n; ++v ) {
+		new ( &adj[p][v] ) list_type();
+		// adj[p][v].reserve( g_index[v+1] - g_index[v] );
+	    }
+	    */
+	} );
+	std::cerr << "transpose: init: " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = g_index[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		EID ee = g_index[v+1];
+		for( ; e < ee; ++e )
+		    adj[p][g_edges[e]].push_back( v );
+	    }
+	} );
+	std::cerr << "transpose: place: " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned q ) {
+	    VID vs = part.start_of_vbal( q );
+	    VID ve = part.end_of_vbal( q );
+	    for( VID v=vs; v < ve; ++v ) {
+		VID deg = 0;
+		for( unsigned p=0; p < P; ++p )
+		    deg += adj[p][v].size();
+		index[v] = (EID)deg;
+	    }
+	} );
+	std::cerr << "transpose: count: " << tm.next() << "\n";
+
+	EID off = 0;
+	for( VID s=0; s < n; ++s ) {
+	    EID deg = index[s];
+	    index[s] = off;
+	    off += deg;
+	}
+	index[n] = off;
+	assert( index[n] == m );
+	std::cerr << "transpose: scan (seq): " << tm.next() << "\n";
+
+	float * w = nullptr, * wg = nullptr;
+	if( weights ) {
+	    w = weights->get();
+	    wg = Gcsr.weights->get();
+	    assert( w && wg );
+	}
+
+	map_partition( part, [&]( unsigned q ) {
+	    VID vs = part.start_of( q );
+	    VID ve = part.end_of( q );
+	    EID e = index[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		for( unsigned p=0; p < P; ++p ) {
+		    const auto & A = adj[p][v];
+		    // std::copy( A.cbegin(), A.cend(), &edges[e] );
+		    A.copy_to( &edges[e] );
+		    e += adj[p][v].size();
+		    // adj[p][v].~vector(); // cleanup
+		    adj[p][v].~compact_list(); // cleanup
+		}
+		assert( e == index[v+1] );
+	    }
+	} );
+	std::cerr << "transpose: re-assemble: " << tm.next() << "\n";
+
+	// Because we are doing a transpose and keeping VIDs the same (no
+	// remapping), sorting would be unnecessary in a sequential
+	// implementation (insert sources in order traversed).
+	// So in a partitioned transpose, with pre-defined per-partition
+	// insertion points, we don't need sorting either.
+	// Note that this is true even if the adjacency lists of the CSR are
+	// not sorted!
+	parallel_for( VID s=0; s < n; ++s ) {
+	    // assert( index[s] + (EID)ctrs[P-1][s] == index[s+1] );
+	    assert( std::is_sorted( &edges[index[s]], &edges[index[s+1]] ) );
+/*
+	    assert( index[s] + (EID)ctrs[0][s] == index[s+1] );
+	    if( w )
+		paired_sort( &edges[index[s]], &edges[index[s+1]],
+			     &w[index[s]] );
+	    else
+		std::sort( &edges[index[s]], &edges[index[s+1]] );
+*/
+	}
+	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
+
+	for( unsigned p=0; p < P; ++p )
+	    adj[p].del();
+	delete[] adj;
+	build_degree();
+	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+
+	std::cerr << "transpose: total: " << tm.total() << "\n";
+    }
+
+    void import_transpose_hybrid( const GraphCSx & Gcsr, unsigned P ) {
+	// 1. Estimate in-degree by out-degree of v
+	// 2. Select D
+	// 3. if deg+(v) > D, then use per-partition counter
+	// 4. if deg+(v) <= D, then use shared counter
+	std::cerr << "transpose (hybrid)...\n";
+
+	timer tm;
+	tm.start();
+	
+	assert( n == Gcsr.numVertices() );
+	assert( m == Gcsr.numEdges() );
+	assert( P >= 1 );
+
+	partitioner part( P, n );
+	partitionBalanceEdges( Gcsr, part );
+	std::cerr << "transpose: create partitioner: " << tm.next() << "\n";
+
+	const EID * idx = Gcsr.getIndex();
+	const VID * edges = Gcsr.getEdges();
+
+	EID * tr_idx = getIndex();
+	VID * tr_edges = getEdges();
+	
+	// Determine cut-off degree. Estimate in-degree by out-degree of vertex.
+	// Count number of 'high-degree' vertices
+	const VID D = atoi( getenv( "GRAPTOR_D" ) ); // 4096;
+	VID n_high = sequence::reduce<VID>(
+	    (VID)0, n, addF<VID>(), selectVDeg<VID,EID>( idx, D ) );
+
+	// Create counters. First allocate compacted arrays per partition
+	// with n_high counters.
+	mm::buffer<VID> * hcnt = new mm::buffer<VID>[P];
+	map_partition( part, [&]( unsigned p ) {
+	    new ( &hcnt[p] ) mm::buffer<VID>(
+		n_high,
+		numa_allocation_local( part.part_of( p ) ) );
+	    
+	    std::fill( &hcnt[p][0], &hcnt[p][n_high], (EID)0 );
+	} );
+	mm::buffer<VID> lcnt( n+1, numa_allocation_partitioned( part ) );
+	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
+	mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
+#if 0
+	mm::buffer<VID> rxp( m, numa_allocation_interleaved() );
+#endif
+	std::cerr << "transpose: setup: " << tm.next() << "\n";
+
+	VID next_hi = 0;
+	VID vv;
+	for( vv=0; vv+63 < n; vv += 64 ) {
+	    uint64_t bmp = 0;
+	    for( VID vi=0; vi < 64; ++vi ) {
+		VID v = vv+vi;
+		bool is_high = idx[v+1] - idx[v] > D;
+		if( is_high ) {
+		    lcnt[v] = next_hi++;
+		    bmp |= uint64_t(1) << vi;
+		} else
+		    lcnt[v] = 0;
+	    }
+	    vkind[vv/64] = bmp;
+	}
+	uint64_t bmp = 0;
+	for( VID v=vv; v < n; ++v ) {
+	    bool is_high = idx[v+1] - idx[v] > D;
+	    if( is_high ) {
+		lcnt[v] = next_hi++;
+		bmp |= uint64_t(1) << ( vv - v );
+	    } else
+		lcnt[v] = 0;
+	}
+	vkind[vv/64] = bmp;
+	assert( next_hi == n_high );
+	std::cerr << "transpose: D=" << D << " n_high=" << n_high
+		  << " n=" << n << " m=" << m << "\n";
+	std::cerr << "transpose: init (partially sequential): "
+		  << tm.next() << "\n";
+
+#if 0
+	// Expand row indices
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = idx[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		EID ee = idx[v+1];
+		std::fill( &rxp[e], &rxp[ee], v );
+		e = ee;
+	    }
+	} );
+	std::cerr << "transpose: expand row indices: " << tm.next() << "\n";
+#endif
+
+	// Count occurences of each vertex
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    for( EID e=es; e < ee; ++e ) {
+		VID v = edges[e];
+		// if( idx[v+1] - idx[v] > D )
+		if( ( vkind[v/64] >> (v & 63) ) & 1 )
+		    xref[e] = hcnt[p][lcnt[v]]++;
+		else {
+		    // Subject to false sharing as well as conflicts
+		    xref[e] = __sync_fetch_and_add( &lcnt[v], 1 );
+		}
+	    }
+	} );
+	std::cerr << "transpose: count: " << tm.next() << "\n";
+
+	// Do per-vertex vertical scans
+	parallel_for( VID v=0; v < n; ++v ) {
+	    if( ( vkind[v/64] >> (v & 63) ) & 1 ) {
+		// if( idx[v+1] - idx[v] > D ) {
+		VID sum = 0;
+		VID vv = lcnt[v];
+		for( unsigned p=0; p < P; ++p ) {
+		    VID tmp = hcnt[p][vv];
+		    if( tmp != 0 ) { // avoid unnecessary stores
+			hcnt[p][vv] = sum;
+			sum += tmp;
+		    }
+		}
+		tr_idx[v] = sum;
+	    } else
+		tr_idx[v] = lcnt[v];
+	}
+	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
+	
+	// Do prefix sums to determine insertion points
+	EID ins = 0;
+	for( VID v=0; v < n; ++v ) {
+	    EID deg = tr_idx[v];
+	    tr_idx[v] = ins;
+	    ins += deg;
+	}
+	assert( ins == m );
+	tr_idx[n] = m;
+	std::cerr << "transpose: prefix sum (seq): " << tm.next() << "\n";
+
+#if 0
+	// Pre-study: idea is to have only one random access pattern per loop.
+	// That doesn't seem important...
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    for( EID e=es; e < ee; ++e ) {
+		VID u = edges[e];
+		if( ( vkind[u/64] >> (u & 63) ) & 1 ) { // random read
+		    // xref[e] += tr_idx[u] + hcnt[p][lcnt[u]]; // random read
+		    xref[e] += hcnt[p][lcnt[u]]; // random read
+		    // } else {
+		    // xref[e] += tr_idx[u]; // random read
+		}
+	    }
+	} );
+	std::cerr << "transpose: place pre-study: " << tm.next() << "\n";
+
+	// Populate adjacency lists
+#if 0
+	constexpr unsigned short VL = MAX_VL;
+	using vid_type = simd::ty<VID,VL>;
+	using eid_type = simd::ty<EID,VL>;
+
+	map_partition( part, [=]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    EID eo = es;
+	    for( ; eo+VL-1 < ee; eo += VL ) {
+		auto v_edges = vid_type::traits::loadu( &edges[eo] );
+		auto v_xref = vid_type::traits::loadu( &xref[eo] );
+		auto v_tr_idx = eid_type::traits::gather( &tr_idx[0], v_edges );
+		auto e_xref = conversion_traits<VID,EID,VL>::convert( v_xref );
+		auto v_rxp = vid_type::traits::loadu( &rxp[eo] );
+		auto e_ins = eid_type::traits::add( e_xref, v_tr_idx );
+		vid_type::traits::scatter( &tr_edges[0], e_ins, v_rxp );
+	    }
+	    for( EID e=eo; e < ee; ++e ) {
+		VID u = edges[e];
+		EID ins = xref[e] + tr_idx[u]; // random read
+		tr_edges[ins] = rxp[e]; // random write
+	    }
+	} );
+#else // rxp
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = idx[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		// EID es = idx[v];
+		EID ee = idx[v+1];
+		for( ; e < ee; ++e ) {
+		    VID u = edges[e];
+		    EID ins = xref[e] + tr_idx[u]; // random read
+		    tr_edges[ins] = v; // random write
+		}
+	    }
+	    assert( e == idx[ve] );
+	} );
+#endif
+	
+#else
+	// Populate adjacency lists
+#if 1
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = idx[vs];
+	    const auto * hcnt_p = &hcnt[p][0];
+	    for( VID v=vs; v < ve; ++v ) {
+		// EID es = idx[v];
+		EID ee = idx[v+1];
+		for( ; e < ee; ++e ) {
+		    VID u = edges[e];
+		    EID ins = xref[e] + tr_idx[u];
+		    // TODO: (?) store vkind bit in top bit of tr_idx?
+		    if( ( vkind[u/64] >> (u & 63) ) & 1 )
+			ins += hcnt_p[lcnt[u]]; // avoids random writes
+		    tr_edges[ins] = v;
+		}
+	    }
+	    assert( e == idx[ve] );
+	} );
+#else
+/*
+	... considering parallelising differently, such that each
+	    partition has write ownership
+	    ... for instance: all partitions scan all edges, but only write
+				  those they own
+      ... or, expanding xrp, also store for each e the owning p
+     ... or, queues to threads that own data
+*/
+	map_partition( part, [&]( unsigned p ) { // markedly slower
+	    VID us = part.start_of( p );
+	    VID ue = part.end_of( p );
+	    EID e = 0;
+	    for( unsigned q=0; q < P; ++q ) {
+		VID vs = part.start_of( q );
+		VID ve = part.end_of( q );
+		const auto * hcnt_q = &hcnt[q][0];
+		for( VID v=vs; v < ve; ++v ) {
+		    EID ee = idx[v+1];
+		    for( ; e < ee; ++e ) {
+			VID u = edges[e];
+			if( u >= us && u < ue ) {
+			    EID ins = xref[e] + tr_idx[u];
+			    if( ( vkind[u/64] >> (u & 63) ) & 1 )
+				ins += hcnt_q[lcnt[u]]; // avoids random writes
+			    tr_edges[ins] = v;
+			}
+		    }
+		}
+	    }
+	} );
+#endif // place variation
+
+#endif // place with pre-study
+	std::cerr << "transpose: place: " << tm.next() << "\n";
+
+	// Sort short adjacency lists
+	// Using edge balanced works better here than vertex balanced
+	// Free-form parallel for is slightly better still
+	/*
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    for( VID v=vs; v < ve; ++v ) {
+		EID deg = idx[v+1] - idx[v];
+		if( deg > 1 && deg <= D )
+		    std::sort( &tr_edges[tr_idx[v]], &tr_edges[tr_idx[v+1]] );
+	    }
+	} );
+	*/
+	parallel_for( VID v=0; v < n; ++v ) {
+	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
+	    if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
+		EID vs = tr_idx[v];
+		EID ve = tr_idx[v+1];
+		EID tr_deg = ve - vs;
+		if( tr_deg < 2 ) {
+		} else if( tr_deg == 2 ) { // marginal benefit of special case
+		    VID a = tr_edges[vs];
+		    VID b = tr_edges[vs+1];
+		    if( a > b ) {
+			tr_edges[vs] = b;
+			tr_edges[vs+1] = a;
+		    }
+		} else {
+		    // ... TODO: Sorting can be avoided if only one of the
+		    // partitions contains edges for this vertex
+		    std::sort( &tr_edges[vs], &tr_edges[ve] );
+		}
+	    }
+	}
+	std::cerr << "transpose: sort: " << tm.next() << "\n";
+
+	// Verify sortedness
+	parallel_for( VID s=0; s < n; ++s ) {
+/* not when using xref
+	    if( idx[s+1] - idx[s] > D )
+		assert( hcnt[P-1][lcnt[s]] == tr_idx[s+1] );
+	    else
+		assert( lcnt[s] == tr_idx[s+1] );
+*/
+	    // assert( std::is_sorted( &edges[idx[s]], &edges[idx[s+1]] ) );
+	    assert( std::is_sorted(
+			&tr_edges[tr_idx[s]], &tr_edges[tr_idx[s+1]] ) );
+	}
+	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
+
+	// Cleanup
+	// rxp.del();
+	vkind.del();
+	xref.del();
+	for( unsigned p=0; p < P; ++p )
+	    hcnt[p].del();
+	delete[] hcnt;
+	lcnt.del();
+
+	build_degree();
+	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+
+	std::cerr << "transpose: total: " << tm.total() << "\n";
+    }
+
+    void import_transpose_pull( const GraphCSx & Gcsr, unsigned P ) {
+	// 1. Estimate in-degree by out-degree of v
+	// 2. Select D
+	// 3. if deg+(v) > D, then use per-partition counter
+	// 4. if deg+(v) <= D, then use shared counter
+	std::cerr << "transpose (hybrid)...\n";
+
+	timer tm;
+	tm.start();
+	
+	assert( n == Gcsr.numVertices() );
+	assert( m == Gcsr.numEdges() );
+	assert( P >= 1 );
+
+	partitioner part( P, n );
+	partitionBalanceEdges( Gcsr, part );
+	std::cerr << "transpose: create partitioner: " << tm.next() << "\n";
+
+	const EID * idx = Gcsr.getIndex();
+	const VID * edges = Gcsr.getEdges();
+
+	EID * tr_idx = getIndex();
+	VID * tr_edges = getEdges();
+	
+	// Determine cut-off degree. Estimate in-degree by out-degree of vertex.
+	// Count number of 'high-degree' vertices
+	const VID D = atoi( getenv( "GRAPTOR_D" ) ); // 4096;
+	VID n_high = sequence::reduce<VID>(
+	    (VID)0, n, addF<VID>(), selectVDeg<VID,EID>( idx, D ) );
+
+	// Create counters. First allocate compacted arrays per partition
+	// with n_high counters.
+	mm::buffer<VID> * hcnt = new mm::buffer<VID>[P];
+	map_partition( part, [&]( unsigned p ) {
+	    new ( &hcnt[p] ) mm::buffer<VID>(
+		n_high,
+		numa_allocation_local( part.part_of( p ) ) );
+	    
+	    std::fill( &hcnt[p][0], &hcnt[p][n_high], (EID)0 );
+	} );
+	mm::buffer<VID> lcnt( n+1, numa_allocation_partitioned( part ) );
+	mm::buffer<EID> last( n, numa_allocation_partitioned( part ) );
+	mm::buffer<EID> link( m, numa_allocation_interleaved() );
+	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
+	mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
+	mm::buffer<VID> rxp( m, numa_allocation_interleaved() );
+	std::cerr << "transpose: setup: " << tm.next() << "\n";
+
+	VID next_hi = 0;
+	VID vv;
+	for( vv=0; vv+63 < n; vv += 64 ) {
+	    uint64_t bmp = 0;
+	    for( VID vi=0; vi < 64; ++vi ) {
+		VID v = vv+vi;
+		bool is_high = idx[v+1] - idx[v] > D;
+		if( is_high ) {
+		    lcnt[v] = next_hi++;
+		    bmp |= uint64_t(1) << vi;
+		} else
+		    lcnt[v] = 0;
+		last[v] = std::numeric_limits<EID>::max();
+	    }
+	    vkind[vv/64] = bmp;
+	}
+	uint64_t bmp = 0;
+	for( VID v=vv; v < n; ++v ) {
+	    bool is_high = idx[v+1] - idx[v] > D;
+	    if( is_high ) {
+		lcnt[v] = next_hi++;
+		bmp |= uint64_t(1) << ( vv - v );
+	    } else
+		lcnt[v] = 0;
+	    last[v] = std::numeric_limits<EID>::max();
+	}
+	vkind[vv/64] = bmp;
+	assert( next_hi == n_high );
+	std::cerr << "transpose: D=" << D << " n_high=" << n_high
+		  << " n=" << n << " m=" << m << "\n";
+	std::cerr << "transpose: init (partially sequential): "
+		  << tm.next() << "\n";
+
+#if 1
+	// Expand row indices
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = idx[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		EID ee = idx[v+1];
+		std::fill( &rxp[e], &rxp[ee], v );
+		e = ee;
+	    }
+	} );
+	std::cerr << "transpose: expand row indices: " << tm.next() << "\n";
+#endif
+
+	// Count occurences of each vertex
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    VID * xref_p = xref.get();
+	    EID * link_p = link.get();
+	    EID * last_p = last.get();
+	    VID * lcnt_p = lcnt.get();
+	    VID * hcnt_p = hcnt[p].get();
+	    uint64_t * vkind_p = vkind.get();
+	    for( EID e=es; e < ee; ++e ) {
+		VID v = edges[e];
+		// if( idx[v+1] - idx[v] > D )
+		if( __builtin_expect( ( vkind_p[v/64] >> (v & 63) ) & 1, 1 ) )
+		    xref_p[e] = hcnt_p[lcnt_p[v]]++;
+		else {
+		    EID old_link = __atomic_exchange_n(
+			&last_p[v], e, __ATOMIC_RELAXED );
+		    link_p[e] = old_link;
+		    // ... consider counting in different array to avoid sharing with read-only high-degree info in lcnt (false sharing) -- applies to hybrid version also
+		    __sync_fetch_and_add( &lcnt_p[v], 1 );
+		}
+	    }
+	} );
+	std::cerr << "transpose: count: " << tm.next() << "\n";
+
+	// Do per-vertex vertical scans
+	parallel_for( VID v=0; v < n; ++v ) {
+	    if( ( vkind[v/64] >> (v & 63) ) & 1 ) {
+		// if( idx[v+1] - idx[v] > D ) {
+		VID sum = 0;
+		VID vv = lcnt[v];
+		for( unsigned p=0; p < P; ++p ) {
+		    VID tmp = hcnt[p][vv];
+		    if( tmp != 0 ) { // avoid unnecessary stores
+			hcnt[p][vv] = sum;
+			sum += tmp;
+		    }
+		}
+		tr_idx[v] = sum;
+	    } else
+		tr_idx[v] = lcnt[v];
+	}
+	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
+	
+	// Do prefix sums to determine insertion points
+	EID ins = 0;
+	for( VID v=0; v < n; ++v ) {
+	    EID deg = tr_idx[v];
+	    tr_idx[v] = ins;
+	    ins += deg;
+	}
+	assert( ins == m );
+	tr_idx[n] = m;
+	std::cerr << "transpose: prefix sum (seq): " << tm.next() << "\n";
+
+	// Populate adjacency lists
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID e = idx[vs];
+	    for( VID v=vs; v < ve; ++v ) {
+		// EID es = idx[v];
+		EID ee = idx[v+1];
+		for( ; e < ee; ++e ) {
+		    VID u = edges[e];
+		    if( ( vkind[u/64] >> (u & 63) ) & 1 ) {
+		    // if( idx[u+1] - idx[u] > D ) {
+			VID off = xref[e] + hcnt[p][lcnt[u]]; // avoids random writes
+			EID ins = tr_idx[u] + off;
+			// VID ins = xref[e] + hcnt[p][lcnt[u]]; // avoids random writes
+
+			// EID ins = hcnt[p][lcnt[u]]++;
+			tr_edges[ins] = v;
+		    } else {
+			// skip - pull-based loop
+			// EID ins = tr_idx[u] + xref[e];
+			// tr_edges[ins] = v;
+		    }
+		}
+	    }
+	    assert( e == idx[ve] );
+	} );
+	std::cerr << "transpose: place (push): " << tm.next() << "\n";
+
+	map_partition( part, [&]( unsigned q ) {
+	    EID * sublists = new EID[P];
+	    const EID undef = std::numeric_limits<EID>::max();
+	    std::fill( &sublists[0], &sublists[P], undef );
+	    VID vs = part.start_of( q );
+	    VID ve = part.end_of( q );
+	    for( VID v=vs; v < ve; ++v ) {
+		if( last[v] == undef ) {
+		    // nothing to do
+		    // Either 0-degree or high-degree type
+		} else if( lcnt[v] == 1 ) {
+		    tr_edges[tr_idx[v]] = rxp[last[v]];
+		} else if( lcnt[v] == 2 ) {
+		    VID a = rxp[last[v]];
+		    VID b = rxp[link[last[v]]];
+		    if( a < b ) {
+			tr_edges[tr_idx[v]] = a;
+			tr_edges[tr_idx[v]+1] = b;
+		    } else {
+			tr_edges[tr_idx[v]] = b;
+			tr_edges[tr_idx[v]+1] = a;
+		    }
+		} else {
+#if 0
+		    EID next_e;
+		    for( EID e=last[v]; e != undef; e=next_e ) {
+			unsigned p = part.part_of( rxp[e] );
+			EID nxt = sublists[p];
+			sublists[p] = e;
+			next_e = link[e];
+			link[e] = nxt;
+		    }
+
+		    EID v_idx = tr_idx[v];
+		    for( unsigned p=0; p < P; ++p ) {
+			for( EID e=sublists[p]; e != undef; e=link[e] ) {
+			    tr_edges[v_idx] = rxp[e];
+			    v_idx++;
+			}
+			sublists[p] = undef;
+		    }
+#else
+		    EID p = tr_idx[v];
+		    for( EID e=last[v]; e != undef; e=link[e] )
+			tr_edges[p++] = rxp[e];
+		    std::sort( &tr_edges[tr_idx[v]], &tr_edges[p] );
+#endif
+		}
+	    }
+	    delete[] sublists;
+	} );
+
+	std::cerr << "transpose: place (pull): " << tm.next() << "\n";
+
+	// Sort short adjacency lists
+	// Using edge balanced works better here than vertex balanced
+	// Free-form parallel for is slightly better still
+	/*
+	map_partition( part, [&]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    for( VID v=vs; v < ve; ++v ) {
+		EID deg = idx[v+1] - idx[v];
+		if( deg > 1 && deg <= D )
+		    std::sort( &tr_edges[tr_idx[v]], &tr_edges[tr_idx[v+1]] );
+	    }
+	} );
+	*/
+#if 0
+	parallel_for( VID v=0; v < n; ++v ) {
+	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
+	    if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
+		EID vs = tr_idx[v];
+		EID ve = tr_idx[v+1];
+		EID tr_deg = ve - vs;
+		if( tr_deg < 2 ) {
+		} else if( tr_deg == 2 ) { // marginal benefit of special case
+		    VID a = tr_edges[vs];
+		    VID b = tr_edges[vs+1];
+		    if( a > b ) {
+			tr_edges[vs] = b;
+			tr_edges[vs+1] = a;
+		    }
+		} else {
+		    std::sort( &tr_edges[vs], &tr_edges[ve] );
+		}
+	    }
+	}
+	std::cerr << "transpose: sort: " << tm.next() << "\n";
+#endif
+
+	// Verify sortedness
+	parallel_for( VID s=0; s < n; ++s ) {
+/* not when using xref
+	    if( idx[s+1] - idx[s] > D )
+		assert( hcnt[P-1][lcnt[s]] == tr_idx[s+1] );
+	    else
+		assert( lcnt[s] == tr_idx[s+1] );
+*/
+	    // assert( std::is_sorted( &edges[idx[s]], &edges[idx[s+1]] ) );
+	    assert( std::is_sorted(
+			&tr_edges[tr_idx[s]], &tr_edges[tr_idx[s+1]] ) );
+	}
+	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
+
+	// Cleanup
+	rxp.del();
+	vkind.del();
+	xref.del();
+	link.del();
+	last.del();
+	for( unsigned p=0; p < P; ++p )
+	    hcnt[p].del();
+	delete[] hcnt;
+	lcnt.del();
+
+	build_degree();
+	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+
+	std::cerr << "transpose: total: " << tm.total() << "\n";
+    }
+
 
 /*
     void import_transpose_expand( const GraphCSx & Gcsr ) {
