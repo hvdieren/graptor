@@ -36,6 +36,8 @@ public:
     using mask_traits = mask_type_traits<4>;
     using mask_type = typename mask_traits::type;
 
+    using mt_preferred = target::mt_vmask;
+
     using half_traits = mmx_4x2<T>;
     using int_traits = sse42_4x4<int_type>;
     
