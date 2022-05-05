@@ -522,13 +522,17 @@ public:
     static type gather( const member_type *a, type b, vmask_type vmask ) {
 	return gather( a, b, asmask( vmask ) );
     }
-    static void scatter( member_type *a, type b, type c ) {
+    static void scatter( member_type *a, itype b, type c ) {
 	_mm512_i32scatter_epi32( (void *)a, b, c, W );
     }
-    static void scatter( member_type *a, type b, type c, mask_type mask ) {
+    static void scatter( member_type *a, vpair<itype,itype> b, type c ) {
+	_mm512_i64scatter_epi32( (void *)a, b.a, lower_half(c), W );
+	_mm512_i64scatter_epi32( (void *)a, b.b, upper_half(c), W );
+    }
+    static void scatter( member_type *a, itype b, type c, mask_type mask ) {
 	_mm512_mask_i32scatter_epi32( (void *)a, mask, b, c, W );
     }
-    static void scatter( member_type *a, type b, type c, vmask_type mask ) {
+    static void scatter( member_type *a, itype b, type c, vmask_type mask ) {
 	scatter( a, b, c, asmask( mask ) );
     }
     class avx512f_epi32_extract_degree {
