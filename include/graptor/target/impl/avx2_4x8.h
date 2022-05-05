@@ -30,6 +30,19 @@ typename avx2_4x8<T>::type avx2_4x8<T>::gather(
     auto hi = ht::template gather_w<W>( a, b.b );
     return set_pair( hi, lo );
 }
+
+#if !__AVX512F__
+template<typename T>
+typename avx2_4x8<T>::type avx2_4x8<T>::gather(
+    const typename avx2_4x8<T>::member_type *a,
+    typename avx2_4x8<T>::itype b,
+    vpair<typename avx2_4x8<T>::vmask_type,typename avx2_4x8<T>::vmask_type> c )
+{
+    auto cc = conversion_traits<logical<2*W>,logical<W>,vlen>::convert( c );
+    return gather( a, b, cc );
+}
+#endif
+
 template<typename T>
 void avx2_4x8<T>::scatter( typename avx2_4x8<T>::member_type *a,
 			   vpair<typename avx2_4x8<T>::itype,
