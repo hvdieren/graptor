@@ -161,6 +161,8 @@ inline void partitionBalanceEdges( const GraphTy & WG,
     EID avgdeg = m / EID(p);
     EID m_remain = m;
     int cur = 0;
+    // TODO: for case of roundup == 1, use lower_bound to find next partition
+    //       boundary
 /*
     std::cerr << "initial m_remain=" << m_remain
 	      << " avgdeg=" << avgdeg << "\n";
@@ -219,10 +221,130 @@ inline void partitionBalanceEdges( const GraphTy & WG,
     assert( part.start_of(p) == n );
 }
 
+inline void partitionBalanceEdges_bisect( const GraphCSx & WG,
+					  partitioner &part ) {
+    using traits = gtraits<GraphCSx>;
+    using VID = typename traits::VID;
+    using EID = typename traits::EID;
+    using PID = typename traits::PID;
+
+    static_assert( std::is_same<VID,typename partitioner::VID>::value,
+		   "essential types are not matched" );
+    
+    int P = part.get_num_partitions();
+    VID * size = part.as_array();
+
+    const EID * index = WG.getIndex();
+
+    VID n = traits::numVertices( WG );
+    EID m = traits::numEdges( WG );
+
+    // Calculate number of vertices in each partition
+    EID m_done = 0;
+    VID v_done = 0;
+    for( unsigned p=0; p < P; ++p ) {
+	EID avgdeg = ( m - m_done ) / EID(P - p);
+	const EID * bnd = std::upper_bound( &index[v_done], &index[n],
+					    m_done + avgdeg );
+	size[p] = bnd - &index[v_done];
+
+	v_done += size[p];
+	m_done = *bnd;
+    }
+
+    assert( m_done == m );
+    assert( v_done == n );
+    
+    // Aggregate values
+    part.compute_starts();
+
+    // Safety check - all vertices accounted for
+    assert( part.start_of(P) == n );
+}
+
+template<typename lVID, typename lEID>
+inline void partitionBalanceEdges_pow2_rec(
+    lVID lo, lVID hi, unsigned plo, unsigned phi,
+    lVID * size, const lEID * index ) {
+
+    if( phi > plo+1 ) {
+	lEID tgt = ( index[lo] + index[hi] ) / 2;
+	const lEID * half = std::lower_bound( &index[lo], &index[hi], tgt );
+
+	lVID mid = half - &index[0];
+	size[(phi+plo)/2] = mid;
+
+	partitionBalanceEdges_pow2_rec( lo, mid, plo, (phi+plo)/2, size, index );
+	partitionBalanceEdges_pow2_rec( mid, hi, (phi+plo)/2, phi, size, index );
+    }
+}
+
+template<typename GraphTy, typename GetDegree>
+inline void partitionBalanceEdges_pow2( const GraphTy & WG,
+					GetDegree get_degree,
+					partitioner &part,
+					unsigned int roundup ) {
+    assert( roundup == 1 );
+    
+    using traits = gtraits<GraphTy>;
+    using VID = typename traits::VID;
+    using EID = typename traits::EID;
+    using PID = typename traits::PID;
+
+    static_assert( std::is_same<VID,typename partitioner::VID>::value,
+		   "essential types are not matched" );
+    
+    int p = part.get_num_partitions();
+    VID * size = part.as_array();
+
+    assert( (p & (p-1)) == 0 && "p must be power of 2" );
+
+    VID n = traits::numVertices( WG );
+    EID m = traits::numEdges( WG );
+
+    EID edges[p];
+    for( int i=0; i < p; ++i ) {
+	edges[i] = 0;
+	size[i] = 0;
+    }
+
+    // Cumulative histogram of edge counts...
+    const EID * index = WG.getIndex();
+
+    partitionBalanceEdges_pow2_rec( (VID)0, n, 0, p, size, index );
+
+    // undo cumulative data to fit with partitioner::compute_starts()
+    size[p] = n;
+    VID cur = 0;
+    for( int i=0; i < p; ++i ) {
+	size[i] = size[i+1] - cur;
+	edges[i] = index[size[i+1]] - index[cur];
+	cur = size[i+1];
+    }
+
+    EID tote = 0;
+    for( int i=0; i < p; ++i )
+	tote += edges[i];
+    assert( tote == m );
+
+    // Aggregate values
+    part.compute_starts();
+
+    // Safety check - all vertices accounted for
+    assert( part.start_of(p) == n );
+}
+
+
 inline void partitionBalanceEdges( const GraphCSx & Gcsc, partitioner &part ) {
 #if 1
-    partitionBalanceEdges( Gcsc, gtraits_getoutdegree<GraphCSx>( Gcsc ),
-			   part, 1 );
+/*
+    int p = part.get_num_partitions();
+    if( (p & (p-1)) == 0 )
+	partitionBalanceEdges_pow2(
+	    Gcsc, gtraits_getoutdegree<GraphCSx>( Gcsc ), part, 1 );
+    else
+*/
+	partitionBalanceEdges_bisect( Gcsc, part );
 #else
     int p = part.get_num_partitions();
     VID * size = part.as_array();
