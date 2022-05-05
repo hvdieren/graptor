@@ -636,6 +636,10 @@ public:
     static type gather( const member_type *a, vpair<itype,itype> b,
 			vpair<vmask_type,vmask_type> vmask );
     static type gather( const member_type *a, vpair<itype,itype> b );
+#if !__AVX512F__
+    static type gather( const member_type *a, itype b,
+			vpair<vmask_type,vmask_type> vmask );
+#endif
 
 
 #if __AVX512VL__
