@@ -17,6 +17,10 @@
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/remap.h"
 
+#if EXTERNAL_SPTRANS
+#include "../../sptrans/sptrans.h"
+#endif
+
 void partitionBalanceEdges( const GraphCSx & Gcsc, partitioner &part );
 
 enum class graph_traversal_kind {
@@ -541,8 +545,10 @@ public:
     void import_transpose( const GraphCSx & Gcsr ) {
 	// import_transpose_partitioned( Gcsr, 128 );
 	// import_transpose_adjacency( Gcsr, 128 );
-	import_transpose_hybrid( Gcsr, 128 );
+	// import_transpose_hybrid( Gcsr, 128 );
 	// import_transpose_pull( Gcsr, 128 );
+	// import_transpose_sptrans_scan( Gcsr, 128 );
+	import_transpose_sptrans_merge( Gcsr, 128 );
 	return;
 
 	timer tm;
@@ -677,6 +683,32 @@ public:
 
 	return Gu;
     }
+
+#if EXTERNAL_SPTRANS
+    void import_transpose_sptrans_scan( const GraphCSx & Gcsr, unsigned P ) {
+	sptrans_scanTrans<VID,int>(
+	    n, n, m,
+	    const_cast<EID *>( Gcsr.getIndex() ),
+	    const_cast<VID *>( Gcsr.getEdges() ),
+	    nullptr,
+	    getIndex(),
+	    getEdges(),
+	    nullptr );
+	getIndex()[n] = m;
+    }
+
+    void import_transpose_sptrans_merge( const GraphCSx & Gcsr, unsigned P ) {
+	sptrans_mergeTrans<VID,int>(
+	    n, n, m,
+	    const_cast<EID *>( Gcsr.getIndex() ),
+	    const_cast<VID *>( Gcsr.getEdges() ),
+	    nullptr,
+	    getIndex(),
+	    getEdges(),
+	    nullptr );
+	getIndex()[n] = m;
+    }
+#endif
 
     void import_transpose_partitioned( const GraphCSx & Gcsr, unsigned P ) {
 	timer tm;
@@ -1027,7 +1059,7 @@ public:
 
 	// Create counters. First allocate compacted arrays per partition
 	// with n_high counters.
-	mm::buffer<VID> * hcnt = new mm::buffer<VID>[P];
+	mm::buffer<VID> * hcnt = new mm::buffer<VID>[P+1];
 	map_partition( part, [&]( unsigned p ) {
 	    new ( &hcnt[p] ) mm::buffer<VID>(
 		n_high,
@@ -1035,10 +1067,14 @@ public:
 	    
 	    std::fill( &hcnt[p][0], &hcnt[p][n_high], (EID)0 );
 	} );
+	new ( &hcnt[P] ) mm::buffer<VID>(
+	    n_high, numa_allocation_interleaved() );
+	std::fill( &hcnt[P][0], &hcnt[P][n_high], (EID)0 );
+
 	mm::buffer<VID> lcnt( n+1, numa_allocation_partitioned( part ) );
 	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
 	// mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
-#if 0
+#if 1
 	mm::buffer<VID> rxp( m, numa_allocation_interleaved() );
 #endif
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
@@ -1070,10 +1106,11 @@ public:
 	}
 	vkind[vv/64] = bmp;
 #endif
-	VID hibit_mask = VID(1) << ( sizeof(VID)*8-1 );
-	EID hibit_emask = EID(1) << ( sizeof(EID)*8-1 );
-	EID sort_emask = EID(1) << ( sizeof(EID)*8-2 );
-	EID bits_emask = EID(3) << ( sizeof(EID)*8-2 );
+	constexpr VID hibit_mask = VID(1) << ( sizeof(VID)*8-1 );
+	constexpr EID hibit_emask = EID(1) << ( sizeof(EID)*8-1 );
+	constexpr EID sort_emask = EID(1) << ( sizeof(EID)*8-2 );
+	constexpr EID bits_emask = EID(3) << ( sizeof(EID)*8-2 );
+#if 0 // sequential init
 	for( VID v=0; v < n; ++v ) {
 	    bool is_high = idx[v+1] - idx[v] > D;
 	    if( is_high )
@@ -1082,14 +1119,48 @@ public:
 		lcnt[v] = 0;
 	}
 	assert( next_hi == n_high );
+#else // parallel init
+	VID * n_high_part = new VID[P];
+	map_partition( part, [=,&part]( unsigned p ) {
+	    VID vs = part.start_of_vbal( p );
+	    VID ve = part.end_of_vbal( p );
+	    VID cnt = 0;
+	    for( VID v=vs; v < ve; ++v ) {
+		bool is_high = idx[v+1] - idx[v] > D;
+		if( is_high )
+		    ++cnt;
+	    }
+	    n_high_part[p] = cnt;
+	} );
+	VID cum = 0;
+	for( unsigned p=0; p < P; ++p ) {
+	    VID tmp = n_high_part[p];
+	    n_high_part[p] = cum;
+	    cum += tmp;
+	}
+	assert( cum == n_high );
+	map_partition( part, [=,&part]( unsigned p ) mutable {
+	    VID vs = part.start_of_vbal( p );
+	    VID ve = part.end_of_vbal( p );
+	    VID next_hi = n_high_part[p];
+	    for( VID v=vs; v < ve; ++v ) {
+		bool is_high = idx[v+1] - idx[v] > D;
+		if( is_high )
+		    lcnt[v] = next_hi++ | hibit_mask;
+		else
+		    lcnt[v] = 0;
+	    }
+	} );
+	delete[] n_high_part;
+#endif
 	std::cerr << "transpose: D=" << D << " n_high=" << n_high
 		  << " n=" << n << " m=" << m << "\n";
 	std::cerr << "transpose: init (partially sequential): "
 		  << tm.next() << "\n";
 
-#if 0
+#if 1
 	// Expand row indices
-	map_partition( part, [&]( unsigned p ) {
+	map_partition( part, [=,&part]( unsigned p ) mutable {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
 	    EID e = idx[vs];
@@ -1103,15 +1174,16 @@ public:
 #endif
 
 	// Count occurences of each vertex
-	map_partition( part, [&]( unsigned p ) {
+	map_partition( part, [=,&part]( unsigned p ) mutable {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
 	    EID es = idx[vs];
 	    EID ee = idx[ve];
+	    VID * hcnt_p = &hcnt[p][0];
 	    for( EID e=es; e < ee; ++e ) {
 		VID v = edges[e];
 		if( (SVID)lcnt[v] < (SVID)0 )
-		    xref[e] = hcnt[p][lcnt[v] & ~hibit_mask]++;
+		    xref[e] = hcnt_p[lcnt[v] & ~hibit_mask]++;
 		else {
 		    // Subject to false sharing as well as conflicts
 		    xref[e] = __sync_fetch_and_add( &lcnt[v], 1 );
@@ -1121,6 +1193,7 @@ public:
 	std::cerr << "transpose: count: " << tm.next() << "\n";
 
 	// Do per-vertex vertical scans
+#if 0
 	parallel_for( VID v=0; v < n; ++v ) {
 	    if( (SVID)lcnt[v] < (SVID)0 ) {
 		VID sum = 0;
@@ -1137,8 +1210,35 @@ public:
 		tr_idx[v] = lcnt[v];
 	}
 	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
+#else
+	// TODO: Easy to vectorize
+	parallel_for( VID vv=0; vv < n_high; ++vv ) {
+	    VID sum = 0;
+	    for( unsigned p=0; p < P; ++p ) {
+		VID tmp = hcnt[p][vv];
+		if( tmp != 0 ) { // avoid unnecessary stores
+		    hcnt[p][vv] = sum;
+		    sum += tmp;
+		}
+	    }
+	    hcnt[P][vv] = sum;
+	}
+	
+/*
+	const VID * hcnt_P = &hcnt[P][0];
+	parallel_for( VID v=0; v < n; ++v ) {
+	    if( (SVID)lcnt[v] < (SVID)0 ) {
+		VID vv = lcnt[v] & ~hibit_mask;
+		tr_idx[v] = hcnt_P[vv];
+	    } else
+		tr_idx[v] = lcnt[v];
+	}
+*/
+	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
+#endif
 	
 	// Do prefix sums to determine insertion points
+#if 0 // sequential prefix sum
 	EID ins = 0;
 	for( VID v=0; v < n; ++v ) {
 	    EID deg = tr_idx[v];
@@ -1152,6 +1252,52 @@ public:
 	assert( ins == m );
 	tr_idx[n] = m;
 	std::cerr << "transpose: prefix sum (seq): " << tm.next() << "\n";
+#else // parallel prefix sum
+	EID * ps_cnt = new EID[P];
+	map_partition( part, [=,&part]( unsigned p ) {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID cnt = 0;
+	    const VID * hcnt_P = &hcnt[P][0];
+	    for( VID v=vs; v < ve; ++v ) {
+		VID val;
+		VID lc = lcnt[v];
+		if( (SVID)lc < (SVID)0 ) {
+		    VID vv = lc & ~hibit_mask;
+		    val = hcnt_P[vv];
+		} else
+		    val = lc;
+		cnt += val;
+		tr_idx[v] = val;
+	    }
+	    ps_cnt[p] = cnt;
+	} );
+	EID ps_sum = 0;
+	for( unsigned p=0; p < P; ++p ) {
+	    EID tmp = ps_cnt[p];
+	    ps_cnt[p] = ps_sum;
+	    ps_sum += tmp;
+	}
+	assert( ps_sum == m );
+	map_partition( part, [=,&part]( unsigned p ) mutable {
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID ins = ps_cnt[p];
+	    for( VID v=vs; v < ve; ++v ) {
+		EID deg = tr_idx[v];
+		tr_idx[v] = ins;
+		if( (SVID)lcnt[v] < (SVID)0 ) {
+		    tr_idx[v] |= hibit_emask;
+		    lcnt[v] &= ~hibit_mask;
+		}
+		ins += deg;
+	    }
+	} );
+	tr_idx[n] = m;
+	delete[] ps_cnt;
+	
+	std::cerr << "transpose: prefix sum (par): " << tm.next() << "\n";
+#endif
 
 #if 0
 	// Pre-study: idea is to have only one random access pattern per loop.
@@ -1201,7 +1347,7 @@ public:
 	    }
 	} );
 #else // rxp
-	map_partition( part, [&]( unsigned p ) {
+	map_partition( part, [=,&part]( unsigned p ) mutable {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
 	    EID e = idx[vs];
@@ -1219,8 +1365,9 @@ public:
 #endif
 	
 #else
+#if 0 // scalar place
 	// Populate adjacency lists
-	map_partition( part, [&]( unsigned p ) {
+	map_partition( part, [=,&part]( unsigned p ) {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
 	    EID e = idx[vs];
@@ -1239,23 +1386,67 @@ public:
 	    }
 	    assert( e == idx[ve] );
 	} );
+#else // vector place
+	constexpr unsigned short VL = MAX_VL;
+	using vid_type = simd::ty<VID,VL>;
+	using svid_type = simd::ty<SVID,VL>;
+	using eid_type = simd::ty<EID,VL>;
+	using vt = typename vid_type::traits;
+	using et = typename eid_type::traits;
+
+	map_partition( part, [=,&part]( unsigned p ) {
+	    auto e_hibit = et::slli( et::setone(), et::B-1 );
+	    const auto * hcnt_p = &hcnt[p][0];
+	    VID vs = part.start_of( p );
+	    VID ve = part.end_of( p );
+	    EID es = idx[vs];
+	    EID ee = idx[ve];
+	    EID eo = es;
+	    for( ; eo+VL-1 < ee; eo += VL ) {
+		auto v_edges = vt::loadu( &edges[eo] );
+		auto v_xref = vt::loadu( &xref[eo] );
+		auto e_tr_idx = et::gather( &tr_idx[0], v_edges );
+		auto e_tr_idx_c = et::bitwise_andnot( e_hibit, e_tr_idx );
+		auto v_rxp = vt::loadu( &rxp[eo] );
+		auto hh = et::cmpge( e_tr_idx, e_hibit, et::mt_preferred() );
+#if __AVX512F__
+		auto h = hh;
+#else
+		auto h = conversion_traits<
+		    logical<sizeof(EID)>,logical<sizeof(VID)>,VL>
+		    ::convert( e_tr_idx );
+#endif
+		typename vt::type v_ins0;
+		// if( vt::is_all_false( h ) ) {
+		if( vid_type::prefmask_traits::traits::is_all_false( h ) ) {
+		    v_ins0 = v_xref;
+		} else {
+		    auto v_lcnt = vt::gather( &lcnt[0], v_edges, h );
+		    auto v_hcnt0 = vt::gather( hcnt_p, v_lcnt, h );
+		    auto v_hcnt = vt::blend( h, vt::setzero(), v_hcnt0 );
+		    v_ins0 = vt::add( v_xref, v_hcnt );
+		}
+		auto e_ins0 = conversion_traits<VID,EID,VL>::convert( v_ins0 );
+		auto e_ins = et::add( e_tr_idx_c, e_ins0 );
+		vt::scatter( &tr_edges[0], e_ins, v_rxp );
+	    }
+	    for( EID e=eo; e < ee; ++e ) {
+		VID u = edges[e];
+		EID ins = xref[e] + tr_idx[u]; // random read
+		if( (SEID)tr_idx[u] < (SEID)0 ) {
+		    ins &= ~hibit_emask; // remove flag bit
+		    ins += hcnt_p[lcnt[u]]; // avoids random writes to lcnt
+		}
+		tr_edges[ins] = rxp[e];
+	    }
+	} );
+#endif // scalar/vector place
 #endif // place with pre-study
 	std::cerr << "transpose: place: " << tm.next() << "\n";
 
 	// Sort short adjacency lists
 	// Using edge balanced works better here than vertex balanced
 	// Free-form parallel for is slightly better still
-	/*
-	map_partition( part, [&]( unsigned p ) {
-	    VID vs = part.start_of( p );
-	    VID ve = part.end_of( p );
-	    for( VID v=vs; v < ve; ++v ) {
-		EID deg = idx[v+1] - idx[v];
-		if( deg > 1 && deg <= D )
-		    std::sort( &tr_edges[tr_idx[v]], &tr_edges[tr_idx[v+1]] );
-	    }
-	} );
-	*/
 	parallel_for( VID v=0; v < n; ++v ) {
 	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
 	    // if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
@@ -1274,8 +1465,8 @@ public:
 			tr_edges[vs+1] = a;
 		    }
 		} else {
-		    // ... TODO: Sorting can be avoided if only one of the
-		    // partitions contains edges for this vertex
+		    // consider https://arxiv.org/pdf/1704.08579.pdf
+		    // and ips4o
 		    std::sort( &tr_edges[vs], &tr_edges[ve] );
 		}
 	    }
@@ -1297,10 +1488,10 @@ public:
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
 
 	// Cleanup
-	// rxp.del();
+	rxp.del();
 	// vkind.del();
 	xref.del();
-	for( unsigned p=0; p < P; ++p )
+	for( unsigned p=0; p <= P; ++p )
 	    hcnt[p].del();
 	delete[] hcnt;
 	lcnt.del();
@@ -1316,7 +1507,7 @@ public:
 	// 2. Select D
 	// 3. if deg+(v) > D, then use per-partition counter
 	// 4. if deg+(v) <= D, then use shared counter
-	std::cerr << "transpose (hybrid)...\n";
+	std::cerr << "transpose (pull)...\n";
 
 	timer tm;
 	tm.start();
