@@ -10,15 +10,11 @@ namespace target {
 #if __AVX512F__
 #else
 // Assumes __AVX2__
-#if __AVX2__
-#else
-#error expecting that __AVX2__ is defined
-#endif
 template<unsigned short VL, typename T>
 typename sse42_1xL<VL,T>::type
 sse42_1xL<VL,T>::gather( const typename sse42_1xL<VL,T>::member_type *a,
-			 typename avx2_4x8<uint32_t>::type b,
-			 typename avx2_4x8<uint32_t>::type m ) {
+		       typename avx2_4x8<uint32_t>::type b,
+		       typename avx2_4x8<uint32_t>::type m ) {
     if constexpr ( VL == 8 ) {
 	using it = avx2_4x8<uint32_t>;
 	auto g = it::template gather_w<W>(

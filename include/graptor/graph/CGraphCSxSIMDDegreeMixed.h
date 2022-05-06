@@ -2,7 +2,25 @@
 #ifndef GRAPTOR_GRAPH_CGRAPHCSXSIMDDEGREEMIXED_H
 #define GRAPTOR_GRAPH_CGRAPHCSXSIMDDEGREEMIXED_H
 
-#include "graptor/graph/GraptorDef.h"
+#define GRAPTOR_WITH_REDUCE 1
+#define GRAPTOR_WITH_SELL 2
+#define GRAPTOR_MIXED 3
+
+#ifndef GRAPTOR_THRESHOLD_MULTIPLIER
+#define GRAPTOR_THRESHOLD_MULTIPLIER 1
+#endif // GRAPTOR_THRESHOLD_MULTIPLIER
+
+#ifndef GRAPTOR_DEGREE_BITS
+#define GRAPTOR_DEGREE_BITS 16
+#endif // GRAPTOR_DEGREE_BITS
+
+#ifndef GRAPTOR_CACHED
+#define GRAPTOR_CACHED 0
+#endif // GRAPTOR_CACHED
+
+#ifndef GRAPTOR_DEGREE_MULTIPLIER
+#define GRAPTOR_DEGREE_MULTIPLIER 1
+#endif // GRAPTOR_DEGREE_MULTIPLIER
 
 namespace {
 
@@ -21,8 +39,7 @@ unsigned short BitsPerLane( unsigned short VL ) {
 // destinations and a nested loop iterating over vectors w/ sources for
 // that destination.
 // Values are cached and a reduction is performed only once per destination.
-template<graptor_mode_t Mode,
-	 typename fVID, typename fEID, unsigned short DegreeBits>
+template<typename fVID, typename fEID, unsigned short DegreeBits>
 class GraptorVReduce {
 public:
     GraptorVReduce( unsigned short maxVL_ )
@@ -40,7 +57,7 @@ public:
 		  fEID * starts_ ) {
 	// Record edges for auxiliary function
 	edges = edges_;
-	// assert( false && "Initialisation of starts for EIDRetriever NYI" );
+	assert( 0 && "Initialisation of starts for EIDRetriever NYI" );
 
 	// Process relevant edges and either calculate storage requirement
 	// or construct graph representation.
@@ -97,21 +114,21 @@ private:
 	    if( value & ~vmask )
 		overflows++;
 	} else {
-	    fVID d;
-	    if constexpr ( GraptorConfig<Mode>::is_cached ) {
-		// Only record degree information in first vector of a run
-		if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) != 0 ) {
-		    edges[pos] = value;
-		    return;
-		}
+#if GRAPTOR_CACHED == 1
+	    // Only record degree information in first vector of a run
+	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) != 0 ) {
+		edges[pos] = value;
+		return;
+	    }
 
-		fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
-		if( deg3 > (dmax-1) )
-		    deg3 = dmax-1;
-		d = deg3 >> (lane * dbpl);
-		d &= ( fVID(1) << dbpl ) - 1;
-	    } else {
-		d = 0;
+	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+	    if( deg3 > (dmax-1) )
+		deg3 = dmax-1;
+	    fVID d = deg3 >> (lane * dbpl);
+	    d &= ( fVID(1) << dbpl ) - 1;
+
+#else
+	    fVID d = 0;
 /*
 	    if( seq + maxVL == deg ) {
 		d = 1 >> ( lane * dbpl ); // TODO: introduce skip bits later
@@ -126,9 +143,8 @@ private:
 		    deg3 |= 1;
 		d = deg3 >> (lane * dbpl);
 		d &= ( fVID(1) << dbpl ) - 1;
-		}
 	    }
-	    
+#endif
 	    value &= vmask;
 	    value |= d << ( sizeof(fVID) * 8 - dbpl );
 	    edges[pos] = value;
@@ -144,8 +160,7 @@ private:
     fVID * edges;
 };
 
-template<graptor_mode_t Mode,
-	 typename fVID, typename fEID, unsigned short DegreeBits>
+template<typename fVID, typename fEID, unsigned short DegreeBits>
 class GraptorDataPar {
 public:
     GraptorDataPar( unsigned short maxVL_ )
@@ -247,13 +262,13 @@ private:
 	    if( value & ~vmask )
 		overflows++;
 	} else {
-	    if constexpr ( GraptorConfig<Mode>::is_cached ) {
-		// Only record degree information in first vector of a word
-		if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2-1))) != 0 ) {
-		    edges[pos] = value;
-		    return;
-		}
+#if GRAPTOR_CACHED == 1
+	    // Only record degree information in first vector of a word
+	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2-1))) != 0 ) {
+		edges[pos] = value;
+		return;
 	    }
+#endif
 
 	    fVID d = 0;
 	    fVID lane = pos % maxVL;
@@ -308,7 +323,6 @@ public:
  * partitions, i.e., index only needed for first vertex, remainder
  * can be delta-degree
  */
-template<graptor_mode_t Mode>
 class GraphCSxSIMDDegreeMixed {
     VID n;	//!< Number of vertices
     VID nv;	//!< Number of SIMD groupds of vertices (n rounded up to maxVL)
@@ -352,7 +366,7 @@ public:
 
 #if GRAPTOR_EXTRACT_OPT
 	assert( maxVL == GRAPTOR_DEGREE_BITS && "restriction" );
-#endif // GRAPTOR_EXTRACT_OPT
+#endif // GRAPTOR_CSC
 
 	assert( lo % maxVL == 0 );
 	// assert( hi % maxVL == 0 ); -- not so in final partition
@@ -372,54 +386,47 @@ public:
 	    VID r = remap.origID(v);
 	    m += idx[r+1] - idx[r];
 	}
-	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
-	    // #if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-	    #if GRAPTOR_DEG12 == 1
-	    // #error "GRAPTOR_DEG12 requires SELL"
-	    assert( true && "GRAPTOR_DEG12 requires SELL" );
-	    #endif
-	    // #endif
-	}
+#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+#if GRAPTOR_DEG12 == 1
+#error "GRAPTOR_DEG12 requires SELL"
+#endif
+#endif
 
 	// Figure out cut-off vertex
 	mv = mvd1 = mvdpar = mv1 = mv2 = 0;
-	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
-	    // #if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-	    vslim = hi;
-	    for( VID v=hi; v > lo; v-- ) {
-		VID r = remap.origID(v-1); // loop index shifted by -1
-		VID deg = idx[r+1] - idx[r];
-		if( deg > 0 ) {
-		    vslim = v; // upper bound, deg[vslim] == 0
-		    break;
-		}
+#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+	vslim = hi;
+	for( VID v=hi; v > lo; v-- ) {
+	    VID r = remap.origID(v-1); // loop index shifted by -1
+	    VID deg = idx[r+1] - idx[r];
+	    if( deg > 0 ) {
+		vslim = v; // upper bound, deg[vslim] == 0
+		break;
 	    }
-	} else if constexpr ( GraptorConfig<Mode>::is_datapar ) {
-	    // #elif (GRAPTOR & GRAPTOR_WITH_REDUCE) == 0
-	    vslim = lo;
-	} else {
-	    // #else
-	    // Cut-off point for d1 vs dpar
-	    const VID threshold = GRAPTOR_THRESHOLD_MULTIPLIER * maxVL;
-
-	    vslim = lo+nv;
-	    for( VID v=lo; v < hi; v++ ) { // TODO: take steps of maxVL
-		// Traverse vertices in order of decreasing degree
-		VID r = remap.origID(v);
-		VID deg = idx[r+1] - idx[r];
-		if( deg < threshold ) { // threshold - evaluate
-		    vslim = std::max( lo, v - ( v % maxVL ) );
-		    //std::cerr << "set vslim C=" << vslim << "\n";
-		    break;
-		}
-	    }
-	    // #endif // GRAPTOR_BY_VERTEX
 	}
+#elif (GRAPTOR & GRAPTOR_WITH_REDUCE) == 0
+	vslim = lo;
+#else
+	// Cut-off point for d1 vs dpar
+	const VID threshold = GRAPTOR_THRESHOLD_MULTIPLIER * maxVL;
+
+	vslim = lo+nv;
+	for( VID v=lo; v < hi; v++ ) { // TODO: take steps of maxVL
+	    // Traverse vertices in order of decreasing degree
+	    VID r = remap.origID(v);
+	    VID deg = idx[r+1] - idx[r];
+	    if( deg < threshold ) { // threshold - evaluate
+		vslim = std::max( lo, v - ( v % maxVL ) );
+		//std::cerr << "set vslim C=" << vslim << "\n";
+		break;
+	    }
+	}
+#endif // GRAPTOR_BY_VERTEX
 
 	// Count number of required edges to store graph
 	{
-	    GraptorVReduce<Mode,VID,EID,DegreeBits> size_d1( maxVL );
-	    GraptorDataPar<Mode,VID,EID,DegreeBits> size_dpar( maxVL );
+	    GraptorVReduce<VID,EID,DegreeBits> size_d1( maxVL );
+	    GraptorDataPar<VID,EID,DegreeBits> size_dpar( maxVL );
 	    fmt_d1_dpar<true>( Gcsc, lo, hi, vslim, maxVL,
 			       remap, nullptr, nullptr, nullptr, nullptr,
 			       size_d1, size_dpar );
@@ -445,30 +452,23 @@ public:
 	    else if( deg == 1 )
 		mv1 += maxVL;
 	    else if( deg > 2 ) {
-		if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
-		    // #if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0 && (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-		    vslim = v; // adjust vslim
-		    // std::cerr << "adjust vslim=" << vslim << "\n";
-		    // #endif
-		}
+#if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0 && (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+		vslim = v; // adjust vslim
+		// std::cerr << "adjust vslim=" << vslim << "\n";
+#endif
 		break;
 	    }
 	}
-
-	if constexpr ( GraptorConfig<Mode>::is_datapar ) {
-	    // #if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
-	    mvdpar -= mv1 + mv2;
-	    // #endif
-	}
+#if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
+	mvdpar -= mv1 + mv2;
+#endif
 	assert( mv1 <= mv );
 	assert( mv2 <= mv );
 #endif
 
-	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
-	    // #if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
-	    assert( mvdpar == 0 );
-	    // #endif
-	}
+#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+	assert( mvdpar == 0 );
+#endif
 
 	// std::cerr << "mv=" << mv
 		  // << "\nvslim=" << vslim
@@ -488,8 +488,8 @@ public:
 
 	// Now that we know that the degree bits are available, encode degrees.
 	{
-	    GraptorVReduce<Mode,VID,EID,DegreeBits> enc_d1( maxVL );
-	    GraptorDataPar<Mode,VID,EID,DegreeBits> enc_dpar( maxVL );
+	    GraptorVReduce<VID,EID,DegreeBits> enc_d1( maxVL );
+	    GraptorDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
 	    fmt_d1_dpar<false>( Gcsc, lo, hi, vslim, maxVL,
 				remap, edges.get(), &edges[mvd1],
 				starts.get(), &starts[(vslim-lo)/maxVL],
@@ -507,21 +507,17 @@ private:
 		      VID * edges_d1, VID * edges_dpar,
 		      EID * starts_d1, EID * starts_dpar,
 		      Functor1 & fnc_d1, FunctorD & fnc_dpar ) {
-// #if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0
-	if constexpr ( !GraptorConfig<Mode>::is_datapar ) {
+#if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0
 	// d1_value( Gcsc, lo, vslim, maxVL, remap, edges_d1, fnc_d1 );
-	    fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, remap, edges_d1, starts_d1 );
-	    assert( fnc_d1.success() );
-	}
-// #endif
+	fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, remap, edges_d1, starts_d1 );
+	assert( fnc_d1.success() );
+#endif
 
-// #if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
-	if constexpr ( GraptorConfig<Mode>::is_datapar ) {
-	    fnc_dpar.template process<EstimateMode>( 
-		Gcsc, vslim, hi, remap, edges_dpar, starts_dpar );
-	    assert( fnc_dpar.success() );
-	}
-// #endif
+#if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
+	fnc_dpar.template process<EstimateMode>( 
+	    Gcsc, vslim, hi, remap, edges_dpar, starts_dpar );
+	assert( fnc_dpar.success() );
+#endif
     }
     
 public:

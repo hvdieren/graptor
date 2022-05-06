@@ -3,6 +3,7 @@
 
 #include <limits>
 
+#include "graptor/customfp.h"
 #include "graptor/bitfield.h"
 #include "graptor/utils.h"
 
@@ -32,7 +33,8 @@ template<typename T, typename Enable = void>
 struct create_type_list;
 
 template<typename T>
-struct create_type_list<T,std::enable_if_t<!is_bitfield_v<T>>> {
+struct create_type_list<T,std::enable_if_t<!is_customfp_v<T>
+					   && !is_bitfield_v<T>>> {
     static constexpr unsigned short narrowest_pow2_width =
 	(unsigned short)( 8 * sizeof(T) );
     static constexpr unsigned short nonpow2_preferred = 1;
@@ -50,6 +52,33 @@ struct create_type_list<bitfield<B>> {
     // Custom-fp with power-of-2 byte width
     static constexpr unsigned short narrowest_pow2_width = B;
     static constexpr unsigned short nonpow2_preferred = 1;
+};
+
+/*
+template<unsigned short E, unsigned short M>
+struct create_type_list<customfp<E,M>,
+			std::enable_if_t<((E+M)&(E+M-1))==0 && ((E+M)&7)==0>> {
+    // Custom-fp with power-of-2 byte width
+    static constexpr unsigned short narrowest_pow2_width = E+M;
+    static constexpr unsigned short nonpow2_preferred = 1;
+};
+*/
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+struct create_type_list<::detail::customfp_em<S,E,M,Z,B>,
+			std::enable_if_t<(::detail::customfp_em<S,E,M,Z,B>::bit_size&(::detail::customfp_em<S,E,M,Z,B>::bit_size-1))==0 && (((S?1:0)+E+M)&7)==0>> {
+    // Custom-fp with power-of-2 byte width
+    static constexpr unsigned short narrowest_pow2_width =
+	::detail::customfp_em<S,E,M,Z,B>::bit_size;
+    static constexpr unsigned short nonpow2_preferred = 1;
+};
+
+template<unsigned short E, unsigned short M>
+struct create_type_list<customfp<E,M>,std::enable_if_t<E+M==21>> {
+    // A hard-coded exception.
+    static constexpr unsigned short narrowest_pow2_width =
+	(unsigned short)( 8 * std::numeric_limits<unsigned short>::max() );
+    static constexpr unsigned short nonpow2_preferred = 3;
 };
 
 /*----------------------------------------------------------------------*
@@ -73,7 +102,8 @@ struct create_type_list_nonpow2 {
 /*----------------------------------------------------------------------*
  * Merge type lists: select narrowest native (power-of-2 wide) type and
  *                   calculate least common multiple (or a multiple thereof)
- *                   for other types.
+ *                   for other types. Currently, only customfp<E,M> with
+ *                   E+M is relevant, so don't bother about the LCM.
  *----------------------------------------------------------------------*/
 template<typename TypeList1, typename TypeList2>
 struct merge_type_lists {

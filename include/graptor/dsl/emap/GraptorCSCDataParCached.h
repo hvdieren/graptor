@@ -11,12 +11,12 @@ template<bool Idempotent, unsigned short VL, graptor_mode_t M,
 	 typename AExpr, typename MVExpr,
 	 typename MRExpr, typename VOPCache, typename VCache,
 	 typename VCacheUse, typename AllCaches, typename Environment,
-	 typename Config, graptor_mode_t Mode>
+	 typename Config>
 __attribute__((always_inline, flatten))
 static inline void GraptorCSCDataParCached(
     const GraphVEBOGraptor<M> & GA,
     int p,
-    const GraphCSxSIMDDegreeMixed<Mode> & GP,
+    const GraphCSxSIMDDegreeMixed & GP,
     const partitioner & part,
     const AExpr & aexpr,
     const MVExpr & m_vexpr,

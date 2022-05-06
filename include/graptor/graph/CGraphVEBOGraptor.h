@@ -2,15 +2,42 @@
 #ifndef GRAPTOR_GRAPH_CGRAPHVEBOGRAPTOR_H
 #define GRAPTOR_GRAPH_CGRAPHVEBOGRAPTOR_H
 
+#ifndef GRAPTOR
+#define GRAPTOR 1
+#endif // GRAPTOR
+
+#ifndef GRAPTOR_CACHED
+#define GRAPTOR_CACHED 1
+#endif // GRAPTOR_CACHED
+
+#ifndef GRAPTOR_CSC
+#define GRAPTOR_CSC 1
+#endif // GRAPTOR_CSC
+
 #include "graptor/graph/CGraphCSx.h"
 #include "graptor/graph/VEBOReorder.h"
-#include "graptor/graph/GraptorDef.h"
 #include "graptor/graph/CGraphCSxSIMDDegree.h"
 #include "graptor/graph/CGraphCSxSIMDDegreeDelta.h"
 #include "graptor/graph/CGraphCSxSIMDDegreeMixed.h"
 #include "graptor/graph/CGraphCSRSIMDDegreeMixed.h"
 #include "graptor/graph/CGraphCSxSIMDDegreeDeltaMixed.h"
 #include "graptor/frontier.h"
+
+enum graptor_mode_t {
+    gm_csc_vreduce_not_cached = 0,
+    gm_csc_vreduce_cached = 1,
+    gm_csc_datapar_not_cached = 2,
+    gm_csc_datapar_cached = 3,
+    gm_csr_vpush_not_cached = 4,
+    gm_csr_vpush_cached = 5,
+    gm_csr_datapar_not_cached = 6,
+    gm_csr_datapar_cached = 7
+};
+
+#define GRAPTOR_MODE (graptor_mode_t) \
+    ( (GRAPTOR_CACHED == 1 ? 1 : 0)   \
+      | (GRAPTOR == 1 ? 0 : 2)	      \
+      | (GRAPTOR_CSC == 1 ? 0 : 4) )
 
 struct GraptorEIDRetriever {
     mmap_ptr<EID> edge_offset;
@@ -37,11 +64,25 @@ template<graptor_mode_t Mode_>
 class GraphVEBOGraptor {
     static constexpr graptor_mode_t Mode = Mode_;
     
-    using GraphPartitionType = typename GraptorConfig<Mode>::partition_type;
+    // using GraphPartitionType = GraphCSxSIMDDegreeDeltaMixed;
+    // using GraphPartitionType = GraphCSxSIMDDegree;
+#if GRAPTOR_CSC
+    using GraphPartitionType = GraphCSxSIMDDegreeMixed;
+#else
+    using GraphPartitionType = GraphCSRSIMDDegreeMixed;
+#endif
 
     GraphCSx csr;
     GraphPartitionType * csc;
-    typename GraptorConfig<Mode>::remap_type remap;
+#if GRAPTOR_CSC
+    VEBOReorder remap;
+#else
+#if VEBO_DISABLE
+    VEBOReorderIdempotent<VID,EID> remap;
+#else
+    VEBOReorderSIMD<VID,EID> remap;
+#endif
+#endif
     partitioner part;
     unsigned short minVL, maxVL;
     VID maxdiff;
@@ -71,134 +112,135 @@ public:
 	    csc_tmp->import_transpose( Gcsr );
 	}
 
-	if constexpr ( GraptorConfig<Mode>::is_csc ) {
-	    // Calculate remapping table. Do not use the feature to interleave
-	    // subsequent destinations over per-lane partitions.
-	    std::cerr << "VEBO...\n";
-	    remap = VEBOReorder( *csc_tmp, part, 1, false, maxVL );
+#if GRAPTOR_CSC
+	// Calculate remapping table. Do not use the feature to interleave
+	// subsequent destinations over per-lane partitions.
+	std::cerr << "VEBO...\n";
+	remap = VEBOReorder( *csc_tmp, part, 1, false, maxVL );
 
-	    std::cerr << "Highest-degree vertex: deg=" << csc_tmp->max_degree()
-		      << "...\n";
-	    csc_tmp->setMaxDegreeVertex( csc_tmp->findHighestDegreeVertex() );
+	std::cerr << "Highest-degree vertex: deg=" << csc_tmp->max_degree()
+		  << "...\n";
+	csc_tmp->setMaxDegreeVertex( csc_tmp->findHighestDegreeVertex() );
 
-	    // Setup CSR
-	    std::cerr << "Reorder CSR...\n";
-	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
-	    csr.import_expand( Gcsr, part, remap.remapper() );
+	// Setup CSR
+	std::cerr << "Reorder CSR...\n";
+	new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
+	csr.import_expand( Gcsr, part, remap.remapper() );
 
-	    // Setup CSC partitions
-	    std::cerr << "Graptor: "
-		      << " n=" << Gcsr.numVertices()
-		      << " e=" << Gcsr.numEdges()
-		      << "\n";
-	    map_partitionL( part, [&]( int p ) {
-		    assert( part.start_of(p) % maxVL == 0 );
-		    new (&csc[p]) GraphPartitionType();
-		    VID lo = part.start_of(p);
-		    VID hi = part.end_of(p);
-		    // if( p == npart-1 && hi % maxVL != 0 )
-		    // hi += maxVL - ( hi % maxVL );
-		    csc[p].import( *csc_tmp, lo, hi, part.get_num_elements(),
-				   maxVL, remap.remapper(),
-				   part.numa_node_of( p ) );
+	// Setup CSC partitions
+	std::cerr << "Graptor: "
+		  << " n=" << Gcsr.numVertices()
+		  << " e=" << Gcsr.numEdges()
+		  << "\n";
+	map_partitionL( part, [&]( int p ) {
+		assert( part.start_of(p) % maxVL == 0 );
+		new (&csc[p]) GraphPartitionType();
+		VID lo = part.start_of(p);
+		VID hi = part.end_of(p);
+		// if( p == npart-1 && hi % maxVL != 0 )
+		// hi += maxVL - ( hi % maxVL );
+		csc[p].import( *csc_tmp, lo, hi, part.get_num_elements(),
+			       maxVL, remap.remapper(),
+			       part.numa_node_of( p ) );
 
-    /*
-		    std::cerr << "Graptor part " << p
-			      << " s=" << part.start_of(p)
-			      << " e=" << part.end_of(p)
-			      << " nv=" << csc[p].numSIMDVertices()
-			      << " ne=" << csc[p].numSIMDEdges()
-			      << "\n";
-    */
-		} );
-	} else {
-	    // Calculate remapping table.
-#if VEBO_DISABLE
-	    remap = VEBOReorderIdempotent<VID,EID>();
-	    partitionBalanceEdges( *csc_tmp,
-				   gtraits_getoutdegree<GraphCSx>( *csc_tmp ),
-				   part, maxVL );
-
-	    // Setup CSR
-	    std::cerr << "Remapping CSR...\n";
-	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
-	    csr.import_expand( Gcsr, part, remap.remapper() );
-
-	    VID hideg = csc_tmp->findHighestDegreeVertex();
-	    csr.setMaxDegreeVertex( remap.remappedID( hideg ) );
-	    csc_tmp->setMaxDegreeVertex( hideg );
+/*
+		std::cerr << "Graptor part " << p
+			  << " s=" << part.start_of(p)
+			  << " e=" << part.end_of(p)
+			  << " nv=" << csc[p].numSIMDVertices()
+			  << " ne=" << csc[p].numSIMDEdges()
+			  << "\n";
+*/
+	    } );
 #else
-	    // remap = VEBOReorder( *csc_tmp, part, maxVL, false, 1 ); // true, 1 );
-	    remap = VEBOReorderSIMD<VID,EID>( *csc_tmp, part, 1, false, maxVL ); // maxVL, true, maxVL );
+	// Calculate remapping table.
+#if VEBO_DISABLE
+	remap = VEBOReorderIdempotent<VID,EID>();
+	partitionBalanceEdges( *csc_tmp,
+			       gtraits_getoutdegree<GraphCSx>( *csc_tmp ),
+			       part, maxVL );
 
-	    // Setup CSR
-	    new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
-	    csr.import_expand( Gcsr, part, remap.remapper() );
+	// Setup CSR
+	std::cerr << "Remapping CSR...\n";
+	new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
+	csr.import_expand( Gcsr, part, remap.remapper() );
 
-	    csr.setMaxDegreeVertex( 0 );
-	    csc_tmp->setMaxDegreeVertex( remap.originalID( 0 ) );
+	VID hideg = csc_tmp->findHighestDegreeVertex();
+	csr.setMaxDegreeVertex( remap.remappedID( hideg ) );
+	csc_tmp->setMaxDegreeVertex( hideg );
+#else
+	// remap = VEBOReorder( *csc_tmp, part, maxVL, false, 1 ); // true, 1 );
+	remap = VEBOReorderSIMD<VID,EID>( *csc_tmp, part, 1, false, maxVL ); // maxVL, true, maxVL );
+
+	// Setup CSR
+	new (&csr) GraphCSx( part.get_num_elements(), Gcsr.numEdges(), -1 );
+	csr.import_expand( Gcsr, part, remap.remapper() );
+
+	csr.setMaxDegreeVertex( 0 );
+	csc_tmp->setMaxDegreeVertex( remap.originalID( 0 ) );
 #endif
 
-	    if constexpr ( false ) { // VPush
-		// Clean up intermediates - no longer needed
-		if( !Gcsr.isSymmetric() && csc_tmp ) {
-		    csc_tmp->del();
-		    delete csc_tmp;
-		    csc_tmp = nullptr;
-		}
-
-		// Setup CSR partitions
-		std::cerr << "Graptor: "
-			  << " n=" << Gcsr.numVertices()
-			  << " e=" << Gcsr.numEdges()
-			  << "\n";
-
-		// Pre-calculate space requirements for all partitions
-		std::cerr << "Calculating space requirements...\n";
-		std::pair<const EID *, const VID *> sz
-		    = GraphPartitionType::space_from_csr( csr, part, maxVL );
-
-		// Create partitions
-		std::cerr << "Creating VPush partitions...\n";
-		map_partitionL( part, [&]( int p ) {
-			assert( part.start_of(p) % maxVL == 0 );
-			new (&csc[p]) GraphPartitionType();
-			csc[p].import_csr( csr, part, p, maxVL,
-					   sz.first[p], sz.second[p],
-					   numa_allocation_local( part.numa_node_of( p ) ) );
-		    } );
-
-		delete[] sz.first;
-		delete[] sz.second;
-	    } else {
-		// Setup CSR partitions
-		std::cerr << "Graptor: "
-			  << " n=" << Gcsr.numVertices()
-			  << " e=" << Gcsr.numEdges()
-			  << "\n";
-		map_partitionL( part, [&]( int p ) {
-			assert( part.start_of(p) % maxVL == 0 );
-			new (&csc[p]) GraphPartitionType();
-			VID lo = part.start_of(p);
-			// VID hi = part.end_of(p);
-			VID hi = part.start_of(p+1);
-			// if( p == npart-1 && hi % maxVL != 0 )
-			// hi += maxVL - ( hi % maxVL );
-			csc[p].import( *csc_tmp, part, p,
-				       maxVL, remap.remapper(),
-				       part.numa_node_of( p ) );
-
-	/*
-			std::cerr << "Graptor part " << p
-				  << " s=" << part.start_of(p)
-				  << " e=" << part.end_of(p)
-				  << " nv=" << csc[p].numSIMDVertices()
-				  << " ne=" << csc[p].numSIMDEdges()
-				  << "\n";
-	*/
-		    } );
-		}
+#if GRAPTOR == 1 // VPush
+	// Clean up intermediates - no longer needed
+	if( !Gcsr.isSymmetric() && csc_tmp ) {
+	    csc_tmp->del();
+	    delete csc_tmp;
+	    csc_tmp = nullptr;
 	}
+
+	// Setup CSR partitions
+	std::cerr << "Graptor: "
+		  << " n=" << Gcsr.numVertices()
+		  << " e=" << Gcsr.numEdges()
+		  << "\n";
+
+	// Pre-calculate space requirements for all partitions
+	std::cerr << "Calculating space requirements...\n";
+	std::pair<const EID *, const VID *> sz
+	    = GraphPartitionType::space_from_csr( csr, part, maxVL );
+
+	// Create partitions
+	std::cerr << "Creating VPush partitions...\n";
+	map_partitionL( part, [&]( int p ) {
+		assert( part.start_of(p) % maxVL == 0 );
+		new (&csc[p]) GraphPartitionType();
+		csc[p].import_csr( csr, part, p, maxVL,
+				   sz.first[p], sz.second[p],
+				   numa_allocation_local( part.numa_node_of( p ) ) );
+	    } );
+
+	delete[] sz.first;
+	delete[] sz.second;
+	
+#else
+	// Setup CSR partitions
+	std::cerr << "Graptor: "
+		  << " n=" << Gcsr.numVertices()
+		  << " e=" << Gcsr.numEdges()
+		  << "\n";
+	map_partitionL( part, [&]( int p ) {
+		assert( part.start_of(p) % maxVL == 0 );
+		new (&csc[p]) GraphPartitionType();
+		VID lo = part.start_of(p);
+		// VID hi = part.end_of(p);
+		VID hi = part.start_of(p+1);
+		// if( p == npart-1 && hi % maxVL != 0 )
+		// hi += maxVL - ( hi % maxVL );
+		csc[p].import( *csc_tmp, part, p,
+			       maxVL, remap.remapper(),
+			       part.numa_node_of( p ) );
+
+/*
+		std::cerr << "Graptor part " << p
+			  << " s=" << part.start_of(p)
+			  << " e=" << part.end_of(p)
+			  << " nv=" << csc[p].numSIMDVertices()
+			  << " ne=" << csc[p].numSIMDEdges()
+			  << "\n";
+*/
+	    } );
+#endif
+#endif
 
 	// set up edge partitioner - determines how to allocate edge properties
 	EID * counts = part.edge_starts();
@@ -254,12 +296,11 @@ public:
 		      << " mv2=" << csc[p].numSIMDEdgesDeg2()
 		      << " mv1=" << csc[p].numSIMDEdgesDeg1()
 		      << " inactd1=" << csc[p].numSIMDEdgesInvDelta1()
-		      << " inactdpar=" << csc[p].numSIMDEdgesInvDeltaPar();
+		      << " inactdpar=" << csc[p].numSIMDEdgesInvDeltaPar()
 #if GRAPTOR_CSR_INDIR
-	    if constexpr( !GraptorConfig<Mode>::is_csc )
-		std::cerr << " indir_nnz=" << csc[p].getRedirNNZ();
+		      << " indir_nnz=" << csc[p].getRedirNNZ()
 #endif
-	    std::cerr << "\n";
+		      << "\n";
 	}
     }
     
@@ -320,10 +361,11 @@ public:
 	if( is_sparse )
 	    return graph_traversal_kind::gt_sparse;
 	else {
-	    if constexpr( GraptorConfig<Mode>::is_csc )
-		return graph_traversal_kind::gt_pull;
-	    else
-		return graph_traversal_kind::gt_push;
+#if GRAPTOR_CSC
+	    return graph_traversal_kind::gt_pull;
+#else
+	    return graph_traversal_kind::gt_push;
+#endif
 	}
     }
 
@@ -331,23 +373,18 @@ public:
 	return gtk == graph_traversal_kind::gt_pull;
     }
 
-    static constexpr bool getRndRd() {
-	if constexpr( GraptorConfig<Mode>::is_csc )
-	    return true;
-	else {
-#if GRAPTOR_CSR_INDIR
-	    return true;
+#if GRAPTOR_CSC
+    static constexpr bool getRndRd() { return true; }
+    static constexpr bool getRndWr() { return false; }
 #else
-	    return false;
+#if GRAPTOR_CSR_INDIR
+    static constexpr bool getRndRd() { return true; }
+    static constexpr bool getRndWr() { return true; }
+#else
+    static constexpr bool getRndRd() { return false; }
+    static constexpr bool getRndWr() { return true; }
 #endif
-	}
-    }
-    static constexpr bool getRndWr() {
-	if constexpr( GraptorConfig<Mode>::is_csc )
-	    return false;
-	else
-	    return true;
-    }
+#endif
 
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
 

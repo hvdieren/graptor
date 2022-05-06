@@ -90,7 +90,7 @@ public:
     }
     
     static type set1( member_type a ) {
-	return _mm256_set1_epi16( (unsigned short)a );
+	return _mm256_set1_epi16( (unsigned short)a ); // in case of customfp
     }
     static type set1inc( member_type a ) {
 	return add( set1( a ), set1inc0() );
@@ -383,7 +383,7 @@ public:
 	return _mm256_srlv_epi16( a, sh );
     }
 
-    static type castfp( type a ) { return a; }
+    static type castfp( type a ) { return a; } // 16-bit float is customfp
     static type castint( type a ) { return a; }
     
     static member_type loads( const member_type * a, unsigned int off ) {

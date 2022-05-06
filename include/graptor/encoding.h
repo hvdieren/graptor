@@ -162,6 +162,215 @@ struct array_encoding {
     }
 };
 
+template<unsigned short E, unsigned short M>
+struct array_encoding<customfp<E,M>,std::enable_if_t<(E+M)==21>> {
+    using stored_type = customfp<E,M>;
+    using storage_type = uint64_t;
+
+    template<unsigned short VL_>
+    using stored_traits = vector_type_traits_vl<stored_type, VL_>;
+
+    template<unsigned short VL_>
+    using enc_traits = vector_type_traits_vl<storage_type, VL_>;
+
+    static mmap_ptr<storage_type>
+    allocate( size_t num_elems, const numa_allocation & kind ) {
+	// TODO: if mapped in numa-aware fashion, then boundaries between
+	//       numa nodes are determined by partitioner and
+	//       need to be adjusted by factor of 3.
+	return mmap_ptr<storage_type>( (num_elems+2)/3, kind );
+    }
+    static mmap_ptr<storage_type>
+    allocate( size_t num_elems, const numa_allocation && kind ) {
+	// TODO: if mapped in numa-aware fashion, then boundaries between
+	//       numa nodes are determined by partitioner and
+	//       need to be adjusted by factor of 3.
+	return mmap_ptr<storage_type>( (num_elems+2)/3, kind );
+    }
+    static mmap_ptr<storage_type>
+    allocate( numa_allocation_partitioned kind ) {
+	// TODO: scale to match NUMA boundaries
+	partitioner part = kind.get_partitioner().contract_widen( 3 );
+	return mmap_ptr<storage_type>( kind );
+    }
+
+    template<typename index_type>
+    static stored_type
+    get( const storage_type * base, index_type idx ) {
+	auto raw = stored_traits<3>::load(
+	    reinterpret_cast<stored_type *>( &base[idx/3] ) );
+	auto elm = stored_traits<3>::lane( raw, idx % 3 );
+	return stored_type( elm );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    load( storage_type * base, index_type idx ) {
+	if constexpr ( Tr::VL == 1 ) {
+	    auto raw = stored_traits<3>::load(
+		reinterpret_cast<stored_type *>( &base[idx/3] ) );
+	    auto elm = stored_traits<3>::lane( raw, idx % 3 );
+	    stored_type cfp( elm );
+	    return (typename Tr::type)cfp;
+	} else {
+	    assert( idx % Tr::VL == 0 && Tr::VL % 3 == 0 && "aligned load" );
+	    auto raw = stored_traits<Tr::VL>::load( &base[idx/3] );
+	    return conversion_traits<
+		typename stored_traits<Tr::VL>::member_type,
+		typename Tr::member_type,
+		Tr::VL>::convert( raw );
+	}
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    loadu( storage_type * base, index_type idx ) {
+	if constexpr ( Tr::VL == 1 ) {
+	    auto raw = stored_traits<3>::load(
+		reinterpret_cast<stored_type *>( &base[idx/3] ) );
+	    auto elm = stored_traits<3>::lane( raw, idx % 3 );
+	    stored_type cfp( elm );
+	    return (typename Tr::type)cfp;
+	} else if( idx % 3 == 0 ) {
+	    auto raw = stored_traits<Tr::VL>::load( &base[idx/3] );
+	    return conversion_traits<
+		typename stored_traits<Tr::VL>::member_type,
+		typename Tr::member_type,
+		Tr::VL>::convert( raw );
+	} else {
+	    assert( 0 && "NYI" ); // only VL==3 ?
+/*
+	    auto raw0 = stored_traits<Tr::VL>::load( &base[idx/3] );
+	    auto raw1 = stored_traits<Tr::VL>::load( &base[(idx/3)+1] );
+	    index_type s = 21 * ( idx % 3 );
+	    index_type t = 21 * ( 3 - ( idx % 3 ) );
+	    auto raw = ( ( raw0 >> s ) | ( raw1 << t ) ) & ~( uint64_t(1)<<63 );
+	    return conversion_traits<
+		typename stored_traits<Tr::VL>::member_type,
+		typename Tr::member_type,
+		Tr::VL>::convert( raw );
+*/
+	}
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    ntload( storage_type * base, index_type idx ) {
+	auto raw = stored_traits<Tr::VL>::ntload( &base[idx] );
+	return conversion_traits<
+	    typename stored_traits<Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	if constexpr ( Tr::VL == 1 ) {
+	    stored_type value( raw );
+	    auto m = stored_traits<3>::load( 
+		reinterpret_cast<stored_type *>( &base[idx/3] ) );
+	    m = stored_traits<3>::setlane(  m, value, idx % 3 );
+	    stored_traits<3>::store( 
+		reinterpret_cast<stored_type *>( &base[idx/3] ), m );
+	} else {
+	    assert( idx % Tr::VL == 0 && Tr::VL % 3 == 0 && "aligned store" );
+	    auto value = conversion_traits<
+		typename Tr::member_type,
+		typename stored_traits<Tr::VL>::member_type,
+		Tr::VL>::convert( raw );
+	    stored_traits<Tr::VL>::store( &base[idx/3], value );
+	}
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    storeu( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	assert( 0 && "NYI" );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx ) {
+	// would be better to fuse gather and conversion operations to avoid
+	// packing+unpacking and shifting after gathering words?
+	if constexpr ( Tr::VL == 1 )
+	    return load<Tr>( base, idx );
+	assert( 0 && "NYI" );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx, mask_type mask ) {
+	// would be better to fuse gather and conversion operations to avoid
+	// packing+unpacking and shifting after gathering words?
+	using idx_traits = vector_type_traits<int_type_of_size_t<
+	    sizeof(index_type)/Tr::VL>,sizeof(index_type)>;
+	using int_traits = vector_type_traits_vl<uint32_t,Tr::VL>;
+	auto dm = idx_traits::divmod3( idx );
+	auto div = dm.a;
+	auto off = idx_traits::mul( dm.b, idx_traits::set1( E+M ) );
+	auto raw = enc_traits<Tr::VL>::gather( base, div, mask );
+	auto coff = conversion_traits<
+	    typename idx_traits::member_type,
+	    typename int_traits::member_type,
+	    Tr::VL>::convert( off );
+	auto shf = enc_traits<Tr::VL>::srl( raw, coff );
+	auto wid = conversion_traits<
+	    typename enc_traits<Tr::VL>::member_type,
+	    typename int_traits::member_type,
+	    Tr::VL>::convert( shf );
+
+	// From now on, should be working on 32-bit elements
+	// TODO: simplify sequence cvt_ methods ...?
+	static_assert( int_traits::W == 4, "expect 32-bit elements" );
+	const auto one = int_traits::setone();
+	const auto msk = int_traits::srl( one, 32-(E+M) );
+	const auto exp = int_traits::sll(
+	    int_traits::srl( one, 32-((8-E)-1) ), E+M );
+	auto num = int_traits::logical_or(
+	    int_traits::logical_and( wid, msk ), exp );
+	auto fin = int_traits::sll( num, 23-M );
+	auto fp32 = int_traits::castfp( fin );
+
+	return fp32;
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val ) {
+	// would be better to fuse gather and conversion operations to avoid
+	// packing+unpacking and shifting after gathering words?
+	assert( 0 && "NYI" );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val,
+	     mask_type mask ) {
+	// would be better to fuse gather and conversion operations to avoid
+	// packing+unpacking and shifting after gathering words?
+	assert( 0 && "NYI" );
+    }
+
+    [[deprecated("replaced by template version for correctness")]]
+    static bool cas( volatile storage_type * addr,
+		     stored_type old, stored_type val ) {
+	assert( 0 && "NYI" );
+	return false;
+    }
+
+    template<typename Tr>
+    static bool cas( volatile storage_type * addr,
+		     typename Tr::member_type old,
+		     typename Tr::member_type val ) {
+	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
+	assert( 0 && "NYI" );
+    }
+};
+
 template<>
 struct array_encoding<void> {
     using stored_type = void;
