@@ -9,6 +9,8 @@
 
 #include "graptor/utils.h"
 #include "graptor/itraits.h"
+#include "graptor/customfp.h"
+#include "graptor/vcustomfp.h"
 #include "graptor/bitfield.h"
 #include "graptor/target/decl.h"
 
@@ -374,13 +376,15 @@ struct vfp_traits_select<
 #if __SSE4_2__
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 16)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 16)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = sse42_4fx4<T>;
 };
 
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 16)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 16)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = sse42_8fx2<T>;
 };
 #endif
@@ -388,13 +392,15 @@ struct vfp_traits_select<
 #if __AVX2__
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 32)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 32)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = avx2_4fx8<T>;
 };
 
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 32)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 32)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = avx2_8fx4<T>;
 };
 #endif // __AVX2__
@@ -402,16 +408,105 @@ struct vfp_traits_select<
 #if __AVX512F__
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 64)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 64)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = avx512_4fx16<T>;
 };
 
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 64)>> {
+    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 64)
+			      && !is_customfp_v<T> && !is_vcustomfp_v<T>>> {
     using type = avx512_8fx8<T>;
 };
 #endif // __AVX512F__
+
+} // namespace target
+
+#include "graptor/target/customfp_21x3.h"
+#include "graptor/target/customfp_21x12.h"
+#include "graptor/target/customfp_21x24.h"
+
+namespace target {
+
+#if __MMX__
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,
+    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
+		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16
+		      && nbytes == 8)>> {
+    using type = mmx_2x4<detail::customfp_em<S,E,M,Z,B>>;
+};
+
+template<typename Cfg, unsigned short nbytes>
+struct vfp_traits_select<
+    vcustomfp<Cfg>,nbytes,
+    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
+		      && nbytes == 8)>> {
+    using type = mmx_2x4<vcustomfp<Cfg>>;
+};
+#endif // __MMX__
+
+#if __SSE4_2__
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,
+    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
+		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16 && nbytes == 16)>> {
+    using type = target::sse42_2x8<detail::customfp_em<S,E,M,Z,B>>;
+};
+
+template<typename Cfg, unsigned short nbytes>
+struct vfp_traits_select<
+    vcustomfp<Cfg>,nbytes,
+    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
+		      && nbytes == 16)>> {
+    using type = sse42_2x8<vcustomfp<Cfg>>;
+};
+#endif // __SSE4_2__
+
+#if __AVX2__
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,
+    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
+		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16 && nbytes == 32)>> {
+    using type = target::avx2_2x16<detail::customfp_em<S,E,M,Z,B>>;
+};
+
+template<typename Cfg, unsigned short nbytes>
+struct vfp_traits_select<
+    vcustomfp<Cfg>,nbytes,
+    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
+		      && nbytes == 32)>> {
+    using type = avx2_2x16<vcustomfp<Cfg>>;
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 8>> {
+    using type = target::customfp_21x3<E,M>;
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 32>> {
+    using type = target::customfp_21x12<E,M>;
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vfp_traits_select<
+    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 64>> {
+    using type = target::customfp_21x24<E,M>;
+};
+#endif // __AVX2__
 
 } // namespace target
 
@@ -421,10 +516,11 @@ struct vfp_traits_select<
 template<typename T, unsigned short nbytes>
 using vector_type_int_traits =
     typename target::vint_traits_select<T,nbytes>::type;
-    
+
 template<typename T, unsigned short nbytes>
 struct vector_type_traits<
-    T,nbytes,std::enable_if_t<std::is_floating_point<T>::value>>
+    T,nbytes,std::enable_if_t<std::is_floating_point<T>::value
+			      || is_vcustomfp_v<T> || is_customfp_v<T>>>
     : public target::vfp_traits_select<T,nbytes>::type { };
 
 /***********************************************************************
@@ -486,6 +582,24 @@ struct vector_type_traits_vl<bitfield<2>,VL> :
 template<unsigned short VL>
 struct vector_type_traits_vl<bitfield<4>,VL> :
     public vector_type_traits<bitfield<4>,VL/2> {
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+struct vector_type_traits_vl<detail::customfp_em<S,E,M,Z,B>,3,
+			     std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size==21>> :
+    public vector_type_traits<detail::customfp_em<S,E,M,Z,B>, 8> {
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+struct vector_type_traits_vl<detail::customfp_em<S,E,M,Z,B>,12,
+			     std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size==21>> :
+    public vector_type_traits<detail::customfp_em<S,E,M,Z,B>, 32> {
+};
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+struct vector_type_traits_vl<detail::customfp_em<S,E,M,Z,B>,24,
+			     std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size==21>> :
+    public vector_type_traits<detail::customfp_em<S,E,M,Z,B>, 64> {
 };
 
 #include "graptor/target/conversion.h"

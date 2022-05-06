@@ -64,7 +64,11 @@ public:
 	default:
 	    assert( 0 && "should not get here" );
 	}
-	return static_cast<member_type>( b );
+	if constexpr ( is_customfp_v<member_type> )
+	    return member_type(
+		static_cast<typename member_type::int_type>( b ) );
+	else
+	    return static_cast<member_type>( b );
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
@@ -103,17 +107,21 @@ public:
     }
     
     static type add( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return _mm_add_pi16( a, b );
     }
 
     static type sub( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return _mm_sub_pi16( a, b );
     }
 
     static type min( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return blend( cmpgt( a, b, mt_vmask() ), a, b );
     }
     static type max( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return blend( cmpgt( a, b, mt_vmask() ), b, a );
     }
 

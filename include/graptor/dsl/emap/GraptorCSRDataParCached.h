@@ -6,11 +6,11 @@ template<unsigned short VL, typename GraphType,
 	 typename Extractor,
 	 typename VExpr, typename MVExpr, typename VCache,
 	 typename Cache,
-	 typename Environment, typename Config, graptor_mode_t Mode>
+	 typename Environment, typename Config>
 __attribute__((flatten))
 static inline VID GraptorCSRDataParCached(
     const GraphType & GA,
-    const GraphCSRSIMDDegreeMixed<Mode> & GP,
+    const GraphCSRSIMDDegreeMixed & GP,
     int p,
     const partitioner & part,
     const Extractor extractor,
@@ -49,7 +49,8 @@ static inline VID GraptorCSRDataParCached(
 	// assert( vdst.at(0) < GA.numVertices() );
 
 #if GRAPTOR_CSR_INDIR == 0
-	auto vsrc = simd::create_set1inc<vid_type,true>( sidx );
+	simd_vector<VID, VL> vsrc;
+	vsrc.set1inc0();
 #else
 	// load vsrc from redir array on the basis of scalar index
 	// vsrc should be lo_unknown and trigger gather instruction later on
@@ -101,8 +102,7 @@ static inline VID GraptorCSRDataParCached(
 		    expr::create_entry<expr::vk_mask>( vmask ),
 		    expr::create_entry<expr::vk_src>( vsrc ),
 		    expr::create_entry<expr::vk_dst>( vdst ) );
-		auto mpack = expr::sb::create_mask_pack( vdst != vmask );
-		auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
+		auto rval_output = expr::evaluate( c, m, m_vexpr );
 		// output.lor_assign( rval_output.mask() );
 
 		// Proceed to next vector of sources
@@ -130,7 +130,7 @@ template<unsigned short VL, graptor_mode_t M, typename VExpr, typename MVExpr,
 static inline void GraptorCSRDataParCachedDriver(
     const GraphVEBOGraptor<M> & GA,
     int p,
-    const GraphCSRSIMDDegreeMixed<M> & GP,
+    const GraphCSRSIMDDegreeMixed & GP,
     const partitioner & part,
     const VExpr & vexpr,
     const MVExpr & m_vexpr,

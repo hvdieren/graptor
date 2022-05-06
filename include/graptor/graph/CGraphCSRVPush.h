@@ -1,10 +1,9 @@
 // -*- c++ -*-
-#ifndef GRAPTOR_GRAPH_CGRAPHCSRSIMDDEGREEMIXED_H
-#define GRAPTOR_GRAPH_CGRAPHCSRSIMDDEGREEMIXED_H
+#ifndef GRAPTOR_GRAPH_CGRAPHCSRVPUSH_H
+#define GRAPTOR_GRAPH_CGRAPHCSRVPUSH_H
 
 #include <cstdlib>
 
-#include "graptor/mm.h"
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/GraphCSx.h"
 
@@ -24,7 +23,7 @@
 #if GRAPTOR_CSR_INDIR
 #define GRAPTOR_SKIP_BITS 0
 #else
-#define GRAPTOR_SKIP_BITS 0
+#define GRAPTOR_SKIP_BITS 8
 #endif
 #endif // GRAPTOR_SKIP_BITS
 
@@ -38,16 +37,6 @@
 #ifndef GRAPTOR_DEG12
 #define GRAPTOR_DEG12 0
 #endif // GRAPTOR_DEG12
-
-template<typename fVID>
-struct SortByDecrDegStable {
-    SortByDecrDegStable( fVID * degp_ ) : degp( degp_ ) { }
-    bool operator () ( fVID l, fVID r ) const {
-	return degp[l] == degp[r] ? l < r : degp[l] > degp[r];
-    }
-private:
-    fVID * degp;
-};
 
 
 // GraptorVReduce is a special case of this with nelm == G.n
@@ -80,7 +69,7 @@ public:
 	const fVID * edg = Gcsr.getEdges();
 	    
 	fVID maxdeg = gtraits_getmaxoutdegree<GraphCSx>(Gcsr).getMaxOutDegree();
-	fVID * buf = new fVID[maxdeg]; // pessimistically sized
+	fVID * buf = new fVID[maxVL*maxdeg]; // pessimistically sized
 
 	// All vector lanes map to same destination
 	fEID nxt = 0;
@@ -96,7 +85,7 @@ public:
 		    buf[ldeg++] = w;
 	    }
 	    std::sort( &buf[0], &buf[ldeg] );
-	    assert( ldeg <= maxdeg );
+	    assert( ldeg <= maxVL * maxdeg );
 
 	    fVID deg = ldeg + maxVL - ( ((ldeg-1) % maxVL) + 1 );
 	    if( deg == 0 ) // record a vector with all lanes disabled for consistency
@@ -117,96 +106,6 @@ public:
 	return nxt;
     }
 
-    template<bool AnalyseMode>
-    fEID process( const GraphCSx & Gcsr,
-		  const partitioner & part,
-		  unsigned int p,
-#if GRAPTOR_CSR_INDIR == 1
-		  fVID * redir,
-		  fVID redir_nnz,
-#endif
-		  fVID * edges_,
-		  fEID * starts_ ) {
-	// Record edges for auxiliary function
-	edges = edges_;
-	// starts = starts_;
-
-	// Process relevant edges and either calculate storage requirement
-	// or construct graph representation.
-	const fVID nelm = part.get_num_elements();
-	const fVID n = nelm;
-	const fVID norig = Gcsr.numVertices();
-	const fVID lo = part.start_of( p );
-	const fVID hi = part.end_of( p );
-	assert( norig <= n );
-	const fEID * idx = Gcsr.getIndex();
-	const fVID * edg = Gcsr.getEdges();
-	    
-	// TODO: This can be optimised such that the values are immediately
-	//       written to the final data structure instead of writing to buf.
-	//       A second pass then updates only the degree bits. The second
-	//       pass is necessary as we don't know the degree at the start.
-	//       However, we do know there is sufficient space in the buffer.
-	fVID maxdeg = gtraits_getmaxoutdegree<GraphCSx>(Gcsr).getMaxOutDegree();
-	fVID * buf = new fVID[maxdeg]; // pessimistically sized
-
-#if GRAPTOR_CSR_INDIR == 1
-	fVID vmax = redir_nnz;
-#else
-	fVID vmax = n;
-#endif
-
-	// All vector lanes map to same destination
-	fEID nxt = 0;
-	for( fVID v=0; v < vmax; v++ ) {
-	    // for( fVID v=0; v < n; v++ ) { // TODO: introduce skip values
-#if GRAPTOR_CSR_INDIR == 1
-	    if( redir[v] == n )
-		break;
-	    fVID r = redir[v];
-#else
-	    fVID r = v;
-#endif
-	    fVID mldeg = idx[r+1] - idx[r];
-
-	    fVID ldeg = 0;
-	    for( fVID j=0; j < mldeg; ++j ) {
-		fVID w = edg[idx[r]+j];
-		if( lo <= w && w < hi )
-		    buf[ldeg++] = w;
-	    }
-	    // std::sort( &buf[0], &buf[ldeg] ); -- redundant
-	    assert( ldeg <= maxdeg );
-
-	    fVID deg = ldeg + maxVL - ( ((ldeg-1) % maxVL) + 1 );
-#if GRAPTOR_CSR_INDIR == 0
-	    if( deg == 0 ) // record a vector with all lanes disabled for consistency
-		deg = maxVL;
-#else
-	    if( ldeg == 0 ) // skip zero-degree vertices
-		continue;
-#endif
-
-	    // Proceed in groups of vector width
-	    for( fVID j=0; j < deg; j += maxVL ) {
-		for( unsigned short l=0; l < maxVL; ++l ) {
-		    if( j+l < ldeg )
-			record<AnalyseMode>( nxt + j + l, j, l, buf[j+l], deg );
-		    else {
-			record<AnalyseMode>( nxt + j + l, j, l, vmask, deg );
-			++ninv;
-		    }
-		}
-	    }
-	    nxt += deg;
-	}
-
-	delete[] buf;
-
-	return nxt;
-    }
-
-
     bool success() const { return overflows == 0; }
     fEID nOverflows() const { return overflows; }
     fEID nBytes() const { return size; }
@@ -223,17 +122,18 @@ private:
 		overflows++;
 	} else {
 #if GRAPTOR_CACHED == 1
-	    // Only record degree information in first vector of a run
-	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) == 0 ) {
-		fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
-		if( deg3 > (dmax/2-1) )
-		    deg3 = dmax/2-1;
-		fVID d = deg3 >> (lane * dbpl);
-		d &= ( fVID(1) << dbpl ) - 1;
+	    // Only record degree information in first vector of a word
+	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) != 0 )
+		return;
 
-		value &= vmask;
-		value |= d << ( sizeof(fVID) * 8 - dbpl );
-	    }
+	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+	    if( deg3 > (dmax/2-1) )
+		deg3 = dmax/2-1;
+	    fVID d = deg3 >> (lane * dbpl);
+	    d &= ( fVID(1) << dbpl ) - 1;
+
+	    value &= vmask;
+	    value |= d << ( sizeof(fVID) * 8 - dbpl );
 	    edges[pos] = value;
 #else
 	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
@@ -259,6 +159,133 @@ private:
 };
 
 template<typename fVID, typename fEID, unsigned short DegreeBits>
+class GraptorVPush2 {
+public:
+    GraptorVPush2( unsigned short maxVL_ )
+	: maxVL( maxVL_ ),
+	  dbpl( BitsPerLane<DegreeBits>( maxVL ) ),
+	  vmask( (fVID(1)<<(sizeof(fVID)*8-dbpl))-1 ),
+	  dmax( fVID(1) << (dbpl*maxVL) ),
+	  overflows( 0 ), size( 0 ), ninv( 0 ), edges( nullptr ) { }
+
+    template<typename Remapper>
+    fEID mk_index( const GraphCSx & Gcsr,
+		   const partitioner & part,
+		   unsigned int p,
+		   Remapper remap ) {
+	// Construct the remap array
+	fVID nelm = part.get_num_elements();
+    }
+
+    template<bool AnalyseMode, typename Remapper>
+    fEID process( const GraphCSx & Gcsr,
+		  fVID lo, fVID hi, fVID nelm,
+		  unsigned int p,
+		  Remapper remap,
+		  fVID * edges_ ) {
+	// Record edges for auxiliary function
+	edges = edges_;
+
+	// Process relevant edges and either calculate storage requirement
+	// or construct graph representation.
+	fVID n = nelm;
+	fVID norig = Gcsr.numVertices();
+	assert( norig <= n );
+	const fEID * idx = Gcsr.getIndex();
+	const fVID * edg = Gcsr.getEdges();
+	    
+	fVID maxdeg = gtraits_getmaxoutdegree<GraphCSx>(Gcsr).getMaxOutDegree();
+	fVID * buf = new fVID[maxVL*maxdeg]; // pessimistically sized
+
+	// All vector lanes map to same destination
+	fEID nxt = 0;
+	for( fVID v=0; v < n; v++ ) { // ERROR - missing sources
+	    // for( fVID v=0; v < n; v++ ) { // TODO: introduce skip values
+	    fVID r = remap.origID(v);
+	    fVID mldeg = r < norig ? idx[r+1] - idx[r] : 0;
+
+	    fVID ldeg = 0;
+	    for( fVID j=0; j < mldeg; ++j ) {
+		fVID w = remap.remapID( edg[idx[r]+j] );
+		if( lo <= w && w < hi )
+		    buf[ldeg++] = w;
+	    }
+	    std::sort( &buf[0], &buf[ldeg] );
+	    assert( ldeg <= maxVL * maxdeg );
+
+	    fVID deg = ldeg + maxVL - ( ((ldeg-1) % maxVL) + 1 );
+	    if( deg == 0 ) // record a vector with all lanes disabled for consistency
+		deg = maxVL;
+
+	    // Proceed in groups of vector width
+	    for( fVID j=0; j < deg; j += maxVL ) {
+		for( unsigned short l=0; l < maxVL; ++l ) {
+		    fVID val = j+l < ldeg ? buf[j+l] : vmask;
+		    record<AnalyseMode>( nxt + j + l, j, l, val, deg );
+		}
+	    }
+	    nxt += deg;
+	}
+
+	delete[] buf;
+
+	return nxt;
+    }
+
+    bool success() const { return overflows == 0; }
+    fEID nOverflows() const { return overflows; }
+    fEID nBytes() const { return size; }
+    fEID nInvalid() const { return ninv; }
+
+private:
+    template<bool AnalyseMode>
+    void record( fEID pos, fVID seq, fVID lane, fVID value, fVID deg ) {
+	if( AnalyseMode ) {
+	    size += sizeof(fVID);
+	    if( (value & vmask) == vmask )
+		ninv++;
+	    if( value & ~vmask )
+		overflows++;
+	} else {
+#if GRAPTOR_CACHED == 1
+	    // Only record degree information in first vector of a word
+	    if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) != 0 )
+		return;
+
+	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+	    if( deg3 > (dmax/2-1) )
+		deg3 = dmax/2-1;
+	    fVID d = deg3 >> (lane * dbpl);
+	    d &= ( fVID(1) << dbpl ) - 1;
+
+	    value &= vmask;
+	    value |= d << ( sizeof(fVID) * 8 - dbpl );
+	    edges[pos] = value;
+#else
+	    fVID deg3 = (deg/maxVL - seq/maxVL - 1) / GRAPTOR_DEGREE_MULTIPLIER;
+	    if( deg3 > (dmax-1) )
+		deg3 = dmax-1;
+	    fVID d = deg3 >> (lane * dbpl);
+	    d &= ( fVID(1) << dbpl ) - 1;
+
+	    value &= vmask;
+	    value |= d << ( sizeof(fVID) * 8 - dbpl );
+	    edges[pos] = value;
+#endif
+	}
+    }
+
+private:
+    const unsigned short maxVL, dbpl;
+    const fVID vmask, dmax;
+    fEID overflows;
+    fEID size;
+    fEID ninv;
+    fVID * edges;
+};
+
+
+template<typename fVID, typename fEID, unsigned short DegreeBits>
 class GraptorCSRDataPar {
 public:
     GraptorCSRDataPar( unsigned short maxVL_ )
@@ -275,13 +302,11 @@ public:
 		  fVID vslim, fVID nelm,
 		  Remapper remap,
 		  fVID * edges_,
-		  fEID * starts_ ,
 		  const fVID * redir, fVID redir_nnz,
 		  const partitioner & part ) {
 	// Calculate dimensions of SIMD representation
 	// Record edges for auxiliary function
 	edges = edges_;
-	starts = starts_;
 
 	// Process relevant edges and either calculate storage requirement
 	// or construct graph representation.
@@ -310,8 +335,6 @@ public:
 	// Each vector lane is a subsequent destination
 	for( fVID vi=0; vi < vmax; vi += maxVL ) {
 	    const fVID * va = &redir[vi];
-	    if constexpr ( !AnalyseMode )
-		starts[/*(vi-lo)*/vi/maxVL] = nxt;
 	    
 	    // Calculate the maximum degree required to store this batch
 	    // of edges originating from the next maxVL vertices and pointing
@@ -484,6 +507,16 @@ public:
     fEID nBytes() const { return size; }
     fEID nInvalid() const { return ninv; }
 
+private:
+    struct SortByDecrDegStable {
+	SortByDecrDegStable( fVID * degp_ ) : degp( degp_ ) { }
+	bool operator () ( fVID l, fVID r ) const {
+	    return degp[l] == degp[r] ? l < r : degp[l] > degp[r];
+	}
+    private:
+	fVID * degp;
+    };
+
 public:
     template<typename Remapper>
     std::pair<mmap_ptr<VID>,VID>
@@ -525,7 +558,7 @@ public:
 	// TODO: Can we be more intelligent here? Look at common destinations?
 	//       Or uncommon destinations to avoid padding?
 	//       Sort lexicographically for tied degrees?
-	std::sort( &imap[0], &imap[n], SortByDecrDegStable<fVID>( degp ) );
+	std::sort( &imap[0], &imap[n], SortByDecrDegStable( degp ) );
 
 	// Calculate number of remapped vertices (iteration index range for
 	// edgemap; inuse for the remapped partitioner)
@@ -545,9 +578,9 @@ public:
 	// TODO: use mmap_ptr and can we extend ifc to trim using munmap?
 	mmap_ptr<VID> rmap;
 	if( allocation == -1 )
-	    rmap.allocate( nnz_alc, numa_allocation_interleaved() );
+	    rmap.Interleave_allocate( nnz_alc, nnz_alc*sizeof(VID) );
 	else
-	    rmap.allocate( nnz_alc, numa_allocation_local( allocation ) );
+	    rmap.local_allocate( nnz_alc, nnz_alc*sizeof(VID), allocation );
 
 	parallel_for( fVID v=0; v < nnz; ++v )
 	    rmap[v] = imap[v];
@@ -583,7 +616,7 @@ private:
 #endif
 #if GRAPTOR_CACHED == 1
 	    // Only record degree information in first vector of a word
-	if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax/2))) != 0 )
+	if( (seq % (GRAPTOR_DEGREE_MULTIPLIER*(dmax-1))) != 0 )
 	    return;
 #endif
 	    
@@ -591,10 +624,8 @@ private:
 
 	fVID lane = pos % maxVL;
 	fVID deg3 = (deg - seq - 1) / GRAPTOR_DEGREE_MULTIPLIER;
-	if( deg3 > (dmax/2-1) )
-	    deg3 = (dmax/2-1) << 1;
-	else
-	    deg3 = (deg3 << 1) | 1;
+	if( deg3 > (dmax-1) )
+	    deg3 = dmax-1;
 	fVID d = deg3 >> (lane * dbpl);
 	d &= ( fVID(1) << dbpl ) - 1;
 
@@ -622,7 +653,6 @@ public:
     const fVID vmask, dmax;
     fEID overflows, size, ninv;
     fVID * edges;
-    fEID * starts;
 };
 
 /**
@@ -646,11 +676,7 @@ class GraphCSRSIMDDegreeMixed {
 		   has size sizeof(VID) * maxVL. This encoding is most
 		   beneficial for lower-degree vertices. It is not applied for
 		   SIMD groups where all vertices have degree 2 or less. */
-    EID mv1;	//!< Number of SIMD groups as in mvdpar but with degree 2.
-    EID mv2;	//!< Number of SIMD groups as in mvdpar but with degree 1.
-    EID ninvd1; //!< Number of unused SIMD lanes in mvd1
-    EID ninvdpar; //!< Number of unused SIMD lanes in mvdpar
-    EID nbytes;
+    EID ninv;   //!< Number of unused SIMD lanes in mvd1
     VID vslim;
 #if GRAPTOR_CSR_INDIR == 1
     mmap_ptr<VID> redir; //!< Map implicit indices to vertices
@@ -658,7 +684,6 @@ class GraphCSRSIMDDegreeMixed {
 #endif
     unsigned short maxVL;
     mmap_ptr<VID> edges;
-    mmap_ptr<EID> starts;
 
     static constexpr unsigned short DegreeBits = GRAPTOR_DEGREE_BITS;
     static constexpr unsigned short SkipBits = GRAPTOR_SKIP_BITS;
@@ -671,7 +696,6 @@ public:
 #if GRAPTOR_CSR_INDIR == 1
 	redir.del();
 #endif
-	starts.del();
     }
     template<typename Remapper>
     void import( const GraphCSx & Gcsc,
@@ -682,10 +706,6 @@ public:
 		 Remapper remap,
 		 int allocation ) {
 	maxVL = maxVL_;
-
-#if GRAPTOR_EXTRACT_OPT
-	assert( maxVL == GRAPTOR_DEGREE_BITS && "restriction" );
-#endif // GRAPTOR_CSC
 
 	VID lo = part.start_of(p);
 	VID hi = part.end_of(p);
@@ -777,7 +797,6 @@ public:
 	    GraptorCSRDataPar<VID,EID,DegreeBits> size_dpar( maxVL );
 	    fmt_d1_dpar<true>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
 			       remap, nullptr, nullptr, size_d1, size_dpar,
-			       starts.get(), &starts[(vslim-lo)/maxVL],
 #if GRAPTOR_CSR_INDIR == 1
 			       redir, redir_nnz,
 #endif
@@ -845,7 +864,6 @@ public:
 	    GraptorCSRDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
 	    fmt_d1_dpar<false>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
 				remap, edges.get(), &edges[mvd1], enc_d1, enc_dpar,
-				starts.get(), &starts[(vslim-lo)/maxVL],
 #if GRAPTOR_CSR_INDIR == 1
 				redir, redir_nnz,
 #endif
@@ -853,13 +871,13 @@ public:
 	}
     }
 
-#if GRAPTOR_CSC == 0 && GRAPTOR == 1
+#if 1
     // VPush only. SIMD edge groups/partition and NNZ/partition
     // These statistics are correct also in case of GRAPTOR_CSR_INDIR
     static std::pair<const EID *,const VID *>
     space_from_csr( const GraphCSx & Gcsr,
 		    const partitioner & part,
-		    unsigned short maxVL ) {
+		    unsigned short maxVL_ ) {
 	// Calculate the number of edges, counted by full SIMD groups,
 	// required to store each partition of the graph.
 	const unsigned int np = part.get_num_partitions();
@@ -874,69 +892,26 @@ public:
 	const EID * idx = Gcsr.getIndex();
 	const VID * edg = Gcsr.getEdges();
 
+#if GRAPTOR_CSR_INDIR == 1
+#error "INDIR case not currently supported"
+#endif
+	
 	parallel_for( VID v=0; v < n; ++v ) {
 	    VID deg = idx[v+1] - idx[v];
-
-#if GRAPTOR_CSR_INDIR == 0
-	    if( deg <= maxVL ) { // special case, easily predicted impact
-		// one word per zero-degree vertex
-		for( unsigned int p=0; p < np; ++p )
-		    __sync_fetch_and_add( &count[p], 1 );
+	    VID * vcnt = new VID[np]; // each entry limited by degree, fits VID
+	    std::fill( &vcnt[0], &vcnt[np], VID(0) );
+	    for( VID d=0; d < deg; ++d ) {
+		unsigned int p = part.partition_of( edg[idx[v]+d] );
+		vcnt[p]++;
 	    }
-#else
-	    if( deg == 0 ) { // special case, nothing to do
-	    } else if( deg == 1 ) { // special case
-		// only one partition takes vertex
-		unsigned int p = part.part_of( edg[idx[v]] );
-		__sync_fetch_and_add( &count[p], 1 );
-		__sync_fetch_and_add( &nnz[p], 1 );
-	    } else if( deg == 2 ) { // special case
-		unsigned int p0 = part.part_of( edg[idx[v]] );
-		unsigned int p1 = part.part_of( edg[idx[v]+1] );
-		if( p0 == p1 ) { // only one partition takes vertex
-		    __sync_fetch_and_add( &count[p0], 1 );
-		    __sync_fetch_and_add( &nnz[p0], 1 );
-		} else { // each partition contains vertex
-		    __sync_fetch_and_add( &count[p0], 1 );
-		    __sync_fetch_and_add( &nnz[p0], 1 );
-		    __sync_fetch_and_add( &count[p1], 1 );
-		    __sync_fetch_and_add( &nnz[p1], 1 );
-		}
+	    for( unsigned int p=0; p < np; ++p ) {
+		VID c = vcnt[p];
+		if( c > 0 )
+		    ++nnz[p];
+		c = ( c + maxVL - 1 ) / maxVL;
+		count[p] += c;
 	    }
-#endif
-	    else {
-		VID * vcnt = new VID[np]; // each entry limited by degree, fits VID
-		std::fill( &vcnt[0], &vcnt[np], VID(0) );
-		for( VID d=0; d < deg; ++d ) {
-		    unsigned int p = part.part_of( edg[idx[v]+d] );
-		    vcnt[p]++;
-		}
-		for( unsigned int p=0; p < np; ++p ) {
-		    VID c = vcnt[p];
-#if GRAPTOR_CSR_INDIR == 1
-		    if( c > 0 )
-			__sync_fetch_and_add( &nnz[p], 1 );
-#else
-		    if( c == 0 ) // at least one SIMD word/vertex
-			c = 1;
-#endif
-		    c = ( c + maxVL - 1 ) / maxVL;
-		    __sync_fetch_and_add( &count[p], c );
-		}
-		delete[] vcnt;
-	    }
-	}
-
-#if GRAPTOR_CSR_INDIR == 0
-	for( unsigned int p=0; p < np; ++p ) {
-	    nnz[p] = n;
-	    assert( count[p] >= n ); // at least one SIMD word/vertex
-	}
-#endif
-
-	for( unsigned int p=0; p < np; ++p ) {
-	    if( nnz[p] % maxVL != 0 )
-		nnz[p] += maxVL - ( nnz[p] % maxVL );
+	    delete[] vcnt;
 	}
 
 	return std::make_pair( count, nnz );
@@ -947,8 +922,6 @@ public:
 		     const partitioner & part,
 		     unsigned int p,
 		     unsigned short maxVL_,
-		     EID mv_, // pre-calculated
-		     VID redir_nnz_, // pre-calculated
 		     Allocation allocation ) {
 	maxVL = maxVL_;
 
@@ -986,25 +959,98 @@ public:
 #endif
 
 	// Figure out cut-off vertex
-	// mv is pre-calculated
-	mv = mvd1 = mv_ * maxVL;
-	mvdpar = mv1 = mv2 = 0;
+	mv = mvd1 = mvdpar = mv1 = mv2 = 0;
+#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+	vslim = hi;
+	for( VID v=hi; v > lo; v-- ) { // Assumes VEBO
+	    VID r = v-1; // loop index shifted by -1
+	    VID deg = idx[r+1] - idx[r];
+	    if( deg > 0 ) {
+		vslim = v; // upper bound, deg[vslim] == 0
+		break;
+	    }
+	}
+#elif (GRAPTOR & GRAPTOR_WITH_REDUCE) == 0
+	vslim = lo;
+#else
+	// Cut-off point for d1 vs dpar
+	const VID threshold = GRAPTOR_THRESHOLD_MULTIPLIER * maxVL;
 
-	// TODO: not required ...?
-	vslim = n;
+	vslim = lo+nv;
+	for( VID v=lo; v < hi; v++ ) { // TODO: take steps of maxVL
+	    // Traverse vertices in order of decreasing degree
+	    VID r = v;
+	    VID deg = idx[r+1] - idx[r];
+	    if( deg < threshold ) { // threshold - evaluate
+		vslim = std::max( lo, v - ( v % maxVL ) );
+		break;
+	    }
+	}
+#endif // GRAPTOR_BY_VERTEX
+
 	// Round up vslim to next multiple of maxVL
 	if( vslim % maxVL != 0 )
 	    vslim += maxVL - ( vslim % maxVL );
 
-	// We pre-calculated the sizes:
-	nbytes = sizeof(VID) * mv;
 #if GRAPTOR_CSR_INDIR == 1
-	redir_nnz = redir_nnz_;
+	{
+	    GraptorCSRDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
+	    std::pair<mmap_ptr<VID>, VID> pair
+		= enc_dpar.reorder( Gcsc, p, maxVL, nelm, remap, part, allocation );
+	    redir = pair.first;
+	    redir_nnz = pair.second;
+	}
 #endif
-	allocate( allocation );
 
+	// Count number of required edges to store graph
+	{
+	    GraptorVPush<VID,EID,DegreeBits> size_d1( maxVL );
+	    GraptorCSRDataPar<VID,EID,DegreeBits> size_dpar( maxVL );
+	    fmt_d1_dpar<true>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
+			       remap, nullptr, nullptr, size_d1, size_dpar,
 #if GRAPTOR_CSR_INDIR == 1
-	reorder( Gcsr, part, p, nelm );
+			       redir, redir_nnz,
+#endif
+			       part );
+	    nbytes = size_d1.nBytes() + size_dpar.nBytes();
+	    mvd1 = size_d1.nBytes() / sizeof(VID);
+	    assert( mvd1 * sizeof(VID) == size_d1.nBytes() );
+	    mvdpar = size_dpar.nBytes() / sizeof(VID);
+	    assert( mvdpar * sizeof(VID) == size_dpar.nBytes() );
+	    mv = mvd1 + mvdpar;
+
+	    ninvd1 = size_d1.nInvalid();
+	    ninvdpar = size_dpar.nInvalid();
+	}
+
+#if GRAPTOR_DEG12
+	// Traverse backwards for efficiency. Based on assumption that
+	// vertices are degree-sorted.
+	for( VID v=lo+nv; v > lo; v -= maxVL ) {
+	    // VID r = remap.first[v-maxVL];
+	    VID r = remap.origID( v-maxVL );
+	    VID deg = idx[r+1] - idx[r];
+	    if( deg == 2 )
+		mv2 += 2 * maxVL;
+	    else if( deg == 1 )
+		mv1 += maxVL;
+	    else if( deg > 2 ) {
+#if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0 && (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+		vslim = v; // adjust vslim
+		// std::cerr << "adjust vslim=" << vslim << "\n";
+#endif
+		break;
+	    }
+	}
+#if (GRAPTOR & GRAPTOR_WITH_SELL) != 0
+	mvdpar -= mv1 + mv2;
+#endif
+	assert( mv1 <= mv );
+	assert( mv2 <= mv );
+#endif
+
+#if (GRAPTOR & GRAPTOR_WITH_SELL) == 0
+	assert( mvdpar == 0 );
 #endif
 
 	// std::cerr << "mv=" << mv
@@ -1017,81 +1063,24 @@ public:
 		  // << "\nninvdpar=" << ninvdpar
 		  // << "\n";
 
-	// Encode...
+	// Allocate data structures
+	if( allocation == -1 )
+	    allocateInterleaved();
+	else
+	    allocateLocal( allocation );
+
+	// Now that we know that the degree bits are available, encode degrees.
 	{
 	    GraptorVPush<VID,EID,DegreeBits> enc_d1( maxVL );
-	    EID ne = enc_d1.template process<false>(
-		Gcsr, part, p,
-#if GRAPTOR_CSR_INDIR == 1
-		redir.get(), redir_nnz,
-#endif
-		edges, starts );
-	    assert( enc_d1.success() );
-	    assert( ne == mvd1 );
-/*
 	    GraptorCSRDataPar<VID,EID,DegreeBits> enc_dpar( maxVL );
-	    fmt_d1_dpar<false>( Gcsr, p, lo, hi, nelm, vslim, maxVL,
+	    fmt_d1_dpar<false>( Gcsc, p, lo, hi, nelm, vslim, maxVL,
 				remap, edges.get(), &edges[mvd1], enc_d1, enc_dpar,
 #if GRAPTOR_CSR_INDIR == 1
 				redir, redir_nnz,
 #endif
 				part );
-*/
-
-	    ninvd1 = enc_d1.nInvalid();
-	    ninvdpar = 0;
-
 	}
     }
-
-#if GRAPTOR_CSR_INDIR == 1
-    void reorder( const GraphCSx & Gcsr,
-		  const partitioner & part,
-		  unsigned int p,
-		  VID nelm ) {
-	VID n = nelm;
-	VID norig = Gcsr.numVertices();
-	VID lo = part.start_of( p );
-	VID hi = part.end_of( p );
-	const EID * idx = Gcsr.getIndex();
-	const VID * edg = Gcsr.getEdges();
-
-	// In w = remap.first[v], v is the new vertex ID, w is the old one
-	// In v = remap.second[w], v is the new vertex ID, w is the old one
-
-	VID * degp = new VID[n+1];
-	VID * imap = redir.get();
-
-	VID ins = 0;
-	for( VID v=0; v < n; ++v ) {
-	    // Calculate the degree of each vertex within this partition
-	    VID r = v;
-	    VID mdeg = idx[r+1] - idx[r];
-	    VID deg = 0;
-	    for( VID j=0; j < mdeg; ++j ) {
-		VID w = edg[idx[r]+j];
-		if( lo <= w && w < hi )
-		    ++deg;
-	    }
-	    degp[v] = deg;
-
-	    // Construct a remapping array
-	    if( deg > 0 ) {
-		imap[ins++] = v;
-		assert( ins <= redir_nnz );
-	    }
-	}
-	// Redir_nnz is rounded up up to multiple of maxVL
-	assert( ins <= redir_nnz  && ins + maxVL > redir_nnz );
-	std::sort( &imap[0], &imap[ins], SortByDecrDegStable<VID>( degp ) );
-
-	for( VID i=ins; i < redir_nnz; ++i )
-	    imap[i] = n;
-
-	// Cleanup
-	delete[] degp;
-    }
-#endif
 #endif
 
 
@@ -1105,7 +1094,6 @@ private:
 		      Remapper remap,
 		      VID * edges_d1, VID * edges_dpar,
 		      Functor1 & fnc_d1, FunctorD & fnc_dpar,
-		      EID * starts_d1, EID * starts_dpar,
 #if GRAPTOR_CSR_INDIR == 1
 		      const VID * redir, VID redir_nnz,
 #endif
@@ -1114,7 +1102,7 @@ private:
 	// are 0-vslim/vslim-n and destinations are defined by partition
 	// start/end
 #if (GRAPTOR & GRAPTOR_WITH_REDUCE) != 0
-	fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, nelm, p, remap, edges_d1, starts_d1 );
+	fnc_d1.template process<EstimateMode>( Gcsc, lo, vslim, nelm, p, remap, edges_d1 );
 	assert( fnc_d1.success() );
 #endif
 
@@ -1123,7 +1111,7 @@ private:
 #error "GRAPTOR_CSR_INDIR currently required"
 #elif GRAPTOR_CSR_INDIR == 1
 	fnc_dpar.template process<EstimateMode>(
-	    Gcsc, p, vslim, nelm, remap, edges_dpar, starts_dpar,
+	    Gcsc, p, vslim, nelm, remap, edges_dpar,
 	    redir, redir_nnz, part );
 	assert( fnc_dpar.success() );
 #endif
@@ -1133,7 +1121,6 @@ private:
 public:
     VID *getEdges() { return edges.get(); }
     const VID *getEdges() const { return edges.get(); }
-    const EID *getStarts() const { return starts.get(); }
 
     VID numVertices() const { return n; }
     EID numEdges() const { return m; }
@@ -1170,23 +1157,10 @@ private:
 	assert( nbytes % esize == 0 );
 	edges.allocate( nbytes/sizeof(VID), esize, alc );
 #if GRAPTOR_CSR_INDIR
-	redir.allocate( redir_nnz, esize, alc );
+	redir.allocate( nbytes/sizeof(VID), esize, alc );
 #endif
-    }
-    
-    void allocateInterleaved() {
-	EID esize = sizeof(VID) * maxVL;
-	assert( nbytes % esize == 0 );
-	edges.allocate( nbytes/sizeof(VID), esize, numa_allocation_interleaved() );
-	starts.allocate( nv/maxVL, numa_allocation_interleaved() );
-    }
-    void allocateLocal( int numa_node ) {
-	EID esize = sizeof(VID) * maxVL;
-	assert( nbytes % esize == 0 );
-	edges.allocate( nbytes/sizeof(VID), esize, numa_allocation_local( numa_node ) );
-	starts.allocate( nv/maxVL, numa_allocation_local( numa_node ) );
     }
 };
 
 
-#endif // GRAPTOR_GRAPH_CGRAPHCSRSIMDDEGREEMIXED_H
+#endif // GRAPTOR_GRAPH_CGRAPHCSRVPUSH_H

@@ -40,18 +40,32 @@ public:
     using int_traits = mmx_2x4<int_type>;
     
     static type set1( member_type a ) {
-	return _mm_set1_pi16( a );
+	if constexpr ( is_customfp_v<member_type> )
+	    return _mm_set1_pi16( static_cast<unsigned short int>( a ) );
+	else
+	    return _mm_set1_pi16( a );
     }
     static type set( member_type a3, member_type a2,
 		     member_type a1, member_type a0 ) {
-	return _mm_set_pi16( a3, a2, a1, a0 );
+	if constexpr ( is_customfp_v<member_type> )
+	    return _mm_set_pi16(
+		static_cast<unsigned short>( a3 ),
+		static_cast<unsigned short>( a2 ),
+		static_cast<unsigned short>( a1 ),
+		static_cast<unsigned short>( a0 ) );
+	else
+	    return _mm_set_pi16( a3, a2, a1, a0 );
     }
     static type setzero() { return _mm_setzero_si64(); }
     static type setone( member_type a ) { set( 0xff, 0xff, 0xff, 0xff ); }
     static bool is_zero( type x ) { return _mm_cvtm64_si64( x ) == 0ULL; }
 
     static member_type lane( type a, int idx ) {
-	assert( 0 && "NYI" );
+	if constexpr ( is_customfp_v<member_type> )
+	    return member_type( (typename member_type::int_type)(
+				    (_mm_cvtm64_si64(a) >> idx*16) & 0xffUL ) );
+	else
+	    assert( 0 && "NYI" );
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
@@ -108,7 +122,10 @@ public:
 	using wint_traits = sse42_4x4<uint32_t>;
 	const char * p = reinterpret_cast<const char *>( a );
 	member_type zero;
-	zero = 0;
+	if constexpr ( is_customfp_v<member_type> )
+	    zero = member_type( typename member_type::int_type(0) );
+	else
+	    zero = 0;
 	return set(
 	    wint_traits::lane3(vmask)
 	    ? *reinterpret_cast<const member_type *>(
@@ -136,7 +153,10 @@ public:
 	using wint_traits = sse42_4x4<uint32_t>;
 	const char * p = reinterpret_cast<const char *>( a );
 	member_type zero;
-	zero = 0;
+	if constexpr ( is_customfp_v<member_type> )
+	    zero = member_type( typename member_type::int_type(0) );
+	else
+	    zero = 0;
 	return set(
 	    mtraits::lane3(mask)
 	    ? *reinterpret_cast<const member_type *>(

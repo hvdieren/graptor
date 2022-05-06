@@ -65,6 +65,16 @@ struct conversion_traits;
  ***********************************************************************/
 template<typename FTy> struct fp_traits;
 
+template<bool S, unsigned short E, unsigned short M, bool Z, int B>
+struct fp_traits<detail::customfp_em<S,E,M,Z,B>> {
+    static constexpr bool sign_bit = S;
+    static constexpr unsigned short exponent_bits = E;
+    static constexpr unsigned short mantissa_bits = M;
+    static constexpr bool exponent_truncated = true;
+    static constexpr bool maybe_zero = Z;
+    static constexpr int exponent_bias = B;
+};
+
 template<>
 struct fp_traits<float> {
     static constexpr bool sign_bit = true;
@@ -245,8 +255,147 @@ cvt_float_widen_static( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
 template<typename SrcTy, typename DstTy, unsigned short VL>
 std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
 		     typename vector_type_traits_vl<DstTy,VL>::itype>
+cvt_float_widen_dynamic( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
+    static_assert( is_vcustomfp_v<SrcTy>, "special case for vcustomfp<>" );
+    
+    using src_traits = vector_type_traits_vl<SrcTy,VL>;
+    using dst_traits = vector_type_traits_vl<DstTy,VL>;
+
+    using cfg = typename SrcTy::cfg;
+    unsigned short ss = cfg::S ? 1 : 0;
+    bool si = cfg::I;
+    unsigned short se = cfg::E;
+    unsigned short sm = cfg::M;
+    int32_t sb = cfg::B;
+    constexpr unsigned short st = 1;
+    bool sz = cfg::Z;
+    constexpr unsigned short sW = src_traits::W;
+    constexpr unsigned short ds = fp_traits<DstTy>::sign_bit ? 1 : 0;
+    constexpr unsigned short de = fp_traits<DstTy>::exponent_bits;
+    constexpr unsigned short dm = fp_traits<DstTy>::mantissa_bits;
+    constexpr unsigned short dW = dst_traits::W;
+    constexpr unsigned short dt = fp_traits<DstTy>::exponent_truncated ? 1 : 0;
+    constexpr bool dz = fp_traits<DstTy>::maybe_zero;
+
+    using sitype = typename src_traits::int_type;
+    using ditype = typename dst_traits::int_type;
+
+    static_assert( sW <= dW, "due to SFINAE restriction" );
+    static_assert( !dt, "have not thought through the case where dt==true" );
+
+    if( sW < dW ) {
+	using it = typename dst_traits::int_traits;
+
+	assert( ds && se <= de && sm <= dm && "implemented config" );
+
+	// If the source is truncated, we need to fill in de-se bits with the
+	// pattern 01...1. If the source is not truncated (and the destination
+	// is not), we add a pattern of de-se+1 bits that is 01...1 (1 extra 1)
+	// to the exponent, where the lowest bit of the pattern is aligned to
+	// the highest of the source's exponent.
+	// Note that when de == se, the mask will be zero still when using
+	// vector instructions (depends on implementation of scalar_int for
+	// scalar case).
+	const auto eoff = it::srli(
+	    it::slli( it::setone(), dW*8-(de-se)+st ), 1+ds );
+
+	assert( ss+se+sm == sW*8 && "assumption" );
+
+	if( ss != 0 ) {
+	    assert( sb == 0 && "bias currently not taken into account" );
+
+	    static_assert( ds, "assumption - impacts mask" );
+	    assert( !si && "NYI" );
+
+	    // smask identifies the sign bit, and other bits to retain from a
+	    const auto mask = it::srli( it::setone(), 1+(de-se) );
+	    const auto smask
+		= it::bitwise_or( it::slli( it::setone(), dW*8-1 ), mask );
+
+	    auto b = it::slli( a, (dW-sW) * 8 );
+	    auto c = it::srai( b, de-se );
+
+	    typename it::type e;
+	    
+	    if constexpr ( st )
+		e = it::bitblend( smask, eoff, c );
+	    else {
+		auto d = it::bitwise_andnot( smask, c );
+		e = it::add( d, eoff ); // need addition if exp > 0
+	    }
+
+	    if constexpr ( !dz ) // support zero value
+		return e;
+	    else if( dz && sz ) { // support zero value
+		auto z = it::setzero();
+		auto s = it::cmpeq( z, a, typename it::mt_preferred() );
+		auto f = it::blend( s, e, z );
+		return f;
+	    } else
+		return e;
+	} else {
+	    const auto delta = (de-se)+(ds-ss);
+	    const auto mask = it::srli( it::setone(), delta );
+	    // Also assuming exponent is positive
+	    auto b = it::slli( a, (dW-sW) * 8 - delta );
+
+	    typename it::type e;
+	    
+	    if constexpr ( st )
+		e = it::bitblend( mask, eoff, b );
+	    else {
+		// Not guaranteed that exp < 0, or no optimisation applied.
+		// The bitwise_andnot is required as the higher-order part
+		// of a lane may contain undefined bits (not zero),
+		// including those bits where we are about to extend the
+		// exponent.
+		auto d = it::bitwise_andnot( mask, b );
+		e = it::add( d, eoff );
+	    }
+
+#if VCUSTOMFP_BIAS
+	    auto bias = it::set1( typename it::member_type( sb ) << dm );
+	    e = it::add( e, bias );
+#endif
+
+#if VCUSTOMFP_INF
+	    if( si ) { // Recognize infinity (only positive infinity)
+		const auto simask
+		    = it::slli( it::srli( it::setone(), dW*8-se ), dm );
+		const auto dimask
+		    = it::slli( it::srli( it::setone(), dW*8-de ), dm );
+		auto i = it::cmpeq( b, simask, typename it::mt_preferred() );
+		e = it::blend( i, e, dimask );
+	    }
+#endif
+
+	    if constexpr ( !dz ) // support zero value
+		return e;
+	    else if( dz && sz ) { // support zero value
+		auto z = it::setzero();
+		auto s = it::cmpeq( z, a, typename it::mt_preferred() );
+		auto f = it::blend( s, e, z );
+		return f;
+	    } else
+		return e;
+	}
+    } else { // dW == sW -- assume identical formats
+	assert( ss == ds && se == de && sm == dm && st == dt && "NYI" );
+	assert( sb == 0 && "bias currently not taken into account" );
+	return a;
+    }
+
+    assert( 0 && "NYI" );
+}
+
+template<typename SrcTy, typename DstTy, unsigned short VL>
+std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
+		     typename vector_type_traits_vl<DstTy,VL>::itype>
 cvt_float_widen( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
-    return cvt_float_widen_static<SrcTy,DstTy,VL>( a );
+    if constexpr ( is_vcustomfp_v<SrcTy> )
+	return cvt_float_widen_dynamic<SrcTy,DstTy,VL>( a );
+    else
+	return cvt_float_widen_static<SrcTy,DstTy,VL>( a );
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
@@ -372,8 +521,122 @@ cvt_float_narrowing_static(
 template<typename SrcTy, typename DstTy, unsigned short VL>
 std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
 		 typename vector_type_traits_vl<SrcTy,VL>::itype>
+cvt_float_narrowing_dynamic(
+    typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
+    static_assert( is_vcustomfp_v<DstTy>, "special case for vcustomfp<>" );
+
+    using src_traits = vector_type_traits_vl<SrcTy,VL>;
+    using dst_traits = vector_type_traits_vl<DstTy,VL>;
+
+    constexpr unsigned short ss = fp_traits<SrcTy>::sign_bit ? 1 : 0;
+    constexpr unsigned short se = fp_traits<SrcTy>::exponent_bits;
+    constexpr unsigned short sm = fp_traits<SrcTy>::mantissa_bits;
+    constexpr unsigned short sW = src_traits::W;
+    constexpr unsigned short st = fp_traits<SrcTy>::exponent_truncated ? 1 : 0;
+    using cfg = typename DstTy::cfg;
+    unsigned short ds = cfg::S ? 1 : 0;
+    unsigned short de = cfg::E;
+    unsigned short dm = cfg::M;
+    bool dz = cfg::Z;
+    int32_t db = cfg::B;
+    bool di = cfg::I;
+    constexpr unsigned short dW = dst_traits::W;
+    constexpr unsigned short dt = 1;
+
+    using sitype = typename src_traits::int_type;
+    using ditype = typename dst_traits::int_type;
+
+    static_assert( sW > dW, "due to SFINAE restriction" );
+    static_assert( !st, "haven't thought about st == true" );
+
+    using it = typename src_traits::int_traits;
+
+    if constexpr ( dt ) {
+	// We only need a slice of the exponent and the mantissa
+	// Only the lower part of the source word corresponding
+	// to the width dW is defined; the higher part of the source is
+	// undefined
+	if( ds == 0 ) {
+	    if( (de+dm) == dW*8 ) {
+		auto b = it::srli( a, sm-dm );
+#if VCUSTOMFP_BIAS
+		auto bias = it::set1( typename it::member_type( db ) << dm );
+		b = it::sub( b, bias );
+#if VCUSTOMFP_INF
+		if( di ) { // recognise infinity. only necessary if bias applies
+		    auto one = it::setone();
+		    auto inf = it::slli( it::srli( one, sW*8-se ), sm );
+		    auto is_inf = it::cmpeq( a, inf,
+					     typename it::mt_preferred() );
+		    auto dinf = it::slli( it::srli( one, sW*8-de ), dm );
+		    b = it::blend( is_inf, b, dinf );
+		}
+#endif
+		if( dz ) { // recognise zero, distorted by bias manipulation
+		    // zero is correctly treated if db == 0 or no bias
+		    // manipulation is applied at all
+		    auto zero = it::setzero();
+		    auto is_zero = it::cmpeq( a, zero,
+					      typename it::mt_preferred() );
+		    b = it::blend( is_zero, b, zero );
+		}
+#endif
+		return b;
+	    } else {
+		assert( db == 0 && "bias currently not taken into account" );
+		assert( (de+dm) < dW*8 && "by elimination" );
+		const auto mask = it::srli( it::setone(), sW*8-(de+dm) );
+		auto b = it::srli( a, sm-dm );
+		auto c = it::bitwise_and( b, mask );
+		return c;
+	    }
+	} else {
+	    assert( db == 0 && "bias currently not taken into account" );
+
+	    // Additionally needs a sign bit
+	    auto c = it::srli( a, sm-dm ); // position mantissa
+	    auto s = it::srli( a, (sW*8-1)-(de+dm) ); // position sign bit
+
+	    // Mask has 1-bits in sign bit position and all higher
+	    // positions (cleared in s by srli)
+	    const auto mask = it::slli( it::setone(), de+dm );
+	    auto d = it::bitblend( mask, c, s );
+	    return d;
+	}
+    } else {
+	assert( db == 0 && "bias currently not taken into account" );
+
+	// Assumes exp < 0, or subtraction does not carry into sign bit
+	const auto eoff =
+	    it::srli( it::slli( it::setone(), sW*8-(se-de) ), 1+ss );
+	const auto smsk = it::srli( it::setone(), 1 );
+
+	auto b = it::sub( a, eoff );
+	auto s = it::bitwise_andnot( smsk, a );
+	auto c = it::slli( b, (se-de) + (ss-ds) );
+	auto d = it::bitwise_or( c, s );
+	auto e = it::srli( d, (sW-dW)*8 );
+
+/*
+	for( unsigned short l=0; l < VL; ++l ) {
+	    auto v = it::lane( e, l );
+	    auto m = ditype(1) << (dW*8-2);
+	    assert( (v & m) == 0 && "exponent out of range" );
+	}
+*/
+    
+	return e;
+    }
+}
+
+template<typename SrcTy, typename DstTy, unsigned short VL>
+std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
+		 typename vector_type_traits_vl<SrcTy,VL>::itype>
 cvt_float_narrowing( typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
-    return cvt_float_narrowing_static<SrcTy,DstTy,VL>( a );
+    if constexpr ( is_vcustomfp_v<DstTy> )
+	return cvt_float_narrowing_dynamic<SrcTy,DstTy,VL>( a );
+    else
+	return cvt_float_narrowing_static<SrcTy,DstTy,VL>( a );
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
@@ -521,7 +784,12 @@ struct fp_conversion_traits {
 	    assert( 0 && "NYI" );
 	} else
 #endif
-	if constexpr ( false ) {
+	if constexpr ( ( is_customfp_v<T> || is_vcustomfp_v<T> )
+		       && std::is_floating_point_v<V> ) {
+	    return cvt_float_width<T,V,VL>( a );
+	} else if constexpr ( std::is_floating_point_v<T>
+			      && ( is_customfp_v<V> || is_vcustomfp_v<V> ) ) {
+	    return cvt_float_width<T,V,VL>( a );
 	} else {
 	    constexpr unsigned short VL1
 		= std::conditional_t<(sizeof(T) > sizeof(V)),src_traits,dst_traits>
@@ -1043,7 +1311,10 @@ struct conversion_traits<T,U,VL,
     static typename dst_traits::type convert( typename src_traits::type a ) {
 	if constexpr ( std::is_same_v<T,U> )
 	    return a;
-	else if constexpr ( std::is_floating_point_v<T> || std::is_floating_point_v<U> )
+	else if constexpr ( std::is_floating_point_v<T>
+	    || is_customfp_v<T>
+	    || std::is_floating_point_v<U>
+	    || is_customfp_v<U> )
 	    return conversion::fp_conversion_traits<T,U,VL>::convert( a );
 	else
 	    return conversion::int_conversion_traits<T,U,VL>::convert( a );

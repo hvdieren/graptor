@@ -5,11 +5,11 @@
 template<unsigned short VL, typename GraphType,
 	 typename Extractor,
 	 typename AExpr, typename VExpr, typename MVExpr, typename MRExpr,
-	 typename Environment, typename Config, graptor_mode_t Mode>
+	 typename Environment, typename Config>
 __attribute__((always_inline, flatten))
 static inline VID GraptorCSRDataParNotCached(
     const GraphType & GA,
-    const GraphCSRSIMDDegreeMixed<Mode> & GP,
+    const GraphCSRSIMDDegreeMixed & GP,
     int p,
     const partitioner & part,
     const Extractor extractor,
@@ -33,7 +33,8 @@ static inline VID GraptorCSRDataParNotCached(
     const simd_vector<VID, VL> vmask( extractor.get_mask() );
 
 #if GRAPTOR_CSR_INDIR == 0
-    auto vidx = simd::create_set1inc0<vid_type>();
+    simd_vector<VID, VL> vidx;
+    vidx.set1inc0();
     VID vmax = n;
 #else
     const VID * redir_p = GP.getRedirP();
@@ -49,10 +50,11 @@ static inline VID GraptorCSRDataParNotCached(
 	// assert( vdst.at(0) < GA.numVertices() );
 
 #if GRAPTOR_CSR_INDIR == 0
-	auto vsrc = simd::create_set1inc<vid_type,true>( sidx );
+	simd_vector<VID, VL> vsrc = vidx;
 #else
 	// load vsrc from redir array on the basis of scalar index
 	// vsrc should be lo_unknown and trigger gather instruction later on
+	// simd_vector_ref<VID, VID, VL> vredir( const_cast<VID *>(redir_p), sidx );
 	auto vredir = simd::template create_vector_ref_cacheop<
 	    vid_type,VID,array_encoding<VID>,false>(
 		const_cast<VID *>( redir_p ), sidx );
@@ -81,14 +83,13 @@ static inline VID GraptorCSRDataParNotCached(
 	    expr::create_entry<expr::vk_mask>( vmask ),
 	    expr::create_entry<expr::vk_dst>( vdst ) );
 	expr::cache<> c;
-	auto mpack = expr::sb::create_mask_pack( vdst != vmask );
-	auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
+	auto rval_output = env.evaluate( c, m, m_vexpr );
 
 	// VID vstep = ( code & 1 ) << lgVL;
 	VID vstep = code == 1 ? VL : 0;
-// #if GRAPTOR_CSR_INDIR == 0
-	// vidx += simd_vector<VID, VL>( (VID)vstep );
-// #endif
+#if GRAPTOR_CSR_INDIR == 0
+	vidx += simd_vector<VID, VL>( (VID)vstep );
+#endif
 	sidx += vstep;
     }
 
@@ -103,7 +104,7 @@ template<unsigned short VL, graptor_mode_t M, typename AExpr, typename VExpr, ty
 static inline void GraptorCSRDataParNotCachedDriver(
     const GraphVEBOGraptor<M> & GA,
     int p,
-    const GraphCSRSIMDDegreeMixed<M> & GP,
+    const GraphCSRSIMDDegreeMixed & GP,
     const partitioner & part,
     const AExpr & aexpr,
     const VExpr & vexpr,

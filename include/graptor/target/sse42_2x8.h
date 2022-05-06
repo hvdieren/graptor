@@ -84,6 +84,8 @@ public:
     }
     
     static type set1( member_type a ) {
+	// Casting twice is done for customfp class. Cast to uint16_t is
+	// inferrable, but cast to int16_t is ambiguous.
 	return _mm_set1_epi16(
 	    static_cast<short int>( static_cast<unsigned short int>( a ) ) );
     }
@@ -331,18 +333,22 @@ public:
     }
 
     static type add( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return _mm_add_epi16( a, b );
     }
     static type sub( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return _mm_sub_epi16( a, b );
     }
     static type min( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm_min_epi16( a, b );
 	else
 	    return _mm_min_epu16( a, b );
     }
     static type max( type a, type b ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm_max_epi16( a, b );
 	else
@@ -353,15 +359,18 @@ public:
 	return setzero();
     }
     static member_type reduce_add( type val ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	type s = _mm_hadd_epi16( val, val );
 	type t = _mm_hadd_epi16( s, s );
 	return lane0( t );
     }
     static member_type reduce_add( type val, mask_type mask ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	assert( 0 && "NYI" );
 	return setzero();
     }
     static member_type reduce_add( type val, vmask_type mask ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	// type zval = _mm_blendv_epi8( setzero(), val, mask );
 	// return reduce_add( zval );
 	// First filter out zeros, then add up all values
@@ -379,15 +388,18 @@ public:
 */
     }
     static member_type reduce_logicalor( type val ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	return _mm_movemask_epi8( val ) ? ~member_type(0) : member_type(0);
     }
     static member_type reduce_logicalor( type val, type mask ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 	int v = _mm_movemask_epi8( val );
 	int m = _mm_movemask_epi8( mask );
 	return (!m | v) ? ~member_type(0) : member_type(0);
     }
     
     static member_type reduce_min( type val ) {
+	static_assert( !is_customfp_v<member_type>, "need special operation" );
 /*
 	auto rot = _mm256_permute4x64_epi64( val, 0b1110 ); // all in lo128 bits
 	auto cmp = _mm256_cmpgt_epi64( val, rot );

@@ -32,14 +32,8 @@
 #include "graptor/utils.h"
 #include "graptor/legacy/gettime.h"
 #include "graptor/itraits.h"
-
-// is T std::floating_point 
-template<typename T>
-struct is_extended_floating_point : public std::is_floating_point<T> { };
-
-template<typename T>
-static constexpr bool is_extended_floating_point_v
-= is_extended_floating_point<T>::value;
+#include "graptor/customfp.h"
+#include "graptor/vcustomfp.h"
 
 /*======================================================================*
  * Partitioning and parallelism control

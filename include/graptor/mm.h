@@ -46,6 +46,7 @@ static double mmap_alloc=0;
 static double del_time=0;
 
 #include "graptor/itraits.h"
+#include "graptor/customfp.h"
 
 /***********************************************************************
  * Debugging support
@@ -898,6 +899,8 @@ public:
         return totalSize;
     }
     size_t get_length() const {
+	static_assert( !is_customfp_v<T>,
+		       "length calculation incorrect for customfp" );
 	return totalSize/sizeof(T);
     }
     T *get() const
