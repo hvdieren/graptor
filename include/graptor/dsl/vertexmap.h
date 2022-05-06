@@ -1106,6 +1106,8 @@ struct step_emap_dense<GraphType,EdgeOperator,EMapConfig,false> {
 	// to wait for other partitions to complete...
     }
 
+    void materialize_frontier( const partitioner & part );
+
     const GraphType & getGraph() const { return G; }
     const frontier & getOldFrontier() const { return old_frontier; }
     frontier & getNewFrontier() { return new_frontier; }
@@ -1161,6 +1163,8 @@ struct step_emap_dense<GraphType,EdgeOperator,EMapConfig,true> {
 	// within partition, not immediately after vertex. Key point: don't need
 	// to wait for other partitions to complete...
     }
+
+    void materialize_frontier( const partitioner & part );
 
     const GraphType & getGraph() const { return m_G; }
     // frontier & getNewFrontier() { return new_frontier; }

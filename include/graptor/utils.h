@@ -80,7 +80,7 @@ constexpr T lcm( T a, T b ) {
 
 // bit reverse
 // https://stackoverflow.com/questions/746171/efficient-algorithm-for-bit-reversal-from-msb-lsb-to-lsb-msb-in-c
-unsigned int bit_reverse( unsigned int x ) {
+inline unsigned int bit_reverse( unsigned int x ) {
     x = (((x & 0xaaaaaaaa) >> 1) | ((x & 0x55555555) << 1));
     x = (((x & 0xcccccccc) >> 2) | ((x & 0x33333333) << 2));
     x = (((x & 0xf0f0f0f0) >> 4) | ((x & 0x0f0f0f0f) << 4));

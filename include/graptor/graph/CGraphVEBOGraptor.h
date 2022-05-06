@@ -340,7 +340,7 @@ public:
 	    std::cerr << "\t" << p << "\t"
 		      << " nv=" << csc[p].numSIMDVertices()
 		      << " mv=" << csc[p].numSIMDEdges()
-		      << " mpad=" << csc[p].numPaddingEdges()
+		      // << " mpad=" << csc[p].numPaddingEdges()
 		// << " mv2=" << csc[p].numSIMDEdgesDeg2()
 		// << " mv1=" << csc[p].numSIMDEdgesDeg1()
 		// << " inactd1=" << csc[p].numSIMDEdgesInvDelta1()

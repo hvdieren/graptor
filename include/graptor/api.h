@@ -406,6 +406,7 @@ struct arg_filter_op {
 				    array_encoding<StoreTy>>::type;
     
     static constexpr bool is_scan = Operator::is_scan;
+    static constexpr bool defines_frontier = false;
 
     arg_filter_op( Operator op, frontier & fr )
 	: m_op( op ), m_array(), m_frontier( fr ) { }
@@ -532,6 +533,8 @@ struct arg_filter {
     template<typename GraphType>
     frontier & get_frontier( const GraphType & GA ) { return m_frontier; }
 
+    frontier & get_frontier() const { return m_frontier; }
+
     bool is_true_frontier() const {
 	return m_frontier.getType() == frontier_type::ft_true;
     }
@@ -553,6 +556,7 @@ struct arg_filter_a_op {
     using ptrset_ty = PtrSet;
     
     static constexpr bool is_scan = Operator::is_scan;
+    static constexpr bool defines_frontier = Operator::defines_frontier;
 
     arg_filter_a_op( Operator op, Fn method, ptrset_ty & ptrset )
 	: m_op( op ), m_method( method ), m_ptrset( ptrset ) { }
@@ -791,7 +795,7 @@ template<typename T>
 constexpr bool is_frontier_record_v = is_frontier_record<T>::value;
 
 /************************************************************************
- * Defintion of filter recording method
+ * Definition of filter recording method
  ************************************************************************/
 template<typename EMapConfig, bool IsPriv, typename Operator,
 	 typename Enable = void>
@@ -804,6 +808,7 @@ struct arg_record_reduction_op {
 				    array_encoding<StoreTy>>::type;
     
     static constexpr bool is_scan = true;
+    static constexpr bool defines_frontier = true;
 
     arg_record_reduction_op( Operator op, frontier & fr,
 			     const VID * degree )
@@ -903,6 +908,7 @@ struct arg_record_reduction_op<
     static constexpr bool is_priv = IsPriv;
     
     static constexpr bool is_scan = true;
+    static constexpr bool defines_frontier = true;
 
     arg_record_reduction_op( Operator op, frontier & fr,
 			     const VID * degree )
@@ -1005,6 +1011,7 @@ struct arg_record_method_op {
     using ptrset_ty = PtrSet;
     
     static constexpr bool is_scan = true;
+    static constexpr bool defines_frontier = true;
 
     arg_record_method_op( Operator op, frontier & fr,
 			  const VID * degree,
@@ -1104,6 +1111,8 @@ struct arg_record_method_op {
 
     const auto get_config() const { return m_op.get_config(); }
 
+    frontier & get_frontier() const { return m_frontier; }
+
 private:
     VID * m_degree;
     Operator m_op;
@@ -1139,6 +1148,8 @@ struct arg_record {
 
     template<typename GraphType>
     frontier & get_frontier( const GraphType & G ) { return m_frontier; }
+
+    frontier & get_frontier() const { return m_frontier; }
 
 private:
     frontier & m_frontier;
@@ -1182,7 +1193,9 @@ struct arg_record_m {
     }
 
     template<typename GraphType>
-    frontier & get_frontier( const GraphType & G ) { return m_frontier; }
+    frontier & get_frontier( GraphType & G ) { return m_frontier; }
+
+    frontier & get_frontier() const { return m_frontier; }
 
 private:
     frontier & m_frontier;
@@ -1404,8 +1417,10 @@ struct op_def {
 	: std::decay_t<Rec>::record == frontier_record::frontier_reduction ? fm_reduction
 	: fm_calculate;
 
-    static constexpr bool is_scan =
+    static constexpr bool defines_frontier =
 	!std::is_same_v<Rec,missing_record_argument>;
+
+    static constexpr bool is_scan = defines_frontier;
 
     // Weak frontiers on source of edge may be omitted
     static constexpr bool may_omit_frontier_rd =
@@ -1592,6 +1607,7 @@ private:
 
 public:
     const Cfg & get_config() const { return m_config; }
+    frontier & get_frontier() const { return m_record.get_frontier(); }
 
 private:
     Rlx m_relax;

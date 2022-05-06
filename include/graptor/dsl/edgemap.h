@@ -11,7 +11,6 @@
 
 #include <immintrin.h>
 
-#include "graptor/frontier.h"
 #include "graptor/target/vector.h"
 #include "graptor/dsl/simd_vector.h"
 #include "graptor/dsl/ast.h"
@@ -20,12 +19,9 @@
 #include "graptor/dsl/comp/rewrite_redop_to_store.h"
 #include "graptor/dsl/comp/rewrite_internal.h"
 #include "graptor/dsl/comp/is_idempotent.h"
-#include "graptor/dsl/comp/is_benign_race.h"
 
 #include "graptor/dsl/emap/utils.h"
 #include "graptor/dsl/emap/emap_scan.h"
-
-#include "graptor/dsl/emap/fusion.h"
 
 #include "graptor/dsl/emap/GraphCOO.h"
 #include "graptor/dsl/emap/GraphCSx_csc.h"
@@ -41,9 +37,6 @@
 #include "graptor/dsl/emap/GraptorCSRVPushNotCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParCached.h"
 #include "graptor/dsl/emap/GraptorCSRDataParNotCached.h"
-
-#include "graptor/frontier_impl.h"
-#include "graptor/api/fusion.h"
 
 template<typename EMapConfig, typename GraphType, typename EdgeOperator>
 static inline void emap_push(
@@ -77,11 +70,10 @@ static std::ostream & emap_report_dyn( std::ostream & os, Operator op ) {
 	return os;
 
     printed = true;
-
+    
     return EMapConfig::report( std::cout )
 	<< " Operator { is_scan: " << Operator::is_scan
-	<< ", is_idempotent: " << expr::is_idempotent_op<Operator>::value
-	<< ", fusion: " << api::has_fusion_op_v<Operator>
+	// << ", is_idempotent: " << Operator::is_idempotent
 	<< " } config { is_parallel: " << op.get_config().is_parallel()
 	<< ", maxVL: " << op.get_config().max_vector_length()
 	<< ", s/d threshold: " << op.get_config().get_threshold()
@@ -273,13 +265,13 @@ step_emap_dense3<GraphType,PushOperator,PullOperator,IRegOperator>::execute(
 
     switch( m_kind ) {
     case graph_traversal_kind::gt_push:
-	m_push.template execute<graph_traversal_kind::gt_push>( part );
+	m_push.template execute<graph_traversal_kind::gt_push>( part ); 
 	break;
     case graph_traversal_kind::gt_pull:
-	m_pull.template execute<graph_traversal_kind::gt_pull>( part );
+	m_pull.template execute<graph_traversal_kind::gt_pull>( part ); 
 	break;
     case graph_traversal_kind::gt_ireg:
-	m_ireg.template execute<graph_traversal_kind::gt_ireg>( part );
+	m_ireg.template execute<graph_traversal_kind::gt_ireg>( part ); 
 	break;
     case graph_traversal_kind::gt_sparse:
 	// nothing to do
@@ -302,42 +294,6 @@ struct ValidVID
     }
 };
 
-enum update_method {
-    um_none,
-    um_list,
-    um_list_must_init,
-    um_list_must_init_unique,
-    um_flags_only
-};
-
-template<update_method um>
-void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
-    if constexpr ( um == um_list ) {
-	if( updated )
-	    *f = d;
-    } else if constexpr ( um == um_list_must_init_unique ) {
-	// at least initialise *f
-	if( updated ) { // set true
-	    if( *zf != 0 || __sync_fetch_and_or( (unsigned char *)zf,
-						 (unsigned char)1 ) ) {
-		// already set, don't set twice
-		*f = ~(VID)0;
-	    } else
-		*f = d;
-	} else { // set false
-	    *f = ~(VID)0;
-	}
-    } else if constexpr ( um == um_list_must_init ) {
-	    *f = updated ? d : ~(VID)0;
-    } else if constexpr ( um == um_flags_only ) {
-	if( updated )
-	    *zf = true;
-    } else {
-	// Do nothing for um_none
-	static_assert( um == um_none, "invalid value for um" );
-    }
-}
-
 
 template<bool setf, bool zerof, bool once>
 void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
@@ -345,8 +301,7 @@ void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
 	if constexpr ( once ) { // at least initialise *f
 	    if constexpr ( zerof ) {
 		if( updated ) { // set true
-		    if( *zf != 0 || __sync_fetch_and_or( (unsigned char *)zf,
-							 (unsigned char)1 ) ) {
+		    if( __sync_fetch_and_or( (unsigned char *)zf, (unsigned char)1 ) ) {
 			// already set, don't set twice
 			*f = ~(VID)0;
 		    } else
@@ -666,8 +621,6 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
     static mmap_ptr<VID> flags;
 
-    constexpr VID undef = std::numeric_limits<VID>::max();
-
     VID m = (VID) me;
     assert( me == (EID)m && "length of array should be small enough" );
 
@@ -677,23 +630,22 @@ inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
 	if( flags.get_length() > 0 )
 	    flags.del();
 	flags.allocate( numa_allocation_partitioned( part ) );
-	parallel_for( VID i=0; i<n; i++ )
-	    flags[i] = undef;
+	parallel_for( VID i=0; i<n; i++ ) flags[i] = (VID)-1;
     }
 
     // Figure out which vertices are listed in ids
     parallel_for( VID i=0; i < m; i++ ) {
-	if( ids[i] != undef && flags[ids[i]] == undef )
-	    CAS( &flags[ids[i]], undef, i );
+	if( ids[i] != (VID)-1 && flags[ids[i]] == (VID)-1 )
+	    CAS( &flags[ids[i]], (VID)-1, i );
     }
 
     // Cancel out duplicates
     parallel_for( VID i=0; i < m; i++ ) {
 	if( ids[i] != (VID)-1 ) {
 	    if( flags[ids[i]] == i ) {  // win
-		flags[ids[i]] = undef; //reset
+		flags[ids[i]] = (VID)-1; //reset
 	    } else
-		ids[i] = undef; // lose
+		ids[i] = (VID)-1; // lose
 	}
     }
     // Flags is restored to all -1 now
@@ -702,11 +654,9 @@ inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
 }
 
 inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
-					  VID * tgt, const partitioner & part ) {
+				   VID * tgt, const partitioner & part ) {
     VID m = (VID) me;
     assert( me == (EID)m && "length of array should be small enough" );
-
-    constexpr VID undef = std::numeric_limits<VID>::max();
 
     if( me > 150000 ) {
 	static mmap_ptr<VID> flags;
@@ -726,9 +676,9 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	VID i = 0;
 	VID t = 0;
 	while( i < m ) {
-	    if( ids[i] == undef ) {
+	    if( ids[i] == ~VID(0) ) {
 		ids[i] = ids[--m];
-	    } else if( flags[ids[i]] == undef ) {
+	    } else if( flags[ids[i]] == ~VID(0) ) {
 		flags[ids[i]] = i;
 		tgt[t++] = ids[i];
 		++i;
@@ -740,8 +690,7 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
     } else if( m > 10 ) {
 	std::sort( &ids[0], &ids[m] );
 
-	assert( !std::is_signed_v<VID> ); // should be ok with signed, double-check
-	if( ids[0] == undef ) // Assuming sort is unsigned, ~VID(0) at back
+	if( ids[0] == ~VID(0) ) // Assuming sort is unsigned, ~VID(0) at back
 	    return 0;
 
 	tgt[0] = ids[0];
@@ -750,7 +699,7 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	for( VID s=1; s < m; ++s ) {
 	    if( ids[s] == ids[s-1] ) {
 		// next
-	    } else if( ids[s] == undef ) {
+	    } else if( ids[s] == ~VID(0) ) {
 		break;
 	    } else {
 		tgt[t++] = ids[s];
@@ -761,7 +710,7 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	// Simplistic algorithm, should work well on very short arrays
 	VID s = 0;
 	while( s < m ) {
-	    if( ids[s] == undef )
+	    if( ids[s] == ~VID(0) )
 		ids[s] = ids[--m];
 	    else
 		++s;
@@ -796,17 +745,24 @@ public:
     static constexpr bool value = sizeof(test<T>(0)) == sizeof(char);
 };
 
+template<typename Operator, bool V = false>
+struct emap_do_add_in_frontier_out_helper {
+    static constexpr bool value = V;
+};
+
 template<typename Operator, typename Enable = void>
 struct emap_do_add_in_frontier_out
-    : public std::false_type { };
+    : emap_do_add_in_frontier_out_helper<Operator,false> { };
 
 template<typename Operator>
 struct emap_do_add_in_frontier_out<
     Operator,std::enable_if_t<has_add_in_frontier_out<Operator>::value>>
-    : public std::integral_constant<bool,Operator::add_in_frontier_out> { };
+    : emap_do_add_in_frontier_out_helper<
+    Operator,Operator::add_in_frontier_out> { };
+
 
 template<bool zerof, typename EIDRetriever, typename Expr>
-static VID
+static DBG_NOINLINE VID
 process_csr_sparse_seq( const EIDRetriever & eid_retriever,
 			const VID *out, VID deg, VID srcv, VID *frontier,
 			bool *zf, const Expr & e ) {
@@ -843,13 +799,12 @@ process_csr_sparse_seq( const EIDRetriever & eid_retriever,
 }
 
 template<bool atomic, bool setf, bool zerof,
-	 typename EIDRetriever, typename Cache, typename Environment,
-	 typename Expr>
+	 typename EIDRetriever, typename Environment, typename Expr>
 static void
 process_csr_sparse( const EIDRetriever & eid_retriever,
 		    const VID *out, VID deg, VID srcv, VID *frontier,
-		    bool *zf, Cache & c,
-		    const Environment & env, const Expr & e ) {
+		    bool *zf, const Environment & env, const Expr & e ) {
+    tuple<> c; // empty cache
 
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
@@ -870,15 +825,16 @@ process_csr_sparse( const EIDRetriever & eid_retriever,
     }
 }
 
-template<bool atomic, bool setf, bool zerof, typename EIDRetriever,
-	 typename Cache, typename Environment, typename Expr>
+template<bool setf, bool zerof, typename EIDRetriever,
+	 typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 			     const VID *out, VID deg, VID srcv, VID *frontier,
 			     bool *zf,
-			     Cache & c,
 			     const Environment & env,
 			     const Expr & e ) {
+    tuple<> c; // empty cache
+
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     parallel_for( VID j=0; j < deg; j++ ) {
@@ -895,18 +851,19 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = env.template evaluate<atomic>( c, m, e );
+	auto ret = env.template evaluate<true>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
     }
 }
 
-template<bool atomic, update_method um,
-	 typename Cache, typename Environment, typename Expr>
+template<bool atomic, bool setf, bool zerof,
+	 typename Environment, typename Expr>
 static void
 process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
-		    bool *zf, Cache & c, const Environment & env,
-		    const Expr & e ) {
+		    bool *zf, const Environment & env, const Expr & e ) {
+    tuple<> c; // empty cache
+
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     auto src = simd::template create_scalar<simd::ty<VID,1>>( srcv );
@@ -922,20 +879,21 @@ process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
 	auto ret = env.template evaluate<atomic>( c, m, e );
-	conditional_set<um>( &frontier[j], &zf[dst.data()],
-			     ret.value().data(), dst.data() );
+	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
+					  ret.value().data(), dst.data() );
     }
 }
 
-template<bool atomic, update_method um,
-	 typename Cache, typename Environment, typename Expr>
+template<bool setf, bool zerof,
+	 typename Environment, typename Expr>
 static void
 process_csr_sparse_parallel( const VID *out, EID be,
 			     VID deg, VID srcv, VID *frontier,
 			     bool *zf,
-			     Cache & c, 
 			     const Environment & env,
 			     const Expr & e ) {
+    tuple<> c; // empty cache
+
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     parallel_for( VID j=0; j < deg; j++ ) {
@@ -953,9 +911,9 @@ process_csr_sparse_parallel( const VID *out, EID be,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = env.template evaluate<atomic>( c, m, e );
-	conditional_set<um>( &frontier[j], &zf[dst.data()],
-			     ret.value().data(), dst.data() );
+	auto ret = env.template evaluate<true>( c, m, e );
+	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
+					  ret.value().data(), dst.data() );
     }
 }
 
@@ -987,7 +945,7 @@ process_csr_sparse( const EIDRetriever & eid_retriever,
     }
 }
 
-template<bool atomic, bool setf, bool zerof, typename EIDRetriever,
+template<bool setf, bool zerof, typename EIDRetriever,
 	 typename Expr>
 static void
 process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
@@ -1012,7 +970,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	    expr::create_entry<expr::vk_edge>( eid ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: set evaluator to use atomics
-	auto ret = expr::evaluate<atomic>( c, m, e );
+	auto ret = expr::evaluate<true>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
     }
@@ -1063,10 +1021,17 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
 
-    // Calculate maximum number of activated out-edges
+    unsigned char * p = new unsigned char[sizeof(EID)*m*2];
+    EID * degrees = reinterpret_cast<EID *>( &p[0] );
+    EID * index = reinterpret_cast<EID *>( &p[sizeof(EID)*m] );
+
+    // Calculate degrees
     EID outEdgeCount = 0;
-    for( VID i=0; i < m; ++i )
-	outEdgeCount += idx[s[i]+1] - idx[s[i]];
+    for( VID i=0; i < m; ++i ) {
+	index[i] = idx[s[i]];
+	degrees[i] = idx[s[i]+1] - idx[s[i]];
+	outEdgeCount += degrees[i];
+    }
 
     if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
 	outEdgeCount += m; // Add in m vertices in old frontier
@@ -1096,9 +1061,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr );
 
-    // Cache local variables; no need to destruct/commit cache
-    auto mi = expr::create_value_map_new<1>();
-    auto c = cache_create( env, l_cache, mi );
+    tuple<> c; // empty cache
 
     const VID *edge = GA.getEdges();
 
@@ -1106,15 +1069,15 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     EID nacte = 0;
     for( VID k = 0; k < m; k++ ) {
 	VID v = s[k];
-	VID d = idx[s[k]+1] - idx[s[k]];
-	const VID * out = &edge[idx[s[k]]];
+	VID d = degrees[k];
+	const VID * out = &edge[index[k]];
 
 	// Sequential, so dump in sequential locations in outEdges[]
 	auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
 
 	for( VID j=0; j < d; j++ ) {
 	    // EID seid = eid_retriever.get_edge_eid( v, j );
-	    EID seid = idx[s[k]]+j;
+	    EID seid = index[k]+j;
 	    auto dst = simd::template load_from<simd::ty<VID,1>>( &out[j] );
 	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	    auto m = expr::create_value_map_new<1>(
@@ -1132,7 +1095,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 			add = true;
 		    }
 		} else
-		    add = true;
+			add = true;
 
 		if( add ) {
 		    outEdges[nactv++] = dst;
@@ -1148,9 +1111,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 
     // Add in vertices in old_frontier, if not present yet
     if constexpr ( emap_do_add_in_frontier_out<Operator>::value ) {
-	static_assert( zerof, "missing code for !zerof" );
 	for( VID r=0; r < m; ++r )
-	    if( !zf[s[r]] )
+	    if( zf[s[r]] == (VID)-1 )
 		outEdges[nactv++] = s[r];
     }
 
@@ -1163,15 +1125,156 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 	}
     }
 
-    // TODO: edge count is wrong in case of !zerof because
-    //       new frontier may contain same vertex multiple times.
     frontier new_frontier
 	= frontier::sparse( GA.numVertices(), nactv, outEdges );
     new_frontier.setActiveCounts( nactv, nacte );
 
+    // Clean up and return
+    delete[] p;
+    
     return new_frontier;
 }
 
+
+// Sparse CSR traversal (GraphCSx) with a new frontier
+template<typename config, typename EIDRetriever, typename Operator>
+static __attribute__((noinline)) frontier csr_sparse_with_f_old(
+    config & cfg,
+    const GraphCSx & GA,
+    const EIDRetriever & eid_retriever,
+    const partitioner & part,
+    frontier & old_frontier,
+    Operator op ) {
+    // timer tm;
+    // tm.start();
+
+    const EID * idx = GA.getIndex();
+    VID m = old_frontier.nActiveVertices();
+    EID * degrees = new EID[m];
+    VID * s = old_frontier.getSparse();
+
+    // By definition of sparsity, don't expect this loop to be worthwhile to
+    // parallelize.
+    if( m > 4096 )
+	parallel_for( VID i=0; i < m; ++i )
+	    degrees[i] = idx[s[i]+1] - idx[s[i]];
+    else
+	for( VID i=0; i < m; ++i )
+	    degrees[i] = idx[s[i]+1] - idx[s[i]];
+
+    // TODO: retain degrees array for use in the main parallel_for
+    //       and accumulate offsets in distinct array. This will improve
+    //       memory locality in main parallel_for as idx[] won't need to be
+    //       accessed again, which occurs in a sparse and unpredictable way.
+    EID* offsets = degrees;
+    EID outEdgeCount = sequence::plusScan(degrees, offsets, m);
+    if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
+	outEdgeCount += m; // Add in m vertices in old frontier
+    VID* outEdges = new VID [outEdgeCount];
+
+    // CSR requires no check that destination is active.
+    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+
+    // TODO: (needs environment in csr_process...)
+    // TODO: give evaluate for set_mask short-cut semantics in scalar mode
+    // auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
+    auto vexpr1 = vexpr0;
+
+    // Match vector lengths and move masks
+    auto vexpr = expr::rewrite_mask_main( vexpr1 );
+
+    const VID *edge = GA.getEdges();
+
+    if constexpr ( !std::decay_t<config>::is_parallel() )  {
+	for( VID k = 0; k < m; k++ ) {
+	    VID v = s[k];
+	    EID o = offsets[k];
+	    intT d = idx[v+1]-idx[v];
+	    process_csr_sparse<false,true,false>(
+		eid_retriever, &edge[idx[v]], d, v,
+		&outEdges[o], nullptr, vexpr );
+	}
+    } else {
+	parallel_for( VID k = 0; k < m; k++ ) {
+	    VID v = s[k];
+	    EID o = offsets[k];
+	    intT d = idx[v+1]-idx[v];
+	    if( __builtin_expect( d < 1000, 1 ) ) {
+		process_csr_sparse<true,true,false>(
+		    eid_retriever, &edge[idx[v]], d, v,
+		    &outEdges[o], nullptr, vexpr );
+	    } else {
+		// Note: it is highly likely that running this in parallel
+		//       will hardly ever occur, as in the sparse part
+		//       high-degree vertices may have converged (e.g.
+		//       PRDelta, maybe not BFS)
+		process_csr_sparse_parallel<true,false>(
+		    eid_retriever, &edge[idx[v]],
+		    d, v, &outEdges[o], nullptr, vexpr );
+	    }
+	}
+    }
+
+    if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
+	for( VID r=0; r < m; ++r )
+	    outEdges[outEdgeCount-m+r] = s[r];
+
+    // Calculate the number of active edges
+    frontier new_frontier = frontier::sparse( GA.numVertices(), outEdgeCount );
+    VID* nextIndices = new_frontier.getSparse();
+    // Currently not required for any of the algorithms. This is due to
+    // converting the frontier to a dense one on every iteration, which
+    // has the same function.
+    // double tmrd= 0;
+    // timer tmd;
+    // tmd.start();
+    VID nextM = 0;
+    if constexpr ( expr::is_idempotent<decltype(vexpr)>::value && false ) { // TEMP
+	// Operation is idempotent, i.e., we are allowed to process each
+	// edge multiple times. No need to remove duplicates. We will filter
+	// 'empty' slots (marked -1).
+
+	// Re-evaluate if vertices are active. Duplicate vertices will be
+	// evaluated multiple times.
+	csr_sparse_update_frontier( nextM, nextIndices, op );
+	// Filter out the empty slots (marked with -1)
+	nextM = sequence::filter( outEdges, nextIndices, outEdgeCount,
+				  ValidVID() );
+    } else if( outEdgeCount > GA.numEdges() / 1000 ) {
+	// We have relatively many edges. Better to process this in parallel.
+	removeDuplicates( outEdges, outEdgeCount, part );
+	// Re-evaluate if vertices are active
+	csr_sparse_update_frontier( nextM, nextIndices, op );
+	// Filter out the empty slots (marked with -1)
+	nextM = sequence::filter( outEdges, nextIndices, outEdgeCount,
+				  ValidVID() );
+    } else {
+	// Re-evaluate if vertices are active. Duplicate vertices will be
+	// evaluated multiple times.
+	csr_sparse_update_frontier( nextM, nextIndices, op );
+
+	// Remove duplicates sequentially
+	nextM = removeDuplicatesAndFilter_seq( outEdges, outEdgeCount,
+					       nextIndices, part );
+    }
+
+    new_frontier.calculateActiveCounts( GA, part, nextM );
+
+    // tmrd = tmd.next();
+    // new_frontier.calculateActiveCounts( GA, part, nextM );
+    // double tmra = tmd.stop();
+
+    // Clean up and return
+    delete [] outEdges;
+    delete [] degrees;
+// double tmr = tm.stop();
+// std::cerr << "csr_sparse_with_f nv=" << m << " noute=" << outEdgeCount << ' ' << tmr << " of which dedup: " << tmrd << " of which count: " << tmra << "\n";
+    
+    return new_frontier;
+}
 
 // Sparse CSR traversal (GraphCSx) with a new frontier
 // Uses internal array for removing duplicates, contrasted to the explicit
@@ -1186,6 +1289,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     Operator op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
+    EID * degrees = new EID[2*m];
     VID * s = old_frontier.getSparse();
 
     static constexpr bool zerof = true; // !expr::is_idempotent<decltype(vexpr)>::value;
@@ -1207,25 +1311,12 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
     }
 
-    // Every call with a fusion operation defined will be executed in the
-    // fusion-based traversal. Exceptions are made when the fusion operation
-    // is read-only, i.e., it has no side effects. In this case we assume that
-    // it is correct to also execute with a non-fusion traversal, which we will
-    // do if a sequential execution is preferred.
-    if constexpr ( api::has_fusion_op_v<Operator> ) {
-	if( !expr::is_readonly_fusion_op<Operator>::value
-	    || ( cfg.is_parallel() && m >= 1024 ) )
-	    return csr_sparse_with_f_fusion_stealing<zerof>(
-		cfg, GA, eid_retriever, part, old_frontier, zf, op );
-    }
-
     if( m < 1024 || !cfg.is_parallel() )
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
 
     // By definition of sparsity, don't expect this loop to be worthwhile to
     // parallelize.
-    EID * degrees = new EID[2*m];
     if( m > 4096 )
 	parallel_for( VID i=0; i < m; ++i )
 	    degrees[i] = idx[s[i]+1] - idx[s[i]];
@@ -1242,6 +1333,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     EID outEdgeCount = outEdgeCountF;
     if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
 	outEdgeCount += m; // Add in m vertices in old frontier
+    VID* outEdges = new VID[outEdgeCount];
 
     // CSR requires no check that destination is active.
     auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
@@ -1269,145 +1361,79 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     const VID *edge = GA.getEdges();
 
-    constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
-
-    // Cache local variables; no need to destruct/commit cache
-    auto mi = expr::create_value_map_new<1>();
-    auto c = cache_create( env, l_cache, mi );
-
-    frontier new_frontier;
-
-    // Handle differently if estimated activated vertices is very large
-    if( zerof && outEdgeCount > EID(GA.numVertices()) ) {
-	parallel_for( VID k = 0; k < m; k++ ) {
-	    VID v = s[k];
-	    EID o = offsets[k];
-	    intT d = degrees[k];
-	    if( __builtin_expect( d < 1000, 1 ) ) {
-		process_csr_sparse<need_atomic,um_flags_only>(
-		    &edge[idx[v]], idx[v], d, v,
-		    nullptr, zf, c, env, vexpr );
-	    } else {
-		// Note: it is highly likely that running this in parallel
-		//       will hardly ever occur, as in the sparse part
-		//       high-degree vertices may have converged (e.g.
-		//       PRDelta, maybe not BFS)
-		process_csr_sparse_parallel<need_atomic,um_flags_only>(
-		    &edge[idx[v]], idx[v],
-		    d, v, nullptr, zf, c, env, vexpr );
-	    }
+    parallel_for( VID k = 0; k < m; k++ ) {
+	VID v = s[k];
+	EID o = offsets[k];
+	intT d = degrees[k];
+	if( __builtin_expect( d < 1000, 1 ) ) {
+	    process_csr_sparse<true,true,zerof>(
+		&edge[idx[v]], idx[v], d, v,
+		&outEdges[o], zf, env, vexpr );
+	} else {
+	    // Note: it is highly likely that running this in parallel
+	    //       will hardly ever occur, as in the sparse part
+	    //       high-degree vertices may have converged (e.g.
+	    //       PRDelta, maybe not BFS)
+	    process_csr_sparse_parallel<true,zerof>(
+		&edge[idx[v]], idx[v],
+		d, v, &outEdges[o], zf, env, vexpr );
 	}
+    }
 
-	if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
-	    for( VID r=0; r < m; ++r )
-		zf[s[r]] = true;
-
-	// Construct frontier based on zerof flags and simultaneously
-	// restore zero frontier to all zeros
-	GraphCSRAdaptor GA_csr( GA );
-	frontier ftrue = frontier::all_true( GA.numVertices(), GA.numEdges() );
-	expr::array_ro<bool,VID,expr::aid_emap_zerof> a_zerof( zf );
-	make_lazy_executor( part )
-	    .vertex_filter(
-		GA_csr,
-		ftrue,
-		new_frontier,
-		[&]( auto v ) {
-		    return expr::let<expr::aid_emap_let>(
-			a_zerof[v],
-			[&]( auto z ) {
-			    return expr::make_seq(
-				a_zerof[v] = expr::_0,
-				z != expr::_0 ); }
-			);
-		} )
-	    .materialize();
-	ftrue.del();
-    } else {
-	assert( outEdgeCount <= EID(std::numeric_limits<VID>::max())
-		&& "limitation due to cast in frontier construction" );
-
-	VID* outEdges = new VID[outEdgeCount];
-
-	constexpr update_method um
-		      = zerof ? um_list_must_init_unique : um_list_must_init;
-
-	parallel_for( VID k = 0; k < m; k++ ) {
-	    VID v = s[k];
-	    EID o = offsets[k];
-	    intT d = degrees[k];
-	    if( __builtin_expect( d < 1000, 1 ) ) {
-		process_csr_sparse<need_atomic,um>(
-		    &edge[idx[v]], idx[v], d, v,
-		    &outEdges[o], zf, c, env, vexpr );
-	    } else {
-		// Note: it is highly likely that running this in parallel
-		//       will hardly ever occur, as in the sparse part
-		//       high-degree vertices may have converged (e.g.
-		//       PRDelta, maybe not BFS)
-		process_csr_sparse_parallel<need_atomic,um>(
-		    &edge[idx[v]], idx[v],
-		    d, v, &outEdges[o], zf, c, env, vexpr );
-	    }
-	}
-
-	if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
-	    for( VID r=0; r < m; ++r ) {
-		bool add = false;
-		if constexpr ( zerof ) {
-		    if( !zf[s[r]] )
-			add = true;
-		} else
+    if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
+	for( VID r=0; r < m; ++r ) {
+	    bool add = false;
+	    if constexpr ( zerof ) {
+		if( !zf[s[r]] )
 		    add = true;
-		outEdges[outEdgeCountF+r] = add ? s[r] : ~(VID)0;
-	    }
-
-
-	// Restore zero frontier to all zeros
-	if constexpr ( zerof ) {
-	    parallel_for( VID k=0; k < outEdgeCountF; ++k )
-		if( outEdges[k] != (VID)-1 ) {
-		    // assert( zf[outEdges[k]] );
-		    zf[outEdges[k]] = false;
-		}
+	    } else
+		add = true;
+	    outEdges[outEdgeCountF+r] = add ? s[r] : ~(VID)0;
 	}
 
-	// Calculate the number of active edges
-	new_frontier = frontier::sparse( GA.numVertices(), outEdgeCount );
-	VID* nextIndices = new_frontier.getSparse();
-	// Currently not required for any of the algorithms. This is due to
-	// converting the frontier to a dense one on every iteration, which
-	// has the same function.
-	VID nextM = 0;
+    // Restore zero frontier to all zeros
+    if constexpr ( zerof ) {
+	parallel_for( VID k=0; k < outEdgeCountF; ++k )
+	    if( outEdges[k] != (VID)-1 ) {
+		// assert( zf[outEdges[k]] );
+		zf[outEdges[k]] = false;
+	    }
+    }
 
-	// Note: there are no duplicates if zerof == true
-	if constexpr ( expr::is_idempotent<decltype(vexpr)>::value || zerof ) {
-	    // Operation is idempotent, i.e., we are allowed to process each
-	    // edge multiple times. No need to remove duplicates. We will filter
-	    // 'empty' slots (marked -1).
+    // Calculate the number of active edges
+    frontier new_frontier = frontier::sparse( GA.numVertices(), outEdgeCount );
+    VID* nextIndices = new_frontier.getSparse();
+    // Currently not required for any of the algorithms. This is due to
+    // converting the frontier to a dense one on every iteration, which
+    // has the same function.
+    VID nextM = 0;
+
+    // Note: there are no duplicates if zerof == true
+    if constexpr ( expr::is_idempotent<decltype(vexpr)>::value || zerof ) {
+	// Operation is idempotent, i.e., we are allowed to process each
+	// edge multiple times. No need to remove duplicates. We will filter
+	// 'empty' slots (marked -1).
+	nextM = sequence::filter( outEdges, nextIndices, outEdgeCount,
+				  ValidVID() );
+    } else {
+	// Default code assuming not idempotent and not zerof
+	if( outEdgeCount > GA.numEdges() / 1000 ) {
+	    // We have relatively many edges. Better to process this in parallel.
+	    removeDuplicates( outEdges, outEdgeCount, part );
+	    // Filter out the empty slots (marked with -1)
 	    nextM = sequence::filter( outEdges, nextIndices, outEdgeCount,
 				      ValidVID() );
 	} else {
-	    // Default code assuming not idempotent and not zerof
-	    if( outEdgeCount > GA.numEdges() / 1000 ) {
-		// We have relatively many edges. Better to process this in parallel.
-		removeDuplicates( outEdges, outEdgeCount, part );
-		// Filter out the empty slots (marked with -1)
-		nextM = sequence::filter( outEdges, nextIndices, outEdgeCount,
-					  ValidVID() );
-	    } else {
-		// Remove duplicates sequentially
-		nextM = removeDuplicatesAndFilter_seq( outEdges, outEdgeCount,
-						       nextIndices, part );
-	    }
+	    // Remove duplicates sequentially
+	    nextM = removeDuplicatesAndFilter_seq( outEdges, outEdgeCount,
+						   nextIndices, part );
 	}
-    
-	new_frontier.calculateActiveCounts( GA, part, nextM );
-
-	delete [] outEdges;
     }
+    
+    new_frontier.calculateActiveCounts( GA, part, nextM );
 
     // Clean up and return
+    delete [] outEdges;
     delete [] degrees;
     
     return new_frontier;
@@ -1450,35 +1476,29 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 
     const VID *edge = GA.getEdges();
 
-    constexpr bool need_atomic = !expr::is_benign_race<decltype(vexpr)>::value;
-
-    // Cache local variables; no need to destruct/commit cache
-    auto mi = expr::create_value_map_new<1>();
-    auto c = cache_create( env, l_cache, mi );
-
     if constexpr ( !std::decay_t<config>::is_parallel() ) {
 	for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
-	    process_csr_sparse<false,um_none>(
+	    process_csr_sparse<false,false,false>(
 		/*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
-		nullptr, nullptr, c, env, vexpr );
+		nullptr, nullptr, env, vexpr );
 	}
     } else {
 	parallel_for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    if( __builtin_expect( d < 1000, 1 ) ) {
-		process_csr_sparse<need_atomic,um_none>(
+		process_csr_sparse<false,false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v], d, v,
-		    nullptr, nullptr, c, env, vexpr );
+		    nullptr, nullptr, env, vexpr );
 	    } else {
 		// Note: it is highly likely that running this in parallel
 		//       will hardly ever occur, as in the sparse part high-degree
 		//       vertices may have converged (e.g. PRDelta, maybe not BFS)
-		process_csr_sparse_parallel<need_atomic,um_none>(
+		process_csr_sparse_parallel<false,false>(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v],
-		    d, v, nullptr, nullptr, c, env, vexpr );
+		    d, v, nullptr, nullptr, env, vexpr );
 	    }
 	}
     }
