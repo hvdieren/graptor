@@ -1,7 +1,7 @@
 # pick up all benchmarks
 #list(APPEND benchmarks PRcfp21 CCv BFSv BFSLVLv PRv APRv FMv KCv MISv GC GCNv)
-#list(APPEND benchmarks CCv BFSv PRv APRv BFv MISv FMv BFSLVLv PRwidth)
-list(APPEND benchmarks GC_vary)
+list(APPEND benchmarks CCv BFSv PRv APRv BFv MISv FMv BFSLVLv)
+#list(APPEND benchmarks GC_vary)
 
 # determine what graph types to compile
 #list(APPEND graphtypes VEBOPartCCSR GGVEBO)
