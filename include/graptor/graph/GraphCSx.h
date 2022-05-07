@@ -545,10 +545,10 @@ public:
     void import_transpose( const GraphCSx & Gcsr ) {
 	// import_transpose_partitioned( Gcsr, 128 );
 	// import_transpose_adjacency( Gcsr, 128 );
-	// import_transpose_hybrid( Gcsr, 128 );
+	import_transpose_hybrid( Gcsr, 128 );
 	// import_transpose_pull( Gcsr, 128 );
 	// import_transpose_sptrans_scan( Gcsr, 128 );
-	import_transpose_sptrans_merge( Gcsr, 128 );
+	// import_transpose_sptrans_merge( Gcsr, 128 );
 	return;
 
 	timer tm;
