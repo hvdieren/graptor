@@ -41,7 +41,7 @@ if(GRAPTOR_PARALLEL STREQUAL "cilk" OR GRAPTOR_PARALLEL STREQUAL "cilk_numa")
     find_library(LIBDL NAMES dl)
 
     # libraries
-    set(graptor_cilkrts /home/hvandierendonck/research/asap/stable/jacob/lib/libcilkrts.so)
+    set(graptor_cilkrts ${CMAKE_CURRENT_SOURCE_DIR}/reproduce/lib/libcilkrts.so)
     set(graptor_ld_preload LD_PRELOAD=${graptor_cilkrts})
     if(LIBNUMA)
 	list(APPEND EXTRA_LIBS ${graptor_cilkrts} ${LIBNUMA} ${LIBDL})
