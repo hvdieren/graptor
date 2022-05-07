@@ -10,4 +10,6 @@ Shell scripts in this directory show how to build Graptor to reproduce some of t
 1. Set up the build system using cmake and the instructions in the top-level directory. At the very least, build graptorlib.a (the very first build target)
 2. Check and edit the script, in particular for the compiler name/version, and the backend. The defaults are set to compile a CilkPlus program.
 3. Run the script
+    ```
     $ ./ICS22.sh
+    ```
