@@ -25,8 +25,9 @@ using expr::_1;
 #endif
 #define MEMO 0
 
+// TODO: FUSION works well for road networks: estimate network type and select at runtime
 #ifndef FUSION
-#define FUSION 1
+#define FUSION 0
 #endif
 
 enum var {

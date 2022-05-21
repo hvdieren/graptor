@@ -39,8 +39,9 @@ using expr::_c;
 #define SP_THRESHOLD -1
 #endif
 
+// TODO: FUSION works well for road networks: estimate network type and select at runtime
 #ifndef FUSION
-#define FUSION 1
+#define FUSION 0
 #endif
 
 #ifndef AVG_DELTA
