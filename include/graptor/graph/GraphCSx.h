@@ -543,12 +543,14 @@ public:
 		  << tm.next() << "\n";
     }
     void import_transpose( const GraphCSx & Gcsr ) {
-	// import_transpose_partitioned( Gcsr, 128 );
-	// import_transpose_adjacency( Gcsr, 128 );
-	import_transpose_hybrid( Gcsr, 128 );
-	// import_transpose_pull( Gcsr, 128 );
-	// import_transpose_sptrans_scan( Gcsr, 128 );
-	// import_transpose_sptrans_merge( Gcsr, 128 );
+	const VID P = atoi( getenv( "GRAPTOR_P" ) ); // 128;
+
+	// import_transpose_partitioned( Gcsr, P );
+	// import_transpose_adjacency( Gcsr, P );
+	import_transpose_hybrid( Gcsr, P );
+	// import_transpose_pull( Gcsr, P );
+	// import_transpose_sptrans_scan( Gcsr, P );
+	// import_transpose_sptrans_merge( Gcsr, P );
 	return;
 
 	timer tm;
@@ -620,6 +622,8 @@ public:
 	aux.del();
 	build_degree();
 	std::cerr << "transpose: build degree: " << tm.next() << "\n";
+
+	std::cerr << "transpose: total: " << tm.total() << "\n";
     }
 
     static GraphCSx create_union( const GraphCSx & G1, const GraphCSx & G2 ) {
@@ -1074,7 +1078,7 @@ public:
 	mm::buffer<VID> lcnt( n+1, numa_allocation_partitioned( part ) );
 	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
 	// mm::buffer<uint64_t> vkind( (m+63)/64, numa_allocation_interleaved() );
-#if 1
+#if 0
 	mm::buffer<VID> rxp( m, numa_allocation_interleaved() );
 #endif
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
@@ -1158,7 +1162,7 @@ public:
 	std::cerr << "transpose: init (partially sequential): "
 		  << tm.next() << "\n";
 
-#if 1
+#if 0
 	// Expand row indices
 	map_partition( part, [=,&part]( unsigned p ) mutable {
 	    VID vs = part.start_of( p );
@@ -1174,6 +1178,12 @@ public:
 #endif
 
 	// Count occurences of each vertex
+	// Options:
+	//  - use read-only array for indices; updated array for counts
+	//  - split loop, iterate twice, once for HDV, once for LDV
+	//    (branch hard to predict; false sharing on read-only data)
+	//  - clzero
+	//  - 
 	map_partition( part, [=,&part]( unsigned p ) mutable {
 	    VID vs = part.start_of( p );
 	    VID ve = part.end_of( p );
@@ -1181,9 +1191,21 @@ public:
 	    EID ee = idx[ve];
 	    VID * hcnt_p = &hcnt[p][0];
 	    for( EID e=es; e < ee; ++e ) {
+		// if( (e & 15) == 0 ) clzero( &xref[e] );
+		if( (e & 15) == 0 ) {
+		    // __asm__( "\n\tclzero" : : "a"(&xref[e]) : );
+		    char * p = reinterpret_cast<char *>( &xref[e] );
+		    __m128i z = _mm_setzero_si128();
+		    _mm_stream_si128( (__m128i *)&p[0], z );
+		    _mm_stream_si128( (__m128i *)&p[16], z );
+		    _mm_stream_si128( (__m128i *)&p[32], z );
+		    _mm_stream_si128( (__m128i *)&p[48], z );
+		}
+		// if( (e & 15) == 0 ) _mm_prefetch( &edges[e+TR_DIST], _MM_HINT_NTA );
 		VID v = edges[e];
-		if( (SVID)lcnt[v] < (SVID)0 )
-		    xref[e] = hcnt_p[lcnt[v] & ~hibit_mask]++;
+		VID lcnt_v = lcnt[v];
+		if( (SVID)lcnt_v < (SVID)0 )
+		    xref[e] = hcnt_p[lcnt_v & ~hibit_mask]++;
 		else {
 		    // Subject to false sharing as well as conflicts
 		    xref[e] = __sync_fetch_and_add( &lcnt[v], 1 );
@@ -1365,7 +1387,7 @@ public:
 #endif
 	
 #else
-#if 0 // scalar place
+#if 1 // scalar place
 	// Populate adjacency lists
 	map_partition( part, [=,&part]( unsigned p ) {
 	    VID vs = part.start_of( p );
@@ -1473,22 +1495,17 @@ public:
 	}
 	std::cerr << "transpose: sort: " << tm.next() << "\n";
 
+#if 0
 	// Verify sortedness
 	parallel_for( VID s=0; s < n; ++s ) {
-/* not when using xref
-	    if( idx[s+1] - idx[s] > D )
-		assert( hcnt[P-1][lcnt[s]] == tr_idx[s+1] );
-	    else
-		assert( lcnt[s] == tr_idx[s+1] );
-*/
-	    // assert( std::is_sorted( &edges[idx[s]], &edges[idx[s+1]] ) );
 	    assert( std::is_sorted(
 			&tr_edges[tr_idx[s]], &tr_edges[tr_idx[s+1]] ) );
 	}
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
+#endif
 
 	// Cleanup
-	rxp.del();
+	// rxp.del();
 	// vkind.del();
 	xref.del();
 	for( unsigned p=0; p <= P; ++p )
