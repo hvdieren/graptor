@@ -830,15 +830,15 @@ struct binop_cmpge {
 };
 
 template<typename E1, typename E2>
-binop<E1,E2,binop_cmpge> make_cmpge( E1 l, E2 r ) {
+auto make_cmpge( E1 l, E2 r,
+		 std::enable_if_t<is_base_of<expr_base,E1>::value
+		 && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_cmpge() );
 }
 
 template<typename E1, typename E2>
-typename std::enable_if<is_base_of<expr_base,E1>::value && is_base_of<expr_base,E2>::value,
-			binop<E1,E2,binop_cmpge>>::type
-operator >= ( E1 l, E2 r ) {
-    return make_binop( l, r, binop_cmpge() );
+auto operator >= ( E1 l, E2 r ) -> decltype(make_cmpge( l, r )) {
+    return make_cmpge( l, r );
 }
 
 /* binop: cmpgt
@@ -880,6 +880,7 @@ auto operator > ( E1 l, E2 r ) -> decltype(make_cmpgt( l, r )) {
     return make_cmpgt( l, r );
 }
 
+
 /* binop: cmple
  */
 struct binop_cmple {
@@ -908,15 +909,15 @@ struct binop_cmple {
 };
 
 template<typename E1, typename E2>
-binop<E1,E2,binop_cmple> make_cmple( E1 l, E2 r ) {
+auto make_cmple( E1 l, E2 r,
+		 std::enable_if_t<is_base_of<expr_base,E1>::value
+		 && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_cmple() );
 }
 
 template<typename E1, typename E2>
-typename std::enable_if<is_base_of<expr_base,E1>::value && is_base_of<expr_base,E2>::value,
-			binop<E1,E2,binop_cmple>>::type
-operator <= ( E1 l, E2 r ) {
-    return make_binop( l, r, binop_cmple() );
+auto operator <= ( E1 l, E2 r ) -> decltype(make_cmple( l, r )) {
+    return make_cmple( l, r );
 }
 
 
@@ -959,6 +960,7 @@ template<typename E1, typename E2>
 auto operator < ( E1 l, E2 r ) -> decltype(make_cmplt( l, r )) {
     return make_cmplt( l, r );
 }
+
 
 
 /* binop: mul
@@ -1286,14 +1288,17 @@ struct binop_sll {
 };
 
 template<typename E1, typename E2>
-auto sll( E1 l, E2 r ) {
+auto make_sll( E1 l, E2 r,
+	       std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_sll() );
 }
 
 template<typename E1, typename E2>
-auto operator << ( E1 l, E2 r ) {
-    return sll( l, r );
+auto operator << ( E1 l, E2 r ) -> decltype(make_sll( l, r )) {
+    return make_sll( l, r );
 }
+
 
 /**====================================================================-
  * let expression.
