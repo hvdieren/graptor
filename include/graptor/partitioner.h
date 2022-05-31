@@ -223,10 +223,7 @@ public:
 	return vs;
     }
     VID end_of_vbal( PID i ) const	    {
-	const VID P = get_num_partitions();
-	VID ve = ((VID)i+1) * ( ( get_vertex_range() + (P-1) ) / P );
-	if( ve > get_vertex_range() ) ve = get_vertex_range();
-	return ve;
+	return start_of_vbal( i+1 );
     }
 
     // Either vertices or edges

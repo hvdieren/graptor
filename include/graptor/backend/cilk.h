@@ -18,25 +18,33 @@
 #include <utility>
 #include <algorithm>
 
+#define USE_CILK_API
+
 #include <cilk/cilk.h>
 #include <cilk/cilk_api.h>
 
+#if defined(__cilk)
 #define parallel_for cilk_for
+#else
+#define parallel_for for
+#endif
 
 inline uint32_t graptor_num_threads() {
     return __cilkrts_get_nworkers();
 }
 
-#ifdef USE_NUMA
 // Copied from Cilk include/internal/abi.h:
 typedef uint64_t cilk64_t;
 typedef void (*__cilk_abi_f64_t)(void *data, cilk64_t low, cilk64_t high);
 
 extern "C" {
+    void __cilkrts_cilk_for_64(__cilk_abi_f64_t body, void *data,
+			       cilk64_t count, int grain);
+#ifdef USE_NUMA
     void __cilkrts_cilk_for_numa_64(__cilk_abi_f64_t body, void *data,
 				    cilk64_t count, int grain);
-}
 #endif // USE_NUMA
+}
 
 template<typename Fn>
 struct PartitionOp {
@@ -48,9 +56,9 @@ struct PartitionOp {
 
     static void func(void *data, uint64_t low, uint64_t high) {
 	PartitionOp<Fn> * datap = reinterpret_cast<PartitionOp<Fn> *>( data );
-	parallel_for( uint64_t n=datap->part.numa_start_of(low);
-		      n < datap->part.numa_start_of(high); ++n )
-	    datap->data( n );
+	parallel_loop( datap->part.numa_start_of( low ),
+		       datap->part.numa_start_of( high ),
+		       [&]( uint64_t n ) { datap->data( n ); } );
     }
 };
 
@@ -65,14 +73,18 @@ struct VertexOp {
     static void func(void *data, uint64_t low, uint64_t high) {
 	using VID = typename partitioner::VID;
 	VertexOp<Fn> * datap = reinterpret_cast<VertexOp<Fn> *>( data );
-	parallel_for( uint64_t p=datap->part.numa_start_of(low);
-		      p < datap->part.numa_start_of(high); ++p ) {
-	    VID ps = datap->part.start_of( p );
-	    VID pe = datap->part.end_of( p );
-	    _Pragma( STRINGIFY(cilk grainsize = _SCAN_BSIZE) ) parallel_for(
-		VID v=ps; v < pe; ++v )
-		datap->data( v );
-	}
+	// TODO: single parallel_loop over all vertices in partition?
+	//       how to deal with padding vertices at end of each partition?
+	parallel_loop(
+	    datap->part.numa_start_of(low),
+	    datap->part.numa_start_of(high),
+	    [&]( auto p ) {
+		VID ps = datap->part.start_of_vbal( p );
+		VID pe = datap->part.end_of_vbal( p );
+		for( VID v=ps; v < pe; ++v ) {
+		    datap->data( v );
+		}
+	    } );
     }
 };
 
@@ -87,16 +99,51 @@ struct EdgeOp {
     static void func(void *data, uint64_t low, uint64_t high) {
 	using EID = typename partitioner::EID;
 	EdgeOp<Fn> * datap = reinterpret_cast<EdgeOp<Fn> *>( data );
-	parallel_for( uint64_t p=datap->part.numa_start_of(low);
-		      p < datap->part.numa_start_of(high); ++p ) {
-	    EID ps = datap->part.edge_start_of( p );
-	    EID pe = datap->part.edge_end_of( p );
-	    _Pragma( STRINGIFY(cilk grainsize = _SCAN_BSIZE) ) parallel_for(
-		EID e=ps; e < pe; ++e )
-		datap->data( e );
+	parallel_loop(
+	    datap->part.numa_start_of(low),
+	    datap->part.numa_start_of(high),
+	    [&]( auto p ) {
+		EID ps = datap->part.edge_start_of( p );
+		EID pe = datap->part.edge_end_of( p );
+		for( EID e=ps; e < pe; ++e ) {
+		    datap->data( e );
+		}
+	    } );
+    }
+};
+
+template<typename Fn>
+struct LoopOp {
+    uint64_t it_start;
+    Fn data;
+
+    LoopOp( uint64_t it_start_, Fn data_ )
+	: it_start( it_start_ ), data( data_ ) { }
+
+    static void func(void *data, uint64_t low, uint64_t high) {
+	LoopOp<Fn> * datap = reinterpret_cast<LoopOp<Fn> *>( data );
+	for( uint64_t i=low; i < high; ++i ) {
+	    datap->data( datap->it_start + i );
 	}
     }
 };
+
+template<typename T, typename Fn>
+void parallel_loop( const T it_start, const T it_end, Fn fn ) {
+    LoopOp<Fn> op( static_cast<uint64_t>( it_start ), fn );
+    __cilkrts_cilk_for_64( &LoopOp<Fn>::func,
+			   reinterpret_cast<void *>( &op ),
+			   static_cast<uint64_t>( it_end - it_start ), 1 );
+}
+
+template<typename T, typename Fn>
+void parallel_loop( const T it_start, const T it_end, const int grain, Fn fn ) {
+    LoopOp<Fn> op( static_cast<uint64_t>( it_start ), fn );
+    __cilkrts_cilk_for_64( &LoopOp<Fn>::func,
+			   reinterpret_cast<void *>( &op ),
+			   static_cast<uint64_t>( it_end - it_start ),
+			   grain );
+}
 
 #if NUMA
 template<typename Fn>
@@ -111,9 +158,7 @@ void map_partitionL( const partitioner & part, Fn fn ) {
 template<typename Fn>
 void map_partitionL( const partitioner & part, Fn fn ) {
     VID _np = part.get_num_partitions();
-    parallel_for( VID vname=0; vname < _np; ++vname ) {
-	fn( vname );
-    }
+    parallel_loop( VID(0), _np, [&]( uint64_t i ) { fn( i ); } );
 }
 #endif // NUMA
 
@@ -130,13 +175,10 @@ void map_vertexL( const partitioner & part, Fn fn ) {
 template<typename Fn>
 void map_vertexL( const partitioner & part, Fn fn ) {
     using VID = typename partitioner::VID;
-    VID np = part.get_num_partitions();
-    parallel_for( unsigned int p=0; p < np; ++p ) {
-	VID s = part.start_of( p );
-	VID e = part.end_of( p );
-	parallel_for( VID v=s; v < e; ++v )
-	    fn( v );
-    }
+    unsigned int np = part.get_num_partitions();
+    VID ps = part.start_of( 0 );
+    VID pe = part.end_of( np-1 );
+    parallel_loop( ps, pe, [&]( VID v ) { fn( v ); } );
 }
 #endif
 
@@ -154,12 +196,9 @@ template<typename Fn>
 void map_edgeL( const partitioner & part, Fn fn ) {
     using EID = typename partitioner::EID;
     unsigned int np = part.get_num_partitions();
-    parallel_for( unsigned int p=0; p < np; ++p ) {
-	EID ps = part.edge_start_of( p );
-	EID pe = part.edge_end_of( p );
-	parallel_for( EID e=ps; e < pe; ++e )
-	    fn( e );
-    }
+    EID ps = part.edge_start_of( 0 );
+    EID pe = part.edge_end_of( np-1 );
+    parallel_loop( ps, pe, [&]( EID e ) { fn( e ); } );
 }
 #endif
 

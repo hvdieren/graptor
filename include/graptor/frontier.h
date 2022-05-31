@@ -562,8 +562,7 @@ public:
 	    b.allocate( numa_allocation_partitioned( part ) );
 	    bool *bp = b.get();
 	    map_vertexL( part, [&]( VID v ) { bp[v]=0; } );
-	    parallel_for( VID i=0; i < nactv; i++ )
-		bp[s[i]] = 1;
+	    parallel_loop( (VID)0, nactv, [&]( VID i ) { bp[s[i]] = 1; } );
 	    delete[] s;
 	    ftype = frontier_type::ft_bool;
 	    break;
@@ -757,8 +756,9 @@ public:
 	    partitioner cpart = part.contract( 4 ); // 8 bits / 2 bits per elm
 	    map_vertexL( cpart, [&]( VID v ) { bp[v]=0; } );
 
-	    parallel_for( VID i=0; i < nactv; i++ )
+	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		bp[s[i]/4] |= 3 << ((s[i]%4)*2);
+	    } );
 	    delete[] s;
 	    ftype = frontier_type::ft_bit2;
 	    break;
@@ -818,10 +818,10 @@ public:
 	    l1.allocate( numa_allocation_partitioned( part ) );
 	    logical<1> *l1p = l1.get();
 	    map_vertexL( part, [&](VID v) { l1p[v]=logical<1>::false_val(); } );
-	    parallel_for( VID i=0; i < nactv; i++ ) {
+	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		assert( !l1p[s[i]] );
 		l1p[s[i]] = logical<1>::true_val();
-	    }
+	    } );
 
 	    delete[] s;
 	    ftype = frontier_type::ft_logical1;
@@ -967,12 +967,12 @@ public:
 	    l4.allocate( numa_allocation_partitioned( part ) );
 	    logical<4> *l4p = l4.get();
 	    map_vertexL( part, [&](VID v) { l4p[v]=logical<4>::false_val(); } );
-	    parallel_for( VID i=0; i < nactv; i++ ) {
+	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		// Assertion meaningful only when prior sparse edgemaps
 		// are guaranteed to remove duplicates
 		// assert( !l4p[s[i]] );
 		l4p[s[i]] = logical<4>::true_val();
-	    }
+	    } );
 
 	    delete[] s;
 	    ftype = frontier_type::ft_logical4;
@@ -1019,8 +1019,9 @@ public:
 	    l8.allocate( numa_allocation_partitioned( part ) );
 	    logical<8> *l8p = l8.get();
 	    map_vertexL( part, [&](VID v) { l8p[v]=logical<8>::false_val(); } );
-	    parallel_for( VID i=0; i < nactv; i++ )
+	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		l8p[s[i]] = logical<8>::true_val();
+	    } );
 
 	    delete[] s;
 	    ftype = frontier_type::ft_logical8;

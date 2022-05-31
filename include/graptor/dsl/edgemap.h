@@ -450,7 +450,7 @@ process_csc_sparse_aset_parallel( const VID *out, VID deg, VID dstv,
 
     auto dst = simd::template create_constant<simd::ty<VID,1>>( dstv );
 
-    parallel_for( VID j=0; j < deg; j++ ) {
+    parallel_loop( VID(0), deg, [&]( VID j ) {
 	// Need to (re-)initialise dst inside loop as otherwise compiler
 	// cannot figure out the layout of the vector due to the vector
 	// being passed in as an argument to the cilk_for function.
@@ -461,7 +461,7 @@ process_csc_sparse_aset_parallel( const VID *out, VID deg, VID dstv,
 	// Note: set evaluator to use atomics as we are in parallel
 	auto ret = env.template evaluate<true>( c, m, e );
 	conditional_set<setf,false,false>( fr, nullptr, ret.value(), dstv );
-    }
+    } );
 }
 
 // Sparse CSR traversal (GraphCSx) with a new frontier
@@ -508,7 +508,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, &o[k], vexpr, vcaches, env );
 	}
     } else {
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually do parallel processing of neighbours as we
@@ -518,7 +518,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 	    o[k] = ~(VID)0;
 	    process_csc_sparse_aset<true>(
 		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, &o[k], vexpr, vcaches, env );
-	}
+	} );
     }
 
     // Filter out the empty slots (marked with -1)
@@ -583,7 +583,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
 		vcaches, env );
 	}
     } else {
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually do parallel processing of neighbours as we
@@ -594,7 +594,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
 	    process_csc_sparse_aset<true>(
 		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, &o[k], vexpr, rexpr,
 		vcaches, env );
-	}
+	} );
     }
 
     // Filter out the empty slots (marked with -1)
@@ -644,7 +644,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 					    vcaches, env );
 	}
     } else {
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually do parallel processing as we have not
@@ -653,7 +653,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 	    // high-degree vertices.
 	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, nullptr, vexpr,
 					    vcaches, env );
-	}
+	} );
     }
 
     // return
@@ -677,25 +677,26 @@ inline void removeDuplicates( VID * ids, EID me, const partitioner & part ) {
 	if( flags.get_length() > 0 )
 	    flags.del();
 	flags.allocate( numa_allocation_partitioned( part ) );
-	parallel_for( VID i=0; i<n; i++ )
+	parallel_loop( VID(0), n, [&]( VID i ) {
 	    flags[i] = undef;
+	} );
     }
 
     // Figure out which vertices are listed in ids
-    parallel_for( VID i=0; i < m; i++ ) {
+    parallel_loop( VID(0), m, [&]( VID i ) {
 	if( ids[i] != undef && flags[ids[i]] == undef )
 	    CAS( &flags[ids[i]], undef, i );
-    }
+    } );
 
     // Cancel out duplicates
-    parallel_for( VID i=0; i < m; i++ ) {
+    parallel_loop( VID(0), m, [&]( VID i ) {
 	if( ids[i] != (VID)-1 ) {
 	    if( flags[ids[i]] == i ) {  // win
 		flags[ids[i]] = undef; //reset
 	    } else
 		ids[i] = undef; // lose
 	}
-    }
+    } );
     // Flags is restored to all -1 now
     // TODO: we could now already know how many distinct values there are
     //       by counting them above, which can speedup the subsequent filter op.
@@ -720,7 +721,9 @@ inline VID removeDuplicatesAndFilter_seq( VID * ids, EID me,
 	}
 
 	// Always reset. Can do in parallel (large numbers)
-	parallel_for( VID i=0; i<n; i++ ) flags[i] = (VID)-1;
+	parallel_loop( VID(0), n, [&]( VID i ) {
+	    flags[i] = (VID)-1;
+	} );
 
 	// Figure out which vertices are listed in ids
 	VID i = 0;
@@ -881,7 +884,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 			     const Expr & e ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
-    parallel_for( VID j=0; j < deg; j++ ) {
+    parallel_loop( VID(0), deg, [&]( VID j ) {
 	// Need to (re-)initialise src inside loop as otherwise compiler
 	// cannot figure out the layout of the vector due to the vector
 	// being passed in as an argument to the cilk_for function.
@@ -898,7 +901,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	auto ret = env.template evaluate<atomic>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
-    }
+    } );
 }
 
 template<bool atomic, update_method um,
@@ -938,7 +941,7 @@ process_csr_sparse_parallel( const VID *out, EID be,
 			     const Expr & e ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
-    parallel_for( VID j=0; j < deg; j++ ) {
+    parallel_loop( VID(0), deg, [&]( VID j ) {
 	// Need to (re-)initialise src inside loop as otherwise compiler
 	// cannot figure out the layout of the vector due to the vector
 	// being passed in as an argument to the cilk_for function.
@@ -956,7 +959,7 @@ process_csr_sparse_parallel( const VID *out, EID be,
 	auto ret = env.template evaluate<atomic>( c, m, e );
 	conditional_set<um>( &frontier[j], &zf[dst.data()],
 			     ret.value().data(), dst.data() );
-    }
+    } );
 }
 
 
@@ -998,7 +1001,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
-    parallel_for( VID j=0; j < deg; j++ ) {
+    parallel_loop( VID(0), deg, [&]( VID j ) {
 	// Need to (re-)initialise src inside loop as otherwise compiler
 	// cannot figure out the layout of the vector due to the vector
 	// being passed in as an argument to the cilk_for function.
@@ -1015,7 +1018,7 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 	auto ret = expr::evaluate<atomic>( c, m, e );
 	conditional_set<setf,zerof,true>( &frontier[j], &zf[dst.data()],
 					  ret.value().data(), dst.data() );
-    }
+    } );
 }
 
 
@@ -1037,7 +1040,7 @@ void csr_sparse_update_frontier( VID nextM, VID * nextIndices, Operator op ) {
 
 	auto expr = rewrite_internal( expr1 );
 
-	parallel_for( VID i=0; i < nextM; ++i ) {
+	parallel_loop( VID(0), nextM, [&]( VID i ) {
 	    VID v = nextIndices[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 	    auto m = expr::create_value_map_new<VL>(
@@ -1046,7 +1049,7 @@ void csr_sparse_update_frontier( VID nextM, VID * nextIndices, Operator op ) {
 	    auto ret = env.evaluate( c, m, expr );
 	    if( !ret.value().data() )
 		nextIndices[i] = ~(VID)0;
-	}
+	} );
     }
 }
 
@@ -1227,8 +1230,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // parallelize.
     EID * degrees = new EID[2*m];
     if( m > 4096 )
-	parallel_for( VID i=0; i < m; ++i )
+	parallel_loop( VID(0), m, [&]( VID i ) {
 	    degrees[i] = idx[s[i]+1] - idx[s[i]];
+	} );
     else
 	for( VID i=0; i < m; ++i )
 	    degrees[i] = idx[s[i]+1] - idx[s[i]];
@@ -1279,7 +1283,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     // Handle differently if estimated activated vertices is very large
     if( zerof && outEdgeCount > EID(GA.numVertices()) ) {
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    EID o = offsets[k];
 	    intT d = degrees[k];
@@ -1296,7 +1300,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 		    &edge[idx[v]], idx[v],
 		    d, v, nullptr, zf, c, env, vexpr );
 	    }
-	}
+	} );
 
 	if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
 	    for( VID r=0; r < m; ++r )
@@ -1332,7 +1336,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	constexpr update_method um
 		      = zerof ? um_list_must_init_unique : um_list_must_init;
 
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    EID o = offsets[k];
 	    intT d = degrees[k];
@@ -1349,7 +1353,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 		    &edge[idx[v]], idx[v],
 		    d, v, &outEdges[o], zf, c, env, vexpr );
 	    }
-	}
+	} );
 
 	if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
 	    for( VID r=0; r < m; ++r ) {
@@ -1365,11 +1369,12 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
 	// Restore zero frontier to all zeros
 	if constexpr ( zerof ) {
-	    parallel_for( VID k=0; k < outEdgeCountF; ++k )
+	    parallel_loop( EID(0), outEdgeCountF, [&]( EID k ) {
 		if( outEdges[k] != (VID)-1 ) {
 		    // assert( zf[outEdges[k]] );
 		    zf[outEdges[k]] = false;
 		}
+	    } );
 	}
 
 	// Calculate the number of active edges
@@ -1465,7 +1470,7 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 		nullptr, nullptr, c, env, vexpr );
 	}
     } else {
-	parallel_for( VID k = 0; k < m; k++ ) {
+	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    if( __builtin_expect( d < 1000, 1 ) ) {
@@ -1480,7 +1485,7 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 		    /*eid_retriever,*/ &edge[idx[v]], idx[v],
 		    d, v, nullptr, nullptr, c, env, vexpr );
 	    }
-	}
+	} );
     }
 
     // return

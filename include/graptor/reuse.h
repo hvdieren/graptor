@@ -127,8 +127,9 @@ public:
 	if( root ) {
 	    std::cout << "******************** STEP/" << /*lru_fill*/ calculateVolume(root) << " ********************\n";
 	    // std::fill( &present[0], &present[n], false );
-	    parallel_for( size_t i=0; i < n; ++i )
+	    parallel_loop( (size_t)0, n, [&]( size_t i ) {
 		prealloc[i].timestamp = absent;
+	    } );
 	    // lru_fill = 0;
 	    root = 0;
 

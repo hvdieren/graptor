@@ -317,7 +317,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
     if( num_threads > 1 ) {
-	parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
 	    VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
 	    VID to = std::min( uint64_t(m),
 			       ( uint64_t(t + 1) * uint64_t(m) )
@@ -326,7 +326,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	    F[t] =
 		csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
 		    cfg, GA, part, work_queues, t, zf, op );
-	}
+	} );
     } else {
 	work_queues.create_buffer( 0, s, m );
 	F[0] = csr_sparse_with_f_seq_fusion<zerof,need_strong_checking>(
@@ -339,7 +339,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	if constexpr ( need_strong_checking ) {
 	    // Vertices already processed leave info in zf[] that is not
 	    // easily cleared. So we need to traverse the whole array.
-	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
 		// Strange stuff with zf check, compiler erroneously
 		// evading it because it looks like bool(?). Hence the cast.
 		unsigned char * uczf = (unsigned char*)zf;
@@ -356,7 +356,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		    uczf[v] = 0;
 		}
 		F[t].resize( nv_new );
-	    }
+	    } );
 
 	    VID n = GA.numVertices();
 /*
@@ -372,7 +372,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		zf[v] = false;
 */
 	    work_queues.shift_processed();
-	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
 		while( auto * buffer = work_queues.steal( t ) ) {
 		    auto I = buffer->begin();
 		    auto E = buffer->end();
@@ -382,7 +382,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		    }
 		    buffer->destroy();
 		}
-	    }
+	    } );
 /*
 	    for( VID v=0; v < n; ++v ) {
 		if( zf[v] != 0 )
@@ -391,12 +391,12 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 */
 	} else {
 	    // Vertices already processed leave no info in zf[]
-	    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
 		VID outEdgeCount = F[t].size();
 		VID * outEdges = &F[t][0];
 		for( VID k=0; k < outEdgeCount; ++k )
 		    zf[outEdges[k]] = false;
-	    }
+	    } );
 	}
     }
 
@@ -411,9 +411,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     // Merge all the resultant frontiers (copy - could do in parallel)
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
-    parallel_for( uint32_t t=0; t < num_threads; ++t ) {
+    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
 	std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
-    }
+    } );
 
     // Cleanup. Deletes contents of vectors also.
     delete[] inspt;

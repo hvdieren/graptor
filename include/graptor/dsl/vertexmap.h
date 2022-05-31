@@ -899,13 +899,13 @@ private:
 
 	VID nactv = fref.nActiveVertices();
 	const VID * f_array = fref.getSparse();
-	parallel_for( VID i=0; i < nactv; ++i ) {
+	parallel_loop( (VID)0, nactv, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
 	    auto c = cache_create( env, l_cache, m );
 	    env.evaluate( c, m, expr );
-	}
+	} );
 
 #if VMAP_TIMING
 	vmap_record_time<Operator>( tm.next() );
@@ -974,7 +974,7 @@ private:
 
 	const VID * f_array = fref.getSparse();
 	VID * n_array = nfrontier.getSparse();
-	parallel_for( VID i=0; i < nactv; ++i ) {
+	parallel_loop( (VID)0, nactv, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
@@ -993,7 +993,7 @@ private:
 		else
 		    n_array[i] = ~(VID)0;
 	    }
-	}
+	} );
 
 	// Compact array.
 	// TODO: parallel scan

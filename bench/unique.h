@@ -55,8 +55,7 @@ count_unique( GraphType &GA, const T * values, std::ostream &os ) {
     expr::array_ro<U,VID,0> count_a( count );
 
     // map_vertex does not work - padded vertices skipped
-    parallel_for( VID v=0; v < n; ++v )
-	count_a[v] = VID(0);
+    parallel_loop( (VID)0, n, [=]( VID v ) mutable { count_a[v] = VID(0); } );
 
     // 2. count number of vertices per partition
     //    set only vertex donating label as active

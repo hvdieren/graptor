@@ -234,7 +234,7 @@ inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
     constexpr size_t BLOCK = size_t(128) << 20; // 128 MiB
     unsigned num_threads = graptor_num_threads();
     size_t nblock = ( len + BLOCK - 1 ) / BLOCK;
-    parallel_for( unsigned t=0; t < num_threads; ++t ) {
+    parallel_loop( (unsigned)0, num_threads, [&]( unsigned t ) { 
 	size_t blk_from = ( nblock * t ) / num_threads;
 	size_t blk_to = ( nblock * (t+1) ) / num_threads;
 	size_t from = blk_from * BLOCK;
@@ -248,7 +248,7 @@ inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
 		exit( 1 );
 	    }
 	}
-    }
+    } );
     double delay = tm.stop();
     std::cerr << "Read " << pretty_size( len ) << " in "
 	      << delay << " seconds, "
@@ -386,23 +386,23 @@ public:
 
 	const vertex * V = WG.V.get();
 	// 1. Build array for each v its degree (in parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    VID w = remap.first[v];
 	    index[v] = V[w].getOutDegree();
-	}
+	} );
 	index[n] = m;
 	// 2. Prefix-sum (parallel) => index array
 	EID mm = sequence::plusScan( index.get(), index.get(), n );
 	assert( mm == m && "Index array count mismatch" );
 
 	// 3. Fill out edge array (parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    VID w = remap.first[v];
 	    EID nxt = index[v];
 	    for( VID j=0; j < V[w].getOutDegree(); ++j )
 		edges[nxt++] = remap.second[V[w].getOutNeighbor(j)];
 	    std::sort( &edges[index[v]], &edges[nxt] );
-	}
+	} );
 	build_degree();
     }
     void import( const GraphCSx & Gcsr, const RemapVertexIdempotent<VID> & ) {
@@ -415,10 +415,10 @@ public:
 	assert( n == Gcsr.n && m == Gcsr.m );
 
 	// 1. Build array for each v its degree (in parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    VID w = remap.first[v];
 	    index[v] = Gcsr.index[w+1] - Gcsr.index[w];
-	}
+	} );
 	index[n] = m;
 	// 2. Prefix-sum (parallel) => index array
 	EID mm = sequence::plusScan( index.get(), index.get(), n );
@@ -433,7 +433,7 @@ public:
 	    ? Gcsr.getWeights()->get() : nullptr;
 
 	// 3. Fill out edge array (parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    VID w = remap.first[v];
 	    EID nxt = index[v];
 	    VID deg = Gcsr.index[w+1] - Gcsr.index[w];
@@ -448,7 +448,7 @@ public:
 			     &Tweights[index[v]] );
 	    else
 		std::sort( &edges[index[v]], &edges[nxt] );
-	}
+	} );
 	build_degree();
     }
     template<typename Remapper>
@@ -479,10 +479,10 @@ public:
 	    ? Gcsr.getWeights()->get() : nullptr;
 
 	// 1. Build array for each v its degree (in parallel)
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    VID w = remap.origID( v );
 	    index[v] = w < norig ? Gcsr.index[w+1] - Gcsr.index[w] : 0;
-	}
+	} );
 	index[n] = m;
 	// 2. Prefix-sum (parallel) => index array
 	EID mm = sequence::plusScan( index.get(), index.get(), n );
@@ -496,7 +496,7 @@ public:
 	    // Rather than copying weights prior to paired_sort, could also
 	    // merge into the remapping step in paired_sort to avoid the
 	    // additional copy.
-	    parallel_for( VID v=0; v < n; ++v ) {
+	    parallel_loop( (VID)0, n, [&]( VID v ) { 
 		VID w = remap.origID( v );
 		if( w < norig ) {
 		    EID nxt = index[v];
@@ -513,9 +513,9 @@ public:
 		    if( w & 1 )
 			paired_sort( &edges[nxt], &edges[nxt+deg], &Tweights[nxt] );
 		}
-	    }
+	    } );
 	} else {
-	    parallel_for( VID v=0; v < n; ++v ) {
+	    parallel_loop( (VID)0, n, [&]( VID v ) { 
 		VID w = remap.origID( v );
 		if( w < norig ) {
 		    EID nxt = index[v];
@@ -531,7 +531,7 @@ public:
 			std::sort( &edges[nxt], &edges[nxt+deg] );
 			// heap_sort( &edges[nxt], &edges[nxt+deg] );
 		}
-	    }
+	    } );
 	}
 
 	std::cerr << "GraphCSx::import_expand: remapping edges and weights: "
@@ -562,13 +562,15 @@ public:
 	mmap_ptr<EID> aux( n+1, numa_allocation_interleaved() );
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
 
-	parallel_for( VID v=0; v < n+1; ++v )
+	parallel_loop( (VID)0, n+1, [&]( VID v ) { 
 	    aux[v] = 0;
+	} );
 	std::cerr << "transpose: init: " << tm.next() << "\n";
 
 	// This loop could have better cache usage with VID aux[] instead of EID
-	parallel_for( EID i=0; i < m; ++i )
+	parallel_loop( (EID)0, m, [&]( EID i ) { 
 	    __sync_fetch_and_add( &aux[Gcsr.edges[i]], 1 );
+	} );
 	std::cerr << "transpose: count edges: " << tm.next() << "\n";
 
 	index[0] = 0;
@@ -586,7 +588,7 @@ public:
 	    assert( w && wg );
 	}
 
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) { 
 	    EID i = Gcsr.index[s];
 	    EID j = Gcsr.index[s+1];
 	    for( ; i < j; ++i ) {
@@ -601,7 +603,7 @@ public:
 		if( w )
 		    w[idx] = wg[i];
 	    }
-	}
+	} );
 	std::cerr << "transpose: place: " << tm.next() << "\n";
 
 	// Because we are doing a transpose and keeping VIDs the same (no
@@ -609,14 +611,14 @@ public:
 	// implementation (insert sources in order traversed).
 	// So in a partitioned transpose, with pre-defined per-partition
 	// insertion points, we don't need sorting either.
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) { 
 	    assert( aux[s] == index[s+1] );
 	    if( w )
 		paired_sort( &edges[index[s]], &edges[index[s+1]],
 			     &w[index[s]] );
 	    else
 		std::sort( &edges[index[s]], &edges[index[s+1]] );
-	}
+	} );
 	std::cerr << "transpose: sort: " << tm.next() << "\n";
 
 	aux.del();
@@ -641,7 +643,7 @@ public:
 
 	// Step 1: Determine incident edge count per vertex for union
 	mm::buffer<EID> new_idx( n+1, numa_allocation_interleaved() );
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    VID cnt = merge_count<false>( &edges1[idx1[v]], &edges1[idx1[v+1]],
 					  &edges2[idx2[v]], &edges2[idx2[v+1]] );
 	    if( cnt == std::numeric_limits<VID>::max() ) {
@@ -651,7 +653,7 @@ public:
 					 &edges2[idx2[v]], &edges2[idx2[v+1]] );
 	    }
 	    new_idx[v] = (EID)cnt;
-	}
+	} );
 	std::cerr << "union: merge-count edges: " << tm.next() << "\n";
 
 	// Step 2: prefix scan
@@ -677,11 +679,11 @@ public:
 	//         lists are sorted
 	const EID * idx = Gu.getIndex();
 	VID * edges = Gu.getEdges();
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    merge_place( &edges1[idx1[v]], &edges1[idx1[v+1]],
 			 &edges2[idx2[v]], &edges2[idx2[v+1]],
 			 &edges[idx[v]] );
-	}
+	} );
 	std::cerr << "union: merge-place edges: " << tm.next() << "\n";
 	std::cerr << "union: total: " << tm.total() << "\n";
 
@@ -740,8 +742,9 @@ public:
 	mm::buffer<VID> xref( m, numa_allocation_interleaved() );
 	std::cerr << "transpose: setup: " << tm.next() << "\n";
 
-	parallel_for( unsigned p=0; p < P; ++p )
+	parallel_loop( (unsigned)0, P, [&]( unsigned p ) { 
 	    std::fill( &ctrs[p][0], &ctrs[p][n+1], VID(0) );
+	} );
 	std::cerr << "transpose: init: " << tm.next() << "\n";
 
 	map_partition( part, [&]( unsigned p ) {
@@ -876,7 +879,7 @@ public:
 	// insertion points, we don't need sorting either.
 	// Note that this is true even if the adjacency lists of the CSR are
 	// not sorted!
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) {
 	    // assert( index[s] + (EID)ctrs[P-1][s] == index[s+1] );
 	    assert( std::is_sorted( &edges[index[s]], &edges[index[s+1]] ) );
 /*
@@ -887,7 +890,7 @@ public:
 	    else
 		std::sort( &edges[index[s]], &edges[index[s+1]] );
 */
-	}
+	} );
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
 
 	xref.del();
@@ -1005,7 +1008,7 @@ public:
 	// insertion points, we don't need sorting either.
 	// Note that this is true even if the adjacency lists of the CSR are
 	// not sorted!
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) { 
 	    // assert( index[s] + (EID)ctrs[P-1][s] == index[s+1] );
 	    assert( std::is_sorted( &edges[index[s]], &edges[index[s+1]] ) );
 /*
@@ -1016,7 +1019,7 @@ public:
 	    else
 		std::sort( &edges[index[s]], &edges[index[s+1]] );
 */
-	}
+	} );
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
 
 	for( unsigned p=0; p < P; ++p )
@@ -1216,7 +1219,7 @@ public:
 
 	// Do per-vertex vertical scans
 #if 0
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    if( (SVID)lcnt[v] < (SVID)0 ) {
 		VID sum = 0;
 		VID vv = lcnt[v] & ~hibit_mask;
@@ -1230,11 +1233,11 @@ public:
 		tr_idx[v] = sum;
 	    } else
 		tr_idx[v] = lcnt[v];
-	}
+	} );
 	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
 #else
 	// TODO: Easy to vectorize
-	parallel_for( VID vv=0; vv < n_high; ++vv ) {
+	parallel_loop( (VID)0, n_high, [&]( VID vv ) { 
 	    VID sum = 0;
 	    for( unsigned p=0; p < P; ++p ) {
 		VID tmp = hcnt[p][vv];
@@ -1244,7 +1247,7 @@ public:
 		}
 	    }
 	    hcnt[P][vv] = sum;
-	}
+	} );
 	
 /*
 	const VID * hcnt_P = &hcnt[P][0];
@@ -1469,7 +1472,7 @@ public:
 	// Sort short adjacency lists
 	// Using edge balanced works better here than vertex balanced
 	// Free-form parallel for is slightly better still
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
 	    // if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
 	    // if( !( (SVID)lcnt[v] < (SVID)0 ) ) {
@@ -1492,15 +1495,15 @@ public:
 		    std::sort( &tr_edges[vs], &tr_edges[ve] );
 		}
 	    }
-	}
+	} );
 	std::cerr << "transpose: sort: " << tm.next() << "\n";
 
 #if 0
 	// Verify sortedness
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) { 
 	    assert( std::is_sorted(
 			&tr_edges[tr_idx[s]], &tr_edges[tr_idx[s+1]] ) );
-	}
+	} );
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
 #endif
 
@@ -1644,7 +1647,7 @@ public:
 	std::cerr << "transpose: count: " << tm.next() << "\n";
 
 	// Do per-vertex vertical scans
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    if( ( vkind[v/64] >> (v & 63) ) & 1 ) {
 		// if( idx[v+1] - idx[v] > D ) {
 		VID sum = 0;
@@ -1659,7 +1662,7 @@ public:
 		tr_idx[v] = sum;
 	    } else
 		tr_idx[v] = lcnt[v];
-	}
+	} );
 	std::cerr << "transpose: vertical scan: " << tm.next() << "\n";
 	
 	// Do prefix sums to determine insertion points
@@ -1771,7 +1774,7 @@ public:
 	} );
 	*/
 #if 0
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    // if( idx[v+1] - idx[v] <= D ) { // check type on source graph
 	    if( !( ( vkind[v/64] >> (v & 63) ) & 1 ) ) {
 		EID vs = tr_idx[v];
@@ -1789,12 +1792,12 @@ public:
 		    std::sort( &tr_edges[vs], &tr_edges[ve] );
 		}
 	    }
-	}
+	} );
 	std::cerr << "transpose: sort: " << tm.next() << "\n";
 #endif
 
 	// Verify sortedness
-	parallel_for( VID s=0; s < n; ++s ) {
+	parallel_loop( (VID)0, n, [&]( VID s ) { 
 /* not when using xref
 	    if( idx[s+1] - idx[s] > D )
 		assert( hcnt[P-1][lcnt[s]] == tr_idx[s+1] );
@@ -1804,7 +1807,7 @@ public:
 	    // assert( std::is_sorted( &edges[idx[s]], &edges[idx[s+1]] ) );
 	    assert( std::is_sorted(
 			&tr_edges[tr_idx[s]], &tr_edges[tr_idx[s+1]] ) );
-	}
+	} );
 	std::cerr << "transpose: sort (verify): " << tm.next() << "\n";
 
 	// Cleanup
@@ -2110,14 +2113,16 @@ public:
 
 	const EID *index_p = reinterpret_cast<const EID *>(
 	    data+sizeof(uint64_t)*8 );
-	parallel_for( VID v=0; v < n; ++v )
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    index[v] = index_p[v];
+	} );
 	index[n] = m;
 
 	const VID *edges_p = reinterpret_cast<const VID *>(
 	    data+sizeof(uint64_t)*8+n*sizeof(EID) );
-	parallel_for( EID e=0; e < m; ++e )
+	parallel_loop( (EID)0, m, [&]( EID e ) { 
 	    edges[e] = edges_p[e];
+	} );
 
 	munmap( (void *)data, len );
 	close( fd );
@@ -2425,7 +2430,7 @@ public:
 	//       to, e.g., j < i and setting invert[j] = i; at the same time
 	//       as invert[i] = j;
 	if( symmetric ) {
-	    parallel_for( VID u=0; u < n; ++u ) {
+	    parallel_loop( (VID)0, n, [&]( VID u ) { 
 		EID s = idx[u];
 		EID e = idx[u+1];
 		for( EID i=s; i < e; ++i ) {
@@ -2461,9 +2466,9 @@ public:
 			}
 		    }
 		}
-	    }
+	    } );
 	} else {
-	    parallel_for( VID u=0; u < n; ++u ) {
+	    parallel_loop( (VID)0, n, [&]( VID u ) {
 		EID s = idx[u];
 		EID e = idx[u+1];
 		for( EID i=s; i < e; ++i ) {
@@ -2483,7 +2488,7 @@ public:
 			}
 		    }
 		}
-	    }
+	    } );
 	}
 
 	return buf;
@@ -2549,8 +2554,9 @@ private:
 	allocate( numa_allocation_local( numa_node ) );
     }
     void build_degree() {
-	parallel_for( VID v=0; v < n; ++v )
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    degree[v] = index[v+1] - index[v];
+	} );
     }
 };
 

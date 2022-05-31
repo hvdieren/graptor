@@ -423,7 +423,7 @@ private:
 	unsigned wPm = P % wP;
 	unsigned L = wPm == 0 ? P : ( P + wP - wPm );
 	EID * p2p = new EID[L*P]();
-	parallel_for( unsigned p=0; p < P; ++p ) {
+	map_partition( part, [&]( unsigned p ) {
 	    VID vs = part.start_of(p);
 	    VID ve = part.end_of(p);
 	    EID es = idx[vs];
@@ -432,11 +432,11 @@ private:
 		unsigned q = part.part_of( edge[e] );
 		p2p[L*p+q]++;
 	    }
-	}
+	} );
 
 	// Scan across all p for each q to determine the insertion points
 	// in the edge lists.
-	parallel_for( unsigned q=0; q < P; ++q ) {
+	map_partition( part, [&]( unsigned q ) {
 	    EID s = 0;
 	    for( unsigned p=0; p < P; ++p ) {
 		EID t = p2p[L*p+q];
@@ -446,14 +446,14 @@ private:
 
 	    // Correctness check
 	    assert( s == coo[q].numEdges() );
-	}
+	} );
 
 	// 4. Assign edges in parallel
 	// Convenience defs
 	const float * const Gweights = csr->getWeights()
 	    ? csr->getWeights()->get() : nullptr;
 	if( Gweights ) {
-	    parallel_for( unsigned p=0; p < P; ++p ) {
+	    map_partition( part, [&]( unsigned p ) {
 		VID vs = part.start_of(p);
 		VID ve = part.end_of(p);
 		for( VID v=vs; v < ve; ++v ) {
@@ -465,9 +465,9 @@ private:
 			coo[q].setEdge( k, v, edge[e], Gweights[e] );
 		    }
 		}
-	    }
+	    } );
 	} else {
-	    parallel_for( unsigned p=0; p < P; ++p ) {
+	    map_partition( part, [&]( unsigned p ) {
 		VID vs = part.start_of(p);
 		VID ve = part.end_of(p);
 		for( VID v=vs; v < ve; ++v ) {
@@ -479,7 +479,7 @@ private:
 			coo[q].setEdge( k, v, edge[e] );
 		    }
 		}
-	    }
+	    } );
 	}
 
 	// Edges are now stored in CSR traversal order
