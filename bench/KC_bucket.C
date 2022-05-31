@@ -10,6 +10,7 @@
 using expr::_0;
 using expr::_1;
 using expr::_1s;
+using expr::_c;
 
 // By default set options for highest performance
 #ifndef FUSION
@@ -26,6 +27,9 @@ enum variable_name {
 struct bucket_fn {
     using ID = VID;
     using BID = std::make_unsigned_t<ID>;
+#if OPTIONAL
+    using SID = std::make_signed_t<ID>;
+#endif
     
     bucket_fn( VID * degree )
 	: m_degree( degree ) { }
@@ -34,6 +38,9 @@ struct bucket_fn {
 	return v == std::numeric_limits<VID>::max() // illegal vertex
 	    || BID(m_degree[v]) < current	// or processing completed
 	    || BID(m_degree[v]) >= overflow	// or already in overflow bucket
+#if OPTIONAL
+	    || SID(m_degree[v]) < 0             // pre-calculated
+#endif
 	    ? std::numeric_limits<BID>::max() // ... then drop vertex
 	    : BID(m_degree[v]);		// ... else this is the bucket
     }
@@ -62,7 +69,7 @@ public:
 	}
     }
     ~KCv() {
-		coreness.del();
+	coreness.del();
     }
 
     struct info {
@@ -106,6 +113,64 @@ public:
 		} )
 	    .materialize();
 
+#if OPTIONAL
+	// Pre-determine the coreness of some vertices where we can
+	// TODO: merge emap and vfilter?
+	api::vertexprop<VID,VID,var_ngh>
+	    n_ngh( part, "coreness neighbour count" );
+	frontier predefined;
+	make_lazy_executor( part )
+	    .vertex_map(
+		[&]( auto v ) { return n_ngh[v] = _0; }
+		).materialize();
+	api::edgemap(
+	    GA,
+	    api::relax( [&]( auto s, auto d, auto e ) {
+		return n_ngh[d] += expr::iif( coreness[s] <= _1, _0, _1 );
+	    } )
+	    ).materialize();
+
+	make_lazy_executor( part )
+	    .vertex_filter(
+		GA,
+		ftrue,
+		predefined,
+		[&]( auto v ) {
+		    constexpr size_t W = sizeof(VID) * 8 - 1;
+		    auto cW = expr::constant_val( coreness[v], W );
+		    auto val = ( _1 << cW ) + _1;
+		    return expr::make_seq(
+			coreness[v] = expr::set_mask(
+			    n_ngh[v] >= a_degrees_ro[v] - _1, val ),
+			n_ngh[v] >= a_degrees_ro[v] - _1 );
+		} )
+	    .materialize();
+	n_ngh.del();
+
+	// For each pre-calculated coreness, subtract one from its neighbours'
+	// coreness, provided the neighbour has not been precalculated
+	// TODO: check if more efficient to filter with frontier...
+	api::edgemap(
+	    GA,
+	    api::filter( api::src, api::strong, predefined ),
+	    api::filter( api::dst, api::strong,
+			 [&]( auto d ) {
+			     using SID = std::make_signed_t<VID>;
+			     return expr::cast<SID>( coreness[d] ) >= _0; } ),
+	    api::relax( [&]( auto s, auto d, auto e ) {
+		// using SID = std::make_signed_t<VID>;
+		return coreness[d] += _1s;
+		// return coreness[d] += expr::iif(
+		// expr::cast<SID>( coreness[s] ) < _0, _0, _1s ); // -1
+/*
+		return coreness[d] += expr::set_mask(
+		    expr::cast<SID>( coreness[s] ) >= _0,
+		    _1s ); // conditionally subtract 1
+*/
+	    } )
+	    ).materialize();
+#endif
+
 	VID K = 0;
 
 	// Create bucket structure
@@ -117,6 +182,10 @@ public:
 	bkts.initialize_buckets( part, nonzero );
 #if !FUSION
 	VID todo = nonzero.nActiveVertices();
+#if OPTIONAL
+	todo -= predefined.nActiveVertices();
+#endif
+	// std::cerr << "todo: " << todo << "\n";
 #endif
 	nonzero.del();
 
@@ -212,6 +281,23 @@ public:
 		    auto cK = expr::constant_val( coreness[v], K );
 		    auto cO = expr::constant_val( coreness[v], overflow_bkt );
 		    // return coreness[v].count_down( cK );
+#if OPTIONAL
+		    using SID = std::make_signed_t<VID>;
+		    return expr::let<var_let>(
+			coreness[v].count_down_value( cK ),
+			[&]( auto old ) {
+			    return expr::cast<int>(
+				expr::iif(
+				    expr::cast<SID>( coreness[v] ) >= _0,
+				    _1s, // inactive, stay
+				    expr::iif(
+					old == cK + _1,
+					expr::iif( old > cO,
+						   _0, // degree below overflow, move
+						   _1s ), // in overflow bucket, stay
+					_1 ) ) ); // degree dropped to K
+			} );
+#else
 		    return expr::let<var_let>(
 			coreness[v].count_down_value( cK ),
 			[&]( auto old ) {
@@ -223,10 +309,19 @@ public:
 					       _1s ), // in overflow bucket, stay
 				    _1 ) ); // degree dropped to K
 			} );
+#endif
 		} ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    auto cK = expr::constant_val( coreness[s], K );
+#if OPTIONAL
+		    using SID = std::make_signed_t<VID>;
+		    return coreness[d].count_down_value(
+			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
+					cK )
+			) > cK;
+#else
 		    return coreness[d] > cK;
+#endif
 		} )
 		)
 		.materialize();
@@ -247,7 +342,15 @@ public:
 		    // coreness should still be K. Hence, we use the count_down
 		    // primitive. This is the only way to ensure atomicity
 		    // of the check-larger-than-K-and-subtract operation.
+		    using SID = std::make_signed_t<VID>;
+#if OPTIONAL
+		    return coreness[d].count_down_value(
+			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
+					cK )
+			) > cK;
+#else
 		    return coreness[d].count_down_value( cK ) > cK;
+#endif
 		} )
 		)
 		.materialize();
@@ -286,6 +389,22 @@ public:
 	    output.del();
 	    F.del();
 	}
+
+#if OPTIONAL
+	make_lazy_executor( part )
+	    .vertex_map(
+		predefined,
+		[&]( auto v ) {
+		    using DT = simd::ty<VID, decltype(v)::VL>;
+		    auto mask = expr::_xp<DT>( _1s ) >> expr::_xp<DT>( _1 );
+		    return coreness[v] &= mask;
+		}
+		).materialize();
+
+	// std::cerr << "predefined: " << predefined << "\n";
+
+	predefined.del();
+#endif
     }
 
     void post_process( stat & stat_buf ) {
