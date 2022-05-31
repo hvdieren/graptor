@@ -155,6 +155,13 @@ public:
     template<layout_t Layout_>
     inline simd_mask_type bor_assign( vec<vector_traits,Layout_> r );
     inline simd_mask_type bor_assign( mask_impl<vector_traits> r );
+
+    template<layout_t Layout_>
+    inline simd_mask_type band_assign( vec<vector_traits,Layout_> r, simd_mask_type m );
+    template<layout_t Layout_>
+    inline simd_mask_type band_assign( vec<vector_traits,Layout_> r );
+    inline simd_mask_type band_assign( mask_impl<vector_traits> r );
+
     template<layout_t Layout_>
     inline simd_mask_type lor_assign( vec<vector_traits,Layout_> r, simd_mask_type m );
     template<layout_t Layout_>

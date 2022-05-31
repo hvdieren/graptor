@@ -373,6 +373,69 @@ vector_ref_impl<Tr,I,Enc,NT_,Layout>::bor_assign(
 #endif
 }
 
+template<class Tr, typename I, typename Enc, bool NT_,layout_t Layout>
+template<layout_t Layout_>
+typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
+vector_ref_impl<Tr,I,Enc,NT_,Layout>::band_assign(
+    vec<Tr,Layout_> r,
+    typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type m ) {
+#if ALT_BOR_ASSIGN
+    auto a = load( m ); // load data
+    auto upd = a & r;
+    store( upd, m ); // store data
+    // Ensures that return value is stronger than m
+    return (upd != a).asmask() & m;
+#else
+    auto a = load( m ); // load data
+    auto mod = a & ~r;
+    store( a & r, m ); // store data
+    auto v = mod;
+    auto z = vector_type::zero_val();
+    // Ensures that return value is stronger than m
+    return (v != z).asmask() & m;
+#endif
+}
+
+template<class Tr, typename I, typename Enc, bool NT_, layout_t Layout>
+template< layout_t Layout_>
+typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
+vector_ref_impl<Tr,I,Enc,NT_,Layout>::band_assign(
+    vec<Tr,Layout_> r ) {
+#if ALT_BOR_ASSIGN
+    auto a = load(); // load data
+    auto upd = a & r;
+    store( upd ); // store data
+    return (upd != a).asmask();
+#else
+    auto a = load(); // load data
+    auto mod = a & ~r;
+    store( a & r ); // store data
+    auto v = mod;
+    auto z = vector_type::zero_val();
+    return (v != z).asmask();
+#endif
+}
+
+template<class Tr, typename I, typename Enc, bool NT_, layout_t Layout>
+typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
+vector_ref_impl<Tr,I,Enc,NT_,Layout>::band_assign(
+    mask_impl<Tr> r ) {
+#if ALT_BOR_ASSIGN
+    auto a = load(); // load data
+    auto upd = a & r;
+    store( upd ); // store data
+    return (upd != a).asmask();
+#else
+    auto a = load(); // load data
+    auto mod = a & ~r;
+    store( a & r ); // store data
+    auto v = mod;
+    auto z = vector_type::zero_val();
+    return (v != z).asmask();
+#endif
+}
+
+
 template<class Tr, typename I, typename Enc, bool NT_, layout_t Layout>
 template< layout_t Layout_>
 typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
