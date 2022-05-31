@@ -494,14 +494,45 @@ struct redop_bitwiseand {
     template<typename T>
     static constexpr auto unit() { return typename T::element_type(0); }
 
-    // TODO: evaluation methods
+    template<typename VTr, layout_t Layout1, layout_t Layout2,
+	     typename I, typename Enc, bool NT, typename MPack>
+    static auto
+    evaluate( sb::lvalue<VTr,I,Enc,NT,Layout1> l,
+	      sb::rvalue<VTr,Layout2> r,
+	      const MPack & mpack ) {
+	// Apply the mask in the addition operation (ALU), perform a full
+	// store. Alternative: only store back relevant values.
+	// Best situation may depend on whether the lvalue is linear or not.
+	if constexpr ( MPack::is_empty() ) {
+	    return make_rvalue( l.value().land_assign( r.value() ), mpack );
+	} else {
+	    using MTr = typename VTr::prefmask_traits;
+	    auto mask = mpack.template get_mask<MTr>();
+	    return make_rvalue( l.value().band_assign( r.value(), mask ),
+				mpack );
+	} 
+    }
+
+    template<typename VTr, typename MTr1, typename MTr2, typename I,
+	     typename Enc, bool NT, layout_t LayoutR, layout_t Layout>
+    static auto
+    evaluate( lvalue<VTr,I,MTr1,Enc,NT,LayoutR> l, rvalue<VTr,Layout,MTr2> r,
+	      std::enable_if_t<simd::matchVL_<VTr::VL,MTr1,MTr2>::value> *
+	      = nullptr ) {
+	return make_rvalue( l.value().band_assign( r.value(), l.mask() & r.mask() ) );
+    }
 };
 
 template<typename E1, typename E2>
-typename std::enable_if<!is_logical_type<typename E1::type>::value,
-			redop<E1,E2,redop_bitwiseand>>::type
-operator &= ( E1 l, E2 r ) {
-    return redop<E1,E2,redop_bitwiseand>( l, r, redop_bitwiseand() );
+auto make_redop_band( E1 l, E2 r,
+	       std::enable_if_t<!is_logical_type<typename E1::type>::value>
+	       * = nullptr ) {
+    return make_redop( l, r, redop_bitwiseand() );
+}
+
+template<typename E1, typename E2>
+auto operator &= ( E1 l, E2 r ) -> decltype(make_redop_band(l,r)) {
+    return make_redop_band( l, r );
 }
 
 
