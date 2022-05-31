@@ -115,6 +115,12 @@ auto expand_cst( Cst c, Expr e ) {
 	return c;
 }
 
+template<typename DataType, value_kind VKind, typename T>
+constexpr auto _xp( constant<VKind,T> c ) {
+    return c.template expand<DataType>();
+}
+
+
 } // namespace expr
 
 #endif // GRAPTOR_DSL_AST_CONSTANT_H
