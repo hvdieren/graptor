@@ -41,7 +41,7 @@ void vertexMap(const partitioner &part, frontier V, F add)
 	    assert( 0 && "NYI" );
     } else {
 	VID * s = V.getSparse();
-	parallel_loop( (intT)0, V.nActiveVertices(), [&]( auto i ) {
+	parallel_loop( (VID)0, V.nActiveVertices(), [&]( VID i ) {
             add(s[i]);
 	} );
     }
