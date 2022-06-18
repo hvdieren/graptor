@@ -1210,14 +1210,11 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
     }
 
-    // Every call with a fusion operation defined will be executed in the
-    // fusion-based traversal. Exceptions are made when the fusion operation
-    // is read-only, i.e., it has no side effects. In this case we assume that
-    // it is correct to also execute with a non-fusion traversal, which we will
-    // do if a sequential execution is preferred.
-    if constexpr ( api::has_fusion_op_v<Operator> ) {
-	if( !expr::is_readonly_fusion_op<Operator>::value
-	    || ( cfg.is_parallel() && m >= 1024 ) )
+    if constexpr ( api::has_fusion_op_v<Operator> && cfg.is_parallel() ) {
+	// Only use fusion if the initial frontier is already sufficiently
+	// large. Otherwise, we will go into a concurrent execution with
+	// mostly idle threads.
+	if( old_frontier.nActiveVertices() >= 8 * graptor_num_threads() )
 	    return csr_sparse_with_f_fusion_stealing<zerof>(
 		cfg, GA, eid_retriever, part, old_frontier, zf, op );
     }
