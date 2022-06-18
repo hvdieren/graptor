@@ -301,7 +301,7 @@ public:
 	// and start a new one.
 	if( !buf || !buf->has_space( num )
 	    || ( 4*m_working.load() < 3*m_threads && m_threads > 1
-	       && !buf->is_empty() ) ) {
+		 && !buf->is_empty() ) ) {
 	    if( buf )
 		push_buffer( buf, self_id );
 	    m_active[self_id] = buf = queue_type::create_list_node();
@@ -336,17 +336,8 @@ public:
 		++m_working;
 		return buf;
 	    }
-	    sched_yield();
 	}
 	return nullptr;
-    }
-
-    buffer_type * shift_processed() {
-	for( unsigned t=0; t < m_threads; ++t ) {
-	    m_queues[t].setup( m_processed[t] );
-	    m_processed[t] = nullptr;
-	}
-	m_working = m_threads;
     }
 
 private:
