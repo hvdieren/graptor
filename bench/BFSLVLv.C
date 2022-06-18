@@ -25,16 +25,6 @@ using expr::_1;
 #endif
 #define MEMO 0
 
-// TODO: FUSION works well for road networks: estimate network type and select at runtime
-#ifndef FUSION
-#define FUSION 0
-#endif
-
-enum var {
-    var_current = 0,
-    var_previous = 1
-};
-
 template <class GraphType>
 class BFSv {
 public:
@@ -100,6 +90,11 @@ public:
 	a_level.get_ptr()[start] = 0;
 
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
+	mmap_ptr<VID> prev_level;
+	prev_level.allocate( numa_allocation_partitioned( part ) );
+
+	expr::array_ro<VID, VID, 1> a_prev_level( prev_level );
+
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
 		return a_prev_level[v]
@@ -145,6 +140,9 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
+		api::fusion( [&]( auto v ) {
+		    return expr::true_val( v );
+		} ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&]( auto d ) {
@@ -186,7 +184,7 @@ public:
 		)
 		.materialize();
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	    maintain_copies( part, output, a_prev_level, a_level );
+	    maintain_copies( part, /*output,*/ prev_level, level );
 #endif
 
 #if BFS_DEBUG
