@@ -230,6 +230,19 @@ public:
 		    } )
 		.materialize();
 
+#if 0
+	    unique.toSparse( part );
+	    if( unique.getType() == frontier_type::ft_sparse ) {
+		VID * s = unique.getSparse();
+		VID k = unique.nActiveVertices();
+
+		for( VID i=0; i < k; ++i ) {
+		    if( s[i] == ~(VID)0 )
+			std::cerr << "unique[" << i << "] is _1s\n";
+		}
+	    }
+#endif
+
 	    // Remove duplicate edges. Edges may be multiply represented
 	    // as they may be inserted once per edge in the worst case.
 	    // This is a consequence of not removing vertices from a bucket
@@ -342,15 +355,7 @@ public:
 		    // coreness should still be K. Hence, we use the count_down
 		    // primitive. This is the only way to ensure atomicity
 		    // of the check-larger-than-K-and-subtract operation.
-		    using SID = std::make_signed_t<VID>;
-#if OPTIONAL
-		    return coreness[d].count_down_value(
-			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
-					cK )
-			) > cK;
-#else
 		    return coreness[d].count_down_value( cK ) > cK;
-#endif
 		} )
 		)
 		.materialize();
@@ -358,7 +363,19 @@ public:
 
 	    // std::cerr << "unique: " << unique.nActiveVertices() << "\n";
 
-#if !FUSION
+#if 0
+	    output.toSparse( part );
+	    if( output.getType() == frontier_type::ft_sparse ) {
+		VID * s = output.getSparse();
+		VID k = output.nActiveVertices();
+
+		for( VID i=0; i < k; ++i ) {
+		    if( s[i] == ~(VID)0 )
+			std::cerr << "unique[" << i << "] is _1s\n";
+		}
+	    }
+#endif
+
 	    todo -= unique.nActiveVertices();
 #endif
 	    unique.del();
