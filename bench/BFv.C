@@ -468,14 +468,9 @@ if waiting until F is empty, we still need 3-4 dense steps
 		// Do not allow unbacked frontiers
 		api::record( output, api::reduction, api::strong ),
 #endif
-#if FUSION
-		// TODO: parameter 0.1 to be tuned similarly to delta in DSSSP
 		api::fusion( [&]( auto v ) {
-		    auto inf = expr::constant_val2<FloatTy>(
-			v, std::numeric_limits<FloatTy>::infinity() );
-		    return expr::iif( new_dist[v] < cur_dist[v] * expr::constant_val( cur_dist[v], 0.1 ) && cur_dist[v] != inf, _0, _1 );
+		    return expr::true_val( v );
 		} ),
-#endif
 		api::filter( filter_strength, api::src, F ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC
