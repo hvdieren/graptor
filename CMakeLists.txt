@@ -15,20 +15,24 @@ configure_file(include/graptor/config.h.in config.h)
 # also add ROOT/include directory
 include_directories("${PROJECT_BINARY_DIR}" "include")
 
-set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
-#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
+#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
+set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=1")
 set(EXTRA_LIBS)
 
 ## choice of parallel backend
 set(GRAPTOR_PARALLEL cilk_numa CACHE STRING "Parallel backend chosen by user at configure time")
 set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa)
+
+set(CILK_ROOT "." CACHE STRING "Cilk root directory, containing include directory")
+
 if(GRAPTOR_PARALLEL STREQUAL "cilk" OR GRAPTOR_PARALLEL STREQUAL "cilk_numa")
     add_library(CILKRTS SHARED IMPORTED)
     target_include_directories(CILKRTS
 	      INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
 	      )
-    string(APPEND graptor_cflags " -fcilkplus -DCILK=1 -I/home/hvandierendonck/research/asap/stable/jacob/include")
+    # -fcilkplus now removed
+    string(APPEND graptor_cflags " -DCILK=1 -I${CILK_ROOT}/include")
     if(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
 	string(APPEND graptor_cflags " -DNUMA=1")
     endif()
