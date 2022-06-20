@@ -90,11 +90,6 @@ public:
 	a_level.get_ptr()[start] = 0;
 
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	mmap_ptr<VID> prev_level;
-	prev_level.allocate( numa_allocation_partitioned( part ) );
-
-	expr::array_ro<VID, VID, 1> a_prev_level( prev_level );
-
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) {
 		return a_prev_level[v]
