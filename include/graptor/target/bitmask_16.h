@@ -37,6 +37,7 @@ struct mask_type_traits<16> {
     static type setzero() { return type(0); }
     static type setone() { return ~ type(0); }
     static type setalternating() { return 0x5555U; }
+    static type set1( bool v ) { return ~(type(v)-1); }
 
     static type logical_and( type l, type r ) {
 	return l & r;
