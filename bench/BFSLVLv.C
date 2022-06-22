@@ -135,9 +135,6 @@ public:
 		api::record( output, api::reduction, api::strong ),
 #endif
 		api::filter( filter_strength, api::src, F ),
-		api::fusion( [&]( auto v ) {
-		    return expr::true_val( v );
-		} ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
 			     [&]( auto d ) {
