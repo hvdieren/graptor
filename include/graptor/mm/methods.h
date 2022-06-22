@@ -56,8 +56,16 @@ struct config {
 	    : size;
     }
 
-    static intptr_t round_page( intptr_t ptr, size_t & sz )
-    {
+    static intptr_t round_page( intptr_t ptr ) {
+	intptr_t page_size = PAGE_SIZE;
+
+        intptr_t ret = (ptr + (PAGE_SIZE-1)) & ~intptr_t(PAGE_SIZE - 1);
+        assert( (ret & (PAGE_SIZE - 1)) == 0 );
+
+        return ret;
+    }
+
+    static intptr_t round_page( intptr_t ptr, size_t & sz ) {
 	intptr_t page_size = PAGE_SIZE;
 
         intptr_t ret = (ptr + (PAGE_SIZE-1)) & ~intptr_t(PAGE_SIZE - 1);
@@ -274,18 +282,24 @@ private:
 #if NUMA
         const int partNum = part.get_num_partitions();
         intptr_t pmem = alc.ptr();
+        const intptr_t pmem_s = pmem;
+        const intptr_t pmem_l = pmem + static_cast<intptr_t>( alc.size() );
 
         for( int p=0 ; p < num_numa_node; ++p ) {
 	    lPID pe = part.numa_start_of( p+1 );
 	    auto ppe = part.template start_of<byV>(pe);
-	    intptr_t pmem_e = pmem + static_cast<intptr_t>( ppe * sizeof(T) );
-	    size_t size = pmem_e - pmem;
-	    intptr_t pmem_er = config::round_page( pmem_e, size );
-	    size = pmem_er - pmem;
+	    intptr_t pmem_e = pmem_s + static_cast<intptr_t>( ppe * sizeof(T) );
+	    pmem_e = std::max( pmem, pmem_e );
+	    intptr_t pmem_er = config::round_page( pmem_e );
+	    assert( pmem_er <= pmem_l );
+	    size_t size = pmem_er - pmem;
+
+
 	    bind_pages( reinterpret_cast<void*>(pmem), size,
 			config::BIND_TO_NODE_FLAGS, p );
 	    pmem +=size;
 	}
+	assert( pmem == pmem_l && "full array range bound" );
 #endif
     }
 
@@ -326,6 +340,9 @@ private:
 		     << std::hex << mem << std::dec
 		     << " size " << size << " failed: " << strerror( errno )
 		     << std::endl;
+
+	   static int x = 0;
+	   ++x;
        }
     }
 #endif
