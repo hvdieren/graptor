@@ -1,4 +1,6 @@
 // -*- C++ -*-
+#include <unistd.h>
+#include <stdlib.h>
 
 #ifndef GRAPHGRIND_DRIVER_H
 #define GRAPHGRIND_DRIVER_H
@@ -188,20 +190,13 @@ int main(int argc, char* argv[])
 	    // && "encoding specifics of Galois binary format" );
     long rounds = P.getOptionLongValue("-rounds",3); // Usually 20 rounds
     int vlen = P.getOptionLongValue("-l", 8);    // NUMA node number
-    int numOfNode = P.getOptionLongValue("-p", 0);    // NUMA node number
     const char * weights = P.getOptionValue("-weights"); // file with weights
 
-#if NUMA
-    // Note: this is legacy for GraphGrind
-    if( numOfNode == 0 )
-        numOfNode = numa_num_configured_nodes();
-#else
-    if( numOfNode == 0 )
-        numOfNode = 1;
-    cerr << "numOfNode: " << numOfNode << endl;
-#endif
+    assert( binary && "driver supports only binary mode files" );
 
-    assert( binary );
+#if NUMA
+    std::cerr << "driver: number of NUMA nodes: " << num_numa_node << "\n";
+#endif
     
     GraphCSx G( iFile, -1, symmetric, weights );
     auto PG = createGraph( G, P );
@@ -218,6 +213,20 @@ int main(int argc, char* argv[])
     for(int r=0; r<rounds; r++)
     {
 	Benchmark<decltype(PG)> problem( PG, P );
+
+#if NUMA
+	// NUMA report. Should have allocated all critical memory by now,
+	// so allows to check for NUMA load balance.
+	pid_t pid = getpid();
+	char buf[128];
+	snprintf( buf, sizeof(buf), "numastat -p %ld", (long)pid );
+	int ret = system( buf );
+	if( ret != 0 ) {
+	    std::cerr << "execution of '" << buf << "' failed: " << (int)ret
+		      << " error: " << strerror(errno) << "\n";
+	}
+#endif
+
 #if PAPI_CACHE 
 	PAPI_start_count();   /*start PAPI counters*/
 #endif
@@ -241,7 +250,7 @@ int main(int argc, char* argv[])
     Benchmark<decltype(PG)>::report( stat_buf );
     reportAvg(rounds);
     PG.del();
-    
+
 #if PAPI_CACHE 
     PAPI_total_print(rounds);   /* PAPI results print*/
     PAPI_end();
