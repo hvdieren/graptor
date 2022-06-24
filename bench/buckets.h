@@ -417,8 +417,10 @@ public:
 	case frontier_type::ft_logical1:
 	case frontier_type::ft_logical2:
 	case frontier_type::ft_logical8:
+	{
 	    assert( 0 && "NYI" );
 	    break;
+	}
 	case frontier_type::ft_bit:
 	{
 	    bucket_updater_dense<frontier_type::ft_bit, ID, BID, BucketFn>
