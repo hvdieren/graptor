@@ -340,6 +340,14 @@ public:
 	return nullptr;
     }
 
+    void shift_processed() {
+	for( unsigned t=0; t < m_threads; ++t ) {
+	    m_queues[t].setup( m_processed[t] );
+	    m_processed[t] = nullptr;
+	}
+	m_working = m_threads;
+    }
+
 private:
     void push_buffer( buffer_type * buf, unsigned self_id ) {
 	m_queues[self_id].push( buf );
