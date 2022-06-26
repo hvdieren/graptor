@@ -1,6 +1,7 @@
 #include <ostream>
 #include <iostream>
 #include <random>
+#include <sstream>
 
 #include "graptor/target/vector.h"
 
@@ -56,6 +57,24 @@ auto random_generate( typename tr::member_type * vals ) {
     }
 }
 
+template<typename T>
+std::string display( const T x ) {
+    return std::to_string( x );
+}
+
+template<unsigned short B>
+std::string display( const logical<B> & x ) {
+    std::stringstream s( std::ios_base::out );
+    s << x;
+    return s.str();
+}
+
+template<>
+std::string display( const char x ) {
+    std::string s = 'c' + std::to_string( (const int)x );
+    return s;
+}
+
 template<typename tr>
 void show(
     typename tr::type v,
@@ -66,8 +85,9 @@ void show(
 
     std::cerr << std::hex;
     for( unsigned short l=0; l < tr::vlen; ++l ) {
-	std::cerr << "lane " << l << ": vector: "  << tr::lane( v, l )
-		  << " scalar: " << s[l] << "\n";
+	std::cerr << "lane " << l << ": vector: "
+		  << display( tr::lane( v, l ) )
+		  << " scalar: " << display( s[l] ) << "\n";
     }
     std::cerr << std::dec;
 }
@@ -83,9 +103,12 @@ unsigned short element_compare(
     unsigned short diff = 0;
     for( unsigned short l=0; l < tr::vlen; ++l ) {
 	if constexpr ( is_logical_v<member_type> ) {
+	    /*
 	    if( ( tr::lane( v, l ) != member_type::true_val()
 		  && tr::lane( v, l ) != member_type::false_val() )
 		|| tr::lane( v, l ) != s[l] )
+	    */
+	    if( tr::lane( v, l ) != s[l] ) // redefined != for logical < 8 bytes
 		++diff;
 	} else if constexpr ( std::is_same_v<member_type,bool> ) {
 	    if( (!tr::lane( v, l )) != (!s[l]) )
