@@ -150,10 +150,18 @@ struct logical<Bytes_, std::enable_if_t<(Bytes_<=8)>> {
     type data() const { return val; }
     type get() const { return val; }
 
+    bool is_true() const {
+	// Checks top bit
+	using stype = std::make_signed_t<type>;
+	return static_cast<stype>( val ) < stype(0);
+    }
+
     operator type () const { return val; }
-    bool operator ! () const { return val == type(0); }
-    bool operator == ( self_type l ) const { return val == l.val; }
-    bool operator != ( self_type l ) const { return val != l.val; }
+
+    // Refined equality tests: only the top bit matters
+    bool operator ! () const { return !is_true(); }
+    bool operator == ( self_type l ) const { return !(*this ^ l).is_true(); }
+    bool operator != ( self_type l ) const { return (*this ^ l).is_true(); }
 
     // These are all bit-wise!
     self_type operator |  (self_type l) const { return self_type(val | l.val); }
@@ -202,10 +210,18 @@ struct logical<Bytes_, std::enable_if_t<(Bytes_>8)>> {
     type data() const { return val; }
     auto get() const { return val.get(); } // urgh
 
+    bool is_true() const {
+	// Checks top bit
+	using stype = std::make_signed_t<type>;
+	return static_cast<stype>( val ) < stype(0);
+    }
+
     operator type () const { return val; }
-    bool operator ! () const { return val == type(0); }
-    bool operator == ( self_type l ) const { return val == l.val; }
-    bool operator != ( self_type l ) const { return val != l.val; }
+
+    // Refined equality tests: only the top bit matters
+    bool operator ! () const { return !is_true(); }
+    bool operator == ( self_type l ) const { return !(*this ^ l).is_true(); }
+    bool operator != ( self_type l ) const { return (*this ^ l).is_true(); }
 
     // These are all bit-wise!
     self_type operator |  (self_type l) const { return self_type(val | l.val); }
