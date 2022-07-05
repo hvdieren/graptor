@@ -1176,6 +1176,8 @@ private:
 		if( p < P-1 ) {
 		    if( u[p] >= pmul ) {
 			part.inuse_as_array()[p] = u[p];
+		    } else if( u[p] == 0 ) {
+			part.inuse_as_array()[p] = 0;
 		    } else {
 			// at least a multiple of pmul -> add padding
 			nwpad += pmul - u[p];
@@ -1188,7 +1190,7 @@ private:
 		    part.inuse_as_array()[p] = u[p];
 		    u[p] += padding;
 		}
-		assert( u[p] > 0 );
+		// assert( u[p] > 0 );
 		part.as_array()[p] = u[p];
 		assert( (u[p] % pmul == 0) || p == P-1 );
 		if( p > 0 )
