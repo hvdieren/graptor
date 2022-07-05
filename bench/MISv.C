@@ -134,6 +134,7 @@ public:
 	    std::cerr << "LEVEL_ASYNC=" << LEVEL_ASYNC << "\n";
 	    std::cerr << "CONVERGENCE=" << CONVERGENCE << "\n";
 	    std::cerr << "MEMO=" << MEMO << "\n";
+	    std::cerr << "VARIANT=" << VARIANT << "\n";
 	}
     }
     ~MISv() {
@@ -174,6 +175,27 @@ public:
 					       (StoredTy)mis_state_t::mis_conditionally_in );
 		} )
 	    .materialize();
+
+#if MIS_DEBUG
+	std::cerr << "initial:";
+	for( VID v=0; v < GA.numVertices(); ++v ) {
+	    switch( (mis_state_t)(int)flags[v].get() ) {
+	    case mis_state_t::mis_undecided:
+		std::cerr << '.';
+		break;
+	    case mis_state_t::mis_conditionally_in:
+		std::cerr << 'c';
+		break;
+	    case mis_state_t::mis_out:
+		std::cerr << 'o';
+		break;
+	    case mis_state_t::mis_in:
+		std::cerr << 'i';
+		break;
+	    }
+	}
+	std::cerr << "\n";
+#endif
 
 	iter = 0;
 
