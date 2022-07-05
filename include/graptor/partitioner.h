@@ -218,8 +218,8 @@ public:
     // balanced partitioning
     VID start_of_vbal( PID i ) const 	    {
 	const VID P = get_num_partitions();
-	VID vs = ((VID)i) * ( ( get_vertex_range() + (P-1) ) / P );
-	if( vs > get_vertex_range() ) vs = get_vertex_range();
+	VID vs = ((VID)i) * ( ( get_num_vertices() + (P-1) ) / P );
+	if( vs > get_num_vertices() ) vs = get_num_vertices();
 	return vs;
     }
     VID end_of_vbal( PID i ) const	    {
