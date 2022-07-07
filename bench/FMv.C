@@ -5,6 +5,11 @@
 #include "graptor/api.h"
 #include "check.h"
 
+using expr::_0;
+using expr::_1;
+using expr::_1s;
+using expr::_c;
+
 // By default set options for highest performance
 #ifndef UNCOND_EXEC
 #define UNCOND_EXEC 1
@@ -33,6 +38,15 @@
 
 #include "graptor/longint.h"
 #include "graptor/target/vt_longint.h"
+
+enum variable_name {
+    var_new_mask = 0,
+    var_prev_mask = 1,
+    var_estsz = 2,
+    var_new_est = 3,
+    var_old_est = 4,
+    var_accum = 5
+};
 
 // Code is defunct with K>1 because of gcc 7.2.0 error at -O2 and above
 // that removes live code for calculating the new frontier. Code correct
@@ -287,11 +301,12 @@ public:
 	new_mask.allocate( numa_allocation_partitioned( Kpart ) );
 	prev_mask.allocate( numa_allocation_partitioned( Kpart ) );
 
-	expr::array_ro<BitStringTy, VID, 0> a_new_mask( new_mask );
-	expr::array_ro<BitStringTy,VID, 1> a_prev_mask( prev_mask );
+	expr::array_ro<BitStringTy,VID,var_new_mask> a_new_mask( new_mask );
+	expr::array_ro<BitStringTy,VID,var_prev_mask> a_prev_mask( prev_mask );
 
 	mmap_ptr<float> estsz;
 	estsz.allocate( numa_allocation_partitioned( part ) );
+	expr::array_ro<float,VID,var_estsz> a_estsz( estsz.get() );
 
 	// Assign initial labels -- in serial for repeatability
 	map_vertex_serialL( part, [&]( VID v ) {
@@ -305,6 +320,9 @@ public:
 	// Create initial frontier
 	frontier F = frontier::all_true( n, m ); // all active
 
+	double s_accum = 0;
+	expr::array_ro<double,VID,var_accum> accum( &s_accum );
+
 	iter = 0;
 
 	timer tm_iter;
@@ -313,27 +331,8 @@ public:
 	std::vector<float> Nhm1i( 32 );
 
 	while( !F.isEmpty() ) {  // iterate until bit strings stabilise
-#if 0
-	    std::cerr << "masks:";
-	    for( VID v=0; v < n*K; ++v )
-		std::cerr << ' ' << new_mask.get()[v];
-	    std::cerr << "\n";
-	    vertexMap( part, F,
-		       EstSize( estsz.get(),
-				new_mask.get(), prev_mask.get() )
-		);
-	    std::cerr << "sizes:";
-	    for( VID v=0; v < n; ++v )
-		std::cerr << ' ' << estsz.get()[v];
-	    std::cerr << "\n";
-#endif
-
 	    // Propagate bit strings
 	    frontier output;
-#if 0
-	    vEdgeMap( GA, F, output, FM_F( new_mask, prev_mask ) )
-		.materialize();
-#else
 #if UNCOND_EXEC
 	    auto filter_strength = api::weak;
 #else
@@ -361,36 +360,48 @@ public:
 		    } )
 		)
 		.materialize();
-#endif
 
 #if 0
-	    VID nv = 0;
-	    EID ne = 0;
-	    VID nvf = 0;
-	    EID nef = 0;
-	    output.toDense<ft_logical4>( part );
-	    logical<4> * f = output.getDense<ft_logical4>();
-	    for( VID v=0; v < n; ++v ) {
-		if( new_mask.get()[v] != prev_mask.get()[v] ) {
-		    nv++;
-		    ne += GA.getOutDegree(v);
-		}
-		if( f && f[v] != 0 ) {
-		    nvf++;
-		    nef += GA.getOutDegree(v);
-		}
-	    }
-	    std::cerr << "F: v=" << output.nActiveVertices() << " e=" << output.nActiveEdges() << "\n";
-	    std::cerr << "f: v=" << nvf << " e=" << nef << "\n";
-	    std::cerr << "M: v=" << nv << " e=" << ne << "\n";
-#endif
-
 	    vertexMap( part, // output,
 		       EstSize( estsz.get(),
 				new_mask.get(), prev_mask.get() )
 		);
 	    Nhm1i.resize( iter+1 );
 	    Nhm1i[iter] = sequence::plusReduce( estsz.get(), n );
+#else
+	    // Incremental computation of the estimates of neighbourhood
+	    // sizes, and incremental update of the sum of all estimates.
+	    static_assert( K == 1, "only case currently supported" );
+	    double old_s_accum = s_accum; // seems to be a bug if accum != 0...
+	    s_accum = 0;
+	    make_lazy_executor( part )
+		.vertex_scan(
+		    output,
+		    [&]( auto v ) {
+			return expr::let<var_old_est>(
+			    expr::cast<double>( a_estsz[v] ),
+			    [&]( auto old_est ) {
+				return expr::let<var_new_est>(
+				    _c<double>( 1.0/0.77351 )
+				    * expr::cast<double>(
+					expr::iif( a_new_mask[v] != _0,
+						   _1s,
+						   ~a_new_mask[v] ^ ( ~a_new_mask[v] & ( ~a_new_mask[v] - _1 ) ) )
+					),
+				    [&]( auto new_est ) {
+					return expr::make_seq(
+					    a_prev_mask[v] = a_new_mask[v],
+					    a_estsz[v] = expr::cast<float>( new_est ),
+					    accum[expr::zero_val(v)]
+					    += new_est - old_est );
+				    } );
+				} );
+		    } )
+		.materialize();
+	    s_accum += old_s_accum;
+	    Nhm1i.resize( iter+1 );
+	    Nhm1i[iter] = s_accum;
+#endif
 
 	    if( itimes ) {
 		VID active = 0;
