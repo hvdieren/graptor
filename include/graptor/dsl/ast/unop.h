@@ -1088,6 +1088,63 @@ auto operator ! ( Expr e ) -> decltype(make_unop_linvert( e )) {
     return make_unop_linvert( e );
 }
 
+/**
+ * unop_shift: Logical/arithmetic shift by constant
+ */
+template<unsigned short Shift_, bool Left_, bool Arith_, unsigned short VL_>
+struct unop_shift {
+    static constexpr unsigned short Shift = Shift_;
+    static constexpr bool Left = Left_;
+    static constexpr bool Arith = Arith_;
+    static constexpr unsigned short VL = VL_;
+
+    template<typename E>
+    struct types {
+	using result_type = typename E::data_type;
+    };
+
+    static constexpr char const * name = "unop_shift";
+
+    template<typename MTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
+	if constexpr ( Arith ) {
+	    if constexpr( Left )
+		return make_rvalue( r.value().template slli<Shift>(), mpack );
+	    else
+		return make_rvalue( r.value().template srai<Shift>(), mpack );
+	} else {
+	    if constexpr( Left )
+		return make_rvalue( r.value().template slli<Shift>(), mpack );
+	    else
+		return make_rvalue( r.value().template srli<Shift>(), mpack );
+	}
+    }
+};
+
+template<unsigned short Shift, typename Expr>
+auto slli( Expr e,
+	   std::enable_if_t<std::is_base_of_v<expr_base,Expr>> *
+	   = nullptr ) {
+    using Op = unop_shift<Shift,true,false,Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
+template<unsigned short Shift, typename Expr>
+auto srli( Expr e,
+	   std::enable_if_t<std::is_base_of_v<expr_base,Expr>> *
+	   = nullptr ) {
+    using Op = unop_shift<Shift,false,false,Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
+template<unsigned short Shift, typename Expr>
+auto srai( Expr e,
+	   std::enable_if_t<std::is_base_of_v<expr_base,Expr>> *
+	   = nullptr ) {
+    using Op = unop_shift<Shift,false,true,Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
 
 } // namespace expr
 

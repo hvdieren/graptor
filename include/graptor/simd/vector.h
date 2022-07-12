@@ -631,6 +631,19 @@ public:
 	return v.asmask();
     }
 
+    template<unsigned short Shift>
+    self_type slli() {
+	return self_type( traits::slli( data(), Shift ) );
+    }
+    template<unsigned short Shift>
+    self_type srli() {
+	return self_type( traits::srli( data(), Shift ) );
+    }
+    template<unsigned short Shift>
+    self_type srai() {
+	return self_type( traits::srai( data(), Shift ) );
+    }
+
 private:
     type m_data;
 
