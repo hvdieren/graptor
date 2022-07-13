@@ -1252,13 +1252,15 @@ struct binop_srl {
 };
 
 template<typename E1, typename E2>
-auto srl( E1 l, E2 r ) {
+auto make_srl( E1 l, E2 r,
+	       std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
     return make_binop( l, r, binop_srl() );
 }
 
 template<typename E1, typename E2>
-auto operator >> ( E1 l, E2 r ) {
-    return srl( l, r );
+auto operator >> ( E1 l, E2 r ) -> decltype(make_srl( l, r )) {
+    return make_srl( l, r );
 }
 
 /* binop: sll
