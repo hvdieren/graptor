@@ -81,6 +81,12 @@ struct constant<VKind,void> : public expr_base {
 	else if constexpr ( vkind == vk_inc )
 	    return value<Tr, vk_inc>();
     }
+
+    // Short-hand to allow, e.g., _1(d) (constant 1 of type d) as well as _1
+    template<typename Expr>
+    auto operator () ( Expr e ) const {
+	return expand<typename Expr::data_type>();
+    }
 };
 
 static const constant<vk_zero,void> _0;
