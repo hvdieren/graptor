@@ -251,6 +251,42 @@ public:
     // static type mul( type a, type b ) { return _mm512_mul_epi32( a, b ); }
     // static type div( type a, type b ) { return _mm512_div_epi32( a, b ); }
 
+    static type mulhi( type a, type b ) {
+	// Multiply by halves
+	type m0 = _mm512_mul_epi32( a, b );
+	type as = _mm512_castps_si512(
+	    _mm512_movehdup_ps( _mm512_castsi512_ps( a ) ) );
+	type bs = _mm512_castps_si512(
+	    _mm512_movehdup_ps( _mm512_castsi512_ps( b ) ) );
+	type m1 = _mm512_mul_epi32( as, bs );
+	type m0s = _mm512_castps_si512(
+	    _mm512_movehdup_ps( _mm512_castsi512_ps( m0 ) ) );
+	__mmask16 msk = 0xaaaa;
+	return _mm512_mask_blend_epi32( msk, m0s, m1 );
+    }
+
+    static type mod( type a, type b ) {
+	// Is this really a general (correct) remainder?
+	// Based on https://stackoverflow.com/questions/70558346/generate-random-numbers-in-a-given-range-with-avx2-faster-than-svml-mm256-rem
+	// Convert random bits into FP32 number in [ 1 .. 2 ) interval
+	const type msk = srli( setone(), 7 ); // 0x7FFFFF, mantissa mask
+	const type man = bitwise_and( a, msk );
+	const __m512 one = _mm512_set1_ps( 1.0f );
+	__m512 val = _mm512_or_ps( _mm512_castsi512_ps( man ), one );
+
+	// Scale the number from [ 1 .. 2 ) into [ 0 .. range ),
+	// the formula is ( val * range ) - range
+	// where range = b
+	// b > 0, so cvtepi32 / cvtepu32 should make no difference
+	const __m512 rf = _mm512_cvtepi32_ps( b );
+	val = _mm512_fmsub_ps( val, rf, rf );
+
+	// Convert to integers
+	// The instruction below always truncates towards 0 regardless of
+	// MXCSR register.
+	return _mm512_cvttps_epi32( val );
+    }
+
     static type add( type src, mask_type m, type a, type b ) {
 	return _mm512_mask_add_epi32( src, m, a, b );
     }

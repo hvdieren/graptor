@@ -81,6 +81,11 @@ public:
     static type add( type a, type b ) { return a + b; }
     static type sub( type a, type b ) { return a - b; }
     static type mul( type a, type b ) { return a * b; }
+    static type mulhi( type a, type b ) {
+	static_assert( 2*W == sizeof(uint64_t), "assumption" );
+	return static_cast<type>(
+	    ( static_cast<int64_t>( a ) * static_cast<int64_t>( b ) ) >> B );
+    }
     static type div( type a, type b ) { return a / b; }
     static type mod( type a, type b ) { return a % b; }
 
