@@ -1002,6 +1002,35 @@ auto operator * ( E1 l, E2 r ) -> decltype(make_mul(l,r)) {
     return make_mul( l, r );
 }
 
+/* binop: mulhi
+ */
+struct binop_mulhi {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type;
+    };
+    
+    static constexpr char const * name = "binop_mulhi";
+    
+    template<typename VTr, layout_t Layout1, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<VTr,Layout1> l,
+				 sb::rvalue<VTr,Layout2> r,
+				 const MPack & mpack ) {
+	return make_rvalue( mulhi( l.value(), r.value() ), mpack );
+    }
+};
+
+template<typename E1, typename E2>
+auto mulhi( E1 l, E2 r,
+	    std::enable_if_t<is_base_of<expr_base,E1>::value
+	    && is_base_of<expr_base,E2>::value,
+	    binop<E1,E2,binop_mulhi>> * = nullptr ) {
+    return make_binop( l, r, binop_mulhi() );
+}
+
+
 /* binop: add
  */
 struct binop_add {
