@@ -1110,14 +1110,18 @@ struct unop_shift {
     evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
 	if constexpr ( Arith ) {
 	    if constexpr( Left )
-		return make_rvalue( r.value().template slli<Shift>(), mpack );
+		return make_rvalue( simd::detail::slli<Shift>( r.value() ),
+				    mpack );
 	    else
-		return make_rvalue( r.value().template srai<Shift>(), mpack );
+		return make_rvalue( simd::detail::srai<Shift>( r.value() ),
+				     mpack );
 	} else {
 	    if constexpr( Left )
-		return make_rvalue( r.value().template slli<Shift>(), mpack );
+		return make_rvalue( simd::detail::slli<Shift>( r.value() ),
+				     mpack );
 	    else
-		return make_rvalue( r.value().template srli<Shift>(), mpack );
+		return make_rvalue( simd::detail::srli<Shift>( r.value() ),
+				     mpack );
 	}
     }
 };
