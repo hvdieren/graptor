@@ -414,30 +414,38 @@ private:
 
 	auto vid1 = expr::value<simd::ty<VID,1>,expr::vk_vid>();
 	auto vid = expr::make_unop_incseq<VL>( vid1 );
+	auto spid = expr::value<simd::ty<VID,1>,expr::vk_pid>();
+	auto pid = expr::make_unop_incseq<VL>( spid );
 
 	auto expr0 = op( vid );
-	auto cache_use = expr::extract_uses<expr::vk_vid>( expr0 );
-	auto expr1 = expr::rewrite_caches<expr::vk_vid,expr::mam_nontemporal>( expr0, cache_use );
-	auto cache_let = expr::extract_local_vars( expr1, cache_use );
-	auto expr2 = expr::rewrite_caches<expr::vk_zero>( expr1, cache_let );
-	auto expr3 = expr::rewrite_vectors_main( expr2 );
-	auto expr4 = expr::rewrite_mask_main( expr3 );
+	auto cache_pid = expr::extract_cacheable_refs<expr::vk_pid>( expr0 );
+	auto expr1 = expr::rewrite_caches<expr::vk_pid>( expr0, cache_pid );
+	auto cache_use = expr::extract_uses<expr::vk_vid>( expr1, cache_pid );
+	auto expr2 = expr::rewrite_caches<expr::vk_vid,expr::mam_nontemporal>( expr1, cache_use );
+	auto cache_let = expr::extract_local_vars( expr2, cache_use );
+	auto expr3 = expr::rewrite_caches<expr::vk_zero>( expr2, cache_let );
+	auto expr4 = expr::rewrite_vectors_main( expr3 );
+	auto expr5 = expr::rewrite_mask_main( expr4 );
 	// auto expr = expr::rewrite_incseq( expr4 ); // TODO -- errors in VL match
-	auto expr = expr4;
+	auto expr = expr5;
 
 	auto sexpr0 = op( vid1 );
-	auto cache_use1 = expr::extract_uses<expr::vk_vid>( sexpr0 );
-	auto sexpr1 = expr::rewrite_caches<expr::vk_vid,expr::mam_nontemporal>( sexpr0, cache_use1 );
-	auto cache_let1 = expr::extract_local_vars( sexpr1, cache_use1 );
-	auto sexpr2 = expr::rewrite_caches<expr::vk_zero>( sexpr1, cache_let1 );
-	auto sexpr3 = expr::rewrite_vectors_main( sexpr2 );
-	auto sexpr = expr::rewrite_mask_main( sexpr3 );
+	auto cache_pid1 = expr::extract_cacheable_refs<expr::vk_pid>( sexpr0 );
+	auto sexpr1 = expr::rewrite_caches<expr::vk_pid>( sexpr0, cache_pid1 );
+	auto cache_use1 = expr::extract_uses<expr::vk_vid>( sexpr1 );
+	auto sexpr2 = expr::rewrite_caches<expr::vk_vid,expr::mam_nontemporal>( sexpr1, cache_use1 );
+	auto cache_let1 = expr::extract_local_vars( sexpr2, cache_use1 );
+	auto sexpr3 = expr::rewrite_caches<expr::vk_zero>( sexpr2, cache_let1 );
+	auto sexpr4 = expr::rewrite_vectors_main( sexpr3 );
+	auto sexpr = expr::rewrite_mask_main( sexpr4 );
 
 	// Build environment
-	auto cache_vid = cache_cat( cache_use, cache_let );
-	auto cache_vid1 = cache_cat( cache_use1, cache_let1 );
+	auto cache_vid = cache_cat( cache_pid, cache_use, cache_let );
+	auto cache_vid1 = cache_cat( cache_pid1, cache_use1, cache_let1 );
+	auto cache_all = cache_cat( cache_vid, cache_vid1 );
 	auto env = expr::eval::create_execution_environment(
-	    cache_cat( cache_vid, cache_vid1 ),
+	    // cache_cat( cache_pid, cache_pid1, cache_vid, cache_vid1 ),
+	    cache_all,
 	    sexpr, expr ); 
 
 	// fail_expose<std::is_class>( cache_vid1 );
@@ -466,31 +474,50 @@ private:
 		VID vstart = std::min( e, roundupVL<VL>( s ) );
 		for( ; v < vstart; ++v ) {
 		    auto vv = simd::template create_constant<simd::ty<VID,1>>( v );
-		    auto m = expr::create_value_map_new2<1,expr::vk_vid>( vv );
+		    auto pp = simd::template create_constant<simd::ty<VID,1>>( VL*VID(p) );
+		    auto m = expr::create_value_map_new2<
+			1,expr::vk_vid,expr::vk_pid>( vv, pp );
 		    auto c = cache_create( env, cache_vid1, m );
 		    auto r = env.evaluate( c, m, sexpr );
 		    cache_commit( env, cache_vid1, c, m, r.mpack() );
 		}
 		if( v < e ) {
 		    assert( (v % VL) == 0 && "vector-alignment failed" );
+
+		    auto pp = simd::template create_constant<simd::ty<VID,1>>( VL*(VID)p );
+		    // auto pp = simd::template create_set1inc<simd::ty<VID,VL>,true>(
+		    // VL*VID(p) );
+
+		    auto m_pid = expr::create_value_map_new2<VL,expr::vk_pid>( pp );
+		    auto c = cache_create_no_init( cache_all, m_pid );
+		    cache_init( env, c, cache_pid, m_pid );
+
 		    for( ; v+VL <= e; v += VL ) {
 			// simd_vector<VID,VL> vv;
 			// vv.set1inc( v );
 			auto vv = simd::template create_constant<simd::ty<VID,1>>( v );
-			auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
-			auto c = cache_create( env, cache_vid, m );
+			auto m = expr::create_value_map_new2<VL,expr::vk_vid,expr::vk_pid>(
+			    vv, pp );
+			cache_init( env, c, cache_vid, m );
+			// auto c = cache_create( env, cache_vid, m );
 			// expr::cache_prefetch<PFV_DISTANCE>( c, cache_vid, m );
 			auto r = env.evaluate( c, m, expr );
 			cache_commit( env, cache_vid, c, m, r.mpack() );
 		    }
+
+		    cache_commit( env, cache_pid, c, m_pid );
+
 		    for( ; v < e; ++v ) {
 			auto vv = simd::template create_constant<simd::ty<VID,1>>( v );
-			auto m = expr::create_value_map_new2<1,expr::vk_vid>( vv );
+			auto pp = simd::template create_constant<simd::ty<VID,1>>( VL*VID(p) );
+			auto m = expr::create_value_map_new2<
+			    1,expr::vk_vid,expr::vk_pid>( vv, pp );
 			auto c = cache_create( env, cache_vid1, m );
 			auto r = env.evaluate( c, m, sexpr );
 			cache_commit( env, cache_vid1, c, m, r.mpack() );
 		    }
 		}
+
 		_mm_mfence(); // for streaming memory operations
 	    } );
 
@@ -887,14 +914,18 @@ private:
 
 	// TODO: sparse vmap could make use of gather/scatter
 	static constexpr unsigned short VL = 1; // sparse, thus scalar
+	auto spid = expr::value<simd::ty<VID,1>,expr::vk_pid>();
 	auto expr0 = op( expr::value<simd::ty<VID,VL>,expr::vk_vid>() );
 
 	auto l_cache = expr::extract_local_vars( expr0, expr::cache<>() );
 	auto expr1 = expr::rewrite_caches<expr::vk_zero>( expr0, l_cache );
+	auto cache_pid1 = expr::extract_cacheable_refs<expr::vk_pid>( expr1, l_cache );
+	auto expr2 = expr::rewrite_caches<expr::vk_pid>( expr1, cache_pid1 );
 
-	auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+	auto cache_all = cache_cat( l_cache, cache_pid1 );
+	auto env = expr::eval::create_execution_environment( expr2, cache_all ); 
 
-	auto expr = rewrite_internal( expr1 );
+	auto expr = rewrite_internal( expr2 );
 
 
 	VID nactv = fref.nActiveVertices();
@@ -902,9 +933,13 @@ private:
 	parallel_loop( (VID)0, nactv, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
-	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
-	    auto c = cache_create( env, l_cache, m );
-	    env.evaluate( c, m, expr );
+// TODO: race conditions on p...
+	    auto pp = simd::template create_unknown<simd::ty<VID,VL>>( VL*VID(0) );
+	    auto m = expr::create_value_map_new2<VL,expr::vk_vid,expr::vk_pid>(
+		vv, pp );
+	    auto c = cache_create( env, cache_all, m );
+	    auto r = env.evaluate( c, m, expr );
+	    cache_commit( env, cache_all, c, m, r.mpack() );
 	} );
 
 #if VMAP_TIMING
