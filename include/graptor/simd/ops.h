@@ -46,6 +46,24 @@ operator << ( simd::detail::vec<Tr,Layout1> l,
 	    Tr::traits::sllv( l.data(), r.data() ) );
 }
 
+template<unsigned short Shift, typename Tr, layout_t Layout>
+auto slli( simd::detail::vec<Tr,Layout> l ) {
+    return simd::detail::vec<Tr,_arith_cst(Layout)>(
+	Tr::traits::slli( l.data(), Shift ) );
+}
+
+template<unsigned short Shift, typename Tr, layout_t Layout>
+auto srli( simd::detail::vec<Tr,Layout> l ) {
+    return simd::detail::vec<Tr,_arith_cst(Layout)>(
+	Tr::traits::srli( l.data(), Shift ) );
+}
+
+template<unsigned short Shift, typename Tr, layout_t Layout>
+auto srai( simd::detail::vec<Tr,Layout> l ) {
+    return simd::detail::vec<Tr,_arith_cst(Layout)>(
+	Tr::traits::srai( l.data(), Shift ) );
+}
+
 template<typename Tr, layout_t Layout>
 auto operator ~ ( simd::vec<Tr,Layout> a ) {
     return simd::detail::vec<Tr,_arith_cst(Layout)>(
@@ -98,6 +116,13 @@ auto operator * ( simd::detail::vec<Tr,Layout1> l,
 		  simd::detail::vec<Tr,Layout2> r ) {
     return simd::detail::vec<Tr,_arith_cst(Layout1,Layout2)>(
 	Tr::traits::mul( l.data(), r.data() ) );
+}
+
+template<typename Tr, layout_t Layout1, layout_t Layout2>
+auto mulhi( simd::detail::vec<Tr,Layout1> l,
+	    simd::detail::vec<Tr,Layout2> r ) {
+    return simd::detail::vec<Tr,_arith_cst(Layout1,Layout2)>(
+	Tr::traits::mulhi( l.data(), r.data() ) );
 }
 
 template<typename Tr, layout_t Layout1, layout_t Layout2>
