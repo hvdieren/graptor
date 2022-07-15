@@ -49,12 +49,10 @@ constexpr T next_ipow2( T t ) {
     return T(1) << (ilog2(t-1)+1);
 }
 
-inline int rt_ilog2( int a ) {
-    return a <= 0 ? -1 : _bit_scan_reverse( a );
-}
-
-inline unsigned short rt_ilog2( unsigned short a ) {
-    return a == 0 ? -1 : _bit_scan_reverse( (unsigned int)a );
+template<typename T>
+inline
+std::enable_if_t<std::is_integral_v<T> && sizeof(T) <= 4,T> rt_ilog2( T a ) {
+    return a <= T(0) ? -1 : _bit_scan_reverse( (unsigned int)a );
 }
 
 template<typename T>
