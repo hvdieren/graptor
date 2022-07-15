@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include "graptor/encoding.h"
+#include "graptor/utils.h"
 
 namespace expr {
 
@@ -40,6 +41,13 @@ enum array_aid {
     aid_frontier_a = -160,
     aid_emap_zerof = -176,
     aid_emap_let = -192,
+    aid_rnd_state0 = -208,
+    aid_rnd_state1 = -224,
+    aid_rnd_tmp0 = -240,
+    aid_rnd_tmp1 = -256,
+    aid_rnd_tmp2 = -272,
+    aid_udiv_p = -288,
+    aid_udiv_m = -304,
     aid_priv = -1024 // a very big downward range is required
 };
 
@@ -406,6 +414,121 @@ auto make_maskrefop( A a, T t, M m ) {
     return maskrefop<A,T,M,T::VL>( a, t, m );
 }
 
+/************************************************************************
+ * scalar value, typically used for reductions.
+ *
+ * The scalar type holds the value itself. It is non-copyable such that the
+ * pointer to the value remains unique. Every use or dereference of the scalar
+ * should immediately translate to a refop on an array_ro that points to the
+ * actual scalar value. When creating the refop, the context of that creation
+ * is used to infer the vector length of the refop.
+ *
+ * @param <T> type of the scalar value
+ * @param <AID_> unique array ID for memory disambiguation
+ ************************************************************************/
+template<typename T, unsigned short AID_>
+struct scalar : public expr_base, private NonCopyable<scalar<T,AID_>> {
+    static constexpr op_codes opcode = op_scalar;
+    static constexpr unsigned short AID = AID_;
+
+    using type = T;			//!< type of scalar value
+    using self_type = scalar<T,AID>;	//!< our own type
+
+    /** Constructor: default initialisation
+     */
+    GG_INLINE scalar() { }
+
+    /** Constructor: value initialisation
+     *
+     * @param[in] v initial value for the scalar
+     */
+    GG_INLINE scalar( type v ) : m_val( v ) { }
+
+    /*! Create a refop for use in ASTs
+     *
+     * @tparam <VL> Vector length of resulting expression
+     */
+    template<unsigned short VL>
+    auto make_refop() {
+	return expr::make_refop(
+	    array_ro<type,VID,AID,array_encoding<type>,false>( ptr() ),
+	    value<simd::ty<VID,VL>,vk_zero>() );
+    }
+
+    /*! Retrieve writeable reference to actual scalar value.
+     */
+    type & operator * () { return *ptr(); }
+
+    /*! Retrieve read-only reference to actual scalar value.
+     */
+    const type & operator * () const { return *ptr(); }
+
+    /*! Retrieve writeable pointer to the actual scalar value.
+     */
+    type *ptr() { return &m_val; }
+
+    /*! Retrieve read-only pointer to the actual scalar value.
+     */
+    const type *ptr() const { return &m_val; }
+
+    /*! Retrieve value of the actual scalar.
+     */
+    operator type () const { return *ptr(); }
+
+    /*! Assign a value to the scalar; use outside of ASTs
+     *
+     * @param[in] t The new value
+     */
+    const self_type & operator = ( type t ) { *ptr() = t; return *this; }
+
+    /*! Create an AST node for a reduction operation using 'min'
+     *
+     * @tparam <E> The type of the RHS of the AST node
+     * @param[in] rhs The RHS of the AST node
+     */
+    template<typename E>
+    auto min( E rhs );
+
+    /*! Create an AST node for a reduction operation using 'max'
+     *
+     * @tparam <E> The type of the RHS of the AST node
+     * @param[in] rhs The RHS of the AST node
+     */
+    template<typename E>
+    auto max( E rhs );
+
+    /*! Create an AST node for a reduction operation using '+'
+     *
+     * The AST node will return a boolean indication that the value was
+     * updated.
+     *
+     * @tparam <E> The type of the RHS of the AST node
+     * @param[in] rhs The RHS of the AST node
+     */
+    template<typename E>
+    auto operator += ( E rhs );
+
+    /*! Create an AST node for a reduction operation using '*'
+     *
+     * @tparam <E> The type of the RHS of the AST node
+     * @param[in] rhs The RHS of the AST node
+     */
+    template<typename E>
+    auto operator *= ( E rhs );
+
+    /*! Create an AST node for a reduction operation using '+'
+     *
+     * The AST node will return the updated value.
+     *
+     * @tparam <E> The type of the RHS of the AST node
+     * @param[in] rhs The RHS of the AST node
+     */
+    template<typename E>
+    auto add( E rhs );
+    
+private:
+    type m_val; //!< The actual scalar value
+};
 
 /* cacheop
  * reference a cached value.

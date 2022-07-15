@@ -709,6 +709,12 @@ auto refop<A,T,VL>::min( E rhs ) {
     return redop<self_type,E,redop_min>( *this, rhs, redop_min() );
 }
 
+template<typename T, unsigned short AID>
+template<typename E>
+auto scalar<T,AID>::min( E rhs ) {
+    return make_redop( make_refop<E::VL>(), rhs, redop_min() );
+}
+    
 /* redop: max
  */
 struct redop_max {
@@ -876,6 +882,12 @@ auto refop<A,T,VL>::max( E rhs ) {
     return redop<self_type,E,redop_max>( *this, rhs, redop_max() );
 }
 
+template<typename T, unsigned short AID>
+template<typename E>
+auto scalar<T,AID>::max( E rhs ) {
+    return make_redop( make_refop<E::VL>(), rhs, redop_max() );
+}
+    
 /* redop: add
  */
 template<bool conditional_>
@@ -992,6 +1004,18 @@ template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::add( E rhs ) {
     return make_redop( *this, rhs, redop_add<false>() );
+}
+    
+template<typename T, unsigned short AID>
+template<typename E>
+auto scalar<T,AID>::operator += ( E rhs ) {
+    return make_redop( make_refop<E::VL>(), rhs, redop_add<true>() );
+}
+    
+template<typename T, unsigned short AID>
+template<typename E>
+auto scalar<T,AID>::add( E rhs ) {
+    return make_redop( make_refop<E::VL>(), rhs, redop_add<false>() );
 }
     
 /* redop: count_down
@@ -1223,6 +1247,12 @@ template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::operator *= ( E rhs ) {
     return make_redop( *this, rhs, redop_mul() );
+}
+
+template<typename T, unsigned short AID>
+template<typename E>
+auto scalar<T,AID>::operator *= ( E rhs ) {
+    return make_redop( make_refop<E::VL>(), rhs, redop_mul() );
 }
 
 template<typename A, typename T, unsigned short VL>

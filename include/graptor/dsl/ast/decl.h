@@ -70,6 +70,7 @@ enum op_codes {
     op_redop,
     op_dfsaop,
     op_noop,
+    op_scalar,
     op_NUM
 };
 
