@@ -318,8 +318,16 @@ void conditional_set( VID * f, bool * zf, bool updated, VID d ) {
     } else if constexpr ( um == um_list_must_init_unique ) {
 	// at least initialise *f
 	if( updated ) { // set true
+#if 1
+	    // For some reason, the fetch-and-or, which includes cmp-xchg
+	    // in a loop, performs slightly faster
 	    if( *zf != 0 || __sync_fetch_and_or( (unsigned char *)zf,
-						 (unsigned char)1 ) ) {
+						 (unsigned char)1 ) )
+#else
+	    if( __atomic_exchange_n( (unsigned char *)zf, (unsigned char)1,
+				     __ATOMIC_ACQ_REL ) != 0 )
+#endif
+	    {
 		// already set, don't set twice
 		*f = ~(VID)0;
 	    } else
@@ -647,7 +655,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 	parallel_loop( VID(0), m, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
-	    // We cannot actually do parallel processing as we have not
+	    // We cannot actually process neighbours in parallel as we have not
 	    // privatized the array elements corresponding to the destination
 	    // vertex. Vectorisation however may be feasible for very
 	    // high-degree vertices.
@@ -1364,16 +1372,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	    }
 
 
-	// Restore zero frontier to all zeros
-	if constexpr ( zerof ) {
-	    parallel_loop( EID(0), outEdgeCountF, [&]( EID k ) {
-		if( outEdges[k] != (VID)-1 ) {
-		    // assert( zf[outEdges[k]] );
-		    zf[outEdges[k]] = false;
-		}
-	    } );
-	}
-
 	// Calculate the number of active edges
 	new_frontier = frontier::sparse( GA.numVertices(), outEdgeCount );
 	VID* nextIndices = new_frontier.getSparse();
@@ -1405,6 +1403,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
     
 	new_frontier.calculateActiveCounts( GA, part, nextM );
+
+	// Restore zero frontier to all zeros
+	if constexpr ( zerof ) {
+	    parallel_loop( VID(0), nextM, [&]( VID k ) {
+		assert( nextIndices[k] != (VID)-1 );
+		zf[nextIndices[k]] = false;
+	    } );
+	}
 
 	delete [] outEdges;
     }
