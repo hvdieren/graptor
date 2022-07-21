@@ -338,6 +338,20 @@ struct redop_bitwiseor {
 	       std::enable_if_t<simd::matchVLtt<VTr,MTr>::value> * = nullptr ) {
 	return make_rvalue( reduce_bitwiseor( r.value(), r.mask() ) );
     }
+
+    template<typename VTr, layout_t Layout, typename MPack>
+    static auto
+    evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	if constexpr ( MPack::is_empty() ) {
+	    auto v = r.value();
+	    return make_rvalue( reduce_bitwiseor( v ), sb::mask_pack<>() );
+	} else {
+	    auto v = r.value();
+	    auto m = mpack.get_mask_for( v );
+	    return make_rvalue( reduce_bitwiseor( v, m ), sb::mask_pack<>() );
+	}
+    }
+
 /*
     template<unsigned short W, unsigned short VL>
     static GG_INLINE auto
