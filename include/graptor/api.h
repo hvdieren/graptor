@@ -1925,7 +1925,7 @@ public:
     //! type of array syntax tree for this property
     using array_ty = expr::array_ro<type,index_type,AID,encoding,NT>;
 
-    /** Constructor: create an vertex property.
+    /** Constructor: create a vertex property.
      *
      * @param[in] name explanation string for debugging
      */
