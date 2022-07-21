@@ -486,6 +486,25 @@ public:
 	}
     }
 
+    template<typename ReturnTy>
+    static auto lzcnt( type a ) {
+#if __AVX512CD__
+	type cnt = _mm512_lzcnt_epi32( a );
+#else
+	// AVX2: https://stackoverflow.com/questions/58823140/count-leading-zero-bits-for-each-element-in-avx2-vector-emulate-mm256-lzcnt-ep
+	type cnt;
+	assert( 0 && "NYI" );
+#endif
+	if constexpr ( sizeof(ReturnTy) == W )
+	    return cnt;
+	else if constexpr ( sizeof(ReturnTy) == 2 ) {
+	    return _mm512_cvtepi32_epi16( cnt ); // AVX512F
+	} else {
+	    assert( 0 && "NYI" );
+	    return 0;
+	}
+    }
+
     static __m512 castfp( type a ) { return _mm512_castsi512_ps( a ); }
     static type castint( type a ) { return a; }
 
