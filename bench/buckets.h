@@ -1,3 +1,6 @@
+#ifndef GRAPTOR_BENCH_BUCKETS_H
+#define GRAPTOR_BENCH_BUCKETS_H
+
 #include <limits>
 
 /************************************************************************
@@ -743,3 +746,5 @@ private:
     size_t m_elems;
     bucket<ID> * m_buckets;
 };
+
+#endif // GRAPTOR_BENCH_BUCKETS_H
