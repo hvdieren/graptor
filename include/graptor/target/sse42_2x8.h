@@ -33,7 +33,7 @@ namespace target {
 template<unsigned short VL, typename T = uint16_t>
 struct sse42_2xL : public sse42_bitwise {
     static_assert( sizeof(T) == 2, 
-		   "version of template class for 4-byte integers" );
+		   "version of template class for 2-byte integers" );
 public:
     using member_type = T;
     using int_type = uint16_t;
@@ -44,11 +44,12 @@ public:
     using mask_traits = mask_type_traits<VL>;
     using mask_type = typename mask_traits::type;
 
-    using mask_traits8 = mask_type_traits<8>;
-    using mask_type8 = typename mask_traits8::type;
+    using mask_traits8 [[deprecated("needed?")]] = mask_type_traits<8>;
+    using mask_type8 [[deprecated("needed?")]] = typename mask_traits8::type;
 
     // using half_traits = sse??_2x4<T>;
     using int_traits = sse42_2xL<VL,int_type>;
+    using mt_preferred = mt_vmask;
     
     static constexpr unsigned short W = 2;
     static constexpr unsigned short B = 8 * W;
