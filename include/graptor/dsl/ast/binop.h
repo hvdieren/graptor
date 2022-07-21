@@ -540,13 +540,19 @@ struct binop_lor {
 
     static constexpr char const * name = "binop_lor";
     
-    template<typename VTr, layout_t Layout1, layout_t Layout2,
+    template<typename VTr1, layout_t Layout1,
+	     typename VTr2, layout_t Layout2,
 	     typename MPack>
     __attribute__((always_inline))
-    static inline auto evaluate( sb::rvalue<VTr,Layout1> l,
-				 sb::rvalue<VTr,Layout2> r,
+    static inline auto evaluate( sb::rvalue<VTr1,Layout1> l,
+				 sb::rvalue<VTr2,Layout2> r,
 				 const MPack & mpack ) {
-	return make_rvalue( l.value() || r.value(), mpack );
+	if constexpr ( std::is_same_v<VTr1,VTr2> )
+	    return make_rvalue( l.value() || r.value(), mpack );
+	else {
+	    auto rr = r.value().template convert_data_type<VTr1>();
+	    return make_rvalue( l.value() || rr, mpack );
+	}
     }
     
     template<typename VTr, layout_t Layout1, typename MTr, layout_t Layout2>
@@ -638,7 +644,7 @@ template<typename E1, typename E2>
 auto make_bor( E1 l, E2 r,
 	       typename std::enable_if_t<is_base_of<expr_base,E1>::value
 	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
-    return make_binop( l, r, binop_lor() );
+    return make_binop( l, r, binop_bor() );
 }
 
 template<typename E1, typename E2>
