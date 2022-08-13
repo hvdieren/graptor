@@ -301,7 +301,16 @@ first set color[v] = v
 	    api::edgemap(
 		GA,
 		api::config( api::always_dense ), // because of edge numbering
-		api::filter( api::dst, api::strong, roots ),
+		// api::filter( api::dst, api::strong, roots ),
+		api::filter( api::dst,
+			     [&]( auto d ) {
+				 constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
+				 auto msb = expr::slli<W>( _1s(posscol[d]) );
+				 auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+				 auto done = ( ( msb >> best ) & ~funion[d] ) != _0;
+				 // Returns true if predicate is true, false otherwise
+				 return posscol[d] = _p( msb >> best, done );
+			     }, api::strong ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // It is expected that posscol[v] != _0; otherwise no
 		    // available colours.
