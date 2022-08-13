@@ -301,16 +301,13 @@ first set color[v] = v
 	    api::edgemap(
 		GA,
 		api::config( api::always_dense ), // because of edge numbering
-		// api::filter( api::dst, api::strong, roots ),
+		api::filter( api::dst, api::strong, roots ),
+/*
 		api::filter( api::dst,
 			     [&]( auto d ) {
-				 constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
-				 auto msb = expr::slli<W>( _1s(posscol[d]) );
-				 auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
-				 auto done = ( ( msb >> best ) & ~funion[d] ) != _0;
-				 // Returns true if predicate is true, false otherwise
-				 return posscol[d] = _p( msb >> best, done );
+				 return ( posscol[d] & ( posscol[d] - _1 ) ) != _0;
 			     }, api::strong ),
+*/
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // It is expected that posscol[v] != _0; otherwise no
 		    // available colours.
@@ -358,6 +355,9 @@ first set color[v] = v
 		)
 		.materialize();
 
+	    frontier new_roots;
+
+#if 0
 	    make_lazy_executor( part )
 		.vertex_map( roots, [&]( auto d ) {
 		    constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
@@ -369,24 +369,6 @@ first set color[v] = v
 		} )
 		.materialize();
 
-	    if( debug ) {
-		roots.toSparse( part );
-
-		std::cerr << "roots: " << roots << "\n";
-		print( std::cerr, part, priority );
-		print( std::cerr, part, predecessors );
-#if WITH_DEPTH
-		print( std::cerr, part, depth );
-#endif
-		std::cerr << std::hex;
-		print( std::cerr, part, posscol );
-		print( std::cerr, part, funion );
-		std::cerr << std::dec;
-	    }
-	    
-	    // what are the new roots/active set?
-	    frontier new_roots;
-#if 0
 	    make_lazy_executor( part )
 		.vertex_filter(
 		    GA,
@@ -408,14 +390,33 @@ first set color[v] = v
 		    roots,
 		    new_roots,
 		    [&]( auto d ) {
-			return ( posscol[d] & ( posscol[d] - _1 ) ) != _0;
+			constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
+			auto msb = expr::slli<W>( _1s(posscol[d]) );
+			auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+			auto done = ( ( msb >> best ) & ~funion[d] ) != _0;
+			return expr::make_seq(
+			    // Returns true if predicate is true, false otherwise
+			    posscol[d] = _p( msb >> best, done ),
+			    !done );
 		    } )
 		.materialize();
 #endif
 
 	    if( debug ) {
+		roots.toSparse( part );
 		new_roots.toSparse( part );
+
+		std::cerr << "roots: " << roots << "\n";
 		std::cerr << "new_roots   : " << new_roots << "\n";
+		print( std::cerr, part, priority );
+		print( std::cerr, part, predecessors );
+#if WITH_DEPTH
+		print( std::cerr, part, depth );
+#endif
+		std::cerr << std::hex;
+		print( std::cerr, part, posscol );
+		print( std::cerr, part, funion );
+		std::cerr << std::dec;
 	    }
 
 	    log( iter, tm_iter, roots, ik_color );
