@@ -8,6 +8,11 @@ using expr::_1;
 using expr::_1s;
 using expr::_true;
 using expr::_c;
+using expr::_p;
+
+#define WITH_DEPTH 0
+
+#define PEELING 1
 
 enum gc_variable_name {
     var_color = 0,
@@ -17,10 +22,34 @@ enum gc_variable_name {
     var_priority = 4,
     var_predecessors = 5,
     var_tie = 6,
+    var_dag = 7,
+    var_dep = 8,
+    var_no_overlap = 9,
+    var_src_fixed = 10,
+    var_posscol_s = 11,
     var_degrees_ro = expr::aid_graph_degree
 };
 
+enum iteration_kind {
+    ik_prio,
+    ik_depth,
+    ik_color,
+    ik_post
+};
+
+std::ostream & operator << ( ostream & os, iteration_kind k ) {
+    switch( k ) {
+    case ik_prio: os << "priority"; break;
+    case ik_depth: os << "DAG-depth"; break;
+    case ik_color: os << "coloring"; break;
+    case ik_post: os << "post-process"; break;
+    default: os << "<unknown>"; break;
+    }
+    return os;
+}
+
 using BitMaskTy = uint64_t;
+using DepTy = logical<4>;
 
 template <class GraphType>
 class GC_ECL {
@@ -35,7 +64,10 @@ public:
 	  priority( GA.get_partitioner(), "priority" ),
 	  predecessors( GA.get_partitioner(), "predecessors" ),
 	  tie_breaker( GA.get_partitioner(), "tie_breaker" ),
+#if WITH_DEPTH
 	  depth( GA.get_partitioner(), "depth" ),
+#endif
+	  dag( GA.get_partitioner(), "DAG" ),
 	  prng( GA.get_partitioner(),
 		static_cast<VID>( static_cast<float>( GA.getCSR().max_degree() )
 				  * ( 1.0 + mu ) ) ),
@@ -47,7 +79,8 @@ public:
 	static bool once = false;
 	if( !once ) {
 	    once = true;
-	    // std::cerr << "FUSION=" << FUSION << "\n";
+	    std::cerr << "WITH_DEPTH=" << WITH_DEPTH << "\n";
+	    std::cerr << "PEELING=" << PEELING << "\n";
 	}
     }
     ~GC_ECL() {
@@ -57,7 +90,10 @@ public:
 	priority.del();
 	predecessors.del();
 	tie_breaker.del();
+#if WITH_DEPTH
 	depth.del();
+#endif
+	dag.del();
     }
 
     struct info {
@@ -65,15 +101,31 @@ public:
 	float density;
 	VID nactv;
 	EID nacte;
+	iteration_kind iknd;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
 		      << " density: " << density
 		      << " nactv: " << nactv
 		      << " nacte: " << nacte
+		      << " " << iknd
 		      << "\n";
 	}
     };
+
+    void log( int & iter, timer & tm_iter, frontier & F, iteration_kind iknd ) {
+	if( itimes ) {
+	    info_buf.resize( iter+1 );
+	    info_buf[iter].density = F.density( GA.numEdges() );
+	    info_buf[iter].delay = tm_iter.next();
+	    info_buf[iter].nactv = F.nActiveVertices();
+	    info_buf[iter].nacte = F.nActiveEdges();
+	    info_buf[iter].iknd = iknd;
+	    if( debug )
+		info_buf[iter].dump( iter );
+	    ++iter;
+	}
+    }
 
     struct stat {
 	double delay;
@@ -97,61 +149,53 @@ public:
 	frontier ftrue = frontier::all_true( n, m );
 
 	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-		constexpr size_t W = sizeof(VID)*8;
-		auto msb = expr::slli<W-1>( _1s(color[v]) );
-		return expr::make_seq(
-		    priority[v] = _0,
-		    // color[v] = v );
-		    // color[v] = _0 );
-		    // color[v] = _1s );
-		    color[v] = msb | v ); // all unique - for debugging
-	    } )
+	    .vertex_map( [&]( auto v ) { return priority[v] = _0; } )
 	    .materialize();
 
 /*
+first set color[v] = v
 	expr::rnd::random_shuffle(
 	    color.get_ptr(),
 	    tie_breaker.get_ptr(),
 	    n,
 	    expr::rnd::simple_rng(1) );
-
-	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) { return color[v] = _0; } )
-	    .materialize();
 */
 
 	// constexpr VID threshold = 2;
-	constexpr VID delta = 1;
+	constexpr VID delta = 2;
 	VID cur_depth = delta;
 
 	// frontier roots;
 	frontier badv;
 	api::edgemap(
 	    GA,
+	    api::config( api::always_dense ), // because of edge numbering
 	    api::relax( [&]( auto s, auto d, auto e ) {
 		auto fn = [&]( auto v ) {
 		    // return v & expr::slli<8>( expr::srli<27>( _1s(v) ) );
 		    // return expr::srli<8>( v );
 		    return v;
 		};
-		return priority[d] +=
-		    expr::add_predicate(
-			_1(priority[d]),
+		return expr::let<var_dep>(
 #if LLF
-			expr::make_unop_lzcnt<VID>( degree[s] )
-			> expr::make_unop_lzcnt<VID>( degree[d] )
-			|| ( expr::make_unop_lzcnt<VID>( degree[s] )
-			     == expr::make_unop_lzcnt<VID>( degree[d] )
-			     && s < d )
+		    expr::make_unop_lzcnt<VID>( degree[s] )
+		    > expr::make_unop_lzcnt<VID>( degree[d] )
+		    || ( expr::make_unop_lzcnt<VID>( degree[s] )
+			 == expr::make_unop_lzcnt<VID>( degree[d] )
+			 && s < d )
 #else
-			degree[s] > degree[d]
-			|| ( degree[s] == degree[d]
-			     && fn(s) > fn(d) )
+		    degree[s] > degree[d]
+		    || ( degree[s] == degree[d]
+			 && fn(s) > fn(d) )
 // -> fn(s) > fn(d) || ( fn(s) == fn(d) && s < d )
-			// || ( degree[s] == degree[d] && tie_breaker[s] < tie_breaker[d] )
+		    // || ( degree[s] == degree[d] && tie_breaker[s] < tie_breaker[d] )
 #endif
-			);
+		    , [&]( auto dep ) {
+			return expr::make_seq(
+			    dag[e] = dep,
+			    priority[d] += _p( _1(priority[d]), dep )
+			    );
+		    } );
 	    } )
 /*
 	    api::record( roots,
@@ -186,13 +230,13 @@ public:
 		&& "cannot encode posscol in available bits" );
 	badv.del();
 
-#if 1
+	log( iter, tm_iter, ftrue, ik_prio );
+
+#if WITH_DEPTH
 	{
 	    frontier todo;
 	    make_lazy_executor( part )
-		.vertex_map( [&]( auto v ) {
-		    return depth[v] = _0;
-		} )
+		.vertex_map( [&]( auto v ) { return depth[v] = _0; } )
 		.vertex_filter(
 		    GA, ftrue, todo,
 		    [&]( auto v ) {
@@ -212,16 +256,7 @@ public:
 		    api::record( new_todo, api::reduction, api::strong )
 		    ).materialize();
 
-		if( itimes ) {
-		    info_buf.resize( iter+1 );
-		    info_buf[iter].density = todo.density( m );
-		    info_buf[iter].delay = tm_iter.next();
-		    info_buf[iter].nactv = todo.nActiveVertices();
-		    info_buf[iter].nacte = todo.nActiveEdges();
-		    if( debug )
-			info_buf[iter].dump( iter );
-		    ++iter;
-		}
+		log( iter, tm_iter, todo, ik_depth );
 
 		todo.del();
 		todo = new_todo;
@@ -240,6 +275,7 @@ public:
 	}
 #endif
 
+#if 0
 	frontier roots;
 	make_lazy_executor( part )
 	    .vertex_filter(
@@ -249,16 +285,10 @@ public:
 		} )
 	    .materialize();
 
-	if( itimes ) {
-	    info_buf.resize( iter+1 );
-	    info_buf[iter].density = -1.0;
-	    info_buf[iter].delay = tm_iter.next();
-	    info_buf[iter].nactv = n;
-	    info_buf[iter].nacte = m;
-	    if( debug )
-		info_buf[iter].dump( iter );
-	    ++iter;
-	}
+	log( iter, tm_iter, ftrue, ik_depth );
+#else
+	frontier roots = ftrue;
+#endif
 
 	while( !roots.isEmpty() ) {
 
@@ -270,193 +300,88 @@ public:
 	     * over us (dependency removed).
 	     */
 	    
-	    /* Idea:
-	     * - process vertices with prio <= 1 at the same time
-	     * - if conflict -> resolve in favour of prio == 0
-	     * - use short-cutting between vertices at prio 0 and prio 1
-	     *   i.e.:
-	     *   1. calculate forbidden color mask
-	     *   2. calculate intersection of all forbidden
-	     *   3. if best color in forbidden is not blocked by intersection
-	     *      then color is permanent and priority of dependents can be
-	     *      be dropped to zero
-	     *      so frontier out would be: is color permanent
-	     *      / non-conflicting?
-	     * Alt:
-	     * - forbidden-prio0 ; forbidden-prio>0 (tentative)
-	         possibly including all vertices in same vector as those prio 0
-	     * - ;
-	     */
-
-/*
 	    make_lazy_executor( part )
-		..vertex_map( roots, [&]( auto v ) { return forbidden[v] = _0; } )
 		.vertex_map( roots, [&]( auto v ) { return funion[v] = _0; } )
-		.vertex_map( roots, [&]( auto v ) { return color[v] = _1; } )
-	    .materialize();
-*/
-
-	    // TODO: specialise first iteration: priority == _0 -> color = _0
-
-	    make_lazy_executor( part )
-		.vertex_map( /*roots,*/ [&]( auto v ) { return funion[v] = _0; } )
 		.materialize();
 
-	// Iterate one partition at a time
-	    frontier vdone; // roots, or non-roots that are correct
 	    api::edgemap(
 		GA,
-		api::config( api::always_dense ),
+		api::config( api::always_dense ), // because of edge numbering
 		api::filter( api::dst, api::strong, roots ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // It is expected that posscol[v] != _0; otherwise no
 		    // available colours.
-		    constexpr size_t W = sizeof(VID)*8;
-		    // auto w = _c( sizeof(BitMaskTy)*8 - 1 );
-		    // auto msb = expr::slli<sizeof(BitMaskTy)*8-1>( _1s(posscol[d]) );
+		    using MTr = typename decltype(posscol[d])::data_type
+			::prefmask_traits;
+		    return expr::let<var_dep>( dag[e], [&]( auto dep ) {
+		    return expr::let<var_posscol_s>( posscol[s],
+		    [&]( auto pcs ) {
+		    return expr::let<var_no_overlap>( ( posscol[d] & pcs ) == _0,
+		    [&]( auto overlap_v ) {
+		    return expr::let<var_src_fixed>( ( pcs & ( pcs - _1 ) ) == _0,
+		    [&]( auto src_fixed_v ) {
+		    auto no_overlap
+			= expr::make_unop_cvt_to_mask<MTr>( overlap_v );
+		    // = ( posscol[d] & pcs ) == _0;
+		    auto src_fixed
+			= expr::make_unop_cvt_to_mask<MTr>( src_fixed_v );
+		    // = ( pcs & ( pcs - _1 ) ) == _0;
 		    return expr::make_seq(
-			// funion[d] |= expr::add_predicate(
-			// posscol[s], priority[s] == _0 ), // < _c(threshold) ),
-			funion[d] |= expr::add_predicate(
-			    posscol[s], 
-			    depth[s] < depth[d] // s is predecessor of d -- can use formula used for priority (LF/LLF)?
-			    // expr::srli<W-1>( color[s] ) == _0
-			    ),
-			predecessors[d] += expr::add_predicate(
+			funion[d] |= _p( pcs, dep ),
+			predecessors[d] += _p(
 			    _1s(predecessors[d]),
-			    // expr::srli<W-1>( color[s] ) == _0
 			    // is-a predecessor and is resolved
-			    ( ( posscol[d] & posscol[s] ) == _0
-			      || ( posscol[s] & ( posscol[s] - _1 ) ) == _0 )
-			    && depth[s] < depth[d] ),
-			posscol[d] = expr::add_predicate(
+			    ( no_overlap || src_fixed ) && dep ),
+			posscol[d] = _p(
 			    expr::iif(
-				( posscol[d] & posscol[s] ) == _0,
-				expr::iif( ( posscol[s] & ( posscol[s] - _1 ) ) == _0,
+				no_overlap,
+				expr::iif( src_fixed,
 					   posscol[d],
-					   posscol[d] ^ posscol[s] ),
+					   posscol[d] ^ pcs ),
 				posscol[d] & ( posscol[d] - _1 )
 				),
-			    // priority[s] == _0 // < _c(threshold)
-			    depth[s] < depth[d]
-			    // expr::srli<W-1>( color[s] ) == _0
-			    ) );
+			    dep
+			    ),
+			dag[e] &= expr::cast<DepTy>(
+			    !( no_overlap || src_fixed ) )
+			);
+		    } );
+		    } );
+		    } );
+		    } );
 		} )
-/*
-		api::record( vdone, [&]( auto d ) {
-		    return priority[d] == _0
-			|| ( priority[d] < _c(threshold)
-			     && ( ( funion[d] >> expr::cast<BitMaskTy>( color[d] ) )
-				  & _1 ) == _0 );
-		}, api::strong )
-*/
 		)
 		.materialize();
 
 	    make_lazy_executor( part )
-		.vertex_filter(
-		    GA,
-		    roots,
-		    vdone,
-		    [&]( auto d ) {
-			auto w = _c( sizeof(BitMaskTy)*8 - 1 );
-			auto msb = expr::slli<sizeof(BitMaskTy)*8-1>( _1s(posscol[d]) );
-			auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
-			auto done = ( ( msb >> best ) & ~funion[d] ) != _0
-			    || predecessors[d] == _0;
-			// Returns true if predicate is true, false otherwise
-			return color[d] = expr::add_predicate( best, done );
-		    } )
+		.vertex_map( roots, [&]( auto d ) {
+		    constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
+		    auto msb = expr::slli<W>( _1s(posscol[d]) );
+		    auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+		    auto done = ( ( msb >> best ) & ~funion[d] ) != _0;
+		    // Returns true if predicate is true, false otherwise
+		    return posscol[d] = _p( msb >> best, done );
+		} )
 		.materialize();
 
-	    std::cerr << "vdone: " << vdone.nActiveVertices()
-		      << " roots: " << roots.nActiveVertices() << "\n";
-
 	    if( debug ) {
-		frontier x = list_conflicts();
-
 		roots.toSparse( part );
-		vdone.toSparse( part );
-		x.toSparse( part );
 
 		std::cerr << "roots: " << roots << "\n";
-		std::cerr << "vdone: " << vdone << "\n";
-		std::cerr << "cnflt: " << x << "\n";
-		print( std::cerr, part, color );
 		print( std::cerr, part, priority );
 		print( std::cerr, part, predecessors );
+#if WITH_DEPTH
 		print( std::cerr, part, depth );
+#endif
 		std::cerr << std::hex;
 		print( std::cerr, part, posscol );
 		print( std::cerr, part, funion );
 		std::cerr << std::dec;
-		x.del();
 	    }
 	    
+	    // what are the new roots/active set?
 	    frontier new_roots;
 #if 0
-	    api::edgemap(
-		GA,
-		// api::config( api::always_sparse ),
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    constexpr size_t W = sizeof(VID)*8;
-/*
-		    return priority[d].count_down_value( _0(d) ) <= _c(threshold)
-			// && expr::cast<int>( color[d] ) < _0;
-			&& expr::srli<W-1>( color[d] ) != _0;
-		    // OR: source, if source has not a final colour yet
-		    */
-		    return expr::make_seq(
-			priority[d].count_down( _0(d) ),
-			depth[d] < _c( cur_depth + delta )
-			&& expr::srli<W-1>( color[d] ) != _0 );
-		} ),
-		api::filter( api::src, api::strong, vdone ), // weak?
-		// api::filter( api::src, api::strong, roots ),
-		api::record( new_roots, api::reduction, api::strong )
-		)
-		.vertex_map( roots,
-			     [&]( auto v ) {
-				 constexpr size_t W = sizeof(VID)*8;
-				 return priority[v]
-				     += expr::add_predicate(
-					 _1s(priority[v]),
-					 expr::srli<W-1>( color[v] ) == _0 ); // predicate should always be true for roots (but applying to broader active set)
-			     } )
-		.materialize();
-
-	    if( debug ) {
-		new_roots.toSparse( part );
-		std::cerr << "new_roots: " << new_roots << "\n";
-	    }
-
-#if 1
-	    // new_roots.del();
-
-	    // To include also vertices previously prio < threshold, but not
-	    // come to conclusion
-	    frontier revive;
-	    make_lazy_executor( part )
-		.vertex_filter(
-		    GA,
-		    roots,
-		    revive,
-		    [&]( auto d ) {
-			constexpr size_t W = sizeof(VID)*8;
-			// return priority[d] < _c(threshold)
-			// && expr::srli<W-1>( color[d] ) != _0;
-			return depth[d] < _c( cur_depth + delta )
-			    && expr::srli<W-1>( color[d] ) != _0;
-		    } )
-		.materialize();
-
-	    std::cerr << "revive   : " << revive << "\n";
-	    new_roots.merge_or( GA, revive );
-	    std::cerr << "merged   : " << new_roots << "\n";
-	    revive.del();
-#endif
-#else
-	    // what are the new roots/active set?
 	    make_lazy_executor( part )
 		.vertex_filter(
 		    GA,
@@ -465,26 +390,31 @@ public:
 		    [&]( auto d ) {
 			constexpr size_t W = sizeof(VID)*8;
 			return ( depth[d] < _c( cur_depth + delta )
-				 || predecessors[d] == _0 )
-			    && expr::srli<W-1>( color[d] ) != _0;
+			    )
+				 // || predecessors[d] == _0 ) // -> done => P==0
+			    // && expr::srli<W-1>( color[d] ) != _0; // -> !done
+			    && ( posscol[d] & ( posscol[d] - _1 ) ) != _0; // !done
 		    } )
 		.materialize();
-
-	    std::cerr << "new_roots   : " << new_roots << "\n";
+#else
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA,
+		    roots,
+		    new_roots,
+		    [&]( auto d ) {
+			return ( posscol[d] & ( posscol[d] - _1 ) ) != _0;
+		    } )
+		.materialize();
 #endif
 
-	    if( itimes ) {
-		info_buf.resize( iter+1 );
-		info_buf[iter].density = roots.density( m );
-		info_buf[iter].delay = tm_iter.next();
-		info_buf[iter].nactv = roots.nActiveVertices();
-		info_buf[iter].nacte = roots.nActiveEdges();
-		if( debug )
-		    info_buf[iter].dump( iter );
-		++iter;
+	    if( debug ) {
+		new_roots.toSparse( part );
+		std::cerr << "new_roots   : " << new_roots << "\n";
 	    }
 
-	    vdone.del();
+	    log( iter, tm_iter, roots, ik_color );
+
 	    roots.del();
 	    roots = new_roots;
 
@@ -492,6 +422,20 @@ public:
 	}
 
 	roots.del();
+
+	make_lazy_executor( part )
+	    .vertex_map(
+		[&]( auto d ) {
+		    auto w = _c( sizeof(BitMaskTy)*8 - 1 );
+		    auto msb = expr::slli<sizeof(BitMaskTy)*8-1>( _1s(posscol[d]) );
+		    auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+		    return color[d] = best;
+		} )
+	    .materialize();
+
+	log( iter, tm_iter, ftrue, ik_post );
+
+	ftrue.del();
     }
     
     void run() {
@@ -593,7 +537,11 @@ private:
     api::vertexprop<VID,VID,var_priority> priority;
     api::vertexprop<VID,VID,var_predecessors> predecessors;
     api::vertexprop<VID,VID,var_tie> tie_breaker;
+#if WITH_DEPTH
     api::vertexprop<VID,VID,var_depth> depth;
+#endif
+    // api::edgeprop<bitfield<1>,EID,var_dag,array_encoding_bit<1>> dag;
+    api::edgeprop<DepTy,EID,var_dag> dag;
     expr::rnd::prng<VID> prng;
     std::vector<info> info_buf;
 };
