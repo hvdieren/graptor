@@ -294,12 +294,6 @@ first set color[v] = v
 
 	    std::cerr << "cur_depth: " << cur_depth << "\n";
 
-	    /* Idea:
-	     * If a neighbour has a color assigned (permanently) that is larger
-	     * then our degree, then that neighbour no longer has priority
-	     * over us (dependency removed).
-	     */
-	    
 	    make_lazy_executor( part )
 		.vertex_map( roots, [&]( auto v ) { return funion[v] = _0; } )
 		.materialize();
@@ -328,10 +322,12 @@ first set color[v] = v
 		    // = ( pcs & ( pcs - _1 ) ) == _0;
 		    return expr::make_seq(
 			funion[d] |= _p( pcs, dep ),
+#if 0
 			predecessors[d] += _p(
 			    _1s(predecessors[d]),
 			    // is-a predecessor and is resolved
 			    ( no_overlap || src_fixed ) && dep ),
+#endif
 			posscol[d] = _p(
 			    expr::iif(
 				no_overlap,
