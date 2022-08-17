@@ -14,6 +14,8 @@ using expr::_p;
 
 #define PEELING 1
 
+#define USE_MSB 1
+
 enum gc_variable_name {
     var_color = 0,
     var_depth = 1,
@@ -58,6 +60,8 @@ class GC_ECL {
 public:
     GC_ECL( GraphType & _GA, commandLine & P )
 	: GA( _GA ),
+	  threshold_init( P.getOptionLongValue( "-th:init", 2 ) ),
+	  threshold_step( P.getOptionLongValue( "-th:step", 2 ) ),
 	  color( GA.get_partitioner(), "color" ),
 	  posscol( GA.get_partitioner(), "possible colors" ),
 	  funion( GA.get_partitioner(), "funion" ),
@@ -81,6 +85,7 @@ public:
 	    once = true;
 	    std::cerr << "WITH_DEPTH=" << WITH_DEPTH << "\n";
 	    std::cerr << "PEELING=" << PEELING << "\n";
+	    std::cerr << "USE_MSB=" << USE_MSB << "\n";
 	}
     }
     ~GC_ECL() {
@@ -134,6 +139,7 @@ public:
 	VID colours;
     };
 
+#if 1
     void run_ecl() {
 	const partitioner &part = GA.get_partitioner();
 	VID n = GA.numVertices();
@@ -334,12 +340,13 @@ first set color[v] = v
 			    // is-a predecessor and is resolved
 			    ( no_overlap || src_fixed ) && dep ),
 #endif
+// Can make version w/o no-overlap opt which does not require DAG-dep
 			posscol[d] = _p(
 			    expr::iif(
 				no_overlap,
 				expr::iif( src_fixed,
 					   posscol[d],
-					   posscol[d] ^ pcs ),
+					   posscol[d] ^ pcs ), // & ~pcs regardless of dep
 				posscol[d] & ( posscol[d] - _1 )
 				),
 			    dep
@@ -394,6 +401,9 @@ first set color[v] = v
 			auto msb = expr::slli<W>( _1s(posscol[d]) );
 			auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
 			auto done = ( ( msb >> best ) & ~funion[d] ) != _0;
+// Alt (exp):
+// auto done = slli<1>( posscol[d] & ~funion[d] ) > posscol[d]
+// but how to set posscol to single-bit mask?
 			return expr::make_seq(
 			    // Returns true if predicate is true, false otherwise
 			    posscol[d] = _p( msb >> best, done ),
@@ -401,6 +411,7 @@ first set color[v] = v
 		    } )
 		.materialize();
 #endif
+
 
 	    if( debug ) {
 		roots.toSparse( part );
@@ -432,10 +443,7 @@ first set color[v] = v
 	make_lazy_executor( part )
 	    .vertex_map(
 		[&]( auto d ) {
-		    auto w = _c( sizeof(BitMaskTy)*8 - 1 );
-		    auto msb = expr::slli<sizeof(BitMaskTy)*8-1>( _1s(posscol[d]) );
-		    auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
-		    return color[d] = best;
+		    return color[d] = expr::lzcnt<BitMaskTy>( posscol[d] );
 		} )
 	    .materialize();
 
@@ -443,6 +451,451 @@ first set color[v] = v
 
 	ftrue.del();
     }
+#elif 0
+    // Only one optimisation
+    void run_ecl() {
+	const partitioner &part = GA.get_partitioner();
+	VID n = GA.numVertices();
+	EID m = GA.numEdges();
+
+	timer tm_iter;
+	tm_iter.start();
+	iter = 0;
+
+	expr::array_ro<VID, VID, var_degrees_ro> degree(
+	    const_cast<VID *>( GA.getCSR().getDegree() ) );
+
+	frontier ftrue = frontier::all_true( n, m );
+
+	make_lazy_executor( part )
+	    .vertex_map( [&]( auto v ) { return priority[v] = _0; } )
+	    .materialize();
+
+	// frontier roots;
+	frontier badv;
+	api::edgemap(
+	    GA,
+	    api::config( api::always_dense ), // because of edge numbering
+	    api::relax( [&]( auto s, auto d, auto e ) {
+		auto fn = [&]( auto v ) {
+		    // return v & expr::slli<8>( expr::srli<27>( _1s(v) ) );
+		    // return expr::srli<8>( v );
+		    return v;
+		};
+		return expr::let<var_dep>(
+#if LLF
+		    expr::make_unop_lzcnt<VID>( degree[s] )
+		    > expr::make_unop_lzcnt<VID>( degree[d] )
+		    || ( expr::make_unop_lzcnt<VID>( degree[s] )
+			 == expr::make_unop_lzcnt<VID>( degree[d] )
+			 && s < d )
+#else
+		    degree[s] > degree[d]
+		    || ( degree[s] == degree[d]
+			 && fn(s) > fn(d) )
+// -> fn(s) > fn(d) || ( fn(s) == fn(d) && s < d )
+		    // || ( degree[s] == degree[d] && tie_breaker[s] < tie_breaker[d] )
+#endif
+		    , [&]( auto dep ) {
+			return expr::make_seq(
+			    dag[e] = dep,
+			    priority[d] += _p( _1(priority[d]), dep )
+			    );
+		    } );
+	    } )
+	    )
+	    .vertex_map( [&]( auto v ) {
+		constexpr size_t W = sizeof(BitMaskTy)*8;
+		auto w = _c( W );
+		auto msb = expr::slli<W-1>( _1s(posscol[v]) );
+		return posscol[v]
+		    = expr::iif( priority[v] < w, _0,
+				 expr::sra( msb,
+					    expr::cast<BitMaskTy>( priority[v] ) ) );
+	    } )
+	    .vertex_map( [&]( auto v ) {
+		return predecessors[v] = priority[v];
+	    } )
+	    .vertex_filter( GA, ftrue, badv,
+			    [&]( auto v ) {
+				return posscol[v] == _0 && degree[v] != _0;
+			    } )
+	    .vertex_map( [&]( auto v ) { return funion[v] = _0; } )
+	    .materialize();
+
+	assert( badv.nActiveVertices() == 0
+		&& "cannot encode posscol in available bits" );
+	badv.del();
+
+	if( debug ) {
+	    print( std::cerr, part, priority );
+#if WITH_DEPTH
+	    print( std::cerr, part, depth );
+#endif
+	    std::cerr << std::hex;
+	    print( std::cerr, part, posscol );
+	    print( std::cerr, part, funion );
+	    std::cerr << std::dec;
+	}
+
+	log( iter, tm_iter, ftrue, ik_prio );
+
+	// This version does not require to remove the worst color (tzcnt)
+	// so we could reverse bit order in order to have efficient code to
+	// simplify the mask to only the best color:
+	//   (posscol ^ (posscol w/o best color))
+
+	frontier roots = ftrue;
+	while( !roots.isEmpty() ) {
+	    make_lazy_executor( part )
+		.vertex_map( roots, [&]( auto v ) { return funion[v] = _0; } )
+		.materialize();
+
+	    api::edgemap(
+		GA,
+		api::config( api::always_dense ), // because of edge numbering
+		api::filter( api::dst, api::strong, roots ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    // It is expected that posscol[v] != _0; otherwise no
+		    // available colours.
+		    using MTr = typename decltype(posscol[d])::data_type
+			::prefmask_traits;
+		    return expr::let<var_dep>( dag[e], [&]( auto dep ) {
+		    return expr::let<var_posscol_s>( posscol[s],
+		    [&]( auto pcs ) {
+		    return expr::let<var_src_fixed>( ( pcs & ( pcs - _1 ) ) == _0,
+		    [&]( auto src_fixed_v ) {
+		    // = ( posscol[d] & pcs ) == _0;
+		    auto src_fixed
+			= expr::make_unop_cvt_to_mask<MTr>( src_fixed_v );
+		    // = ( pcs & ( pcs - _1 ) ) == _0;
+		    return expr::make_seq(
+			funion[d] |= _p( pcs, dep ),
+			predecessors[d] += _p(
+			    _1s(predecessors[d]),
+			    // is-a predecessor and is resolved
+			    src_fixed && dep ),
+			posscol[d] &= _p( ~pcs, src_fixed && dep ),
+			dag[e] = _p( _0(dag[e]), src_fixed && dep )
+			    // can drop dep here: any fixed neighbour removes color; may affect number of colors used
+			);
+		    } );
+		    } );
+		    } );
+		} )
+		)
+		.materialize();
+
+	    frontier new_roots;
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA,
+		    roots,
+		    new_roots,
+		    [&]( auto d ) {
+			constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
+			auto msb = expr::slli<W>( _1s(posscol[d]) );
+			auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+			auto pdone = ( ( msb >> best ) & ~funion[d] ) != _0
+			    && predecessors[d] == _0;
+			auto sdone = ( posscol[d] & ( posscol[d] - _1 ) ) == _0;
+			auto done = pdone || sdone;
+// Alt (exp):
+// auto done = slli<1>( posscol[d] & ~funion[d] ) > posscol[d]
+// but how to set posscol to single-bit mask?
+			return expr::make_seq(
+			    // Returns true if predicate is true, false otherwise
+			    posscol[d] = _p( msb >> best, pdone ),
+			    !done );
+		    } )
+		.materialize();
+
+	    if( debug ) {
+		roots.toSparse( part );
+		new_roots.toSparse( part );
+
+		std::cerr << "roots: " << roots << "\n";
+		std::cerr << "new_roots   : " << new_roots << "\n";
+		print( std::cerr, part, priority );
+		print( std::cerr, part, predecessors );
+#if WITH_DEPTH
+		print( std::cerr, part, depth );
+#endif
+		std::cerr << std::hex;
+		print( std::cerr, part, posscol );
+		print( std::cerr, part, funion );
+		std::cerr << std::dec;
+	    }
+
+	    log( iter, tm_iter, roots, ik_color );
+
+	    roots.del();
+	    roots = new_roots;
+	}
+
+	roots.del();
+
+	make_lazy_executor( part )
+	    .vertex_map(
+		[&]( auto d ) {
+		    return color[d] = expr::lzcnt<BitMaskTy>( posscol[d] );
+		} )
+	    .materialize();
+
+	log( iter, tm_iter, ftrue, ik_post );
+
+	ftrue.del();
+    }
+
+#else
+    void run_ecl() {
+	const partitioner &part = GA.get_partitioner();
+	VID n = GA.numVertices();
+	EID m = GA.numEdges();
+
+	timer tm_iter;
+	tm_iter.start();
+	iter = 0;
+
+	expr::array_ro<VID, VID, var_degrees_ro> degree(
+	    const_cast<VID *>( GA.getCSR().getDegree() ) );
+
+	frontier ftrue = frontier::all_true( n, m );
+
+	make_lazy_executor( part )
+	    .vertex_map( [&]( auto v ) { return priority[v] = _0; } )
+	    .materialize();
+
+	VID threshold = threshold_init;
+	frontier roots;
+	frontier badv;
+	api::edgemap(
+	    GA,
+	    api::config( api::always_dense ), // because of edge numbering
+	    api::relax( [&]( auto s, auto d, auto e ) {
+		auto fn = [&]( auto v ) {
+		    // return v & expr::slli<8>( expr::srli<27>( _1s(v) ) );
+		    // return expr::srli<8>( v );
+		    return v;
+		};
+		return expr::let<var_dep>(
+#if LLF
+		    expr::make_unop_lzcnt<VID>( degree[s] )
+		    > expr::make_unop_lzcnt<VID>( degree[d] )
+		    || ( expr::make_unop_lzcnt<VID>( degree[s] )
+			 == expr::make_unop_lzcnt<VID>( degree[d] )
+			 && s < d )
+#else
+		    degree[s] > degree[d]
+		    || ( degree[s] == degree[d]
+			 && fn(s) > fn(d) )
+// -> fn(s) > fn(d) || ( fn(s) == fn(d) && s < d )
+		    // || ( degree[s] == degree[d] && tie_breaker[s] < tie_breaker[d] )
+#endif
+		    , [&]( auto dep ) {
+			return expr::make_seq(
+			    dag[e] = dep,
+			    priority[d] += _p( _1(priority[d]), dep )
+			    );
+		    } );
+	    } ),
+	    api::record( roots,
+			 [&]( auto d ) {
+			     return priority[d] < _c(threshold);
+			 }, api::strong )
+	    )
+	    .vertex_map( [&]( auto v ) {
+		constexpr size_t W = sizeof(BitMaskTy)*8;
+		auto w = _c( W );
+#if USE_MSB
+#else
+#endif
+		auto msb = expr::slli<W-1>( _1s(posscol[v]) );
+		return posscol[v]
+		    = expr::iif( priority[v] < w, _0,
+				 expr::sra( msb,
+					    expr::cast<BitMaskTy>( priority[v] ) ) );
+	    } )
+	    .vertex_map( [&]( auto v ) {
+		return predecessors[v] = priority[v];
+	    } )
+	    .vertex_filter( GA, ftrue, badv,
+			    [&]( auto v ) {
+				return posscol[v] == _0 && degree[v] != _0;
+			    } )
+	    .vertex_map( [&]( auto v ) { return funion[v] = _0; } )
+	    .materialize();
+
+	assert( badv.nActiveVertices() == 0
+		&& "cannot encode posscol in available bits" );
+	badv.del();
+
+	if( debug ) {
+	    print( std::cerr, part, priority );
+#if WITH_DEPTH
+	    print( std::cerr, part, depth );
+#endif
+	    std::cerr << std::hex;
+	    print( std::cerr, part, posscol );
+	    print( std::cerr, part, funion );
+	    std::cerr << std::dec;
+	}
+
+	log( iter, tm_iter, ftrue, ik_prio );
+
+	while( !roots.isEmpty() ) {
+	    api::edgemap(
+		GA,
+		api::config( api::always_dense ), // because of edge numbering
+		api::filter( api::dst, api::strong, roots ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    // It is expected that posscol[v] != _0; otherwise no
+		    // available colours.
+		    using MTr = typename decltype(posscol[d])::data_type
+			::prefmask_traits;
+		    return expr::let<var_dep>( dag[e], [&]( auto dep ) {
+		    return expr::let<var_posscol_s>( posscol[s],
+		    [&]( auto pcs ) {
+		    return expr::let<var_no_overlap>( ( posscol[d] & pcs ) == _0,
+		    [&]( auto overlap_v ) {
+		    return expr::let<var_src_fixed>( ( pcs & ( pcs - _1 ) ) == _0,
+		    [&]( auto src_fixed_v ) {
+		    // = ( posscol[d] & pcs ) == _0;
+		    auto no_overlap
+			= expr::make_unop_cvt_to_mask<MTr>( overlap_v );
+		    auto src_fixed
+			= expr::make_unop_cvt_to_mask<MTr>( src_fixed_v );
+		    // = ( pcs & ( pcs - _1 ) ) == _0;
+		    return expr::make_seq(
+			funion[d] |= _p( pcs, dep ),
+			predecessors[d] += _p(
+			    _1s(predecessors[d]),
+			    // is-a predecessor and is resolved
+			    ( no_overlap || src_fixed ) && dep ),
+			posscol[d] &= _p(
+			    expr::iif(
+				no_overlap,
+				expr::iif( src_fixed, _1s, ~pcs ),
+				posscol[d] - _1
+				),
+			    dep
+			    ),
+			dag[e] = _p( _0(dag[e]), ( no_overlap || src_fixed ) && dep )
+			    // can drop dep here: any fixed neighbour removes color; may affect number of colors used
+			);
+		    } );
+		    } );
+		    } );
+		    } );
+		} )
+		)
+		.materialize();
+
+	    if( api::default_threshold().is_sparse( roots, m ) )
+		roots.toSparse( part );
+
+	    frontier vdone;
+	    frontier new_roots;
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA,
+		    roots,
+		    vdone,
+		    [&]( auto d ) {
+			return expr::let<var_dep>(
+			funion[d],
+			[&]( auto funion_d ) {
+			constexpr size_t W = sizeof(BitMaskTy)*8 - 1;
+			auto msb = expr::slli<W>( _1s(posscol[d]) );
+			auto best = expr::lzcnt<BitMaskTy>( posscol[d] );
+			auto pdone = ( ( msb >> best ) & ~funion_d ) != _0
+			    && predecessors[d] == _0;
+			auto sdone = ( posscol[d] & ( posscol[d] - _1 ) ) == _0;
+			auto done = pdone || sdone;
+// Alt (exp):
+// auto pdone = slli<1>( posscol[d] & ~funion[d] ) > posscol[d]
+// but how to set posscol to single-bit mask w/o lzcnt?
+			return expr::make_seq(
+			    // Returns true if predicate is true, false otherwise
+			    funion[d] = _0,
+			    posscol[d] = _p( msb >> best, pdone ),
+			    done );
+			} );
+		    } )
+		.materialize();
+
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA,
+		    roots,
+		    new_roots,
+		    [&]( auto d ) {
+			auto done = ( posscol[d] & ( posscol[d] - _1 ) ) == _0;
+			return expr::make_seq(
+			    priority[d] += expr::add_predicate(
+				_1s(priority[d]),
+				done ),
+			    !done );
+		    } )
+		.materialize();
+
+	    // Raise threshold
+	    threshold += threshold_step;
+
+	    frontier awakened;
+	    api::edgemap(
+		GA,
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    // Priority below threshold, and no final colour yet
+		    constexpr size_t W = sizeof(VID)*8;
+		    return priority[d].count_down_value( _0(d) ) < _c(threshold);
+			// && ( posscol[d] & ( posscol[d] - _1 ) ) != _0;
+		} ),
+		api::filter( api::src, api::strong, vdone ),
+		api::record( awakened, api::reduction, api::strong )
+		)
+		.materialize();
+	    new_roots.merge_or( GA, awakened );
+	    awakened.del();
+	    vdone.del();
+
+	    if( debug ) {
+		roots.toSparse( part );
+		new_roots.toSparse( part );
+
+		std::cerr << "roots: " << roots << "\n";
+		std::cerr << "new_roots   : " << new_roots << "\n";
+		print( std::cerr, part, priority );
+		print( std::cerr, part, predecessors );
+#if WITH_DEPTH
+		print( std::cerr, part, depth );
+#endif
+		std::cerr << std::hex;
+		print( std::cerr, part, posscol );
+		print( std::cerr, part, funion );
+		std::cerr << std::dec;
+	    }
+
+	    log( iter, tm_iter, roots, ik_color );
+
+	    roots.del();
+	    roots = new_roots;
+	}
+
+	roots.del();
+
+	make_lazy_executor( part )
+	    .vertex_map(
+		[&]( auto d ) {
+		    return color[d] = expr::lzcnt<BitMaskTy>( posscol[d] );
+		} )
+	    .materialize();
+
+	log( iter, tm_iter, ftrue, ik_post );
+
+	ftrue.del();
+    }
+#endif 
     
     void run() {
 	run_ecl();
@@ -461,11 +914,6 @@ first set color[v] = v
     }
 
     void post_process( stat & stat_buf ) {
-	if( itimes ) {
-	    for( int i=0; i < iter; ++i )
-		info_buf[i].dump( i );
-	}
-
 	if( outfile )
 	    writefile( GA, outfile, color.get_ptr() );
     }
@@ -537,11 +985,20 @@ private:
     bool itimes, debug;
     const char * outfile;
     int iter;
+    VID threshold_init, threshold_step;
     api::vertexprop<VID,VID,var_color> color;
     api::vertexprop<BitMaskTy,VID,var_posscol> posscol;
     api::vertexprop<BitMaskTy,VID,var_funion> funion;
     api::vertexprop<VID,VID,var_priority> priority;
-    api::vertexprop<VID,VID,var_predecessors> predecessors;
+    /**
+     * !brief vertex property holding number of outstanding predecessors.
+     *
+     * 8 bits suffices as width of bitmask is 64 predecessors.
+     * Use array encoding as variable is held in registers most of the time,
+     * allowing efficient operation on wider natural width.
+     */
+    api::vertexprop<VID,VID,var_predecessors,
+		    array_encoding<uint8_t>> predecessors;
     api::vertexprop<VID,VID,var_tie> tie_breaker;
 #if WITH_DEPTH
     api::vertexprop<VID,VID,var_depth> depth;
