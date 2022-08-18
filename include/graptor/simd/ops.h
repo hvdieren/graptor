@@ -35,6 +35,17 @@ operator >> ( simd::detail::vec<Tr,Layout1> l,
 }
 
 template<typename Tr, typename Cr, layout_t Layout1, layout_t Layout2>
+auto sra( simd::detail::vec<Tr,Layout1> l,
+	  simd::detail::vec<Cr,Layout2> r ) {
+    if constexpr ( Layout2 == lo_constant )
+	return simd::detail::vec<Tr,_arith_cst(Layout1)>(
+	    Tr::traits::sra( l.data(), r.at(0) ) );
+    else
+	return simd::detail::vec<Tr,lo_unknown>(
+	    Tr::traits::srav( l.data(), r.data() ) );
+}
+
+template<typename Tr, typename Cr, layout_t Layout1, layout_t Layout2>
 auto
 operator << ( simd::detail::vec<Tr,Layout1> l,
 	      simd::detail::vec<Cr,Layout2> r ) {
