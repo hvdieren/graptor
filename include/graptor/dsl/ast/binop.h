@@ -291,6 +291,11 @@ auto add_predicate( E1 val, E2 mask ) {
 	return make_binop( val, mask, binop_predicate() );
 }
 
+template<typename E1, typename E2>
+constexpr auto _p( E1 val, E2 mask ) {
+    return add_predicate( val, mask );
+}
+
 /**
  * binop: sequence
  *
@@ -506,6 +511,9 @@ struct binop_band {
     }
 };
 
+// TODO: create binop_b/landnot<LHS/RHS> class and when creating binop_b/land,
+// check for unop_b/linvert in LHS/RHS and contract AST accordingly
+
 // Optimise for the cases where we try to merge no-op masks
 template<typename E1, typename E2>
 auto make_band( E1 l, E2 r,
@@ -595,8 +603,8 @@ auto make_lor( noop l, E r,
 
 template<typename E1, typename E2>
 auto make_lor( E1 l, E2 r,
-	       typename std::enable_if_t<is_base_of<expr_base,E1>::value
-	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
+	       typename std::enable_if_t<std::is_base_of_v<expr_base,E1>
+	       && std::is_base_of_v<expr_base,E2>> * = nullptr ) {
     return make_binop( l, r, binop_lor() );
 }
 
@@ -1270,13 +1278,19 @@ struct binop_srl {
     
     static constexpr char const * name = "binop_srl";
     
-    template<typename VTr, layout_t Layout1, layout_t Layout2,
+    template<typename VTr1, layout_t Layout1,
+	     typename VTr2, layout_t Layout2,
 	     typename MPack>
     __attribute__((always_inline))
-    static inline auto evaluate( sb::rvalue<VTr,Layout1> l,
-				 sb::rvalue<VTr,Layout2> r,
+    static inline auto evaluate( sb::rvalue<VTr1,Layout1> l,
+				 sb::rvalue<VTr2,Layout2> r,
 				 const MPack & mpack ) {
-	return make_rvalue( l.value() >> r.value(), mpack );
+	if constexpr ( std::is_same_v<VTr1,VTr2> )
+	    return make_rvalue( l.value() >> r.value(), mpack );
+	else {
+	    auto rr = r.value().template convert_data_type<VTr1>();
+	    return make_rvalue( l.value() >> rr, mpack );
+	}
     }
     
     template<typename VTr1, layout_t Layout1, typename MTr1, typename CTr, typename MTr2, layout_t Layout2>
@@ -1297,6 +1311,51 @@ template<typename E1, typename E2>
 auto operator >> ( E1 l, E2 r ) -> decltype(make_srl( l, r )) {
     return make_srl( l, r );
 }
+
+/* binop: sra
+ */
+struct binop_sra {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type;
+    };
+    
+    static constexpr char const * name = "binop_sra";
+    
+    template<typename VTr1, layout_t Layout1,
+	     typename VTr2, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<VTr1,Layout1> l,
+				 sb::rvalue<VTr2,Layout2> r,
+				 const MPack & mpack ) {
+	if constexpr ( std::is_same_v<VTr1,VTr2> )
+	    return make_rvalue( sra( l.value(), r.value() ), mpack );
+	else {
+	    auto rr = r.value().template convert_data_type<VTr1>();
+	    return make_rvalue( sra( l.value(), rr ), mpack );
+	}
+    }
+    
+    template<typename VTr1, layout_t Layout1, typename MTr1, typename CTr, typename MTr2, layout_t Layout2>
+    __attribute__((always_inline))
+    static inline auto evaluate( rvalue<VTr1,Layout1,MTr1> l, rvalue<CTr,Layout2,MTr2> r ) {
+	return make_rvalue( sra( l.value(), r.value() ), l.mask() && r.mask() );
+    }
+};
+
+template<typename E1, typename E2>
+auto make_sra( E1 l, E2 r,
+	       std::enable_if_t<is_base_of<expr_base,E1>::value
+	       && is_base_of<expr_base,E2>::value> * = nullptr ) {
+    return make_binop( l, r, binop_sra() );
+}
+
+template<typename E1, typename E2>
+auto sra( E1 l, E2 r ) -> decltype(make_sra( l, r )) {
+    return make_sra( l, r );
+}
+
 
 /* binop: sll
  */
