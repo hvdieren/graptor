@@ -619,6 +619,8 @@ private:
 	    execute<frontier_type::ft_bit2>( G, cfrontier, nfrontier, part, op );
 	    break;
 	case frontier_type::ft_logical1:
+	    execute<frontier_type::ft_logical1>( G, cfrontier, nfrontier, part, op );
+	    break;
 	case frontier_type::ft_logical2:
 	    assert( 0 && "Not instantiated to save compilation time" );
 	    break;
