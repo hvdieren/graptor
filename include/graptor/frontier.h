@@ -1166,9 +1166,22 @@ public:
 	return ( double( nactv ) + double( nacte ) ) / double( m );
     }
 
+    template<typename GraphType>
+    void merge_or( const GraphType &, frontier & );
+
+private:
+    void merge_or_sparse( const GraphCSx & G, frontier & f );
+    
+    template<typename GraphType, typename LHSTy>
+    void merge_or_ds( const GraphType &, LHSTy *, frontier & );
+
+    template<typename GraphType, typename LHSTy, typename RHSTy>
+    void merge_or_tmpl( const GraphType &, LHSTy *, RHSTy * );
+
     /*************************************************************
      * Vertex map and filter
      *************************************************************/
+public:
     template<class F>
     frontier filter( const partitioner & part, F fn ) {
 	switch( ftype ) {

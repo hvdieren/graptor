@@ -333,6 +333,191 @@ void frontier::convert_logical( const partitioner & part,
 	.materialize();
 }
 
+template<typename GraphType>
+void frontier::merge_or( const GraphType & G, frontier & f ) {
+    // Nothing to do
+    if( f.nActiveVertices() == 0 )
+	return;
+
+    switch( ftype ) {
+    case frontier_type::ft_true: break;
+    case frontier_type::ft_sparse:
+	if constexpr ( std::is_same_v<GraphType,GraphCSx> )
+	    merge_or_sparse( G, f );
+	else
+	    merge_or_sparse( G.getCSR(), f );
+	break;
+    case frontier_type::ft_logical1:
+	merge_or_ds( G, getDense<frontier_type::ft_logical1>(), f );
+	break;
+    case frontier_type::ft_logical4:
+	merge_or_ds( G, getDense<frontier_type::ft_logical4>(), f );
+	break;
+    case frontier_type::ft_bool:
+    case frontier_type::ft_logical2:
+    case frontier_type::ft_logical8:
+    case frontier_type::ft_bit:
+    case frontier_type::ft_bit2:
+	assert( 0 && "NYI - frontier::merge_or" );
+	break;
+    case frontier_type::ft_unbacked:
+    default: UNREACHABLE_CASE_STATEMENT;
+    }
+}
+
+/************************************************************************
+ * \brief logical-or-merge the frontier f into this
+ *
+ * This operation incrementally sets true values for those vertices
+ * that are listed in the frontier f and are absent from this.
+ * It minimizes writes to memory.
+ * The code below is agnostic to the type of the frontier f.
+ *
+ * \tparam GraphType type of the graph object
+ * \tparam LHSTy pointer to array of values for the dense frontier this
+ *
+ * \param G the graph object
+ * \param lhs_p pointer to dense array of logical values for frontier this
+ * \param f frontier to perform logical-or with
+ ************************************************************************/
+template<typename GraphType, typename LHSTy>
+void frontier::merge_or_ds( const GraphType & G, LHSTy * lhs_p,
+			    frontier & f ) {
+    const VID * degree_p = nullptr;
+    if constexpr ( std::is_same_v<GraphType,GraphCSx> )
+	degree_p = G.getDegree();
+    else
+	degree_p = G.getCSR().getDegree();
+    expr::array_ro<VID,VID,expr::aid_graph_degree,array_encoding<VID>,false> degree( const_cast<VID *>( degree_p ) );
+    // Should be possible to extend to 1- and 2-bit frontiers in 'this'
+    // by passing a suitable encoding here.
+    expr::array_ro<LHSTy,VID,expr::aid_frontier_new,array_encoding<LHSTy>,false> lhs( lhs_p );
+    VID v_new = 0;
+    EID e_new = 0;
+    expr::array_ro<VID,VID,expr::aid_frontier_nactv,array_encoding<VID>,false> nactv_( &v_new );
+    expr::array_ro<EID,VID,expr::aid_frontier_nacte,array_encoding<EID>,false> nacte_( &e_new );
+
+    make_lazy_executor( G.get_partitioner() )
+	.vertex_scan(
+	    f, [&]( auto v ) {
+		return expr::let<expr::aid_frontier_a>(
+		    lhs[v],
+		    [&]( auto nf ) {
+			// Not sure if the add_predicate construct works
+			// in case of 1-bit or 2-bit frontiers
+			using Tr = typename decltype(lhs[v])::data_type;
+			using MTr = typename Tr::prefmask_traits;
+			auto mask = !expr::make_unop_cvt_to_mask<MTr>( nf );
+			return expr::make_seq(
+			    nacte_[expr::_0(v)] +=
+			    expr::_p(
+				expr::make_unop_cvt_type<EID>( degree[v] ),
+				mask ),
+			    nactv_[expr::_0(v)] +=
+			    expr::_p( expr::_1(nactv_[expr::_0(v)]),
+						 mask ),
+			    lhs[v] = expr::_p(
+				expr::true_val( lhs[v] ),
+				mask )
+			    // expr::_true(lhs[v])
+			    );
+		    } );
+	    } )
+	.materialize();
+    
+    nactv += v_new;
+    nacte += e_new;
+}
+
+void frontier::merge_or_sparse( const GraphCSx & G, frontier & f ) {
+    using std::swap;
+    
+    // Worst-case memory allocation
+    frontier newf = frontier::sparse(
+	G.numVertices(),
+	nActiveVertices() + f.nActiveVertices() );
+    VID * newf_p = newf.getSparse();
+    VID * lhs_p = getSparse();
+    VID * rhs_p = f.getSparse();
+
+    sort( &lhs_p[0], &lhs_p[nActiveVertices()] );
+    sort( &rhs_p[0], &rhs_p[f.nActiveVertices()] );
+
+    VID ne = 0;
+    const VID * l = lhs_p;
+    const VID * le = &lhs_p[nActiveVertices()];
+    const VID * r = rhs_p;
+    const VID * re = &rhs_p[f.nActiveVertices()];
+    VID * o = newf_p;
+    for( ; l != le; ++o ) {
+	if( r == re ) {
+	    for( ; l != le; ++l ) {
+		ne += G.getDegree( *l );
+		*o++ = *l;
+	    }
+	    break;
+	}
+	if( *r < *l ) {
+	    ne += G.getDegree( *r );
+	    *o = *r++;
+	} else {
+	    ne += G.getDegree( *l );
+	    *o = *l;
+	    if( *r == *l )
+		++r;
+	    ++l;
+	}
+    }
+    for( ; r != re; ++r ) {
+	ne += G.getDegree( *r );
+	*o++ = *r;
+    }
+
+    newf.nactv = o - newf_p;
+    newf.nacte = ne;
+
+    swap( *this, newf );
+    newf.del();
+}
+
+template<typename GraphType, typename LHSTy, typename RHSTy>
+void frontier::merge_or_tmpl( const GraphType & G, LHSTy * lhs_p, RHSTy * rhs_p ) {
+    const VID * degree_p = nullptr;
+    if constexpr ( std::is_same_v<GraphType,GraphCSx> )
+	degree_p = G.getDegree();
+    else
+	degree_p = G.getCSR().getDegree();
+    expr::array_ro<VID,VID,expr::aid_graph_degree,array_encoding<VID>,false> degree( const_cast<VID *>( degree_p ) );
+    expr::array_ro<LHSTy,VID,expr::aid_frontier_new,array_encoding<LHSTy>,false> lhs( lhs_p );
+    expr::array_ro<LHSTy,VID,expr::aid_frontier_old,array_encoding<RHSTy>,false> rhs( rhs_p );
+    nactv = 0;
+    nacte = 0;
+    expr::array_ro<VID,VID,expr::aid_frontier_nactv,array_encoding<VID>,false> nactv_( &nactv );
+    expr::array_ro<EID,VID,expr::aid_frontier_nacte,array_encoding<EID>,false> nacte_( &nacte );
+
+    make_lazy_executor( G.get_partitioner() )
+	.vertex_scan( [&]( auto v ) {
+	    return expr::let<expr::aid_frontier_a>(
+		lhs[v] || rhs[v],
+		[&]( auto nf ) {
+		    // Not sure if the add_predicate construct works in case of
+		    // 1-bit or 2-bit frontiers
+		    using Tr = simd::detail::mask_preferred_traits_type<
+                        LHSTy, decltype(v)::VL>;
+		    auto mask = expr::make_unop_cvt_to_mask<Tr>( nf );
+		    return expr::make_seq(
+			nacte_[expr::_0(v)] +=
+			    expr::add_predicate(
+				expr::make_unop_cvt_type<EID>( degree[v] ),
+				mask ),
+			nactv_[expr::_0(v)] +=
+			    expr::add_predicate( expr::_1(v), mask ),
+			lhs[v] = nf );
+		} );
+	} )
+	.materialize();
+}
+
 inline std::ostream & operator << ( std::ostream & os, const frontier & F ) {
     VID n = F.nVertices();
     VID nv = F.nActiveVertices();
