@@ -278,6 +278,9 @@ public:
     static type add( type src, vmask_type m, type a, type b ) {
 	return _mm_blendv_epi8( src, add( a, b ), m );
     }
+    static type add( type src, mask_type m, type a, type b ) {
+	return _mm_mask_blend_epi8( m, src, add( a, b ) );
+    }
 
     static type add( type a, type b ) { return _mm_add_epi8( a, b ); }
     static type sub( type a, type b ) { return _mm_sub_epi8( a, b ); }
