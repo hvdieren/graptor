@@ -246,6 +246,9 @@ public:
     static type bitwise_or( type a, type b ) {
 	return _mm512_or_si512( a, b );
     }
+    static type bitwise_xor( type a, type b ) {
+	return _mm512_xor_si512( a, b );
+    }
     static type bitwise_invert( type a ) {
 	return _mm512_andnot_si512( a, setone() );
     }
@@ -357,6 +360,14 @@ public:
 	__m512i bias = srli( setone(), 8*W-10 ); // 0x3ff
 	__m512i raw = _mm512_sub_epi64( h, bias );
 	__m512i cnt = blendm( cmpeq( a, zero, mt_mask() ), raw, zero );
+
+#if 1
+	__m512i chk = bitwise_and(
+	    a, sub( sllv( setoneval(), cnt ), setoneval() ) );
+	__mmask8 allz = cmpeq( chk, setzero(), mt_mask() );
+	assert( _kortestz_mask8_u8( allz, allz ) == 0 && "error tzcnt" );
+#endif
+	
 	if constexpr ( sizeof(ReturnTy) == W ) {
 	    return cnt;
 	} else if constexpr ( sizeof(ReturnTy) == 4 ) {
@@ -370,6 +381,26 @@ public:
 #else
 	    return r;
 #endif
+	} else {
+	    assert( 0 && "NYI" );
+	    return 0;
+	}
+    }
+
+    template<typename ReturnTy>
+    static auto lzcnt( type a ) {
+#if __AVX512CD__
+	type cnt = _mm512_lzcnt_epi64( a );
+#else
+	type cnt;
+	assert( 0 && "NYI" );
+#endif
+	if constexpr ( sizeof(ReturnTy) == W )
+	    return cnt;
+	else if constexpr ( sizeof(ReturnTy) == 4 )
+	    return _mm512_cvtepi64_epi32( cnt ); // AVX512F
+	else if constexpr ( sizeof(ReturnTy) == 2 ) {
+	    return _mm512_cvtepi64_epi16( cnt ); // AVX512F
 	} else {
 	    assert( 0 && "NYI" );
 	    return 0;
