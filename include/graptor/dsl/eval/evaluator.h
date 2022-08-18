@@ -122,7 +122,7 @@ struct evaluator {
     // __attribute__((noinline))
     auto evaluate( const binop<E1,E2,BinOp> & bop, const MPack & mpack ) {
 	if constexpr ( std::is_same_v<BinOp,binop_setmask> ) {
-	    // binop_setmask is evaluated inline because it alters the
+	    // binop_setmask is evaluated inline because it
 	    // deviates from the normal evaluation order and mask pack passing.
 	    // Evaluate LHS and merge with the mask pack using logical and.
 	    // The resulting value becomes the new mask pack.
@@ -286,6 +286,7 @@ struct evaluator {
     }
 
     // bitarray
+#if 0
     template<typename T, short AID, typename VTr, layout_t Layout>
     GG_INLINE
     auto levaluate( const bitarray_intl<T,typename VTr::member_type,AID> & array,
@@ -295,15 +296,25 @@ struct evaluator {
 		reinterpret_cast<typename simd::detail::mask_bit_traits<VTr::VL>::pointer_type *>( get_ptr( array ) ), idx.value().data(),
 		idx.value().get_layout() );
     }
+#else
     template<typename T, typename VTr, short AID, layout_t Layout>
     GG_INLINE
     auto levaluate( const bitarray_intl<T,typename VTr::member_type,AID> & array,
 		    sb::rvalue<VTr,Layout> idx ) {
 	static_assert( sizeof(T)*8 == VTr::VL || VTr::VL == 1, "VL check" );
+/*
 	return 
-	    simd::detail::vector_ref_impl<simd::detail::mask_bit_traits<VTr::VL>,typename VTr::member_type,array_encoding<T>,false,lo_unknown>(
+	    simd::detail::vector_ref_impl<simd::detail::mask_bit_traits<VTr::VL>,typename VTr::member_type,array_encoding<T>,false,Layout>(
 		reinterpret_cast<typename simd::detail::mask_bit_traits<VTr::VL>::pointer_type *>( get_ptr( array ) ), idx.value() );
+*/
+	using ATr = simd::detail::mask_bit_traits<VTr::VL>;
+	return 
+	    simd::create_vector_ref_vec<
+		ATr,typename VTr::member_type,array_encoding_bit<1>,false,Layout>(
+		    reinterpret_cast<typename ATr::pointer_type *>(
+			get_ptr( array ) ), idx.value() );
     }
+#endif
 
     template<typename T, typename VTr, short AID, layout_t Layout,
 	     typename... MTr>
