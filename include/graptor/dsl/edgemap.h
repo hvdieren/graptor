@@ -380,7 +380,8 @@ void conditional_set( VID * f, simd::nomask<1>, VID d ) {
 
 template<bool setf, typename Expr, typename Cache, typename Environment>
 static DBG_NOINLINE void
-process_csc_sparse_aset( const VID *out, VID deg, VID p, VID dstv, VID *fr,
+process_csc_sparse_aset( const VID *out, VID deg, VID p, VID dstv, EID eid,
+			 VID *fr,
 			 const Expr & e, const Cache & vcaches,
 			 const Environment & env ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
@@ -398,8 +399,10 @@ process_csc_sparse_aset( const VID *out, VID deg, VID p, VID dstv, VID *fr,
 
     for( VID j=0; j < deg; j++ ) {
 	auto src = simd::template load_from<simd::ty<VID,1>>( &out[j] );
+	auto edg = simd::template create_constant<simd::ty<EID,1>>( eid+EID(j) );
 	auto m = expr::create_value_map_new<1>(
 	    // expr::create_entry<expr::vk_pid>( pvec1 ),
+	    expr::create_entry<expr::vk_edge>( edg ),
 	    expr::create_entry<expr::vk_dst>( dst ),
 	    expr::create_entry<expr::vk_src>( src ) );
 	// Note: CSC, sequential by degree, no atomics required
@@ -513,7 +516,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 	    intT d = idx[v+1]-idx[v];
 	    o[k] = ~(VID)0;
 	    process_csc_sparse_aset<true>(
-		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, &o[k], vexpr, vcaches, env );
+		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k], vexpr, vcaches, env );
 	}
     } else {
 	parallel_loop( VID(0), m, [&]( VID k ) {
@@ -525,7 +528,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 	    // for very high-degree vertices.
 	    o[k] = ~(VID)0;
 	    process_csc_sparse_aset<true>(
-		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, &o[k], vexpr, vcaches, env );
+		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k], vexpr, vcaches, env );
 	} );
     }
 
@@ -648,7 +651,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 	for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
-	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, nullptr, vexpr,
+	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], nullptr, vexpr,
 					    vcaches, env );
 	}
     } else {
@@ -659,7 +662,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 	    // privatized the array elements corresponding to the destination
 	    // vertex. Vectorisation however may be feasible for very
 	    // high-degree vertices.
-	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, nullptr, vexpr,
+	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], nullptr, vexpr,
 					    vcaches, env );
 	} );
     }
