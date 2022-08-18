@@ -159,26 +159,22 @@ struct default_threshold {
 
 
 struct always_sparse_t {
-    bool is_sparse( VID nactv, EID nacte, EID m ) const {
+    constexpr bool is_sparse( VID nactv, EID nacte, EID m ) const {
 	return true;
     }
 
-    bool is_sparse( frontier F, EID m ) const {
-	VID nactv = F.nActiveVertices();
-	EID nacte = F.nActiveEdges();
-	return is_sparse( nactv, nacte, m );
+    constexpr bool is_sparse( frontier F, EID m ) const {
+	return true;
     }
 };
 
 struct always_dense_t {
-    bool is_sparse( VID nactv, EID nacte, EID m ) const {
+    constexpr bool is_sparse( VID nactv, EID nacte, EID m ) const {
 	return false;
     }
 
-    bool is_sparse( frontier F, EID m ) const {
-	VID nactv = F.nActiveVertices();
-	EID nacte = F.nActiveEdges();
-	return is_sparse( nactv, nacte, m );
+    constexpr bool is_sparse( frontier F, EID m ) const {
+	return false;
     }
 };
 
@@ -1713,6 +1709,9 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
     bool applied_emap = false;
     bool need_record = false;
 
+    // If always dense required, then skip all sparse implementations
+    if constexpr ( !std::is_same_v<decltype(config.get_threshold()),always_dense_t> ) {
+	
     // If a filter has been specified on edge sources: check if it is
     // sparse; if so execute and complete.
     if constexpr ( has_argument_v<is_filter_for_src,Args...> ) {
@@ -1841,6 +1840,8 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 	    // The edgemap has been performed
 	    applied_emap = true;
 	}
+    }
+
     }
 
     // Determine if we prefer push / pull / irregular (COO) based on frontier
@@ -2077,6 +2078,7 @@ public:
      * @param[in] name explanation string for debugging
      */
     edgeprop( const partitioner & part, const char * name = nullptr )
+	// TODO: use encoding::allocate + adjust to use mm::buffer
 	: mem( numa_allocation_edge_partitioned( part ), m_name ),
 	  m_name( name ) {
     }
@@ -2132,7 +2134,7 @@ public:
     const char * get_name() const { return m_name; }
 
 private:
-    mm::buffer<typename encoding::stored_type> mem; //!< memory buffer
+    mm::buffer<typename encoding::storage_type> mem; //!< memory buffer
     const char * m_name;	//!< explanatory name describing edge property
 };
 
