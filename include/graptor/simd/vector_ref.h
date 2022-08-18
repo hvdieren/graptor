@@ -356,6 +356,45 @@ public:
     auto atomic_bitwiseor( vec<vector_traits,Layout_> val ) {
 	return atomic_logicalor( val );
     }
+    template<layout_t Layout_>
+    auto atomic_logicaland( vec<vector_traits,Layout_> val ) {
+	static_assert( VL == 1, "only supported for VL=1" );
+	// TODO: as this is logicaland, just overwrite with false
+
+	member_type nn = val.at(0); // assumes VL == 1
+	member_type o, n;
+	bool r = false;
+	do {
+	    o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    n = o && nn;
+	} while( o != n
+		 && !(r = encoding::template cas<vector_traits>(
+			  &m_addr[m_sidx], o, n ))
+	    );
+	using L = typename add_logical<member_type>::type;
+	return r
+	    ? vector<L,1>::true_mask()
+	    : vector<L,1>::false_mask();
+    }
+    template<layout_t Layout_>
+    auto atomic_bitwiseand( vec<vector_traits,Layout_> val ) {
+	static_assert( VL == 1, "only supported for VL=1" );
+
+	member_type nn = val.at(0); // assumes VL == 1
+	member_type o, n;
+	bool r = false;
+	do {
+	    o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    n = o & nn;
+	} while( o != n
+		 && !(r = encoding::template cas<vector_traits>(
+			  &m_addr[m_sidx], o, n ))
+	    );
+	using L = typename add_logical<member_type>::type;
+	return r
+	    ? vector<L,1>::true_mask()
+	    : vector<L,1>::false_mask();
+    }
 
     // Generic interface
     /*GG_INLINE*/ inline vector_type load( nomask<VL> = nomask<VL>() ) const {
