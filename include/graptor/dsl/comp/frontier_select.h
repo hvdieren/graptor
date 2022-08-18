@@ -193,6 +193,24 @@ struct collect_types<array_ro<T, U, AID, Enc, NT>>
     : public merge_type_lists<create_type_list<T>,
 			      create_type_list_nonpow2<typename Enc::stored_type>> { };
 
+template<typename T, typename U, short AID>
+struct collect_types<bitarray_intl<T, U, AID>>
+    // Computationally, we will be using type T, however, for load/store
+    // purpose we are looking at type Enc::stored_type. If the latter is not
+    // an elementary type width (power of 2), then we will need to use multiple
+    // vectors at once.
+    : public merge_type_lists<create_type_list<T>,
+			      create_type_list_nonpow2<bitfield<1>>> { };
+
+template<typename T, typename U, short AID>
+struct collect_types<bitarray_ro<T, U, AID>>
+    // Computationally, we will be using type T, however, for load/store
+    // purpose we are looking at type Enc::stored_type. If the latter is not
+    // an elementary type width (power of 2), then we will need to use multiple
+    // vectors at once.
+    : public merge_type_lists<create_type_list<T>,
+			      create_type_list_nonpow2<bitfield<1>>> { };
+
 template<typename Expr, typename UnOp>
 struct collect_types<unop<Expr,UnOp>,
 		     std::enable_if_t<!unop_is_cvt<UnOp>::value
