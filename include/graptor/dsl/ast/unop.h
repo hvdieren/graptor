@@ -943,6 +943,12 @@ auto make_unop_tzcnt( Expr e ) {
     return unop<Expr,unop_type>( e, unop_type() );
 }
 
+template<typename ReturnTy, typename Expr>
+auto tzcnt( Expr e ) {
+    return make_unop_tzcnt<ReturnTy>( e );
+}
+
+
 /**
  * unop_lzcnt: Given a bit mask in each lane, count leading zeroes.
  */
@@ -978,6 +984,11 @@ auto make_unop_lzcnt( Expr e ) {
     using unop_type = unop_lzcnt<simd::ty<typename Expr::type,Expr::VL>,
 				 ReturnTy>;
     return unop<Expr,unop_type>( e, unop_type() );
+}
+
+template<typename ReturnTy, typename Expr>
+auto lzcnt( Expr e ) {
+    return make_unop_lzcnt<ReturnTy>( e );
 }
 
 /**
