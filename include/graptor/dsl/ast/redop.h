@@ -478,6 +478,25 @@ struct redop_logicaland {
 	      = nullptr ) {
 	return make_rvalue( l.value().land_assign( r.value(), l.mask() & r.mask() ) );
     }
+
+    template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
+	     layout_t Layout, typename MPack>
+    static auto
+    evaluate_atomic( sb::lvalue<VTr,I,Enc,NT,LayoutR> l,
+		     sb::rvalue<VTr,Layout> r,
+		     const MPack & mpack ) {
+	auto rval = r.value();
+	auto mask = mpack.template get_any<simd::detail::mask_bool_traits>();
+	if( mask.data() ) {
+	    auto val = l.value().atomic_logicaland( rval );
+	    return make_rvalue( val, mpack );
+	} else {
+	    // Mask disabled -> no change in the value
+	    auto mfalse = simd::detail::mask_impl<simd::detail::mask_bool_traits>
+		::false_mask();
+	    return make_rvalue( mfalse, mpack );
+	}
+    }
 };
 
 template<typename E1, typename E2>
@@ -498,6 +517,9 @@ struct redop_bitwiseand {
 	using cache_type = typename E2::type;
 	using infer_type = typename E1::data_type;
     };
+
+    static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false; // load-modify-store
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_bitwiseand";
@@ -723,6 +745,13 @@ auto refop<A,T,VL>::min( E rhs ) {
     return redop<self_type,E,redop_min>( *this, rhs, redop_min() );
 }
 
+template<typename A, typename T, unsigned short VL>
+template<typename E, typename C>
+auto refop<A,T,VL>::min( E rhs, C cond ) {
+    return make_redop(
+	*this, add_predicate( rhs, cond ), redop_min() );
+}
+
 template<typename T, unsigned short AID>
 template<typename E>
 auto scalar<T,AID>::min( E rhs ) {
@@ -894,6 +923,13 @@ template<typename A, typename T, unsigned short VL>
 template<typename E>
 auto refop<A,T,VL>::max( E rhs ) {
     return redop<self_type,E,redop_max>( *this, rhs, redop_max() );
+}
+
+template<typename A, typename T, unsigned short VL>
+template<typename E, typename C>
+auto refop<A,T,VL>::max( E rhs, C cond ) {
+    return make_redop(
+	*this, add_predicate( rhs, cond ), redop_max() );
 }
 
 template<typename T, unsigned short AID>
@@ -1130,18 +1166,24 @@ struct redop_count_down {
 		     sb::rvalue<VTr,Layout2> r,
 		     const MPack & mpack ) {
 	static_assert( VTr::VL == 1, "atomics always scalar" );
-	using MTr = typename VTr::prefmask_traits;
-	auto mask = mpack.template get_mask<MTr>();
-	if( mask.data() ) {
+	if constexpr ( MPack::is_empty() ) {
 	    auto oval =
 		l.value().template atomic_count_down<conditional>( r.value() );
 	    return make_rvalue( oval, mpack );
-	} else
-	    if constexpr ( conditional )
-		return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
-				    mpack );
-	    else
-		return make_rvalue( r.value().zero_val(), mpack );
+	} else {
+	    using MTr = typename VTr::prefmask_traits;
+	    auto mask = mpack.template get_mask<MTr>();
+	    if( mask.data() ) {
+		auto oval =
+		    l.value().template atomic_count_down<conditional>( r.value() );
+		return make_rvalue( oval, mpack );
+	    } else
+		if constexpr ( conditional )
+		    return make_rvalue( simd::detail::mask_impl<MTr>::false_mask(),
+					mpack );
+		else
+		    return make_rvalue( r.value().zero_val(), mpack );
+	}
     }
 };
 
