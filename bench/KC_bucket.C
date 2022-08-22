@@ -17,10 +17,11 @@ using expr::_c;
 #define FUSION 1
 #endif
 
-enum variable_name {
+enum kc_variable_name {
     var_coreness = 0,
     var_let = 1,
     var_ngh = 2,
+    var_kc_num = 3,
     var_degrees_ro = expr::aid_graph_degree
 };
 
@@ -599,6 +600,9 @@ public:
 
     static void report( const std::vector<stat> & stat_buf ) { }
 
+    VID getLargestCore() const { return largestCore; }
+    auto & getCoreness() const { return coreness; }
+
 private:
     const GraphType & GA;
     bool itimes, debug;
@@ -610,7 +614,9 @@ private:
     std::vector<info> info_buf;
 };
 
+#ifndef NOBENCH
 template <class GraphType>
 using Benchmark = KCv<GraphType>;
 
 #include "driver.C"
+#endif
