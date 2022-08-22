@@ -557,6 +557,25 @@ struct redop_bitwiseand {
 	      = nullptr ) {
 	return make_rvalue( l.value().band_assign( r.value(), l.mask() & r.mask() ) );
     }
+
+    template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
+	     layout_t Layout, typename MPack>
+    static auto
+    evaluate_atomic( sb::lvalue<VTr,I,Enc,NT,LayoutR> l,
+		     sb::rvalue<VTr,Layout> r,
+		     const MPack & mpack ) {
+	auto rval = r.value();
+	auto mask = mpack.template get_any<simd::detail::mask_bool_traits>();
+	if( mask.data() ) {
+	    auto val = l.value().atomic_bitwiseand( rval );
+	    return make_rvalue( val, mpack );
+	} else {
+	    // Mask disabled -> no change in the value
+	    auto mfalse = simd::detail::mask_impl<simd::detail::mask_bool_traits>
+		::false_mask();
+	    return make_rvalue( mfalse, mpack );
+	}
+    }
 };
 
 template<typename E1, typename E2>
