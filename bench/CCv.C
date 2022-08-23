@@ -61,6 +61,24 @@ enum variable_name {
     var_previds = 1
 };
 
+enum iteration_kind {
+    ik_preset,
+    ik_normal,
+    ik_pushz,
+    ik_pushnz
+};
+
+std::ostream & operator << ( std::ostream & os, iteration_kind ik ) {
+    switch( ik ) {
+    case ik_preset: os << "preset"; break;
+    case ik_normal: os << "normal"; break;
+    case ik_pushz: os << "push-zero"; break;
+    case ik_pushnz: os << "push-nonzero"; break;
+    default: os << "<unknown>";
+    }
+    return os;
+}
+
 // To construct a summary histogram of component sizes
 struct CC_Vertex_Count
 {
@@ -173,13 +191,16 @@ public:
 	float active;
 	EID nacte;
 	VID nactv;
+	iteration_kind ikind;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
 		      << " density: " << density
 		      << " nacte: " << nacte
 		      << " nactv: " << nactv
-		      << " active: " << active << "\n";
+		      << " active: " << active
+		      << " " << ikind
+		      << "\n";
 	}
     };
 
@@ -248,6 +269,7 @@ public:
 	    info_buf[iter].nactv = G.nActiveVertices();
 	    info_buf[iter].active = float(1)/float(n);
 	    info_buf[iter].delay = tm_iter.next();
+	    info_buf[iter].ikind = ik_preset;
 	    if( debug )
 		info_buf[iter].dump( iter );
 	}
@@ -285,6 +307,7 @@ public:
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].active = float(active)/float(n);
 		info_buf[iter].delay = tm_iter.next();
+		info_buf[iter].ikind = ik_normal;
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
@@ -304,15 +327,12 @@ public:
 	    // in different clusters.
 	    // if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
 	    if( !have_checked ) { // check at most once
-		zeros = find_zeros();
+#if PRESET_ZERO
+		zeros = find_zeros(); // scan at least output + ngh vertex 0
+#else
+		zeros = find_zeros( output );
+#endif
 		if( zeros.nActiveVertices() * 10 < n ) {
-/*
-  if(
-  #if PRESET_ZERO
-  1 +
-  #endif
-  0 == iter && F.density( GA.numEdges() ) < 0.8 ) {
-*/
 		    // Cleanup old frontier
 		    F.del();
 		    F = output;
@@ -358,6 +378,7 @@ public:
 		    info_buf[iter].nactv = F.nActiveVertices();
 		    info_buf[iter].active = float(active)/float(n);
 		    info_buf[iter].delay = tm_iter.next();
+		    info_buf[iter].ikind = ik_pushz;
 		    if( debug )
 			info_buf[iter].dump( iter );
 		}
@@ -390,6 +411,7 @@ public:
 		    info_buf[iter].nactv = F.nActiveVertices();
 		    info_buf[iter].active = float(active)/float(n);
 		    info_buf[iter].delay = tm_iter.next();
+		    info_buf[iter].ikind = ik_pushnz;
 		    if( debug )
 			info_buf[iter].dump( iter );
 		}
@@ -498,7 +520,7 @@ private:
 	    } )
 	    )
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	    .vertex_map( [&](auto vid) { return prevIDs[vid] = IDs[vid]; } )
+	    .vertex_map( [&]( auto vid ) { return prevIDs[vid] = IDs[vid]; } )
 #endif
 	    .materialize();
 
