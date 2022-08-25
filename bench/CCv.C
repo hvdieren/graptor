@@ -247,6 +247,8 @@ public:
 	timer tm_iter;
 	tm_iter.start();
 
+	VID initial_zeros = 1;
+
 #if PRESET_ZERO
 	// Create frontier
 	frontier G = frontier::sparse(
@@ -261,6 +263,8 @@ public:
 	    } )
 	    .materialize();
 	// Do not delete frontier G, it does not own data
+
+	initial_zeros += G.nActiveVertices();
 
 	if( itimes ) {
 	    info_buf.resize( iter+1 );
@@ -327,11 +331,9 @@ public:
 	    // in different clusters.
 	    // if( max_deg < n / (128*1024) ) { // assumes a non-power-law graph
 	    if( !have_checked ) { // check at most once
-#if PRESET_ZERO
-		zeros = find_zeros(); // scan at least output + ngh vertex 0
-#else
-		zeros = find_zeros( output );
-#endif
+		// If PRESET_ZERO: scan output, and add neighbours of vertex 0
+		// Else: scan output, add vertex 0
+		zeros = find_zeros( output ) + initial_zeros;
 		if( zeros.nActiveVertices() * 10 < n ) {
 		    // Cleanup old frontier
 		    F.del();
