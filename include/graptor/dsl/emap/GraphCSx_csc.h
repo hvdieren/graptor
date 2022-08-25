@@ -319,6 +319,7 @@ void DBG_NOINLINE csc_loop(
     auto vop0 = op.vertexop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
     auto accum = expr::extract_accumulators( vop0 );
 // TODO: spread out accumulators for different partitions on different cache blocks ???
+    expr::accum_create( part, accum );
     auto vop1 = expr::rewrite_privatize_accumulators( vop0, part, accum, pid );
     auto pvop = expr::accumulate_privatized_accumulators( pid, accum );
     auto pvopf = expr::final_accumulate_privatized_accumulators( pid, accum );
@@ -393,7 +394,7 @@ void DBG_NOINLINE csc_loop(
 					 
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ),
-	vcaches, accum, vexpr, aexpr, rexpr, uexpr, pvop, pvopf );
+	vcaches, vop_caches, accum, vexpr, aexpr, rexpr, uexpr, pvop, pvopf );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
 
