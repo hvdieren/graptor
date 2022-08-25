@@ -145,7 +145,8 @@ public:
 #if FUSION
 		api::fusion( [&]( auto v ) {
 		    // return expr::true_val( v );
-		    auto cTh = expr::constant_val( v, 3*iter+3 );
+		    // auto cTh = expr::constant_val( v, 3*iter+3 );
+		    auto cTh = expr::constant_val( v, iter+1 );
 		    return a_level[v] <= cTh;
 		} ),
 #endif
