@@ -333,8 +333,8 @@ public:
 	    if( !have_checked ) { // check at most once
 		// If PRESET_ZERO: scan output, and add neighbours of vertex 0
 		// Else: scan output, add vertex 0
-		zeros = find_zeros( output ) + initial_zeros;
-		if( zeros.nActiveVertices() * 10 < n ) {
+		zeros = find_zeros( output );
+		if( ( zeros.nActiveVertices() + initial_zeros ) * 10 < n ) {
 		    // Cleanup old frontier
 		    F.del();
 		    F = output;
