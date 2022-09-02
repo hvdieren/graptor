@@ -1979,5 +1979,315 @@ struct array_encoding_permute {
     }
 };
 
+/**
+ * Encoding that interleaves two arrays to improve locality.
+ * Declaration;
+ */
+template<typename StoredTy0,
+	 typename StoredTy1,
+	 unsigned short MaxVL_ = MAX_VL,
+	 typename Enable = void>
+struct array_encoding_intlv2;
+
+/**
+ * Helper encoding
+ */
+template<unsigned short A,
+	 typename StoredTy0,
+	 typename StoredTy1,
+	 unsigned short MaxVL_ = MAX_VL,
+	 typename Enable = void>
+struct array_encoding_intlv2_ifc {
+    using base_encoding = array_encoding_intlv2<StoredTy0,StoredTy1,MaxVL_>;
+
+    using stored_type = typename base_encoding::stored_type_sel<A>;
+    using storage_type = stored_type;
+    
+    template<typename index_type>
+    static stored_type
+    get( const storage_type * base, index_type idx ) {
+	return base_encoding::get<A>( idx );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    load( storage_type * base, index_type idx ) {
+	return base_encoding::template load<A,Tr>( base, idx );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    loadu( storage_type * base, index_type idx ) {
+	return base_encoding::template loadu<A,Tr>( base, idx );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    ntload( storage_type * base, index_type idx ) {
+	return base_encoding::template ntload<A,Tr>( base, idx );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    store( storage_type * base, index_type idx, typename Tr::type raw ) {
+	return base_encoding::template store<A,Tr>( base, idx, raw );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    storeu( storage_type * base, index_type idx, typename Tr::type raw ) {
+	return base_encoding::template storeu<A,Tr>( base, idx, raw );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx ) {
+	return base_encoding::template gather<A,Tr>( base, idx );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx, mask_type mask ) {
+	return base_encoding::template gather<A,Tr>( base, idx, mask );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val ) {
+	return base_encoding::template scatter<A,Tr>( base, idx, val );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val,
+	     mask_type mask ) {
+	return base_encoding::template scatter<A,Tr>( base, idx, val, mask );
+    }
+
+    template<typename Tr>
+    static bool cas( volatile storage_type * addr,
+		     typename Tr::member_type old,
+		     typename Tr::member_type val ) {
+	return base_encoding::template cas<A,Tr>( addr, old, val );
+    }
+};
+
+/**
+ * Encoding that interleaves two arrays to improve locality. Implementation.
+ */
+template<typename StoredTy0,
+	 typename StoredTy1,
+	 unsigned short MaxVL_,
+	 typename Enable>
+struct array_encoding_intlv2 {
+    static constexpr unsigned short MaxVL = MaxVL_;
+    static constexpr unsigned short Shift = ilog2( MaxVL );
+    static constexpr unsigned short Mask = MaxVL-1;
+    
+    static_assert( sizeof(StoredTy0) == sizeof(StoredTy1),
+		   "interleaved storage supported only for equal-size types" );
+    static_assert( ( MaxVL & (MaxVL-1) ) == 0, "MaxVL must be power of two" );
+
+    using stored_type = int_type_of_size_t<sizeof(StoredTy0)>;
+    using storage_type = stored_type;
+
+    using stored_type_0 = StoredTy0;
+    using stored_type_1 = StoredTy1;
+
+    template<unsigned short A>
+    using stored_type_sel
+    = std::conditional_t<A == 0, stored_type_0, stored_type_1>;
+
+    template<unsigned short A, unsigned short VL_>
+    using stored_traits = vector_type_traits_vl<stored_type_sel<A>, VL_>;
+
+    template<unsigned short A>
+    using ifc_encoding =
+	array_encoding_intlv2_ifc<A,StoredTy0,StoredTy1,MaxVL_,Enable>;
+
+#if 0
+    static mmap_ptr<stored_type>
+    allocate( size_t num_elems, const numa_allocation && kind ) {
+	return mmap_ptr<stored_type>( 2*num_elems, kind );
+    }
+    static mmap_ptr<stored_type>
+    allocate( size_t num_elems, const numa_allocation & kind ) {
+	return mmap_ptr<stored_type>( 2*num_elems, kind );
+    }
+    static mmap_ptr<stored_type>
+    allocate( numa_allocation_partitioned kind ) {
+	partitioner part2 = kind.get_partitioner().scale( 2 );
+	return mmap_ptr<stored_type>( numa_allocation_partitioned( part2 ) );
+    }
+#endif
+
+    template<unsigned short A, typename index_type>
+    static index_type 
+    get_index( index_type idx ) {
+	static constexpr index_type M = (index_type)Mask;
+	index_type intlv = ((idx & ~M) << 1) | (idx & M);
+	if constexpr ( A != 0 )
+	    intlv += MaxVL;
+	return intlv;
+    }
+
+    template<unsigned short A, unsigned short VL, typename index_type>
+    static index_type 
+    get_vindex( index_type idx ) {
+	using index_traits
+	    = vector_type_traits_vl<int_type_of_size_t<sizeof(index_type)/VL>,
+				    VL>;
+	auto M = index_traits::srli( index_traits::setone(),
+				     index_traits::B-Shift );
+	index_type intlv = index_traits::bitwise_or(
+	    index_traits::slli( index_traits::bitwise_andnot( idx, M ), 1 ),
+	    index_traits::bitwise_and( idx, M ) );
+	if constexpr ( A != 0 ) {
+	    auto V = index_traits::slli(
+		index_traits::srli( index_traits::setone(), index_traits::B-1 ),
+		Shift );
+	    intlv = index_traits::bitwise_or( intlv, V );
+	}
+	return intlv;
+    }
+
+    template<unsigned short A, typename index_type>
+    static stored_type_0
+    get( const storage_type * base, index_type idx ) {
+	return base[get_index<A>(idx)];
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static typename Tr::type
+    load( storage_type * base, index_type idx ) {
+	auto raw = stored_traits<A,Tr::VL>::load( &base[get_index<A>(idx)] );
+	return conversion_traits<
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static typename Tr::type
+    loadu( storage_type * base, index_type idx ) {
+	// Load two unaligned vectors and blend
+	storage_type * shft = &base[MaxVL];
+	index_type intlv = get_index<A>( idx );
+	auto raw0 = stored_traits<A,Tr::VL>::loadu( &base[intlv] );
+	auto raw1 = stored_traits<A,Tr::VL>::loadu( &shft[intlv] );
+	static constexpr index_type M = (index_type)Mask;
+	static constexpr index_type V = ((index_type)1) << MaxVL;
+	// For MaxVL = 4; M = 3
+	// idx = 0 -> 1111
+	// idx = 1 -> 0111
+	// idx = 2 -> 0011
+	// idx = 3 -> 0001
+	index_type mask = ( V - 1 ) >> ( idx & M );
+	auto raw = stored_traits<A,Tr::VL>::blend( mask, raw1, raw0 );
+	return conversion_traits<
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static typename Tr::type
+    ntload( storage_type * base, index_type idx ) {
+	auto raw = stored_traits<A,Tr::VL>::ntload( &base[get_index<A>(idx)] );
+	return conversion_traits<
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	stored_traits<A,Tr::VL>::store( &base[get_index<A>(idx)], value );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static void
+    storeu( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	assert( 0 && "NYI" );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	stored_traits<A,Tr::VL>::storeu( &base[get_index<A>(idx)], value );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx ) {
+	auto raw = stored_traits<A,Tr::VL>::gather(
+	    base, get_vindex<A,Tr::VL>( idx ) );
+	return conversion_traits<
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type, typename mask_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx, mask_type mask ) {
+	auto raw = stored_traits<A,Tr::VL>::gather(
+	    base, get_vindex<A,Tr::VL>( idx ), mask );
+	return conversion_traits<
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    typename Tr::member_type,
+	    Tr::VL>::convert( raw );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val ) {
+	static_assert( sizeof(stored_type) >= 4 || Tr::VL == 1,
+		       "vector scatter i32/i64 only" );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    Tr::VL>::convert( val );
+	stored_traits<A,Tr::VL>::scatter(
+	    base, get_vindex<A,Tr::VL>( idx ), value );
+    }
+
+    template<unsigned short A, typename Tr, typename index_type, typename mask_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val,
+	     mask_type mask ) {
+	// static_assert( sizeof(StoredTy) >= 4 || Tr::VL == 1,
+	// "vector scatter i32/i64 only" );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,Tr::VL>::member_type,
+	    Tr::VL>::convert( val );
+	stored_traits<A,Tr::VL>::scatter(
+	    base, get_vindex<A,Tr::VL>( idx ), value, mask );
+    }
+
+    template<unsigned short A, typename Tr>
+    static bool cas( volatile storage_type * addr,
+		     typename Tr::member_type old,
+		     typename Tr::member_type val ) {
+	assert( 0
+		&& "NYI - change interface to pass index instead of address" );
+	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
+	auto s_old = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,1>::member_type,1>::convert( old );
+	auto s_val = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<A,1>::member_type,1>::convert( val );
+	return stored_traits<A,1>::cas( addr, s_old, s_val );
+    }
+};
+
 
 #endif // GRAPTOR_ENCODING_H
