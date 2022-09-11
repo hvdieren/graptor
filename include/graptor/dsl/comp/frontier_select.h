@@ -396,7 +396,8 @@ struct determine_frontier_bytewidth<VID,Operator,0,RndRd>; // no def
 #endif // MAX_VL
 
 template<typename VID, typename Operator,
-	 bool may_be_unbacked, unsigned short VLBound_, bool RndRd, bool RndWr>
+	 bool may_be_unbacked, bool may_embed_frontier,
+	 unsigned short VLBound_, bool RndRd, bool RndWr>
 struct determine_frontier {
     static constexpr unsigned short VLBound =
 	std::min( VLBound_, (unsigned short)MAX_VL );
@@ -406,7 +407,14 @@ struct determine_frontier {
     using bytewidth_wr =
 	determine_frontier_bytewidth<VID,Operator,VLBound,RndWr>;
 
-    static constexpr frontier_type rd_ftype = bytewidth_rd::rd_ftype;
+    static constexpr frontier_type rd_ftype =
+#if 0
+	// Override ft_logical4 with ft_msb4 if sensible (!RndWr) and allowed
+	may_embed_frontier 
+	&& bytewidth_rd::rd_ftype == frontier_type::ft_logical4
+	? frontier_type::ft_msb4 :
+#endif
+	bytewidth_rd::rd_ftype;
     static constexpr frontier_type wr_ftype =
 #if !DISABLE_UNBACKED
 	// Unbacked frontiers possible if allowed algorithmically (may_omit_wr)
@@ -416,7 +424,12 @@ struct determine_frontier {
 	// && Operator::may_omit_frontier_wr ? frontier_type::ft_unbacked :
 	may_be_unbacked && !RndWr ? frontier_type::ft_unbacked :
 #endif
-	bytewidth_wr::wr_ftype;
+	// Override ft_logical4 with ft_msb4 if sensible (!RndWr) and allowed
+	( may_embed_frontier && !RndWr
+	  && bytewidth_wr::wr_ftype == frontier_type::ft_logical4
+	  ? frontier_type::ft_msb4 :
+	  // Default case
+	  bytewidth_wr::wr_ftype );
 
     // Vector length
     static constexpr unsigned short VL =
@@ -432,15 +445,18 @@ struct determine_frontier {
 };
 
 template<typename VID, typename Operator, typename GraphType,
-	 bool may_be_unbacked>
+	 bool may_be_unbacked, bool may_embed_frontier>
 struct determine_emap_config {
     using pull = determine_frontier<
-	VID,Operator,may_be_unbacked,GraphType::getPullVLBound(),true,false>;
+	VID,Operator,may_be_unbacked,may_embed_frontier,
+	GraphType::getPullVLBound(),true,false>;
     using push = determine_frontier<
-	VID,Operator,may_be_unbacked,GraphType::getPushVLBound(),false,true>;
+	VID,Operator,may_be_unbacked,may_embed_frontier,
+	GraphType::getPushVLBound(),false,true>;
     using ireg = determine_frontier<
-	VID,Operator,may_be_unbacked,GraphType::getIRegVLBound(),true,true>;
-    using scalar = determine_frontier<VID,Operator,false,1,true,true>;
+	VID,Operator,may_be_unbacked,may_embed_frontier,
+	GraphType::getIRegVLBound(),true,true>;
+    using scalar = determine_frontier<VID,Operator,false,false,1,true,true>;
 };
 
 /*----------------------------------------------------------------------*

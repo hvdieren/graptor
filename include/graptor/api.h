@@ -4,6 +4,8 @@
 
 #include "graptor/dsl/ast/decl.h"
 #include "graptor/api/utils.h"
+#include "graptor/api/vertexprop.h"
+#include "graptor/api/edgeprop.h"
 
 class frontier;
 
@@ -243,9 +245,10 @@ template<typename EMapConfig,
 struct arg_filter_op {
     static constexpr frontier_type ftype = EMapConfig::rd_ftype;
     using StoreTy = typename frontier_params<ftype,EMapConfig::VL>::type;
+    using encoding = typename frontier_params<ftype,EMapConfig::VL>::encoding;
     using array_ty =
 	typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_old_f,
-				    array_encoding<StoreTy>>::type;
+				    encoding>::type;
     
     static constexpr bool is_scan = Operator::is_scan;
     static constexpr bool defines_frontier = false;
@@ -392,9 +395,10 @@ template<typename EMapConfig, filter_entity E, bool as_method, bool as_mask,
 struct arg_filter_a_op {
     static constexpr frontier_type ftype = EMapConfig::rd_ftype;
     using StoreTy = typename frontier_params<ftype,EMapConfig::VL>::type;
+    using encoding = typename frontier_params<ftype,EMapConfig::VL>::encoding;
     using array_ty =
 	typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_old_f,
-				    array_encoding<StoreTy>>::type;
+				    encoding>::type;
     using ptrset_ty = PtrSet;
     
     static constexpr bool is_scan = Operator::is_scan;
@@ -613,6 +617,8 @@ static constexpr auto all_true =
     frontier_record_argument<frontier_record::frontier_true>();
 static constexpr auto reduction =
     frontier_record_argument<frontier_record::frontier_reduction>();
+static constexpr auto method =
+    frontier_record_argument<frontier_record::frontier_method>();
 static constexpr auto reduction_or_method =
     frontier_record_argument<frontier_record::frontier_reduction_or_method>();
 
@@ -639,15 +645,16 @@ constexpr bool is_frontier_record_v = is_frontier_record<T>::value;
 /************************************************************************
  * Definition of filter recording method
  ************************************************************************/
-template<typename EMapConfig, bool IsPriv, typename Operator,
-	 typename Enable = void>
+template<typename EMapConfig, bool IsPriv,
+	 typename Operator, typename Enable = void>
 struct arg_record_reduction_op {
     static constexpr frontier_type ftype = EMapConfig::wr_ftype;
     static constexpr bool is_priv = IsPriv;
     using StoreTy = typename frontier_params<ftype,EMapConfig::VL>::type;
+    using encoding = typename frontier_params<ftype,EMapConfig::VL>::encoding;
     using array_ty =
 	typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_new_f,
-				    array_encoding<StoreTy>>::type;
+				    encoding>::type;
     
     static constexpr bool is_scan = true;
     static constexpr bool defines_frontier = true;
@@ -661,12 +668,12 @@ struct arg_record_reduction_op {
     auto relax( VIDSrc s, VIDDst d, EIDEdge e ) const {
 	// |= will be evaluated as atomic if !is_priv
 	auto dd = expr::remove_mask( d );
-/*
 	return expr::set_mask(
 	    expr::get_mask_cond( d ),
 	    m_array[dd] |= expr::cast<StoreTy>( m_op.relax( s, dd, e ) )
 	    );
-*/
+/* -- this version does not work correctly for reduction_or_method with
+ * -- embedded frontier
 	return expr::set_mask(
 	    expr::get_mask_cond( d ),
 	    expr::set_mask(
@@ -674,6 +681,7 @@ struct arg_record_reduction_op {
 		m_array[dd]
 		= expr::value<typename VIDDst::data_type::prefmask_traits,expr::vk_true>() )
 	    );
+*/
     }
 
     template<typename VIDType>
@@ -843,11 +851,13 @@ private:
 template<frontier_type ftype, unsigned short VL>
 struct record_store_type {
     using type = typename frontier_params<ftype,VL>::type;
+    using encoding = typename frontier_params<ftype,VL>::encoding;
 };
 
 template<unsigned short VL>
 struct record_store_type<frontier_type::ft_unbacked,VL> {
     using type = void;
+    using encoding = array_encoding<void>;
 };
 
 template<typename EMapConfig, bool IsPriv, typename Operator,
@@ -856,9 +866,10 @@ struct arg_record_method_op {
     static constexpr frontier_type ftype = EMapConfig::wr_ftype;
     static constexpr bool is_priv = IsPriv;
     using StoreTy = typename record_store_type<ftype,EMapConfig::VL>::type;
+    using encoding = typename record_store_type<ftype,EMapConfig::VL>::encoding;
     using array_ty =
 	typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_new_f,
-				    array_encoding<StoreTy>>::type;
+				    encoding>::type;
     using ptrset_ty = PtrSet;
     
     static constexpr bool is_scan = true;
@@ -973,15 +984,24 @@ private:
     ptrset_ty m_ptrset;
 };
 
-template<filter_strength S, frontier_record R>
+template<filter_strength S, frontier_record R, typename MF = void>
 struct arg_record {
     static constexpr filter_strength strength = S; // weak implies unbacked ok
     static constexpr frontier_record record = R;
     static constexpr bool may_be_unbacked = strength == filter_strength::weak;
+    static constexpr bool may_merge_frontier = !std::is_same_v<MF,void>;
+
+    using merge_frontier_type = MF;
 
     static_assert( record != frontier_record::frontier_method, "required" );
 
-    arg_record( frontier & f ) : m_frontier( f ) { };
+    arg_record( frontier & f ) : m_frontier( f ) { }
+
+    arg_record( frontier & f, merge_frontier_type * merge_vp )
+	: m_frontier( f ), m_merge_vp( merge_vp ) {
+	static_assert( !std::is_same_v<merge_frontier_type,void>,
+		       "if supplied, must be non-void pointer" );
+    }
 
     template<typename EMapConfig, bool IsPriv, typename Operator>
     auto record_and_count( const VID * degree, Operator op ) {
@@ -994,7 +1014,10 @@ struct arg_record {
 
     template<frontier_type ftype>
     void setup( const partitioner & part ) {
-	m_frontier = frontier::create<ftype>( part );
+	if constexpr ( ftype == frontier_type::ft_msb4 )
+	    m_frontier = frontier::msb( part, m_merge_vp );
+	else
+	    m_frontier = frontier::create<ftype>( part );
     }
 
     template<typename GraphType>
@@ -1004,15 +1027,19 @@ struct arg_record {
 
 private:
     frontier & m_frontier;
+    merge_frontier_type * m_merge_vp;
 };
 
 // Strong/weak here implies unbacked or not? Better to replace with other terms
 // to make it more clear
-template<filter_strength S, frontier_record M, typename Fn>
+template<filter_strength S, frontier_record M, typename Fn, typename MF = void>
 struct arg_record_m {
     static constexpr filter_strength strength = S;
     static constexpr frontier_record record = M;
     static constexpr bool may_be_unbacked = strength == filter_strength::weak;
+    static constexpr bool may_merge_frontier = !std::is_same_v<MF,void>;
+
+    using merge_frontier_type = MF;
 
     static_assert( record == frontier_record::frontier_method
 		   || record == frontier_record::frontier_reduction_or_method,
@@ -1020,6 +1047,12 @@ struct arg_record_m {
 
     arg_record_m( frontier & f, Fn method )
 	: m_frontier( f ), m_method( method ) { }
+
+    arg_record_m( frontier & f, merge_frontier_type * merge_vp, Fn method )
+	: m_frontier( f ), m_merge_vp( merge_vp ), m_method( method ) {
+	static_assert( !std::is_same_v<merge_frontier_type,void>,
+		       "if supplied, must be non-void pointer" );
+    }
 
     template<typename EMapConfig, bool IsPriv, typename Operator>
     auto record_and_count( const VID * degree, Operator op ) {
@@ -1040,7 +1073,10 @@ struct arg_record_m {
 
     template<frontier_type ftype>
     void setup( const partitioner & part ) {
-	m_frontier = frontier::create<ftype>( part );
+	if constexpr ( ftype == frontier_type::ft_msb4 )
+	    m_frontier = frontier::msb( part, m_merge_vp );
+	else
+	    m_frontier = frontier::create<ftype>( part );
     }
 
     template<typename GraphType>
@@ -1050,6 +1086,7 @@ struct arg_record_m {
 
 private:
     frontier & m_frontier;
+    merge_frontier_type * m_merge_vp;
     Fn m_method;
 };
 
@@ -1057,6 +1094,7 @@ struct missing_record_argument {
     static constexpr filter_strength strength = filter_strength::weak;
     static constexpr frontier_record record = frontier_record::frontier_true;
     static constexpr bool may_be_unbacked = true;
+    static constexpr bool may_merge_frontier = false;
 
     template<typename EMapConfig, bool IsPriv, typename Operator>
     auto record_and_count( const VID * degree, Operator op ) {
@@ -1066,54 +1104,82 @@ struct missing_record_argument {
     void setup( const partitioner & part ) { }
 };
 
-template<typename Record = frontier_record_argument<frontier_record::frontier_reduction>,
-	 typename Strength = filter_strength_argument<filter_strength::strong>>
-std::enable_if_t<
-    is_frontier_record<Record>::value && is_filter_strength<Strength>::value,
-    arg_record<Strength::value,Record::value>>
+template<frontier_record Record = frontier_record::frontier_reduction,
+	 filter_strength Strength = filter_strength::strong>
+auto
 record( frontier & f,
-	Record r = reduction,
-	Strength s = strong ) {
-    return arg_record<Strength::value,Record::value>( f );
+	frontier_record_argument<Record> r = reduction,
+	filter_strength_argument<Strength> s = strong ) {
+    return arg_record<Strength,Record>( f );
 }
-	     
-template<typename Fn,
-	 typename Strength = filter_strength_argument<filter_strength::strong>>
-std::enable_if_t<
-    is_active<Fn>::value && is_filter_strength<Strength>::value,
-    arg_record_m<Strength::value,frontier_record::frontier_method,Fn>>
+    
+template<typename Fn, filter_strength Strength = filter_strength::strong>
+std::enable_if_t<is_active<Fn>::value,
+		 arg_record_m<Strength,frontier_record::frontier_method,Fn>>
 record( frontier & f,
 	Fn && fn,
-	Strength s = strong ) {
-    return arg_record_m<Strength::value,frontier_record::frontier_method,Fn>(
+	filter_strength_argument<Strength> s = strong ) {
+    return arg_record_m<Strength,frontier_record::frontier_method,Fn>(
 	f, std::forward<Fn>( fn ) );
 }
 	     
-template<typename Record,
+template<frontier_record Record,
 	 typename Fn,
-	 typename Strength = filter_strength_argument<filter_strength::strong>>
+	 filter_strength Strength = filter_strength::strong>
 std::enable_if_t<
-    is_active<Fn>::value && is_filter_strength<Strength>::value,
-    arg_record_m<Strength::value,Record::value,Fn>>
+    is_active<Fn>::value,
+    arg_record_m<Strength,Record,Fn>>
 record( frontier & f,
-	Record r,
+	frontier_record_argument<Record> r,
 	Fn && fn,
-	Strength s = strong ) {
-    static_assert( Record::value == frontier_record::frontier_method
-		   || Record::value == frontier_record::frontier_reduction_or_method,
+	filter_strength_argument<Strength> s = strong ) {
+    static_assert( Record == frontier_record::frontier_method
+		   || Record == frontier_record::frontier_reduction_or_method,
 		   "Require a method option in this interface variant" );
-    return arg_record_m<Strength::value,Record::value,Fn>(
+    return arg_record_m<Strength,Record,Fn>(
 	f, std::forward<Fn>( fn ) );
+}
+
+template<typename MF,
+	 frontier_record Record = frontier_record::frontier_reduction,
+	 filter_strength Strength = filter_strength::strong>
+std::enable_if_t<!std::is_same_v<MF,void>,
+		 arg_record<Strength,Record,MF>>
+record( frontier & f,
+	MF * merge_vp,
+	frontier_record_argument<Record> r = reduction,
+	filter_strength_argument<Strength> s = strong ) {
+    return arg_record<Strength,Record,MF>( f, merge_vp );
+}
+   
+
+template<frontier_record Record,
+	 typename MF,
+	 typename Fn,
+	 filter_strength Strength = filter_strength::strong>
+std::enable_if_t<
+    is_active<Fn>::value && !std::is_same_v<MF,void>,
+    arg_record_m<Strength,Record,Fn,MF>>
+record( frontier & f,
+	MF * merge_vp,
+	frontier_record_argument<Record> r,
+	Fn && fn,
+	filter_strength_argument<Strength> s = strong ) {
+    static_assert( Record == frontier_record::frontier_method
+		   || Record == frontier_record::frontier_reduction_or_method,
+		   "Require a method option in this interface variant" );
+    return arg_record_m<Strength,Record,Fn,MF>(
+	f, merge_vp, std::forward<Fn>( fn ) );
 }
 	     
 template<typename T>
 struct is_record : public std::false_type { };
 
-template<filter_strength S, frontier_record R>
-struct is_record<arg_record<S,R>> : public std::true_type { };
+template<filter_strength S, frontier_record R, typename MF>
+struct is_record<arg_record<S,R,MF>> : public std::true_type { };
 
-template<filter_strength S, frontier_record R, typename Fn>
-struct is_record<arg_record_m<S,R,Fn>> : public std::true_type { };
+template<filter_strength S, frontier_record R, typename Fn, typename MF>
+struct is_record<arg_record_m<S,R,Fn,MF>> : public std::true_type { };
 
 /************************************************************************
  * Defintion of configuration option
@@ -1124,7 +1190,8 @@ struct arg_config {
     static constexpr vectorization_spec<VL> vectorization =
 	vectorization_spec<VL>();
 
-    arg_config( const threshold_type & t ) : m_threshold( t ) { }
+    arg_config( const threshold_type & t )
+	: m_threshold( t ) { }
 
     static constexpr bool is_parallel() {
 	return parallelism == parallelism_spec::parallel;
@@ -1160,7 +1227,8 @@ struct missing_config_argument {
 template<typename... Args>
 auto config( Args &&... args ) {
     if constexpr( check_arguments_3<is_parallelism,
-		  is_vectorization,is_threshold,Args...>::value ) {
+		  is_vectorization,is_threshold,
+		  Args...>::value ) {
 	auto & t = get_argument_value<is_threshold,default_threshold>(
 	    args... );
 	return arg_config<
@@ -1688,17 +1756,21 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
     using Operator = decltype(op);
 
     // Analyse operator
+    /*
     constexpr bool rd_frontier =
 		  !std::is_same_v<decltype(filter_src),missing_filter_argument>;
     constexpr bool wr_frontier =
 		  !std::is_same_v<decltype(filter_dst),missing_filter_argument>
 		  && !std::is_same_v<decltype(active_dst),missing_filter_argument>;
+    */
 
     // TODO: take into account how filtering is done. E.g., in destination
     //       filtering in pull, the read frontier is sequential access like
     //       the written frontier
     using cfg = expr::determine_emap_config<
-	VID,Operator,GraphType,decltype(record)::may_be_unbacked>;
+	VID,Operator,GraphType,decltype(record)::may_be_unbacked,
+	decltype(record)::may_merge_frontier
+	>;
     using cfg_pull = typename cfg::pull;
     using cfg_push = typename cfg::push;
     using cfg_ireg = typename cfg::ireg;
@@ -1896,499 +1968,6 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 	.template edge_map<cfg>( GA, op, gtk );
 
     return lax;
-}
-
-/************************************************************************
- * Representation of a vertex property. Can be used both as a syntax tree
- * element and as a native C++ array.
- *
- * Memory is allocated at construction time and has to be freed explicitly
- * by calling #del.
- * Memory allocation proceeds using a balanced partitioned allocation.
- * The array size as well as the dimensions of partitioning are taken
- * from the partitioner object supplied to the constructor.
- *
- * @see mm
- * @param <T> the type of array elements
- * @param <U> the type of the array index
- * @param <AID_> an integral identifier that uniquely identifies the
- *               property array
- * @param <Encoding> optional in-memory array encoding specification
- ************************************************************************/
-template<typename T, typename U, short AID_,
-	 typename Encoding = array_encoding<T>, bool NT = false>
-class vertexprop : private NonCopyable<vertexprop<T,U,AID_,Encoding,NT>> {
-public:
-    using type = T; 	 	 	//!< type of array elements
-    using index_type = U; 	 	//!< index type of property
-    using encoding = Encoding; 	 	//!< data encoding in memory
-    static constexpr short AID = AID_;	//!< array ID of property
-    //! type of array syntax tree for this property
-    using array_ty = expr::array_ro<type,index_type,AID,encoding,NT>;
-
-    /** Constructor: create a vertex property.
-     *
-     * @param[in] part graph partitioner
-     * @param[in] name explanation string for debugging
-     */
-    vertexprop( const partitioner & part, const char * name )
-	: mem( numa_allocation_partitioned( part ), m_name ),
-	  m_name( name ) { }
-
-    /** Constructor: create vertex property from file.
-     *
-     * @param[in] part graph partitioner
-     * @param[in] fname file name
-     * @param[in] name explanation string for debugging
-     */
-    vertexprop( const partitioner & part, const char * fname,
-		const char * name )
-	: m_name( name ) {
-	mem.map_file( numa_allocation_partitioned( part ), fname, name );
-    }
-
-    /*! Factory creation method for a vertex property.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] name explanation string for debugging
-     */
-    static vertexprop
-    create( const partitioner & part, const char * name = nullptr ) {
-	return vertexprop( part, name );
-    }
-
-    /*! Factory creation method reading data from file.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] fname filename of the file containing the vertex property
-     * @param[in] name explanation string for debugging
-     */
-    static vertexprop
-    from_file( const partitioner & part, const char * fname,
-	       const char * name = nullptr ) {
-	return vertexprop( part, fname, name );
-    }
-
-    //! Release memory
-    void del() {
-	mem.del( m_name );
-    }
-
-    /*! Subscript operator overload for syntax trees
-     * This operator builds a syntax tree that represents an array index
-     * operation.
-     *
-     * @param[in] v Syntax tree element for the index
-     * @return The syntax tree representing the indexing of the array
-     */
-    template<typename Expr>
-    std::enable_if_t<expr::is_expr_v<Expr>,
-		     decltype(array_ty(nullptr)[*(Expr*)nullptr])>
-    operator[] ( const Expr & e ) const {
-	static_assert( std::is_same_v<index_type, typename Expr::type>,
-		       "requires a match of index_type" );
-	return array_ty( mem.get() )[e];
-    }
-
-    /*! Subscript operator overload for native C++ array operation.
-     * Indexes the array and returns the value at index #v of the array.
-     * This operator returns an r-value; it cannot be used to modify array contents.
-     *
-     * @param[in] v array index
-     * @return value found at array index #e
-     */
-    T operator[] ( VID v ) const {
-	return encoding::template load<simd::ty<T,1>>( mem.get(), v );
-    }
-
-    typename encoding::stored_type * get_ptr() const {
-	return mem.get();
-    }
-
-    const char * get_name() const { return m_name; }
-
-private:
-    mm::buffer<typename encoding::stored_type> mem;	//!< memory buffer
-    const char * m_name;	//!< explanatory name describing vertex property
-};
-
-template<typename T, typename U, short AID, typename Enc, bool NT>
-void print( std::ostream & os,
-	    const partitioner & part,
-	    const vertexprop<T,U,AID,Enc,NT> & vp ) {
-    os << vp.get_name() << ':';
-    VID n = part.get_vertex_range();
-    for( VID v=0; v < n; ++v )
-	os << ' ' << vp[v];
-    os << '\n';
-}
-
-template<typename lVID,
-	 typename T, typename U, short AID, typename Enc, bool NT>
-void print( std::ostream & os,
-	    const RemapVertexIdempotent<lVID> &,
-	    const partitioner & part,
-	    const vertexprop<T,U,AID,Enc,NT> & vp ) {
-    print( os, part, vp );
-}
-
-template<typename lVID,
-	 typename T, typename U, short AID, typename Enc, bool NT>
-void print( std::ostream & os,
-	    const RemapVertex<lVID> & remap,
-	    const partitioner & part,
-	    const vertexprop<T,U,AID,Enc,NT> & vp ) {
-    os << vp.get_name() << ':';
-    VID n = part.get_vertex_range();
-    for( VID v=0; v < n; ++v )
-	os << ' ' << vp[remap.remapID(v)];
-    os << '\n';
-}
-
-/************************************************************************
- * Interleaved representation of two vertex properties.
- *
- * Memory is allocated at construction time and has to be freed explicitly
- * by calling #del.
- * Memory allocation proceeds using a balanced partitioned allocation.
- * The array size as well as the dimensions of partitioning are taken
- * from the partitioner object supplied to the constructor.
- *
- * @see mm
- * @param <T0> the first type of array elements
- * @param <T1> the second type of array elements
- * @param <U> the type of the array index
- * @param <AID0_> an integral identifier that uniquely identifies the
- *                first property array
- * @param <AID1_> an integral identifier that uniquely identifies the
- *                second property array
- * @param <MaxVL_> maximum vector length - interleaving factor
- ************************************************************************/
-#if 0
-template<typename T0, typename T1, typename U,
-	 short AID0_, short AID1_,
-	 unsigned short MaxVL = MAX_VL>
-class vertexprop2 : private NonCopyable<vertexprop2<T0,T1,U,AID0_,AID1_,MaxVL>> {
-public:
-    using type0 = T0; 	 	 	//!< first type of array elements
-    using type1 = T1; 	 	 	//!< second type of array elements
-    using index_type = U; 	 	//!< index type of property
-    using encoding = array_encoding_intlv2<T0,T1,MaxVL>; //!< data encoding
-    using encoding0 = typename encoding::ifc_encoding<0>;
-    using encoding1 = typename encoding::ifc_encoding<1>;
-    static constexpr short AID0 = AID0_; //!< array ID of first property
-    static constexpr short AID1 = AID1_; //!< array ID of second property
-
-    /** Constructor: create an vertex property.
-     *
-     * @param[in] part graph partitioner
-     * @param[in] name explanation string for debugging
-     */
-    vertexprop2( const partitioner & part, const char * name )
-	: mem( part.scale( 2 ), name ),
-	  m_name( name ) { }
-
-    //! Release memory
-    void del() {
-	mem.del( m_name );
-    }
-
-    /*! Obtaining proxy vertex property
-     *
-     * @tparam A property index
-     * @return A vertexprop object representing the property
-     */
-    template<unsigned short A>
-    auto get_property() {
-	return vertexprop<A, type0, type1, index_type,
-			  A == 0 ? AID0 : AID1,
-			  typename encoding::ifc_encoding<A>,
-			  MaxVL>( encoding::get_base<A>( mem.get() ) );
-	// TODO: avoid add of MaxVL to index for A == 1 by taking different base poiter
-    }
-    
-    const char * get_name() const { return m_name; }
-
-private:
-    mm::buffer<typename encoding::stored_type> mem;	//!< memory buffer
-    const char * m_name;	//!< explanatory name describing vertex property
-};
-#endif
-
-/************************************************************************
- * Representation of an interleaved vertex property. Can be used both as
- * a syntax tree element and as a native C++ array.
- *
- * Memory is not held by this object. #del has no impact.
- *
- * @see mm
- * @param <A> the accessible property from the interleaved set
- * @param <T0> the first type of array elements
- * @param <T1> the second type of array elements
- * @param <U> the type of the array index
- * @param <AID_> an integral identifier that uniquely identifies the
- *               property array
- * @param <MaxVL_> maximum vector length - interleaving factor
- ************************************************************************/
-#if 0
-template<unsigned short A, typename T0, typename T1, typename U,
-	 short AID_, unsigned short MaxVL_>
-class vertexprop<std::conditional_t<A==0,T0,T1>,U,AID_,
-    array_encoding_intlv2_ifc<A,T0,T1,MaxVL_>>
-    : private NonCopyable<vertexprop<
-	std::conditional_t<A==0,T0,T1>,U,AID_,
-	array_encoding_intlv2_ifc<A,T0,T1,MaxVL_>> {
-public:
-    using type = std::conditional_t<A==0,T0,T1>; //!< type of array elements
-    using index_type = U; 	 	//!< index type of property
-    using encoding = array_encoding_intlv2_ifc<A,T0,T1,MaxVL_>; //!< data encoding
-    static constexpr short AID = AID_;	//!< array ID of property
-    //! type of array syntax tree for this property
-    using array_ty = expr::array_ro<type,index_type,AID,encoding,false>;
-
-    /** Constructor: create an vertex property.
-     *
-     * @param[in] ptr base pointer of array
-     * @param[in] name explanation string for debugging
-     */
-    vertexprop( typename encoding::storage_type * ptr, const char * name )
-	: m_ptr( ptr ), m_name( name ) { }
-
-    //! Release memory - no-op
-    void del() { }
-
-    /*! Subscript operator overload for syntax trees
-     * This operator builds a syntax tree that represents an array index
-     * operation.
-     *
-     * @param[in] v Syntax tree element for the index
-     * @return The syntax tree representing the indexing of the array
-     */
-    template<typename Expr>
-    std::enable_if_t<expr::is_expr_v<Expr>,
-		     decltype(array_ty(nullptr)[*(Expr*)nullptr])>
-    operator[] ( const Expr & e ) const {
-	static_assert( std::is_same_v<index_type, typename Expr::type>,
-		       "requires a match of index_type" );
-	return array_ty( m_ptr )[e];
-    }
-
-    /*! Subscript operator overload for native C++ array operation.
-     * Indexes the array and returns the value at index #v of the array.
-     * This operator returns an r-value; it cannot be used to modify array contents.
-     *
-     * @param[in] v array index
-     * @return value found at array index #e
-     */
-    T operator[] ( VID v ) const {
-	return encoding::template load<simd::ty<T,1>>( m_ptr, v );
-    }
-
-    typename encoding::stored_type * get_ptr() const {
-	return m_ptr;
-    }
-
-    const char * get_name() const { return m_name; }
-
-private:
-    typename encoding::storage_type * m_ptr; //!< memory buffer, not owned
-    const char * m_name;	//!< explanatory name describing vertex property
-};
-#endif
-
-
-/************************************************************************
- * Representation of an edge property. Can be used both as a syntax tree
- * element and as a native C++ array.
- *
- * Memory is allocated at construction time and has to be freed explicitly
- * by calling #del.
- * Memory allocation proceeds using an edge-balanced partitioned allocation.
- * The array size as well as the dimensions of edge partitioning are taken
- * from the partitioner object supplied to the constructor.
- *
- * @see mm
- * @param <T> the type of array elements
- * @param <U> the type of the array index
- * @param <AID_> an integral identifier that uniquely identifies the
- *               property array
- * @param <Encoding> optional in-memory array encoding specification
- ************************************************************************/
-template<typename T, typename U, short AID_,
-	 typename Encoding = array_encoding<T>>
-class edgeprop : private NonCopyable<edgeprop<T,U,AID_,Encoding>> {
-public:
-    using type = T; 	 	 	//!< type of array elements
-    using index_type = U; 	 	//!< index type of property
-    using encoding = Encoding; 	 	//!< data encoding in memory
-    static constexpr short AID = AID_;	//!< array ID of property
-    //! type of array syntax tree for this property
-    using array_ty = expr::array_ro<type,index_type,AID,encoding>;
-
-    /** Constructor: create an edge property.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] name explanation string for debugging
-     */
-    edgeprop( const partitioner & part, const char * name = nullptr )
-	// TODO: use encoding::allocate + adjust to use mm::buffer
-	: mem( numa_allocation_edge_partitioned( part ), m_name ),
-	  m_name( name ) {
-    }
-
-    /*! Factory creation method for an edge property.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] name explanation string for debugging
-     */
-    static edgeprop
-    create( const partitioner & part, const char * name = nullptr ) {
-	return edgeprop( part, name );
-    }
-
-    //! Release memory
-    void del() {
-	mem.del( m_name );
-    }
-
-    /*! Subscript operator overload for syntax trees
-     * This operator builds a syntax tree that represents an array index
-     * operation.
-     *
-     * @param[in] e Syntax tree element for the index
-     * @return The syntax tree representing the indexing of the array
-     */
-    template<typename Expr>
-    std::enable_if_t<expr::is_expr_v<Expr>,
-		     decltype(array_ty(nullptr)[*(Expr*)nullptr])>
-    operator[] ( const Expr & e ) const {
-	static_assert( std::is_same_v<index_type,
-		       typename Expr::data_type::element_type>,
-		       "requires a match of index_type" );
-	return array_ty( mem.get() )[e];
-    }
-
-    /*! Subscript operator overload for native C++ array operation.
-     * Indexes the array and returns the value at index #e of the array.
-     * This operator returns an r-value; it cannot be used to modify array
-     * contents.
-     *
-     * @param[in] e array index
-     * @return value found at array index #e
-     */
-    T operator[] ( EID e ) const {
-	return encoding::template load<simd::ty<T,1>>( mem.get(), e );
-    }
-
-    typename encoding::stored_type * get_ptr() const {
-	return mem.get();
-    }
-
-    const char * get_name() const { return m_name; }
-
-private:
-    mm::buffer<typename encoding::storage_type> mem; //!< memory buffer
-    const char * m_name;	//!< explanatory name describing edge property
-};
-
-/************************************************************************
- * Representation of a property for edge weights. This class does not
- * contain the actual weights, as the weight array is considered immutable
- * and the order in which weights are stored is specialised to the graph
- * data structure and layout.
- * Indexing produces a syntax tree. For safety reasons, the address is a
- * null pointer.
- *
- * The class has an interface that is compatible to that of the general
- * edgeprop class.
- *
- * @param <T> the type of array elements
- * @param <U> the type of the array index
- * @param <Encoding> optional in-memory array encoding specification
- ************************************************************************/
-template<typename T, typename U, typename Encoding>
-class edgeprop<T,U,expr::vk_eweight,Encoding>
-    : private NonCopyable<edgeprop<T,U,expr::vk_eweight,Encoding>> {
-public:
-    using type = T; 	 	 	//!< type of array elements
-    using index_type = U; 	 	//!< index type of property
-    using encoding = Encoding; 	 	//!< data encoding in memory
-    static constexpr short AID = expr::vk_eweight; //!< array ID of property
-    //! type of array syntax tree for this property
-    using array_ty = expr::array_ro<type,index_type,AID,encoding>;
-
-    /** Constructor: create an edge property.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] name explanation string for debugging
-     */
-    edgeprop( const partitioner & part, const char * name = nullptr )
-	: m_name( name ) { }
-
-    /*! Factory creation method for an edge property.
-     *
-     * @param[in] part graph partitioner object dictating size and allocation
-     * @param[in] name explanation string for debugging
-     */
-    static edgeprop
-    create( const partitioner & part, const char * name = nullptr ) {
-	return edgeprop( part, name );
-    }
-
-    //! Release memory - noop
-    void del() { }
-
-    /*! Subscript operator overload for syntax trees
-     * This operator builds a syntax tree that represents an array index
-     * operation.
-     *
-     * @param[in] e Syntax tree element for the index
-     * @return The syntax tree representing the indexing of the array
-     */
-    template<typename Expr>
-    std::enable_if_t<expr::is_expr_v<Expr>,
-		     decltype(array_ty(nullptr)[*(Expr*)nullptr])>
-    operator[] ( const Expr & e ) const {
-	static_assert( std::is_same_v<index_type,
-		       typename Expr::data_type::element_type>,
-		       "requires a match of index_type" );
-	return array_ty( nullptr )[e];
-    }
-
-    /*! Subscript operator overload for native C++ array operation.
-     * Indexes the array and returns the value at index #e of the array.
-     * This operator is deleted for vk_eweight; the class does not
-     * contain the data.
-     *
-     * @param[in] e array index
-     * @return value found at array index #e
-     */
-    T operator[] ( EID e ) const = delete;
-
-    typename encoding::stored_type * get_ptr() const {
-	return nullptr;
-    }
-
-    const char * get_name() const { return m_name; }
-
-private:
-    const char * m_name;	//!< explanatory name describing edge property
-};
-
-template<typename T, typename U, short AID, typename Enc>
-void print( std::ostream & os,
-	    const partitioner & part,
-	    const edgeprop<T,U,AID,Enc> & ep ) {
-    os << ep.get_name() << ':';
-    EID m = part.get_edge_range();
-    if constexpr ( is_logical_v<T> ) {
-	for( EID e=0; e < m; ++e )
-	    os << ( ep[e] ? 'T' : '.' );
-    } else {
-	for( EID e=0; e < m; ++e )
-	    os << ' ' << ep[e];
-    }
-    os << '\n';
 }
 
 } // namespace api
