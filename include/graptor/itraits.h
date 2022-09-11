@@ -155,6 +155,9 @@ struct logical<Bytes_, std::enable_if_t<(Bytes_<=8)>> {
 	using stype = std::make_signed_t<type>;
 	return static_cast<stype>( val ) < stype(0);
     }
+    void clear_msb() {
+	val &= ( type(1) << (8*Bytes-1) ) - 1;
+    }
 
     operator type () const { return val; }
 
