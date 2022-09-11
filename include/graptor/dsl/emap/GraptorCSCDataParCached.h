@@ -43,7 +43,7 @@ static inline void GraptorCSCDataParCached(
     using svid_type = simd::ty<VID,1>;
     using seid_type = simd::ty<EID,1>;
 
-    using output_type = simd::container<typename MVExpr::data_type>;
+    // using output_type = simd::container<typename MVExpr::data_type>;
 
     auto pvec1 = simd::template create_constant<svid_type>( VL*(VID)p );
     auto m_pid = expr::create_value_map_new<VL>(
@@ -78,10 +78,10 @@ static inline void GraptorCSCDataParCached(
 	    expr::create_entry<expr::vk_pid>( pvec1 ) );
 	cache_init( env, c, vcaches, m ); // partial init
 
-	using OTr = typename output_type::data_type;
-	static_assert( simd::detail::is_mask_traits_v<OTr>,
-		       "expect edgemap operation to return update mask" );
-	auto output = output_type::false_mask();
+	// using OTr = typename output_type::data_type;
+	// static_assert( simd::detail::is_mask_traits_v<OTr>,
+	// "expect edgemap operation to return update mask" );
+	// auto output = output_type::false_mask();
 
 	EID code;
 	do {
@@ -140,8 +140,9 @@ static inline void GraptorCSCDataParCached(
 		// as the memory references are likely captured in the cache.
 		auto mpack = expr::sb::create_mask_pack( vdecode != vmask );
 		cache_init( env, c, vcaches_use, m, mpack ); // partial init of uses (src)
-		auto rval_output = env.evaluate( c, m, mpack, m_vexpr );
-		output.lor_assign( rval_output.value().template convert_data_type<OTr>() );
+		// auto rval_output =
+		env.evaluate( c, m, mpack, m_vexpr );
+		// output.lor_assign( rval_output.value().template convert_data_type<OTr>() );
 
 		// Proceed to next vector of sources
 		s += VL;
@@ -169,18 +170,22 @@ static inline void GraptorCSCDataParCached(
 
 	// Evaluate hoisted part of expression.
 	{
-	    using logicalVID = typename add_logical<VID>::type;
+	    // using logicalVID = typename add_logical<VID>::type;
 	    // auto input = output.template asvector<logicalVID>();
-	    auto input = output;
+	    // auto input = output;
 
 	    auto m = expr::create_value_map_new<VL>(
-		expr::create_entry<expr::vk_smk>( input ),
+		// expr::create_entry<expr::vk_smk>( input ),
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
 	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
 	}
 
+	{
+	    static int x = 0;
+	    ++x;
+	}
 	cache_commit( env, vcaches, c, m /*, mpack*/ );
 	sdst += sstep;
     }
@@ -190,6 +195,8 @@ static inline void GraptorCSCDataParCached(
     // We might benefit from creating a variation of m_rexpr that does not
     // include frontier calculation, i.e., constant-propagate a false
     // vk_smk.
+    // Note: changes in api.h imply that vk_smk is no longer used. The info
+    // is read from a cached array, which may be unbacked.
     while( sdst.at(0) < send ) {
 	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
@@ -205,10 +212,10 @@ static inline void GraptorCSCDataParCached(
 	// Evaluate hoisted part of expression.
 	{
 	    using logicalVID = typename add_logical<VID>::type;
-	    auto input = output_type::false_mask();
+	    // auto input = output_type::false_mask();
 
 	    auto m = expr::create_value_map_new<VL>(
-		expr::create_entry<expr::vk_smk>( input ),
+		// expr::create_entry<expr::vk_smk>( input ),
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
@@ -246,7 +253,7 @@ static inline void emap_pull(
     unsigned short storedVL = GA.getMaxVL();
 
     // Restrictions:
-    // Meta-information is recoved only from the vector that is processed
+    // Meta-information is recovered only from the vector that is processed
     assert( VL == storedVL && "restriction" );
 
     // Variables (actually parameters because they are constant within the AST)
