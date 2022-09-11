@@ -46,6 +46,12 @@ public:
     }
 
     static type setone() { return ~type(0); }
+    static type setone_shr1() {
+	if constexpr ( is_logical_v<type> )
+	    return type( setone().get() >> 1 );
+	else
+	    return setone() >> 1;
+    }
     static type setoneval() { return type(1); }
     
     static type create( member_type a0_ ) { return a0_; }
@@ -129,25 +135,35 @@ public:
     static vmask_type cmple( type a, type b, target::mt_vmask ) { return a <= b ? ~vmask_type(0) : vmask_type(0); }
     static vmask_type cmpgt( type a, type b, target::mt_vmask ) { return a > b ? ~vmask_type(0) : vmask_type(0); }
     static vmask_type cmpge( type a, type b, target::mt_vmask ) { return a >= b ? ~vmask_type(0) : vmask_type(0); }
+    static vmask_type cmpneg( type a, target::mt_vmask ) { return a < member_type(0) ? ~vmask_type(0) : vmask_type(0); }
     static mask_type cmpeq( type a, type b, target::mt_mask ) { return a == b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpne( type a, type b, target::mt_mask ) { return a != b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmplt( type a, type b, target::mt_mask ) { return a < b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmple( type a, type b, target::mt_mask ) { return a <= b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpgt( type a, type b, target::mt_mask ) { return a > b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpge( type a, type b, target::mt_mask ) { return a >= b ? mask_traits::setone() : mask_traits::setzero(); }
+    static vmask_type cmpneg( type a, target::mt_mask ) { return a < member_type(0) ? mask_traits::setone() : mask_traits::setzero(); }
     static bool cmpne( type a, type b, target::mt_bool ) { return a != b; }
     static bool cmpeq( type a, type b, target::mt_bool ) { return a == b; }
     static bool cmplt( type a, type b, target::mt_bool ) { return a < b; }
     static bool cmple( type a, type b, target::mt_bool ) { return a <= b; }
     static bool cmpgt( type a, type b, target::mt_bool ) { return a > b; }
     static bool cmpge( type a, type b, target::mt_bool ) { return a >= b; }
+    static bool cmpneg( type a, target::mt_bool ) { return a < member_type(0); }
 
     // Second definition is chosen if type auto-casts to bool
     // static type blend( type c, type a, type b ) { return c != 0 ? b : a; }
     static type blend( bool c, type a, type b ) { return c ? b : a; }
+    static type bitblend( type m, type l, type r ) {
+	return bitwise_or( bitwise_and( m, r ),
+			   bitwise_andnot( m, l ) );
+    }
 
     static member_type blendm( mask_type m, type l, type r ) {
 	return m ? r : l;
+    }
+    static member_type iforz( mask_type m, type a ) {
+	return m ? a : setzero();
     }
     static member_type reduce_setif( type val ) { return val; }
     static member_type reduce_setif( type val, mask_type mask ) {

@@ -278,6 +278,12 @@ public:
 			       bitwise_andnot( m, l ) );
 	}
     }
+    static type iforz( vmask_type m, type a ) {
+	return bitwise_and( m, a );
+    }
+    static type iforz( mask_type m, type a ) {
+	return blend( m, setzero(), a );
+    }
 
     static constexpr bool has_ternary = true;
 

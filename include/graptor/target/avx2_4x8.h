@@ -298,6 +298,12 @@ public:
 	return asmask( cmpne( a, b, mt_vmask() ) );
     }
 #endif
+    static mask_type cmpneg( type a, mt_mask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return asmask( a );
+	else
+	    return mask_traits::setzero();
+    }
     static vmask_type cmpeq( type a, type b, mt_vmask ) {
 	return _mm256_cmpeq_epi32( a, b );
     }
@@ -316,8 +322,11 @@ public:
     }
     static vmask_type cmpge( type a, type b, mt_vmask ) {
 	if constexpr ( std::is_signed_v<member_type> ) {
+	    return logical_invert( cmpgt( b, a, mt_vmask() ) );
+/*
 	    return _mm256_or_si256( _mm256_cmpgt_epi32( a, b ),
 				    _mm256_cmpeq_epi32( a, b ) );
+*/
 	} else {
 	    // This could be needlessly expensive for many comparisons
 	    // where the top bit will never be set (e.g. VID)
@@ -336,6 +345,12 @@ public:
     }
     static vmask_type cmple( type a, type b, mt_vmask ) {
 	return cmpge( b, a, mt_vmask() );
+    }
+    static vmask_type cmpneg( type a, mt_vmask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return srai( a, 31 );
+	else
+	    return setzero();
     }
 
     static bool cmpeq( type a, type b, mt_bool ) {
@@ -531,7 +546,8 @@ public:
 	v = _mm256_castps_si256(_mm256_cvtepi32_ps(v)); // convert an integer to float
 	v = _mm256_srli_epi32(v, 23); // shift down the exponent
 	v = _mm256_subs_epu16(_mm256_set1_epi32(158), v); // undo bias
-	v = _mm256_min_epi16(v, _mm256_set1_epi32(32)); // clamp at 32
+	const type c32 = slli( setoneval(), 5 );
+	v = _mm256_min_epi16(v, c32); // clamp at 32
 #endif
 	if constexpr ( sizeof(ReturnTy) == W )
 	    return v;

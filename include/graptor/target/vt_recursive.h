@@ -53,14 +53,25 @@ struct vt_recursive {
     // using hitype = typename hitraits::type;
 
     static type setzero() {
-	return type { lo_half_traits::setzero(), hi_half_traits::setzero() };
+	auto l = lo_half_traits::setzero();
+	if constexpr ( std::is_same_v<lo_half_traits,hi_half_traits> )
+	    return type { l, l };
+	else
+	    return type { l, hi_half_traits::setzero() };
     }
     static type setone() {
-	return type { lo_half_traits::setone(), hi_half_traits::setone() };
+	auto l = lo_half_traits::setone();
+	if constexpr ( std::is_same_v<lo_half_traits,hi_half_traits> )
+	    return type { l, l };
+	else
+	    return type { l, hi_half_traits::setone() };
     }
     static type setoneval() {
-	return type { lo_half_traits::setoneval(),
-		hi_half_traits::setoneval() };
+	auto l = lo_half_traits::setoneval();
+	if constexpr ( std::is_same_v<lo_half_traits,hi_half_traits> )
+	    return type { l, l };
+	else
+	    return type { l, hi_half_traits::setoneval() };
     }
     template<typename AT1, typename AT0>
     static std::enable_if_t<sizeof(AT0)==lo_half_traits::size
@@ -162,6 +173,16 @@ struct vt_recursive {
 	    lo_half_traits::blend( mask_traits::lower_half( m ), a.a, b.a ),
 		hi_half_traits::blend( mask_traits::upper_half( m ), a.b, b.b ) };
     }
+    static type iforz( vmask_type m, type a ) {
+	return type {
+	    lo_half_traits::iforz( m.a, a.a ),
+		hi_half_traits::iforz( m.b, a.b ) };
+    }
+    static type iforz( mask_type m, type a ) {
+	return type {
+	    lo_half_traits::iforz( mask_traits::lower_half( m.a ), a.a ),
+	    hi_half_traits::iforz( mask_traits::lower_half( m.b ), a.b ) };
+    }
 
     static constexpr bool has_ternary =
 	lo_half_traits::has_ternary && hi_half_traits::has_ternary;
@@ -170,7 +191,7 @@ struct vt_recursive {
     static type ternary( type a, type b, type c ) {
 	return type {
 	    lo_half_traits::template ternary<imm8>( a.a, b.a, c.a ),
-		hi_half_traits::template ternary<imm8>( a.b, b.b, c.b ) };
+	    hi_half_traits::template ternary<imm8>( a.b, b.b, c.b ) };
     }
     
     static itype castint( type a ) {
@@ -458,6 +479,14 @@ struct vt_recursive {
 	return traits::set_pair(
 	    hi_half_traits::template tzcnt<ReturnTy>( upper_half( a ) ),
 	    lo_half_traits::template tzcnt<ReturnTy>( lower_half( a ) ) );
+    }
+    
+    template<typename ReturnTy>
+    static auto lzcnt( type a ) {
+	using traits = vector_type_traits<ReturnTy,sizeof(ReturnTy)*vlen>;
+	return traits::set_pair(
+	    hi_half_traits::template lzcnt<ReturnTy>( upper_half( a ) ),
+	    lo_half_traits::template lzcnt<ReturnTy>( lower_half( a ) ) );
     }
     
     static type loadu( const member_type * addr ) {

@@ -274,7 +274,28 @@ public:
 	return _mm256_blendv_epi8( a, b, _mm256_cvtepi8_epi16( mask ) );
     }
     static type blend( mask_type m, type a, type b ) {
+#if __AVX512F__ && __AVX512VL__
+	return _mm256_mask_blend_epi64( m, a, b );
+#else
 	return _mm256_blendv_epi8( a, b, asvector( m ) );
+#endif
+    }
+    static type iforz( vmask_type m, type a ) {
+#if 0
+#if __AVX512F__ && __AVX512VL__
+	// Note: no 64-bit srai available
+	vmask_type clean = _mm256_srai_epi64( m, 63 );
+#else
+	vmask_type half = _mm256_srai_epi32( m, 31 );
+	vmask_type clean = _mm256_shuffle_epi32( half, 0b11110101 );
+#endif
+#else
+	vmask_type clean = m;
+#endif
+	return bitwise_and( clean, a );
+    }
+    static type iforz( mask_type m, type a ) {
+	return blend( m, setzero(), a );
     }
 
 #if __AVX512VL__
@@ -438,6 +459,32 @@ public:
 	    return 0;
 	}
 #endif
+    }
+
+    template<typename ReturnTy>
+    static auto lzcnt( type a ) {
+#if __AVX512VL__ && __AVX512DQ__
+	type cnt = _mm256_lzcnt_epi64( a );
+#elif __AVX2__
+	// Count leading zeros in half-lanes
+	type cnt2 = avx2_4x8<uint32_t>::lzcnt<uint32_t>( a );
+	// Bottom-half lanes only count if top-half is 32
+	// * top-half 32: bottom-half + top-half
+	// * top-half lower: move top-half in place
+	const type c1h = _mm256_srli_epi32( setone(), 31 );
+	const type c32h = _mm256_slli_epi32( c1h, 5 );
+	type cnt2hi = srli( cnt2, 32 );
+	type mask = _mm256_cmpeq_epi32( cnt2hi, c32h );
+	type cnt = add( bitwise_and( mask, cnt2 ), cnt2hi );
+#endif
+	if constexpr ( sizeof(ReturnTy) == W )
+	    return cnt;
+	else if constexpr ( sizeof(ReturnTy) == 4 ) {
+	    return _mm256_cvtepi64_epi32( cnt ); // AVX512VL
+	} else {
+	    assert( 0 && "NYI" );
+	    return 0;
+	}
     }
 
     static type loadu( const member_type * a ) {
