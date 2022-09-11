@@ -56,6 +56,18 @@ struct array_encoding {
 
     template<typename Tr, typename index_type>
     static typename Tr::type
+    ldcas( storage_type * base, index_type idx ) {
+	return load<Tr>( base, idx );
+    }
+
+    template<typename Tr>
+    static typename Tr::type
+    extract( typename Tr::type val ) {
+	return val;
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
     loadu( storage_type * base, index_type idx ) {
 	auto raw = stored_traits<Tr::VL>::loadu( &base[idx] );
 	return conversion_traits<
@@ -83,6 +95,19 @@ struct array_encoding {
 	    typename stored_traits<Tr::VL>::member_type,
 	    Tr::VL>::convert( raw );
 	stored_traits<Tr::VL>::store( &base[idx], value );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw, mask_type mask ) {
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	auto old = load<Tr>( base, idx );
+	auto upd = stored_traits<Tr::VL>::blend( mask, old, value );
+	stored_traits<Tr::VL>::store( &base[idx], upd );
     }
 
     template<typename Tr, typename index_type>
@@ -506,6 +531,13 @@ struct array_encoding_bit {
     store( storage_type * base, index_type idx,
 	   typename Tr::type raw ) {
 	storeu<Tr>( base, idx, raw );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw, mask_type mask ) {
+	assert( 0 );
     }
 
     template<typename Tr, typename index_type>
@@ -1463,6 +1495,14 @@ struct array_encoding_zero {
 	    return base_encoding::template store<Tr>( base, idx, raw );
     }
 
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    store( storage_type * base, index_type idx, typename Tr::type raw,
+	   mask_type mask ) {
+	if( base )
+	    return base_encoding::template store<Tr>( base, idx, raw, mask );
+    }
+
     template<typename Tr, typename index_type>
     static void
     storeu( storage_type * base, index_type idx, typename Tr::type raw ) {
@@ -2286,6 +2326,204 @@ struct array_encoding_intlv2 {
 	    typename Tr::member_type,
 	    typename stored_traits<A,1>::member_type,1>::convert( val );
 	return stored_traits<A,1>::cas( addr, s_old, s_val );
+    }
+};
+
+template<unsigned short W, bool MSB, typename Enable = void>
+struct array_encoding_msb {
+    using stored_type = std::conditional_t<MSB,logical<W>,int_type_of_size_t<W>>;
+    using storage_type = stored_type;
+
+    template<unsigned short VL_>
+    using stored_traits = vector_type_traits_vl<stored_type, VL_>;
+
+    static mmap_ptr<stored_type>
+    allocate( size_t num_elems, const numa_allocation && kind ) {
+	return mmap_ptr<stored_type>( num_elems, kind );
+    }
+    static mmap_ptr<stored_type>
+    allocate( size_t num_elems, const numa_allocation & kind ) {
+	return mmap_ptr<stored_type>( num_elems, kind );
+    }
+    static mmap_ptr<stored_type>
+    allocate( numa_allocation_partitioned kind ) {
+	// TODO: scale to match NUMA boundaries
+	return mmap_ptr<stored_type>( kind );
+    }
+
+    template<typename index_type>
+    static stored_type
+    get( const storage_type * base, index_type idx ) {
+	return base[idx];
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    load( storage_type * base, index_type idx ) {
+	return extract<Tr>( ldcas<Tr>( base, idx ) );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    ldcas( storage_type * base, index_type idx ) {
+	return array_encoding<stored_type>::template load<Tr>( base, idx );
+    }
+
+    template<typename Tr>
+    static typename Tr::type
+    extract( typename Tr::type val ) {
+	if constexpr ( MSB )
+	    return stored_traits<Tr::VL>::srai( val, Tr::B-1 );
+	    // return val;
+	else {
+	    auto mask = stored_traits<Tr::VL>::setone_shr1();
+	    return stored_traits<Tr::VL>::bitwise_and( mask, val );
+	}
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    loadu( storage_type * base, index_type idx ) {
+	auto val = array_encoding<stored_type>::template loadu<Tr>( base, idx );
+	return extract<Tr>( val );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    ntload( storage_type * base, index_type idx ) {
+	auto val
+	    = array_encoding<stored_type>::template ntload<Tr>( base, idx );
+	return extract<Tr>( val );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	auto mask = stored_traits<Tr::VL>::setone_shr1();
+	if constexpr( MSB )
+	    mask = stored_traits<Tr::VL>::bitblend( mask, value, old );
+	else
+	    mask = stored_traits<Tr::VL>::bitblend( mask, old, value );
+	stored_traits<Tr::VL>::store( &base[idx], mask );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw, mask_type mask ) {
+	auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	auto bmask = stored_traits<Tr::VL>::setone_shr1();
+	auto dflt = stored_traits<Tr::VL>::setone();
+	auto zero = stored_traits<Tr::VL>::setzero();
+	if constexpr( MSB ) {
+	    bmask = stored_traits<Tr::VL>::blend( mask, dflt, bmask );
+	    bmask = stored_traits<Tr::VL>::bitblend( bmask, value, old );
+	} else {
+	    bmask = stored_traits<Tr::VL>::blend( mask, zero, bmask );
+	    bmask = stored_traits<Tr::VL>::bitblend( bmask, old, value );
+	}
+	stored_traits<Tr::VL>::store( &base[idx], bmask );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    storeu( storage_type * base, index_type idx,
+	   typename Tr::type raw ) {
+	auto old = stored_traits<Tr::VL>::loadu( &base[idx] );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	auto mask = stored_traits<Tr::VL>::setone_shr1();
+	if constexpr( MSB )
+	    mask = stored_traits<Tr::VL>::bitblend( mask, value, old );
+	else
+	    mask = stored_traits<Tr::VL>::bitblend( mask, old, value );
+	stored_traits<Tr::VL>::storeu( &base[idx], mask );
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx ) {
+	auto val = array_encoding<stored_type>::
+	    template gather<Tr>( base, idx );
+	return extract<Tr>( val );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static typename Tr::type
+    gather( storage_type * base, index_type idx, mask_type mask ) {
+	auto val = array_encoding<stored_type>::
+	    template gather<Tr>( base, idx, mask );
+	return extract<Tr>( val );
+    }
+
+    template<typename Tr, typename index_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val ) {
+	static_assert( sizeof(storage_type) >= 4 || Tr::VL == 1,
+		       "vector scatter i32/i64 only" );
+	auto old = gather( base, idx );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( val );
+	auto mask = stored_traits<Tr::VL>::setone_shr1();
+	if constexpr ( MSB )
+	    mask = stored_traits<Tr::VL>::bitblend( mask, value, old );
+	else
+	    mask = stored_traits<Tr::VL>::bitblend( mask, old, value );
+	stored_traits<Tr::VL>::scatter( base, idx, mask );
+    }
+
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    scatter( storage_type * base, index_type idx, typename Tr::type val,
+	     mask_type mask ) {
+	static_assert( sizeof(storage_type) >= 4 || Tr::VL == 1,
+		       "vector scatter i32/i64 only" );
+	auto old = gather( base, idx, mask );
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( val );
+	auto bmask = stored_traits<Tr::VL>::setone_shr1();
+	if constexpr ( MSB )
+	    bmask = stored_traits<Tr::VL>::bitblend( bmask, value, old );
+	else
+	    bmask = stored_traits<Tr::VL>::bitblend( bmask, old, value );
+	stored_traits<Tr::VL>::scatter( base, idx, bmask, mask );
+    }
+
+    template<typename Tr>
+    static bool cas( volatile storage_type * addr,
+		     typename Tr::member_type old,
+		     typename Tr::member_type val ) {
+	// Adapted from baseline CAS definition
+	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
+	auto s_old = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<1>::member_type,1>::convert( old );
+	auto s_val = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<1>::member_type,1>::convert( val );
+	// TODO: copy msb by flag manipulation?
+	auto mask = stored_traits<1>::setone_shr1();
+	if constexpr ( MSB )
+	    mask = stored_traits<1>::bitblend( mask, s_val, s_old );
+	else
+	    mask = stored_traits<1>::bitblend( mask, s_old, s_val );
+	return stored_traits<1>::cas( addr, s_old, mask );
     }
 };
 

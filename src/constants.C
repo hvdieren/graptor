@@ -244,6 +244,7 @@ const char * frontier_type_names[
     "logical8",
     "sparse",
     "bit2",
+    "msb4",
     "illegal-frontier-type"
 };
 

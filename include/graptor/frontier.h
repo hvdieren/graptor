@@ -22,7 +22,8 @@ enum class frontier_type {
     ft_logical8 = 7,
     ft_sparse = 8,
     ft_bit2 = 9,
-    ft_N = 10
+    ft_msb4 = 10,
+    ft_N = 11
 };
 
 extern const char * frontier_type_names[static_cast<std::underlying_type_t<frontier_type>>( frontier_type::ft_N )+1];
@@ -50,6 +51,7 @@ struct frontier_params<frontier_type::ft_bool,VL_> {
     using type = bool;
     using data_type = simd::ty<bool,VL>;
     using mask_type = simd::detail::mask_bool_traits;
+    using encoding = array_encoding<type>;
 };
 
 template<>
@@ -60,6 +62,7 @@ struct frontier_params<frontier_type::ft_bit,0> {
     using type = unsigned char;
     using data_type = simd::ty<void,VL>;
     using mask_type = simd::detail::mask_bit_traits<VL>;
+    using encoding = array_encoding<type>;
 };
 
 template<unsigned short VL_>
@@ -70,6 +73,7 @@ struct frontier_params<frontier_type::ft_bit2,VL_> {
     using type = unsigned char;
     using data_type = simd::ty<bitfield<2>,VL>;
     using mask_type = simd::detail::mask_bit_logical_traits<2,VL>;
+    using encoding = array_encoding_bit<1>;
 };
 
 template<unsigned short VL_>
@@ -80,6 +84,7 @@ struct frontier_params<frontier_type::ft_bit,VL_,std::enable_if_t<VL_ != 0>> {
     using type = typename mask_type_traits<1>::type;
     using data_type = simd::ty<void,VL>;
     using mask_type = simd::detail::mask_bit_traits<VL>;
+    using encoding = array_encoding_bit<2>;
 };
 
 template<unsigned short VL_>
@@ -90,6 +95,7 @@ struct frontier_params<frontier_type::ft_logical1,VL_> {
     using type = logical<1>;
     using data_type = simd::detail::mask_logical_traits<W,VL>;
     using mask_type = data_type;
+    using encoding = array_encoding<type>;
 };
 
 template<unsigned short VL_>
@@ -100,6 +106,7 @@ struct frontier_params<frontier_type::ft_logical2,VL_> {
     using type = logical<2>;
     using data_type = simd::detail::mask_logical_traits<W,VL>;
     using mask_type = data_type;
+    using encoding = array_encoding<type>;
 };
 
 template<unsigned short VL_>
@@ -110,6 +117,7 @@ struct frontier_params<frontier_type::ft_logical4,VL_> {
     using type = logical<4>;
     using data_type = simd::detail::mask_logical_traits<W,VL>;
     using mask_type = data_type;
+    using encoding = array_encoding<type>;
 };
 
 template<unsigned short VL_>
@@ -120,7 +128,20 @@ struct frontier_params<frontier_type::ft_logical8,VL_> {
     using type = logical<8>;
     using data_type = simd::detail::mask_logical_traits<W,VL>;
     using mask_type = data_type;
+    using encoding = array_encoding<type>;
 };
+
+template<unsigned short VL_>
+struct frontier_params<frontier_type::ft_msb4,VL_> {
+    static constexpr unsigned short W = 4;
+    static constexpr unsigned short VL = VL_;
+    static constexpr frontier_type ftype = frontier_type::ft_msb4;
+    using type = logical<4>;
+    using data_type = simd::detail::mask_logical_traits<W,VL>;
+    using mask_type = data_type;
+    using encoding = array_encoding_msb<W,true>;
+};
+
 
 template<typename lVID>
 struct BitReader {
@@ -277,6 +298,34 @@ public:
 	}
 	return f;
     }
+    // template<typename VertexProp>
+    // static frontier msb( const partitioner & part, VertexProp & p ) {
+	// static constexpr unsigned short W = sizeof(typename VertexProp::type);
+    template<typename type>
+    static frontier msb( const partitioner & part, type * p ) {
+	static constexpr unsigned short W = sizeof(type);
+	static_assert( (W & (W-1)) == 0 && W > 0 && W <= 8,
+		       "W must be one of 1, 2, 4 or 8" );
+
+	frontier f;
+	f.nv = part.get_num_elements();
+	f.nactv = 0;
+	f.nacte = 0;
+	mmap_ptr<logical<W>> & fb = f.get_l<W>();
+	new ( &fb ) mmap_ptr<logical<W>>();
+	fb.set_allocation( part.get_num_vertices() * W, p /*.get_ptr()*/ );
+
+	// TODO: Should use VertexProp::encoding to access data
+	// TODO: how to put together constructor? for now, not clear...
+	logical<W> * d = fb.get();
+	map_vertexL( part, [&]( VID v ) { d[v].clear_msb(); } );
+
+	switch( W ) {
+	case 4: f.ftype = frontier_type::ft_msb4; break;
+	default: UNREACHABLE_CASE_STATEMENT;
+	}
+	return f;
+    }
     static frontier dense( const partitioner & part, VID num_vertices ) {
 	// std::cerr << "FRONTIER create dense bool\n";
 	// TODO: get num_vertices argument from part argument
@@ -360,6 +409,7 @@ public:
 	case frontier_type::ft_logical2: get_l<2>().del(); break;
 	case frontier_type::ft_logical4: get_l<4>().del(); break;
 	case frontier_type::ft_logical8: get_l<8>().del(); break;
+	case frontier_type::ft_msb4: break; // frontier does not own data
 	case frontier_type::ft_sparse:
 	    if( VID * s = get_s() ) // s is null in case of ::empty()
 		delete[] s;
@@ -940,6 +990,9 @@ public:
 	}
 	case frontier_type::ft_logical4:
 	    break; // nothing to do
+	case frontier_type::ft_msb4:
+	    // Leave as is; works nearly same way as logical<4>, so why change?
+	    break;
 	case frontier_type::ft_logical1:
 	{
 	    convert_logical<1,4>( part );
@@ -1073,7 +1126,10 @@ public:
 	    break;
 	}
 	case frontier_type::ft_logical4:
+	case frontier_type::ft_msb4:
 	{
+	    // Same code applies to ft_logical4 and ft_msb4 as we should only
+	    // consult the MSB to decide on true/false in both cases
 	    _seq<VID> R = packDense( part, get_l<4>().get() );
 	    replace_storage( R );
 	    break;
@@ -1129,6 +1185,7 @@ public:
 	case frontier_type::ft_logical2: return W == 2 ? get_l<W>().get() : nullptr;
 	case frontier_type::ft_logical4: return W == 4 ? get_l<W>().get() : nullptr;
 	case frontier_type::ft_logical8: return W == 8 ? get_l<W>().get() : nullptr;
+	case frontier_type::ft_msb4: return W == 4 ? get_l<W>().get() : nullptr;
 	default: UNREACHABLE_CASE_STATEMENT;
 	}
     }
@@ -1170,7 +1227,7 @@ public:
     void merge_or( const GraphType &, frontier & );
 
 private:
-    void merge_or_sparse( const GraphCSx & G, frontier & f );
+    inline void merge_or_sparse( const GraphCSx & G, frontier & f );
     
     template<typename GraphType, typename LHSTy>
     void merge_or_ds( const GraphType &, LHSTy *, frontier & );
@@ -1384,7 +1441,7 @@ private:
 		      VID e = part.end_of( p );
 		      VID r = 0;
 		      for( VID v=s; v < e; ++v )
-			  if( !!flags[v] )
+			  if( !!flags[v] ) // uses logical<>::is_true()
 			      ++r;
 		      sums[p] = r;
 		  } );
@@ -1407,7 +1464,7 @@ private:
 		      VID e = part.end_of( p );
 		      VID pos = sums[p];
 		      for( VID v=s; v < e; ++v )
-			  if( !!flags[v] )
+			  if( !!flags[v] ) // uses logical<>::is_true()
 			      ids[pos++] = v;
 		      assert( pos == sums[p+1] );
 		  } );
@@ -1566,6 +1623,7 @@ private:
 	case frontier_type::ft_logical2: get_l<2>().del(); break;
 	case frontier_type::ft_logical4: get_l<4>().del(); break;
 	case frontier_type::ft_logical8: get_l<8>().del(); break;
+	case frontier_type::ft_msb4: break; // nothing to do
 	default: UNREACHABLE_CASE_STATEMENT;
 	}
     }
@@ -1705,6 +1763,11 @@ inline void frontier::toDense<frontier_type::ft_logical8>( const partitioner & p
     toLogical8( part );
 }
 
+template<>
+inline void frontier::toDense<frontier_type::ft_msb4>( const partitioner & part ) {
+    // Cannot make this converion, leave as it is
+}
+
 
 template<>
 inline bool * frontier::getDense<bool>() const {
@@ -1764,6 +1827,11 @@ inline logical<4> * frontier::getDense<frontier_type::ft_logical4>() const {
 template<>
 inline logical<8> * frontier::getDense<frontier_type::ft_logical8>() const {
     return getDenseL<8>();
+}
+
+template<>
+inline logical<4> * frontier::getDense<frontier_type::ft_msb4>() const {
+    return getDenseL<4>();
 }
 
 
