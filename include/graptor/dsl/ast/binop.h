@@ -3,6 +3,7 @@
 #define GRAPTOR_DSL_AST_BINOP_H
 
 #include "graptor/dsl/ast/memref.h"
+#include "graptor/dsl/ast/unop.h"
 #include "graptor/dsl/comp/extract_mask.h"
 
 namespace expr {
@@ -294,6 +295,35 @@ auto add_predicate( E1 val, E2 mask ) {
 template<typename E1, typename E2>
 constexpr auto _p( E1 val, E2 mask ) {
     return add_predicate( val, mask );
+}
+
+/* binop: if-or-zero
+ */
+struct binop_iforz {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E2::data_type;
+    };
+
+    static constexpr char const * name = "binop_iforz";
+
+    template<typename MTr, layout_t Layout1,
+	     typename VTr, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<MTr,Layout1> m,
+				 sb::rvalue<VTr,Layout2> a,
+				 const MPack & mpack ) {
+	return make_rvalue( simd::iforz( m.value(), a.value() ), mpack );
+    }
+ 
+};
+
+template<typename E1, typename E2>
+auto iforz( E1 mask, E2 val ) {
+    static_assert( E1::VL == E2::VL && "vector length match" );
+    
+    return make_binop( mask, val, binop_iforz() );
 }
 
 /**
@@ -967,7 +997,10 @@ template<typename E1, typename E2>
 auto make_cmplt( E1 l, E2 r,
 		 std::enable_if_t<is_base_of<expr_base,E1>::value
 		 && is_base_of<expr_base,E2>::value> * = nullptr ) {
-    return make_binop( l, r, binop_cmplt() );
+    if constexpr ( r.opcode == op_constant && r.vkind == vk_zero )
+	return cmpneg( l );
+    else
+	return make_binop( l, r, binop_cmplt() );
 }
 
 template<typename E1, typename E2>

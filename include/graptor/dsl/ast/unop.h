@@ -1161,6 +1161,34 @@ auto srai( Expr e,
     return unop<Expr,Op>( e, Op() );
 }
 
+/**
+ * unop_cmpneg: comparison for negative numbers
+ */
+template<unsigned short VL_>
+struct unop_cmpneg {
+    static constexpr unsigned short VL = VL_;
+
+    template<typename E>
+    struct types {
+	using result_type = typename E::data_type::prefmask_traits;
+    };
+
+    static constexpr char const * name = "unop_cmpneg";
+
+    template<typename MTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
+	return make_rvalue( simd::detail::cmpneg( r.value() ), mpack );
+    }
+};
+
+template<typename Expr>
+auto cmpneg( Expr e,
+	     std::enable_if_t<std::is_base_of_v<expr_base,Expr>> * = nullptr ) {
+    using Op = unop_cmpneg<Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
 } // namespace expr
 
 #endif // GRAPTOR_DSL_AST_UNOP_H
