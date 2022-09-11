@@ -193,6 +193,13 @@ auto max( detail::vec<Tr,Layout1> a,
 	Tr::traits::max( a.data(), b.data() ) );
 }
 
+template<typename Tr, typename MTr, simd::layout_t Layout>
+auto iforz( simd::detail::mask_impl<MTr> sel,
+	    simd::detail::vec<Tr,Layout> a ) {
+    return simd::detail::vec<Tr,lo_unknown>(
+	Tr::traits::iforz( sel.get(), a.data() ) );
+}
+
 namespace detail {
 
 template<typename Tr, layout_t Layout1, layout_t Layout2>
@@ -236,6 +243,12 @@ template<typename Tr, layout_t Layout1, layout_t Layout2>
 auto operator < ( vec<Tr,Layout1> l, vec<Tr,Layout2> r ) {
     return vec<Tr,Layout1>::make_mask(
 	Tr::traits::cmplt( l.data(), r.data(), typename Tr::tag_type() ) );
+}
+
+template<typename Tr, layout_t Layout1>
+auto cmpneg( vec<Tr,Layout1> l ) {
+    return vec<Tr,Layout1>::make_mask(
+	Tr::traits::cmpneg( l.data(), typename Tr::tag_type() ) );
 }
 
 template<typename Tr, layout_t Layout1, layout_t Layout2>

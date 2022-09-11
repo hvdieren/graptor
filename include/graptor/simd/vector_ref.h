@@ -203,16 +203,18 @@ public:
     template<layout_t Layout_>
     auto atomic_min( vec<vector_traits,Layout_> val ) {
 	static_assert( VL == 1, "only supported for VL=1" );
-	// static_assert( layout != lo_unknown, "cannot do CAS in gather/scatter" );
 
 	member_type n = val.at(0); // assumes VL == 1
+	member_type oc;
 	member_type o;
 	bool r = false;
 	do {
-	    o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    // o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    oc = encoding::template ldcas<vector_traits>( m_addr, m_sidx );
+	    o = encoding::template extract<vector_traits>( oc );
 	} while( o > n
 		 && !(r = encoding::template cas<vector_traits>(
-			  &m_addr[m_sidx], o, n ))
+			  &m_addr[m_sidx], oc, n ))
 	    );
 	using L = typename add_logical<member_type>::type;
 	return r
@@ -664,9 +666,12 @@ public:
 	    return;
 	}
 	if constexpr ( m_layout == lo_linalgn ) {
+/*
 	    type old = encoding::template load<vector_traits>( m_addr, m_sidx );
 	    type upd = traits::blend( mask.data(), old, val.data() );
 	    encoding::template store<vector_traits>( m_addr, m_sidx, upd );
+*/
+	    encoding::template store<vector_traits>( m_addr, m_sidx, val.data(), mask.data() );
 	    return;
 	}
 	UNREACHABLE_CASE_STATEMENT;
