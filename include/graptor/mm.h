@@ -320,6 +320,11 @@ public:
         local_allocate(elements,numa_node);
     }
 
+    void set_allocation( size_t b, void * m ) {
+	totalSize = b;
+	mem = m;
+    }
+
     void allocate( size_t elements, const numa_allocation & alloc ) {
 	switch( alloc.get_kind() ) {
 	case na_local:
@@ -720,6 +725,13 @@ public:
     // Default is interleaved allocation
     mmap_ptr( size_t elements )
 	: mmap_ptr( elements, numa_allocation_interleaved() ) { }
+
+    void set_allocation( size_t b, void * m ) {
+	totalSize = b;
+	mem = reinterpret_cast<type *>( m );
+	allocated = nullptr;
+    }
+
     void allocate( const numa_allocation_partitioned & alloc ) {
 	generic_allocate( alloc.get_partitioner().get_vertex_range(),
 			  MIN_ALIGN );
