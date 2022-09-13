@@ -10,6 +10,14 @@ using expr::_true;
 using expr::_c;
 using expr::_p;
 
+#ifndef USE_MSB
+#define USE_MSB 1
+#endif
+
+#ifndef USE_BM64
+#define USE_BM64 1
+#endif
+
 enum gc_variable_name {
     var_color = 0,
     var_mupd = 1,
@@ -18,6 +26,8 @@ enum gc_variable_name {
     var_unavail = 4,
     var_bound = 5,
     var_used = 6,
+    var_diff = 7,
+    var_dfsh = 8,
     var_degrees_ro = expr::aid_graph_degree
 };
 
@@ -37,8 +47,37 @@ std::ostream & operator << ( ostream & os, iteration_kind k ) {
     return os;
 }
 
+#if USE_BM64
 using BitMaskTy = uint64_t;
-using ColTy = VID;
+#else
+using BitMaskTy = uint32_t;
+#endif
+
+using ColTy = std::make_signed_t<VID>;
+
+#if USE_MSB
+#define SHIFT_OUT <<
+#define SHIFT_IN >>
+template<typename AST>
+auto base_mask( AST mask ) {
+    return expr::slli<sizeof(BitMaskTy)*8-1>( _1s( mask ) );
+}
+template<typename T, typename AST>
+auto zero_cnt( AST mask ) {
+    return expr::lzcnt<T>( mask );
+}
+#else
+#define SHIFT_OUT >>
+#define SHIFT_IN <<
+template<typename AST>
+auto base_mask( AST mask ) {
+    return expr::srli<sizeof(BitMaskTy)*8-1>( _1s( mask ) );
+}
+template<typename T, typename AST>
+auto zero_cnt( AST mask ) {
+    return expr::tzcnt<T>( mask );
+}
+#endif
 
 template <class GraphType>
 class GC_GM3P {
@@ -52,9 +91,9 @@ public:
 	  bound( GA.get_partitioner(), "bound on seen color" ),
 	  used( GA.get_partitioner(), "used colors" ),
 	  unavail( GA.get_partitioner(), "unavailable coors" ),
-	  prng( GA.get_partitioner(),
-		static_cast<VID>( static_cast<float>( GA.getCSR().max_degree() )
-				  * ( 1.0 + mu ) ) ),
+	  // prng( GA.get_partitioner(),
+		// static_cast<VID>( static_cast<float>( GA.getCSR().max_degree() )
+				  // * ( 1.0 + mu ) ) ),
 	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -63,7 +102,8 @@ public:
 	static bool once = false;
 	if( !once ) {
 	    once = true;
-	    // std::cerr << "WITH_DEPTH=" << WITH_DEPTH << "\n";
+	    std::cerr << "USE_MSB=" << USE_MSB << "\n";
+	    std::cerr << "USE_BM64=" << USE_BM64 << "\n";
 	}
     }
     ~GC_GM3P() {
@@ -184,11 +224,17 @@ public:
 	    auto undef = _1s( col[d]);
 	    auto one = _1( col[d] );
 
-	    auto Mone = _1( unavail[d] );
+	    auto Mone = base_mask( unavail[d] );
 	    auto Mzero = _0( unavail[d] );
 
-	    auto w = expr::constant_val( bound[d], sizeof(BitMaskTy)*8 );
-	    auto Mw = expr::constant_val( unavail[d], sizeof(BitMaskTy)*8 );
+	    constexpr ColTy cw = sizeof(BitMaskTy)*8;
+	    constexpr ColTy log_w = ilog2( cw );
+
+	    auto w = expr::slli<log_w>( _1(bound[d]) ); // expr::constant_val( bound[d], cw );
+	    auto Mw = expr::slli<log_w>( _1(unavail[d]) ); // expr::constant_val( unavail[d], cw );
+	    // auto Mwm = expr::slli<log_w>( _1(unavail[d]) ) - _1;
+
+	    // using MTr = simd::detail::mask_logical_traits<sizeof(ColTy),decltype(dd)::VL>;
 
 	    // Conditional set of bound value. The bound is the smallest colour
 	    // of a neighbour that is larger than the current colour and
@@ -197,47 +243,59 @@ public:
 	    // a previously seen neighbour.
 	    // If the colour is less then the bound and not present in the mask,
 	    // then the colour has not been seen on a neighbour.
+	    return expr::let<var_diff>(
+		color[s] - color[d],
+		[&]( auto diff ) {
 	    return expr::template let<var_mupd>( // updated mask (add neighbour)
-		expr::iif( col[s] < col[d] || col[s] == undef,      // need a positive shift value
-			   unavail[d] | ( Mone << expr::cast<BitMaskTy>( col[s] - col[d] ) ), // set bit
+#if 0
+		expr::iif( ( diff | col[s] ) < _0, // need a positive shift value
+			   unavail[d] | ( Mone SHIFT_IN expr::cast<BitMaskTy>( diff ) ), // set bit
 			   unavail[d] ),         // nothing to set
+#else
+		// Assumptions: BitMaskTy = 32 bits ; MSB
+		// bit pattern with top bit 1 if condition met, else zeros
+		( expr::cast<BitMaskTy>( ~( diff | col[s] ) & ( expr::slli<31>( _1s(col[s]) ) ) ) SHIFT_IN expr::cast<BitMaskTy>( diff ) ) | unavail[d],
+#endif
 		[&]( auto Mupd ) {
 		    return expr::template let<var_sh>( // positions to shift mask
-			expr::iif( /*dd != s &&*/ col[d] == col[s] && col[s] != undef, // colour conflict?
+			expr::iif( diff == _0 && !( col[s] < _0 ), // colour conflict?
 				   Mzero,             // no: 0 shift; yes: find next
-				   expr::make_unop_tzcnt<BitMaskTy>( ~Mupd ) ),
+				   zero_cnt<BitMaskTy>( ~Mupd ) ),
 			[&]( auto sh ) {
-			    return expr::template let<var_smod>( // new colour for d
-				expr::iif( /*dd != s &&*/ col[d] == undef,
-					   col[d] + expr::cast<ColTy>( sh ),          // advance
-					   zero ),               // first colour
-				[&]( auto smod ) {               // store values
-				    return expr::make_seq(
-					bound[d] = expr::add_predicate(
-					    smod,
-					    smod < bound[d] && col[d]+w < smod ),
-					// x86 scalar >> (shrx) masks sh by w
-					// bits ((1<<w)-1) shifting by zero if
-					// sh == w, while SSE/AVX will
-					// set to zero if sh >= w
-					unavail[d] = expr::iif( sh >= Mw,
-								Mupd >> sh, // expr::cast<BitMaskTy>( sh ),
-								Mzero ),
-					col[d] = smod // ,
-					// , sh != zero // change mask -- TODO
-					// , smod >= undef
-					);
-				} );
+			    return expr::make_seq(
+/*
+				bound[d] = expr::add_predicate(
+				    smod,
+				    smod < bound[d] && col[d]+w < smod ),
+*/
+				// x86 scalar >> (shrx) masks sh by w
+				// bits ((1<<w)-1) shifting by zero if
+				// sh == w, while SSE/AVX will
+				// set to zero if sh >= w
+				// Note: sh can be at most #bits in mask
+				//  due to computed by zero count.
+				//  Thus, we only need to consider the
+				//  case where sh == w.
+				unavail[d] = expr::iif( sh >= Mw,
+							Mupd SHIFT_OUT sh,
+							Mzero ),
+				col[d] = expr::iif(
+				    col[d] < _0,
+				    col[d] + expr::cast<ColTy>( sh ),          // advance
+				    zero )               // first colour
+				);
 			} );
+		} );
 		} );
 	};
 
 	auto simple = [&]( auto s, auto d ) {
+	    auto Mone = base_mask( unavail[d] );
 	    return expr::make_seq(
 		unavail[d] |= _p(
-		    _1(unavail[d]) << expr::cast<BitMaskTy>( color[s] ),
+		    Mone SHIFT_IN expr::cast<BitMaskTy>( color[s] ),
 		    color[s] != _1s ),
-		color[d] = expr::tzcnt<VID>( ~unavail[d] )
+		color[d] = zero_cnt<VID>( ~unavail[d] )
 		);
 		
 	};
@@ -246,8 +304,8 @@ public:
 	    GA,
 	    api::filter( api::dst, api::strong, active ),
 	    api::relax( [&]( auto s, auto d, auto e ) {
-		// return greedy( s, d );
-		return simple( s, d );
+		return greedy( s, d );
+		// return simple( s, d );
 	    } )
 	    )
 	    .materialize();
@@ -271,13 +329,10 @@ public:
 	const VID * edge = GA.getCSR().getEdges();
 
 	make_lazy_executor( part )
-	    .vertex_map(
-		[&]( auto v ) {
-		    return used[v] = _1s;
-		} )
+	    .vertex_map( [&]( auto v ) { return used[v] = _1s; } )
 	    .materialize();
 	
-	VID * const used_p = used.get_ptr();
+	VID * const used_p = reinterpret_cast<VID *>( used.get_ptr() );
 
 	for( VID k=0; k < fn; ++k ) {
 	    const VID v = fv[k];
@@ -311,8 +366,9 @@ public:
 		// Returns true if color reset
 		return color[d] = _p( _1s(color[d]),
 				      color[s] == color[d]
-				      && color[s] != _1s
-				      && s < d );
+				      // && color[s] != _1s
+				      // && s < d
+		    );
 	    } )
 	    ).materialize();
 	return c;
@@ -397,7 +453,7 @@ private:
     api::vertexprop<ColTy,VID,var_bound> bound;
     api::vertexprop<ColTy,VID,var_bound> used;
     api::vertexprop<BitMaskTy,VID,var_unavail> unavail;
-    expr::rnd::prng<VID> prng;
+    // expr::rnd::prng<VID> prng;
     std::vector<info> info_buf;
 };
 
