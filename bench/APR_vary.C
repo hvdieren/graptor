@@ -451,7 +451,6 @@ public:
 	// iter = 0;
 
 	while( iter < max_iter ) {
-	    // frontier output; // unused, initialized to all_true
 	    frontier active = frontier::dense<sizeof(VID)>( part );
 	    using FrTy = typename add_logical<VID>::type;
 	    expr::array_ro<FrTy,VID,var_frontier> active_arr( active.getDense<FrTy>() );
