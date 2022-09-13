@@ -997,9 +997,12 @@ template<typename E1, typename E2>
 auto make_cmplt( E1 l, E2 r,
 		 std::enable_if_t<is_base_of<expr_base,E1>::value
 		 && is_base_of<expr_base,E2>::value> * = nullptr ) {
-    if constexpr ( r.opcode == op_constant && r.vkind == vk_zero )
-	return cmpneg( l );
-    else
+    if constexpr ( r.opcode == op_constant ) {
+	if constexpr ( r.vkind == vk_zero )
+	    return cmpneg( l );
+	else
+	    return make_binop( l, r, binop_cmplt() );
+    } else
 	return make_binop( l, r, binop_cmplt() );
 }
 
