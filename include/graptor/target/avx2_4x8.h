@@ -819,9 +819,14 @@ public:
 	    // _mm512_set1_epi32( ~smsk );
 	}
 	member_type extract_degree( type v ) const {
+	    /*
 	    __m512i x = _mm512_castsi256_si512( v );
 	    __mmask16 k = _mm512_cmpgt_epu32_mask( x, wmask );
 	    member_type degree = _cvtmask16_u32( k ) & 255;
+	    return degree;
+	    */
+	    __mmask8 k = _mm256_movepi32_mask( v );
+	    member_type degree = _cvtmask8_u32( k );
 	    return degree;
 	}
 	type extract_source( type v ) const {

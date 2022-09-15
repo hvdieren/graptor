@@ -656,7 +656,8 @@ public:
 	    // type vs = _mm512_andnot_si512( mask, v );
 	    // type bits = _mm512_srlv_epi32( vs, shift );
 	    // member_type degree = _mm512_reduce_or_epi32( bits );
-	    __mmask16 k = _mm512_cmpgt_epu32_mask( v, mask ); /* cmpge??*/
+	    // __mmask16 k = _mm512_cmpgt_epu32_mask( v, mask ); /* cmpge??*/
+	    __mmask16 k = _mm512_movepi32_mask( v );
 	    member_type degree = _cvtmask16_u32( k );
 	    return degree;
 	}
