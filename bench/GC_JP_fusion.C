@@ -158,7 +158,7 @@ first set color[v] = v
 #endif
 	};
 
-	parallel_loop( (EID)0, m, [&]( EID e ) { usedcol[e] = 0; } );
+	parallel_loop( (EID)0, m, [&]( EID e ) { usedcol.get_ptr()[e] = 0; } );
 
 	frontier roots;
 	api::edgemap(
@@ -271,7 +271,7 @@ first set color[v] = v
 	    GA,
 	    api::record( output, api::reduction, api::strong ),
 	    api::relax( [&]( auto s, auto d, auto e ) {
-		return color[s] == color[d];
+		return color[s] == color[d] && s != d;
 	    } )
 	    ).materialize();
 
