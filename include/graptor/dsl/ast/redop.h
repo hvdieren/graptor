@@ -497,6 +497,17 @@ struct redop_logicaland {
 	    return make_rvalue( mfalse, mpack );
 	}
     }
+
+    template<typename VTr, layout_t Layout, typename MPack>
+    static auto
+    evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	auto v = r.value();
+	if constexpr ( !mpack.is_empty() ) {
+	    auto m = mpack.get_mask_for( v );
+	    v &= m.data();
+	}
+	return make_rvalue( reduce_logicaland( v ), sb::mask_pack<>() );
+    }
 };
 
 template<typename E1, typename E2>
@@ -1507,6 +1518,51 @@ template<typename E>
 auto refop<A,T,VL>::setif( E rhs ) {
     return redop<self_type,E,redop_setif>( *this, rhs, redop_setif() );
 }
+
+/* redop: find_first
+ * Returns lowest-numbered lane with a zero value
+ */
+struct redop_find_first {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type::prefmask_traits;
+	using cache_type = logical<sizeof(typename E2::type)>;
+	using infer_type = typename E1::data_type;
+    };
+
+    static constexpr bool is_idempotent = true;
+    static constexpr bool is_benign_race = false;
+    
+    // TODO: should have an ID here instead of string
+    static constexpr char const * name = "redop_find_first";
+
+    template<typename E1, typename E2>
+    using enable = std::true_type;
+
+    template<typename T>
+    static constexpr auto unit() { return ~typename T::element_type(0); }
+
+    template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
+	     layout_t Layout, typename MPack>
+    static __attribute__((always_inline))
+    auto evaluate( sb::lvalue<VTr,I,Enc,NT,LayoutR> l, sb::rvalue<VTr,Layout> r,
+		   const MPack & mpack ) {
+	assert( 0 && "NYI" );
+	return r;
+    }
+
+    template<typename VTr, layout_t Layout, typename MPack>
+    static auto
+    evaluate1( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	auto v = r.value();
+	if constexpr ( mpack.is_empty() )
+	    return make_rvalue( simd::find_first( v ), sb::mask_pack<>() );
+	else {
+	    auto m = mpack.get_mask_for( v ); // or any mask
+	    return make_rvalue( simd::find_first( v, m ), sb::mask_pack<>() );
+	}
+    }
+};
 
 } // namespace expr
 
