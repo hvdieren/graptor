@@ -8,6 +8,8 @@
 
 namespace expr {
 
+struct binop_seq;
+
 /* binop
  * A binary operation applied to a pair of expressions.
  */
@@ -15,16 +17,15 @@ template<typename E1, typename E2, typename BinOp>
 struct binop : public expr_base {
     using data_type = typename BinOp::template types<E1,E2>::result_type;
     using type = typename data_type::member_type;
-    // using ltype = typename E1::type;
-    // using rtype = typename E2::type;
-    static constexpr unsigned short VL = std::max( E1::VL, E2::VL );
+    static constexpr unsigned short VL = data_type::VL;
     using left_type = E1;
     using right_type = E2;
     using op_type = BinOp;
 
     static constexpr op_codes opcode = op_binop;
 
-    static_assert( E1::VL == E2::VL, "vector lengths must match" );
+    static_assert( E1::VL == E2::VL || std::is_same_v<op_type,binop_seq>,
+		   "vector lengths must match" );
     
     binop( left_type arg1, right_type arg2, BinOp )
 	: m_arg1( arg1 ), m_arg2( arg2 ) { }
