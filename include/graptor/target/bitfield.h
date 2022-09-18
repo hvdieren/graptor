@@ -35,6 +35,8 @@ public:
     // using itype = __m256i;
     // using int_type = uint8_t;
 
+    using mt_preferred = target::mt_vmask;
+
     using mtraits = mask_type_traits<vlen>;
     using mask_type = typename mtraits::type;
 
@@ -122,6 +124,27 @@ public:
 	assert( 0 && "NYI" );
     }
 
+    static uint32_t find_first( type a ) {
+	if constexpr ( bits == 1 && size <= 4 ) {
+	    return _tzcnt_u32( ~(uint32_t)a );
+	} else if constexpr ( bits == 1 && size <= 8 ) {
+	    return _tzcnt_u64( ~(uint64_t)a );
+	} else {
+	    assert( 0 && "NYI" );
+	    return 0;
+	}
+    }
+    static uint32_t find_first( type a, vmask_type m ) {
+	if constexpr ( bits == 1 && size <= 4 ) {
+	    return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
+	} else if constexpr ( bits == 1 && size <= 8 ) {
+	    return _tzcnt_u64( (uint64_t)logical_andnot( a, m ) );
+	} else {
+	    assert( 0 && "NYI" );
+	    return 0;
+	}
+    }
+
     static type blendm( vmask_type m, type a, type b ) {
 	return blend( m, a, b );
     }
@@ -142,7 +165,9 @@ public:
     }
 
     static vmask_type cmpne( type a, type b, mt_vmask ) {
-	if constexpr ( bits == 2 ) {
+	if constexpr ( bits == 1 ) {
+	    return a ^ b;
+	} else if constexpr ( bits == 2 ) {
 	    // only top bit is meaningful
 	    auto ne = a ^ b;
 	    auto c = ( ne << 1 ) | ne;
@@ -168,14 +193,21 @@ public:
 	return cmplt( b, a, mt_vmask() );
     }
 
+    static vmask_type cmpneg( type a, mt_vmask ) { return a; }
+
     // Only top bit matters in logical (bit-)masks
     static type logical_and( type a, type b ) { return a & b; }
+    static type logical_andnot( type a, type b ) { return ~a & b; }
     static type logical_or( type a, type b ) { return a | b; }
     static type logical_invert( type a ) { return ~a; }
 
     static type bitwise_and( type a, type b ) { return a & b; }
     static type bitwise_or( type a, type b ) { return a | b; }
     static type bitwise_invert( type a ) { return ~a; }
+
+    // This incorrectly requires that all non-top-bits mimick the top bit.
+    // Corrects if bits == 1, otherwise maybe not.
+    static member_type reduce_logicaland( type a ) { return ~a == 0; }
 
     // Contrary to other implementations, the address passed into load and store
     // is a vector address, not a member address.
@@ -430,6 +462,8 @@ public:
     static bool cmplt( type a, type b, mt_bool ) {
 	return a.get() < b.get();
     }
+    static vmask_type cmpneg( type a, mt_vmask ) { return a; }
+    static vmask_type cmpneg( type a, mt_bool ) { return a != setzero(); }
 
     static type blendm( mask_type m, type a, type b ) {
 	return blend( m, a, b );
