@@ -47,8 +47,26 @@ struct mask_type_traits<8> {
 	return ( hi << 4 ) | lo;
     }
 
+    static uint32_t find_first( type a ) {
+	return _tzcnt_u32( ~(uint32_t)a );
+    }
+
+    static uint32_t find_first( type a, type m ) {
+	// a m | eligible
+	// 0 0 | - 1
+	// 0 1 | + 0
+	// 1 0 | - 1
+	// 1 1 | - 1
+	// tzcnt( ~( a | ~m ) ) = tzcnt( ~a & m )
+	// return find_first( logical_or( a, logical_invert( m ) ) );
+	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
+    }
+
     static type logical_and( type l, type r ) {
 	return l & r;
+    }
+    static type logical_andnot( type l, type r ) {
+	return ~l & r;
     }
     static type logical_or( type l, type r ) {
 	return l | r;
