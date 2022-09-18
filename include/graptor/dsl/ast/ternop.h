@@ -4,17 +4,20 @@
 
 namespace expr {
 
+struct loopop_while;
+
 /* ternop
  * A ternary operation.
  */
 template<typename E1, typename E2, typename E3, typename TernOp>
 struct ternop : public expr_base {
-    static_assert( E1::VL == E2::VL && E2::VL == E3::VL,
+    static_assert( E1::VL == E2::VL && E2::VL == E3::VL
+		   || std::is_same_v<TernOp,loopop_while>,
 		   "vector lengths must match" );
 
-    using data_type = typename E3::data_type; // E1 is conditional for iif
+    using data_type = typename TernOp::types<E1,E2,E3>::result_type;
     using type = typename data_type::member_type;
-    static constexpr unsigned short VL = E1::VL;
+    static constexpr unsigned short VL = data_type::VL;
     using arg1_type = E1;
     using arg2_type = E2;
     using arg3_type = E3;
