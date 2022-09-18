@@ -225,6 +225,19 @@ public:
 	return blendm( asvector( m ), l, r );
 #endif
     }
+
+    static uint32_t find_first( type v ) {
+	// Needs to return vlen when all lanes of v are zero. Happens because
+	// of the bitwise inversion of the mask, which puts default 0 bits
+	// to 1. As long as vlen < 32
+	return mask_traits::find_first( asmask( v ) );
+    }
+    static uint32_t find_first( type v, vmask_type m ) {
+	// Should return 8 when all lanes of v are zero due to mask
+	// argument
+	return mask_traits::find_first( asmask( v ), asmask( m ) );
+    }
+    
     static type blend( mask_type m, type l, type r ) {
 	return blendm( m, l, r );
     }
@@ -411,6 +424,20 @@ public:
 	return asmask( cmple( a, b, mt_vmask() ) );
     }
 #endif // __AVX512VL__ && __AVX512BW__
+
+    static mask_type cmpneg( type a, mt_mask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return asmask( a );
+	else
+	    return mask_traits::setzero();
+    }
+    static vmask_type cmpneg( type a, mt_vmask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return asvector( asmask( a ) );
+	else
+	    return setzero();
+    }
+    
     static member_type reduce_setif( type val ) {
 	assert( 0 && "NYI" );
 	return setzero();
@@ -445,7 +472,16 @@ public:
 	else
 	    return ( (!m | v) & 0xff ) ? ~member_type(0) : member_type(0);
     }
-    
+    static member_type reduce_logicaland( type val ) {
+	   static_assert( vlen < 32, "word width limit" );
+	   return member_type(
+	       (uint32_t)asmask( val ) == ( uint32_t(1) << vlen ) - 1 );
+    }
+    static member_type reduce_logicaland( type val, type mask ) {
+	// if mask then true if val; if not mask, then true
+	// mask => val, or !mask || val, then reduce
+	return reduce_logicaland( logical_or( logical_invert( mask ), val ) );
+    } 
     static member_type reduce_min( type val ) {
 /*
 	auto rot = _mm256_permute4x64_epi64( val, 0b1110 ); // all in lo128 bits
