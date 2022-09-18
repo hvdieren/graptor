@@ -169,25 +169,30 @@ struct evaluator {
 		get_ptr( array ), idx.value() );
     }
 
-    template<unsigned short VL, typename T, typename VTr, short AID,
-	     typename Enc, bool NT, layout_t Layout>
+    template<unsigned short VL, bool aligned,
+	     typename T, typename VTr, short AID, typename Enc, bool NT,
+	     layout_t Layout>
     GG_INLINE
-    auto levaluate_incseq( const array_intl<T,typename VTr::member_type,AID,Enc,NT> & array,
-			   sb::rvalue<VTr,Layout> idx ) {
+    auto levaluate_incseq(
+	const array_intl<T,typename VTr::member_type,AID,Enc,NT> & array,
+	sb::rvalue<VTr,Layout> idx ) {
 	static_assert( VTr::VL == 1, "incseq requirement" );
+	static_assert( aligned, "default value; extension not checked" );
 	using ATr = simd::ty<T,VL>;
 	return simd::template create_vector_ref_cacheop<
 	    ATr,typename VTr::member_type,Enc,NT>(
 		get_ptr( array ), idx.value().data() );
     }
 
-    template<unsigned short VL, typename T, typename VTr, short AID,
-	     layout_t Layout>
+    template<unsigned short VL, bool aligned,
+	     typename T, typename VTr, short AID, layout_t Layout>
     GG_INLINE
-    auto levaluate_incseq( const bitarray_intl<T,typename VTr::member_type,AID> & array,
-			   sb::rvalue<VTr,Layout> idx ) {
+    auto levaluate_incseq(
+	const bitarray_intl<T,typename VTr::member_type,AID> & array,
+	sb::rvalue<VTr,Layout> idx ) {
 	static_assert( VTr::VL == 1, "incseq requirement" );
 	static_assert( VL >= 8, "coding scheme" );
+	static_assert( aligned, "default value; extension not checked" );
 /*
 	using Ty = int_type_of_size_t<VL/8>;
 	using Enc = array_encoding<Ty>;
@@ -230,7 +235,9 @@ struct evaluator {
 	return make_rvalue( rv, idx.mpack() );
     }
 
+#if 0
     template<typename T, typename VTr, short AID, typename Enc, bool NT, layout_t Layout>
+    [[deprecated("rvalue replaced by sb::rvalue")]]
     GG_INLINE
     auto evaluate( const array_intl<T,typename VTr::member_type,AID,Enc,NT> & array,
 		   rvalue<VTr,Layout,simd::detail::mask_bool_traits> idx ) {
@@ -242,6 +249,7 @@ struct evaluator {
     }
 
     template<typename T, typename VTr, short AID, typename Enc, bool NT, layout_t Layout>
+    [[deprecated("rvalue replaced by sb::rvalue")]]
     GG_INLINE
     auto evaluate( const array_intl<T,typename VTr::member_type,AID,Enc,NT> & array,
 		   rvalue<VTr,Layout,void> idx ) {
@@ -253,9 +261,11 @@ struct evaluator {
 		get_ptr( array ), idx.value() );
 	return make_rvalue( ref.load() );
     }
+#endif
 
-    template<unsigned short VL, typename T, typename VTr, short AID,
-	     typename Enc, bool NT, layout_t Layout>
+    template<unsigned short VL, bool aligned,
+	     typename T, typename VTr, short AID, typename Enc, bool NT,
+	     layout_t Layout>
     GG_INLINE
     auto evaluate_incseq( array_intl<T,typename VTr::member_type,AID,Enc,NT> array,
 			  sb::rvalue<VTr,Layout> idx ) {
@@ -263,7 +273,8 @@ struct evaluator {
 	using ATr = simd::detail::vdata_traits<T,VL>;
 	auto lv = simd::template
 	    create_vector_ref_scalar<
-		ATr,typename VTr::member_type,Enc,NT,lo_linalgn>(
+		ATr,typename VTr::member_type,Enc,NT,
+		aligned ? lo_linalgn : lo_linear>(
 		    get_ptr( array ), idx.value().data() );
 	// Ignore the mask in index as this is a linear-align fetch, which
 	// should always have a valid base pointer
@@ -337,12 +348,13 @@ struct evaluator {
 					get_ptr( array ), idx.value() );
 	return make_rvalue( ref.load() );
     }
-    template<unsigned short VL, typename T, typename VTr, short AID,
-	     layout_t Layout>
+    template<unsigned short VL, bool aligned,
+	     typename T, typename VTr, short AID, layout_t Layout>
     GG_INLINE
     auto evaluate_incseq( bitarray_intl<T,typename VTr::member_type,AID> array,
 			  sb::rvalue<VTr,Layout> idx ) {
 	static_assert( VTr::VL == 1, "incseq requirement" );
+	static_assert( aligned, "default value; extension not checked" );
 	simd::detail::mask_ref_impl<simd::detail::mask_bit_traits<VL>,
 				    typename VTr::member_type>
 	    ref( get_ptr( array ), idx.value().data() );
@@ -357,16 +369,19 @@ struct evaluator {
 	return evaluate( op.array(), idx );
     }
 
-    template<typename A, typename T, unsigned short VL, typename MPack>
-    GG_INLINE auto evaluate( const refop<A,unop<T,unop_incseq<VL>>,VL> & op,
-	const MPack & mpack ) {
+    template<typename A, typename T, unsigned short VL, bool aligned,
+	     typename MPack>
+    GG_INLINE
+    auto
+    evaluate( const refop<A,unop<T,unop_incseq<VL,aligned>>,VL> & op,
+	      const MPack & mpack ) {
 	// Don't evaluate unop_incseq, just pick up the data
 	auto idx = evaluate( op.index().data(), mpack );
 	static_assert( decltype(idx.value())::VL == 1, "VL match" );
 	// Any mask applied to index has been set prior to VL width; we need
 	// to assume here that the base pointer is always valid in a linear
 	// fetch, such that we can fetch unconditionally
-	auto rv = evaluate_incseq<VL>( op.array(), idx.uvalue() );
+	auto rv = evaluate_incseq<VL,aligned>( op.array(), idx.uvalue() );
 	return make_rvalue( rv.value(), idx.mpack() );
     }
 
@@ -385,15 +400,16 @@ struct evaluator {
 	auto idx = evaluate( op.index(), mpack );
 	auto msk = evaluate( op.mask(), idx.mpack() );
 	auto mpack2 = binop_mask::set_mask( msk.uvalue(), msk.mpack() );
-	return make_lvalue( levaluate_incseq<VL>( op.array(), idx.uvalue() ),
-			    mpack2 );
+	return make_lvalue( levaluate_incseq<VL,true>(
+				op.array(), idx.uvalue() ), mpack2 );
     }
 
     template<typename A, typename T, typename M, unsigned short VL,
-	     typename MPack>
+	     bool aligned, typename MPack>
     GG_INLINE
-    auto levaluate( const maskrefop<A,unop<T,unop_incseq<VL>>,M,VL> & op,
-		    const MPack & mpack ) {
+    auto
+    levaluate( const maskrefop<A,unop<T,unop_incseq<VL,aligned>>,M,VL> & op,
+	       const MPack & mpack ) {
 	// A scalar-index (incseq) load with a mask is performed unconditionally
 	// and the mask is inserted on the loaded value
 	// The scalar is unconditionally true. Beware for memory accesses
@@ -405,7 +421,7 @@ struct evaluator {
 
 	auto mpack2 = binop_mask::set_mask( msk.uvalue(), msk.mpack() );
 	return make_lvalue(
-	    levaluate_incseq<VL>( op.array(), idx.uvalue() ), mpack2 );
+	    levaluate_incseq<VL,aligned>( op.array(), idx.uvalue() ), mpack2 );
     }
 
     template<typename A, typename T, unsigned short VL, typename MPack>
@@ -418,16 +434,18 @@ struct evaluator {
 			    idx.mpack() );
     }
 
-    template<typename A, typename T, unsigned short VL, typename MPack>
+    template<typename A, typename T, unsigned short VL, bool aligned,
+	     typename MPack>
     GG_INLINE
-    auto levaluate( const refop<A,unop<T,unop_incseq<VL>>,VL> & op,
+    auto levaluate( const refop<A,unop<T,unop_incseq<VL,aligned>>,VL> & op,
 		    const MPack & mpack ) {
 	// We don't expect a mask here - if a mask was present, the refop
 	// should have been converted to a maskrefop
 	// Don't evaluate unop_incseq, just pick up the data
 	auto idx = evaluate( op.index().data(), mpack );
-	return make_lvalue( levaluate_incseq<VL>( op.array(), idx.uvalue() ),
-			    idx.mpack() );
+	return make_lvalue(
+	    levaluate_incseq<VL,aligned>( op.array(), idx.uvalue() ),
+	    idx.mpack() );
     }
 
     template<typename A, typename T, unsigned short VL>
@@ -683,21 +701,38 @@ struct evaluator {
 	// Evaluate condition
 	auto cnd = evaluate( op.data1(), mpack ).value();
 
-	// Build mask
-	auto m0 = mpack.get_mask_for( cnd );
+	if constexpr ( decltype(cnd)::VL == 1 ) {
+	    // We could turn this into iterative code instead of recursive code
+	    // by checking the return value of evaluate( data2() ) and ensuring
+	    // a relevant mask exists in the mask pack. Then iterate the loop as
+	    // validness of lanes is not affected throughout iterations.
+	    // TODO: convert mask if necessary.
+	    if( cnd.data() ) {
+		do {
+		    // Execute loop body
+		    auto b = evaluate( op.data2(), mpack );
 
-	// Disable terminated lanes
-	auto m = m0 && cnd;
+		    // Evaluate condition
+		    cnd = evaluate( op.data1(), mpack ).value();
+		} while( cnd.data() );
+	    }
+	} else {
+	    // Build mask
+	    auto m0 = mpack.get_mask_for( cnd );
+
+	    // Disable terminated lanes
+	    auto m = m0 && cnd;
 	
-	if( !m.is_all_false() ) {
-	    // Create mask_pack with terminated lanes disabled
-	    auto mpack2 = sb::create_mask_pack( m );
+	    if( !m.is_all_false() ) {
+		// Create mask_pack with terminated lanes disabled
+		auto mpack2 = sb::create_mask_pack( m );
 
-	    // Execute loop body
-	    auto b = evaluate( op.data2(), mpack2 );
+		// Execute loop body
+		auto b = evaluate( op.data2(), mpack2 );
 
-	    // Continue loop using tail recursion
-	    evaluate_loop( op, b.mpack() );
+		// Continue loop using tail recursion
+		evaluate_loop( op, b.mpack() );
+	    }
 	}
     }
     

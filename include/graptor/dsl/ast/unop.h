@@ -49,23 +49,12 @@ struct unop_broadcast {
     
     static constexpr char const * name = "unop_broadcast";
 
-    template<typename VTr, layout_t Layout, typename MTr>
+    template<typename VTr, layout_t Layout, typename MPack>
     static GG_INLINE auto
-    evaluate( rvalue<VTr,Layout,MTr> r,
-	      typename std::enable_if<VTr::VL == 1
-	      && MTr::VL == 1>::type * = nullptr ) {
-	using VTr2 = typename VTr::template rebindVL<VL>::type;
-	using MTr2 = typename MTr::template rebindVL<VL>::type;
-	// Constructors do a splat to VL
-	return make_rvalue( simd::vec<VTr2,lo_constant>( r.value().at(0) ),
-			    simd::detail::mask_impl<MTr2>( r.mask().at(0) ) );
-    }
-    template<typename VTr, layout_t Layout>
-    static GG_INLINE auto
-    evaluate( rvalue<VTr,Layout,void> r,
-	      typename std::enable_if<VTr::VL == 1>::type * = nullptr ) {
-	using VTr2 = typename VTr::template rebindVL<VL>::type;
-	return make_rvalue( simd::vec<VTr2,lo_constant>( r.value().at(0) ) );
+    evaluate( sb::rvalue<VTr,Layout> r, const MPack & mpack ) {
+	using OTr = typename VTr::template rebindVL<VL>::type;
+	auto av = simd::template create_constant<OTr>( r.value().at( 0 ) );
+	return make_rvalue( av, mpack );
     }
 };
 
@@ -813,8 +802,9 @@ auto make_unop_cvt_to_vector( Expr e ) {
 /**
  * unop_incseq: Given a scalar value a, create a vector {a+0, a+1, a+2, ...}
  * It is assumed here that the vector will be aligned, i.e., a % VL == 0
+ * Aligned defaults to true.
  */
-template<unsigned short VL_>
+template<unsigned short VL_, bool aligned>
 struct unop_incseq {
     template<typename E>
     struct types {
@@ -830,7 +820,7 @@ struct unop_incseq {
     evaluate( sb::rvalue<VTr,Layout> a, const MPack & mpack ) {
 	using OTr = typename VTr::template rebindVL<VL>::type;
 	auto av = simd::detail::vector_impl<OTr>::
-	    template s_set1inc<true>( a.value().data() );
+	    template s_set1inc<aligned>( a.value().data() );
 	return make_rvalue( av, mpack );
     }
     
@@ -841,7 +831,7 @@ struct unop_incseq {
 	      = nullptr ) {
 	using OTr = typename VTr::template rebindVL<VL>::type;
 	auto av = simd::detail::vector_impl<OTr>::
-	    template s_set1inc<true>( a.value().data() );
+	    template s_set1inc<aligned>( a.value().data() );
 	return make_rvalue( av );
     }
 };
@@ -849,7 +839,13 @@ struct unop_incseq {
 template<unsigned short VL, typename Expr>
 auto make_unop_incseq( Expr e ) {
     static_assert( Expr::VL == 1, "unop_incseq applies to scalars only" );
-    return unop<Expr,unop_incseq<VL>>( e, unop_incseq<VL>() );
+    return unop<Expr,unop_incseq<VL,true>>( e, unop_incseq<VL,true>() );
+}
+
+template<unsigned short VL, bool aligned, typename Expr>
+auto make_unop_incseq( Expr e ) {
+    static_assert( Expr::VL == 1, "unop_incseq applies to scalars only" );
+    return unop<Expr,unop_incseq<VL,aligned>>( e, unop_incseq<VL,aligned>() );
 }
 
 /**

@@ -123,7 +123,7 @@ struct binop_add;
 struct binop_mul;
 
 // Pre-declared unary operations
-template<unsigned short VL>
+template<unsigned short VL, bool aligned = true>
 struct unop_incseq;
 
 template<unsigned short VL>
