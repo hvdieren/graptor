@@ -1916,58 +1916,63 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 
     }
 
-    // Determine if we prefer push / pull / irregular (COO) based on frontier
-    // density, filters supplied and GraphType.
-    // Override recording strength if unbacked frontier is sparse.
-    frontier ftrue = frontier::all_true( GA.numVertices(), GA.numEdges() );
-    frontier * gtk_frontier = &ftrue;
-    if constexpr
-	( !std::is_same_v<decltype(filter_src),missing_filter_argument> )
-	gtk_frontier = &filter_src.get_frontier( GA );
-    graph_traversal_kind gtk =
-	applied_emap ? graph_traversal_kind::gt_sparse
-	: GA.select_traversal(
-	    filter_src.strength == filter_strength::strong,
-	    filter_dst.strength == filter_strength::strong,
-	    active_dst.strength == filter_strength::strong,
-	    record.strength == filter_strength::strong || need_record,
-	    *gtk_frontier,
-	    config.get_threshold().is_sparse( *gtk_frontier, m ) && !need_record
-	    );
-    ftrue.del();
+    if constexpr ( std::is_same_v<decltype(config.get_threshold()),always_sparse_t> ) {
+	assert( applied_emap && "if always-sparse, should have done so" );
+	return make_lazy_executor( part ); // nothing more to do
+    } else {
+	// Determine if we prefer push / pull / irregular (COO) based on frontier
+	// density, filters supplied and GraphType.
+	// Override recording strength if unbacked frontier is sparse.
+	frontier ftrue = frontier::all_true( GA.numVertices(), GA.numEdges() );
+	frontier * gtk_frontier = &ftrue;
+	if constexpr
+	    ( !std::is_same_v<decltype(filter_src),missing_filter_argument> )
+	    gtk_frontier = &filter_src.get_frontier( GA );
+	graph_traversal_kind gtk =
+	    applied_emap ? graph_traversal_kind::gt_sparse
+	    : GA.select_traversal(
+		filter_src.strength == filter_strength::strong,
+		filter_dst.strength == filter_strength::strong,
+		active_dst.strength == filter_strength::strong,
+		record.strength == filter_strength::strong || need_record,
+		*gtk_frontier,
+		config.get_threshold().is_sparse( *gtk_frontier, m ) && !need_record
+		);
+	ftrue.del();
 
-    // Error in control flow in this function...
-    assert( ( applied_emap || gtk != graph_traversal_kind::gt_sparse )
-	    && "Too late to decide on sparse traversal now..." );
+	// Error in control flow in this function...
+	assert( ( applied_emap || gtk != graph_traversal_kind::gt_sparse )
+		&& "Too late to decide on sparse traversal now..." );
 
-    // Set up frontiers (memory allocation / conversion)
-    switch( gtk ) {
-    case graph_traversal_kind::gt_sparse: break; // done
-    case graph_traversal_kind::gt_push:
-	filter_src.template setup<cfg_push::rd_ftype>( part );
-	filter_dst.template setup<cfg_push::rd_ftype>( part );
-	record.template setup<cfg_push::wr_ftype>( part );
-	break;
-    case graph_traversal_kind::gt_pull:
-	filter_src.template setup<cfg_pull::rd_ftype>( part );
-	filter_dst.template setup<cfg_pull::rd_ftype>( part );
-	record.template setup<cfg_pull::wr_ftype>( part );
-	break;
-    case graph_traversal_kind::gt_ireg:
-	filter_src.template setup<cfg_ireg::rd_ftype>( part );
-	filter_dst.template setup<cfg_ireg::rd_ftype>( part );
-	record.template setup<cfg_ireg::wr_ftype>( part );
-	break;
-    default:
-	UNREACHABLE_CASE_STATEMENT;
+	// Set up frontiers (memory allocation / conversion)
+	switch( gtk ) {
+	case graph_traversal_kind::gt_sparse: break; // done
+	case graph_traversal_kind::gt_push:
+	    filter_src.template setup<cfg_push::rd_ftype>( part );
+	    filter_dst.template setup<cfg_push::rd_ftype>( part );
+	    record.template setup<cfg_push::wr_ftype>( part );
+	    break;
+	case graph_traversal_kind::gt_pull:
+	    filter_src.template setup<cfg_pull::rd_ftype>( part );
+	    filter_dst.template setup<cfg_pull::rd_ftype>( part );
+	    record.template setup<cfg_pull::wr_ftype>( part );
+	    break;
+	case graph_traversal_kind::gt_ireg:
+	    filter_src.template setup<cfg_ireg::rd_ftype>( part );
+	    filter_dst.template setup<cfg_ireg::rd_ftype>( part );
+	    record.template setup<cfg_ireg::wr_ftype>( part );
+	    break;
+	default:
+	    UNREACHABLE_CASE_STATEMENT;
+	}
+
+	// Build lazy executor
+	// Note: nothing to do if sparse frontier - all complete
+	auto lax = make_lazy_executor( part )
+	    .template edge_map<cfg>( GA, op, gtk );
+
+	return lax;
     }
-	
-    // Build lazy executor
-    // Note: nothing to do if sparse frontier - all complete
-    auto lax = make_lazy_executor( part )
-	.template edge_map<cfg>( GA, op, gtk );
-
-    return lax;
 }
 
 } // namespace api
