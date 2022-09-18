@@ -19,7 +19,7 @@ template<class Tr, typename I, typename Enc, bool NT, layout_t Layout>
 auto create_vector_ref_scalar(
     typename detail::vector_ref_impl<Tr,I,Enc,NT,Layout>::storage_type* addr,
     I idx,
-    std::enable_if_t<Layout == lo_linalgn || Layout == lo_constant> * = nullptr );
+    std::enable_if_t<Layout == lo_linalgn || Layout == lo_linear || Layout == lo_constant> * = nullptr );
 
 template<class Tr, typename I, typename Enc, bool NT, layout_t Layout>
 auto create_vector_ref_vec(
@@ -90,7 +90,7 @@ public:
     friend auto simd::create_vector_ref_scalar(
 	typename detail::vector_ref_impl<Tr_,I_,Enc_,NT__,Layout__>::storage_type* addr,
 	I_ idx,
-	std::enable_if_t<Layout__ == lo_linalgn || Layout__ == lo_constant> * );
+	std::enable_if_t<Layout__ == lo_linalgn || Layout__ == lo_linear || Layout__ == lo_constant> * );
 
     template<class Tr_, typename I_, typename Enc_, bool NT__, layout_t Layout__>
     friend auto simd::create_vector_ref_vec(
@@ -114,7 +114,8 @@ private:
 		     std::enable_if_t<
 		     std::is_same_v<std::make_unsigned<U>,
 		     std::make_unsigned<index_type>>
-		     && ( layout == lo_linalgn || layout == lo_constant )> *
+		     && ( layout == lo_linalgn || layout == lo_linear
+		     || layout == lo_constant )> *
 		     = nullptr )
 	: m_addr( addr ), m_sidx( idx ) {
 	static_assert( layout != lo_unknown, "Not allowed in unknown layout" );
@@ -759,7 +760,8 @@ template<class Tr, typename I, typename Enc, bool NT, layout_t Layout>
 auto create_vector_ref_scalar(
     typename detail::vector_ref_impl<Tr,I,Enc,NT,Layout>::storage_type* addr,
     I idx,
-    std::enable_if_t<Layout == lo_linalgn || Layout == lo_constant> * ) {
+    std::enable_if_t<Layout == lo_linalgn || Layout == lo_linear
+    || Layout == lo_constant> * ) {
     static_assert( Layout != lo_variable, "ruling out lo_variable" );
     return detail::vector_ref_impl<Tr,I,Enc,NT,Layout>( addr, idx );
 }
