@@ -90,7 +90,7 @@ public:
 	return encoding::template load<simd::ty<T,1>>( mem.get(), e );
     }
 
-    typename encoding::stored_type * get_ptr() const {
+    typename encoding::storage_type * get_ptr() const {
 	return mem.get();
     }
 
