@@ -51,21 +51,22 @@ struct bf_conversion_traits<bitfield<B>, U, VL> {
 		auto c = tr::sllv( b, osh );
 		auto d = tr::srai( c, 8*tr::W-1 );
 		return d;
-	    }
-#else
-	    auto b = dst_traits::set1( U( a ) );
-	    const auto inc = dst_traits::set1inc0();
-	    const auto sh = dst_traits::slli( inc, ilog2(T::bits) );
-	    const auto w = dst_traits::set1( U( 8*dst_traits::W-T::bits ) );
-	    const auto osh = dst_traits::sub( w, sh );
-	    auto c = dst_traits::sllv( b, osh );
-	    typename dst_traits::type d;
-	    if constexpr ( is_logical_v<U> )
-		d = dst_traits::srai( c, 8*dst_traits::W-T::bits );
-	    else
-		d = dst_traits::srli( c, 8*dst_traits::W-T::bits );
-	    return d;
+	    } else
 #endif
+	    {
+		auto b = dst_traits::set1( U( a ) );
+		const auto inc = dst_traits::set1inc0();
+		const auto sh = dst_traits::slli( inc, ilog2(T::bits) );
+		const auto w = dst_traits::set1( U( 8*dst_traits::W-T::bits ) );
+		const auto osh = dst_traits::sub( w, sh );
+		auto c = dst_traits::sllv( b, osh );
+		typename dst_traits::type d;
+		if constexpr ( is_logical_v<U> )
+		    d = dst_traits::srai( c, 8*dst_traits::W-T::bits );
+		else
+		    d = dst_traits::srli( c, 8*dst_traits::W-T::bits );
+		return d;
+	    }
 	}
 
 	else if constexpr ( dst_traits::W > 1 && VL > 1 ) {
