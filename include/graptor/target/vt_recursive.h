@@ -144,6 +144,22 @@ struct vt_recursive {
 		hi_half_traits::asvector( mask_traits::upper_half( m ) ) };
     }
 
+    static uint32_t find_first( type v ) {
+	uint32_t pos = lo_half_traits::find_first( v.a );
+	if( pos < lo_half_traits::vlen )
+	    return pos;
+	pos = hi_half_traits::find_first( v.b );
+	return pos + vlen;
+    }
+    static uint32_t find_first( type v, vmask_type m ) {
+	uint32_t pos = lo_half_traits::find_first(
+	    v.a, mask_traits::lower_half( m ) );
+	if( pos < lo_half_traits::vlen )
+	    return pos;
+	pos = hi_half_traits::find_first( v.b, mask_traits::upper_half( m ) );
+	return pos + vlen;
+    }
+
     template<typename MaskTy>
     static type blendm( MaskTy m, type a, type b ) {
 	// Not sure why this variant exists. Do whatever blend does.
