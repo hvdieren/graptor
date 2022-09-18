@@ -511,6 +511,20 @@ struct array_encoding_bit {
 		typename tr::member_type,
 		typename Tr::member_type,
 		Tr::VL>::convert( raw );
+	} else if( Tr::VL <= 32 && bits == 1 ) {
+	    // unaligned, wide loads possible
+	    // Load twice as much data as necessary, then shift into place
+	    // and retain bottom half only.
+	    using tr = stored_traits<Tr::VL*2>;
+	    using tr1 = stored_traits<Tr::VL>;
+	    auto raw = tr::load(
+		reinterpret_cast<const typename tr::type *>( &base[idx/factor] ) );
+	    auto shf = raw >> ( idx % factor ); // shift across bit-wide lanes
+	    auto lo = tr::lower_half( shf );
+	    return conversion_traits<
+		typename tr1::member_type,
+		typename Tr::member_type,
+		Tr::VL>::convert( lo );
 	} else {
 	    assert( 0 && "NYI" ); // only VL==factor ?
 	}
@@ -616,7 +630,7 @@ struct array_encoding_bit {
 	    constexpr unsigned short B = ilog2(bits);
 	    constexpr unsigned short F = ilog2(32/bits);
 	    static_assert( F == 5-B, "yes" );
-	    static_assert( bits == 2, "code not validated for 4 bits" );
+	    static_assert( bits <= 2, "code not validated for 4 bits" );
 	    // Worse version: no srli but gather_w<1>
 	    auto div = idx_traits::srli( idx, F );
 	    auto raw = u32t::gather(
@@ -654,10 +668,10 @@ struct array_encoding_bit {
 	}
 
 	
-#if __AVX512F__
+#if __AVX512F__ || __AVX2__
 	// If just one bit is needed, and mask returned,
 	// use comparison operation
-	if constexpr ( bits == 1 ) {
+	else if constexpr ( bits == 1 ) {
 	    using u32t = vector_type_traits_vl<uint32_t,Tr::VL>;
 	    constexpr unsigned short B = ilog2(bits);
 	    constexpr unsigned short F = ilog2(32/bits);
@@ -685,13 +699,34 @@ struct array_encoding_bit {
 		auto off = idx_traits::bitwise_and( idx, omask );
 		woff = idx_traits::bitwise_xor( omask, off );
 	    }
-	    auto s = u32t::sllv( raw, woff );
+	    typename u32t::type uoff;
+	    if constexpr ( idx_traits::W == u32t::W ) {
+		uoff = woff;
+	    } else {
+		uoff = conversion_traits<
+		    typename idx_traits::member_type,
+		    typename u32t::member_type,
+		    Tr::VL>::convert( woff );
+	    }
+	    auto s = u32t::sllv( raw, uoff );
 
-	    const auto hmask = u32t::srli( u32t::setone(), 1 );
-	    auto r = u32t::cmpgt( s, hmask, target::mt_mask() );
-	    return r;
+	    if constexpr ( is_bitfield_v<typename Tr::member_type>
+			   && Tr::B == 1 ) {
+		auto r = u32t::asmask( s );
+		return r;
+	    } else {
+		const auto hmask = u32t::srli( u32t::setone(), 1 );
+		auto w = u32t::cmpgt( s, hmask, target::mt_vmask() );
+		auto r = conversion_traits<
+		    typename u32t::member_type,
+		    typename Tr::member_type,
+		    Tr::VL>::convert( w );
+		return r;
+	    }
 	}
 #endif
+
+	else {
 
 	using g_traits =
 	    vector_type_traits_vl<int_type_of_size_t<
@@ -886,6 +921,7 @@ struct array_encoding_bit {
 					   (unsigned short)(8*Tr::W-bits) );
 	    auto val = tgt_traits::bitwise_and( fmask, pos );
 	    return val;
+	}
 	}
     }
 
