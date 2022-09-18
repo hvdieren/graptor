@@ -13,6 +13,9 @@
 #include "unique.h"
 
 using expr::_0;
+using expr::_1s;
+using expr::_true;
+using expr::_false;
 
 // By default set options for highest performance
 #ifndef LEVEL_ASYNC
@@ -54,7 +57,17 @@ using expr::_0;
 #define PRESET_ZERO 1
 #endif
 
+#ifndef EMBED_FRONTIER
+#define EMBED_FRONTIER 0
+#endif
+
 using LabelTy = VID;
+
+#if EMBED_FRONTIER
+using LabelEnc = array_encoding_msb<sizeof(LabelTy),false>;
+#else
+using LabelEnc = array_encoding<LabelTy>;
+#endif
 
 enum variable_name {
     var_ids = 0,
@@ -175,6 +188,7 @@ public:
 	    std::cerr << "FUSION=" << FUSION << "\n";
 	    std::cerr << "PUSH_ZERO=" << PUSH_ZERO << "\n";
 	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
+	    std::cerr << "EMBED_FRONTIER=" << EMBED_FRONTIER << "\n";
 	}
 
 	// VID max_deg = GA.getCSR().findHighestDegreeVertex();
@@ -214,7 +228,7 @@ public:
 	m_IDs.allocate( numa_allocation_partitioned( part ) );
 	m_prevIDs.allocate( numa_allocation_partitioned( part ) );
 
-	expr::array_ro<LabelTy,VID,var_previds> prevIDs( m_prevIDs );
+	expr::array_ro<LabelTy,VID,var_previds,LabelEnc> prevIDs( m_prevIDs );
 	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
 
 	// Assign initial labels
@@ -297,6 +311,36 @@ public:
 	while( !F.isEmpty() ) {  // iterate until IDs converge
 	    // Propagate labels
 	    frontier output = emap_step( F, 5 );
+
+#if 0
+	    if( output.getType() == frontier_type::ft_msb4 ) {
+		VID k = 0;
+		int * f = (int *)output.getDenseL<4>();
+		for( unsigned short p=0; p < part.get_num_partitions(); ++p ) {
+		    VID ve = part.end_of( p );
+		    VID kk = 0;
+		    for( VID v=part.start_of( p ); v < ve; ++v ) {
+			if( f[v] < 0 )
+			    ++kk;
+			VID p = prevIDs[v];
+			p = ( p << 1 ) >> 1;
+			VID i = IDs[v];
+			i = ( i << 1 ) >> 1;
+			assert( ( f[v] < 0 ) == ( p != i ) );
+		    }
+		    std::cerr << "p=" << p << " kk=" << kk << "\n";
+		    k += kk;
+		}
+
+		std::cerr << "k=" << k << "\n";
+		std::cerr << "nactv=" << output.nActiveVertices() << "\n";
+		assert( k == output.nActiveVertices() );
+	    }
+
+	    make_lazy_executor( part )
+		.vertex_map( [&]( auto vid ) { return prevIDs[vid] = IDs[vid]; } )
+		.materialize();
+#endif
 
 	    if( itimes ) {
 		VID active = 0;
@@ -482,7 +526,7 @@ private:
 	// Propagate labels
 	frontier output;
 
-	expr::array_ro<LabelTy,VID,var_previds> prevIDs( m_prevIDs );
+	expr::array_ro<LabelTy,VID,var_previds,LabelEnc> prevIDs( m_prevIDs );
 	expr::array_ro<LabelTy,VID,var_ids> IDs( m_IDs );
 
 #if UNCOND_EXEC
@@ -494,12 +538,24 @@ private:
 	    GA,
 	    api::config( api::frac_threshold( threshold ) ),
 #if DEFERRED_UPDATE
+#if EMBED_FRONTIER
 	    api::record( output,
+			 m_prevIDs.get(),
 			 api::reduction_or_method, 
 			 [&] ( auto d ) { return IDs[d] != prevIDs[d]; },
 			 api::strong ),
 #else
+	    api::record( output,
+			 api::reduction_or_method, 
+			 [&] ( auto d ) { return IDs[d] != prevIDs[d]; },
+			 api::strong ),
+#endif
+#else
+#if EMBED_FRONTIER
+	    api::record( output, m_prevIDs.get(), api::reduction, api::strong ),
+#else
 	    api::record( output, api::reduction, api::strong ),
+#endif
 #endif
 	    api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
