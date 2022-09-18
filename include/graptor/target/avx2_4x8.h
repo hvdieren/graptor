@@ -210,9 +210,12 @@ public:
 #elif __AVX512F__ && __AVX512VL__
 	// The mask is necessary if we only want to pick up the highest bit
 	vmask_type m = int_traits::slli( int_traits::setone(), 31 );
-	auto am = _mm256_and_si256( a, m );
-	return _mm256_cmpeq_epi32_mask( am, m );
+	// auto am = _mm256_and_si256( a, m );
+	// return _mm256_cmpeq_epi32_mask( am, m );
+	// 3 cycle latency, 1 CPI on SKL, delivers in k register
+	return _mm256_cmpge_epu32_mask( a, m );
 #else
+	// 2 cycle latency, 1 CPI on SKL, delivers in GPR
 	return _mm256_movemask_ps( _mm256_castsi256_ps( a ) );
 #endif
     }
@@ -244,6 +247,27 @@ public:
 	return mask;
     }
 */
+
+    static uint32_t find_first( type v ) {
+	// Needs to return 8 when all lanes of v are zero. Happens because
+	// of the bitwise inversion of the mask, which puts default 0 bits
+	// to 1.
+	// mask_type m = asmask( v );
+	// uint32_t meql = ~(uint32_t)m;
+	// member_type pos = _tzcnt_u32( meql );
+	// return pos; // std::min( (member_type)vlen, pos );
+	return mask_traits::find_first( asmask( v ) );
+    }
+    static uint32_t find_first( type v, vmask_type m ) {
+	// Should return 8 when all lanes of v are zero due to mask
+	// argument
+	// mask_type mactv = asmask( m );
+	// mask_type meql = asmask( v );
+	// mask_type mchk = mask_traits::logical_and( meql, mactv );
+	// member_type pos = _tzcnt_u32( ~(uint32_t)mchk );
+	// return pos;
+	return mask_traits::find_first( asmask( v ), asmask( m ) );
+    }
 
     static __m256 castfp( type a ) { return _mm256_castsi256_ps( a ); }
 
@@ -304,6 +328,12 @@ public:
 	else
 	    return mask_traits::setzero();
     }
+    static vmask_type cmpneg( type a, mt_vmask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return srai( a, 31 );
+	else
+	    return setzero();
+    }
     static vmask_type cmpeq( type a, type b, mt_vmask ) {
 	return _mm256_cmpeq_epi32( a, b );
     }
@@ -345,12 +375,6 @@ public:
     }
     static vmask_type cmple( type a, type b, mt_vmask ) {
 	return cmpge( b, a, mt_vmask() );
-    }
-    static vmask_type cmpneg( type a, mt_vmask ) {
-	if constexpr ( std::is_signed_v<member_type> )
-	    return srai( a, 31 );
-	else
-	    return setzero();
     }
 
     static bool cmpeq( type a, type b, mt_bool ) {
@@ -444,13 +468,21 @@ public:
 	return reduce_add( zval );
     }
     static member_type reduce_logicalor( type val ) {
-	return _mm256_movemask_epi8( val ) ? ~member_type(0) : member_type(0);
+	return asmask( val ) ? ~member_type(0) : member_type(0);
     }
     static member_type reduce_logicalor( type val, type mask ) {
 	assert( 0 && "ERROR - need to only consider active lanes" );
 	int v = _mm256_movemask_epi8( val );
 	int m = _mm256_movemask_epi8( mask );
 	return (!m | v) ? ~member_type(0) : member_type(0);
+    }
+    static member_type reduce_logicaland( type val ) {
+	return member_type( asmask( val ) == 0xff );
+    }
+    static member_type reduce_logicaland( type val, type mask ) {
+	// if mask then true if val; if not mask, then true
+	// mask => val, or !mask || val, then reduce
+	return reduce_logicaland( logical_or( logical_invert( mask ), val ) );
     }
     static member_type reduce_bitwiseor( type val ) {
 	return half_traits::reduce_bitwiseor(
