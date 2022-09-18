@@ -14,6 +14,30 @@ using expr::_p;
 #define FUSION 1
 #endif
 
+// VECTORIZE indicates vector length of fusion operation with
+// scalar destination. 1 means no vectorization (scalar baseline),
+// 8 is typical vector length for AVX2 with 4-byte flags, 16 is typical
+// for AVX512 with 4-byte flags, 32 is useful either way for flags stored
+// as bits (FLAG_STORAGE 2)
+#ifndef VECTORIZE
+#define VECTORIZE 1
+#endif
+
+// Vectorization applies to the fusion operation. The same operation in
+// vertex_map is vectorized differently.
+#if FUSION == 0
+#undef VECTORIZE
+#define VECTORIZE 1
+#endif
+
+#ifndef FLAG_TYPE
+#define FLAG_TYPE 0
+#endif
+
+#ifndef FLAG_STORAGE
+#define FLAG_STORAGE 0
+#endif
+
 enum gc_variable_name {
     var_color = 0,
     var_i = 1,
@@ -22,6 +46,7 @@ enum gc_variable_name {
     var_new = 4,
     var_usedcol = 5,
     var_index = 6,
+    var_tmp = 7,
     var_degrees_ro = expr::aid_graph_degree
 };
 
@@ -43,7 +68,31 @@ std::ostream & operator << ( ostream & os, iteration_kind k ) {
     return os;
 }
 
+#if FLAG_TYPE == 0
 using FlagTy = int32_t; // signed integer; 32-bit wide for scatter
+#elif FLAG_TYPE == 1
+using FlagTy = int8_t; // signed integer; 32-bit wide for scatter
+#elif FLAG_TYPE == 2
+using FlagTy = bitfield<1>; // single bit
+#elif FLAG_TYPE == 3
+using FlagTy = logical<4>; // natural width for scatter, convert from bit
+#else
+#error "illegal FLAG_TYPE"
+#endif
+
+#if FLAG_STORAGE == 0
+using FlagEnc = array_encoding<int32_t>;
+#elif FLAG_STORAGE == 1
+using FlagEnc = array_encoding<int8_t>;
+#elif FLAG_STORAGE == 2
+using FlagEnc = array_encoding_bit<1>;
+#else
+#error "illegal FLAG_STORAGE"
+#endif
+
+#if FLAG_STORAGE == 3 && FLAG_TYPE != 2 && FLAG_TYPE != 3
+#warn "this combination of FLAG_STORAGE and FLAG_TYPE may not work"
+#endif
 
 template <class GraphType>
 class GC_JP_Fusion {
@@ -67,6 +116,12 @@ public:
 	if( !once ) {
 	    once = true;
 	    std::cerr << "FUSION=" << FUSION << "\n";
+	    std::cerr << "VECTORIZE=" << VECTORIZE << "\n";
+	    std::cerr << "FLAG_TYPE=" << FLAG_TYPE
+		      << " width=" << sizeof(FlagTy) << "\n";
+	    std::cerr << "FLAG_STORAGE=" << FLAG_STORAGE
+		      << " width=" << sizeof(typename FlagEnc::stored_type)
+		      << "\n";
 	}
     }
     ~GC_JP_Fusion() {
@@ -158,7 +213,11 @@ first set color[v] = v
 #endif
 	};
 
+#if FLAG_STORAGE == 2
+	parallel_loop( (EID)0, (m+7)/8, [&]( EID e ) { usedcol.get_ptr()[e] = 0; } );
+#else
 	parallel_loop( (EID)0, m, [&]( EID e ) { usedcol.get_ptr()[e] = 0; } );
+#endif
 
 	frontier roots;
 	api::edgemap(
@@ -186,6 +245,47 @@ first set color[v] = v
 		);
 	};
 
+#if VECTORIZE != 1
+	auto select_col_fusion = [&]( auto v ) {
+	    static_assert( decltype(v)::VL == 1, "assumption" );
+	    static constexpr unsigned short VL = VECTORIZE;
+	    static constexpr unsigned short lgVL = ilog2( VL );
+	    auto idx = expr::make_scalar<var_i,VID,1>();
+	    auto tmp = expr::make_scalar<var_tmp,FlagTy,VL>();
+	    return expr::make_seq(
+		idx = _0,
+		tmp = usedcol[expr::make_unop_incseq<VL,false>(index[v])],
+		color[v] = expr::make_loop(
+		    // condition: do not exceed degree of vertex, and require
+		    // all fields are non-zero
+		    // Note: any lane with this condition requires continuation
+		    //       of the loop, hence resort to scalar condition
+		    idx + expr::slli<lgVL>( _1(idx) ) < degree[v]
+		    && expr::make_unop_reduce(
+			// tmp < _0,
+			tmp != _0,
+			expr::redop_logicaland() ),
+		    // loop body and increment
+		    expr::make_seq(
+			idx += expr::slli<lgVL>( _1(idx) ),
+			tmp = usedcol[expr::make_unop_incseq<VL,false>(
+				index[v]+expr::cast<EID>(idx))]
+			),
+		    // final value. Allow to overrun end of neighbour list,
+		    // correct by taking minimum with degree.
+		    expr::min(
+			degree[v],
+			idx + expr::cast<VID>(
+			    expr::make_unop_reduce(
+				tmp, expr::redop_find_first() ) )
+			)
+		    )
+		);
+	};
+#else
+	auto select_col_fusion = select_col;
+#endif
+
 	while( !roots.isEmpty() ) {
 	    frontier new_roots;
 	    api::edgemap(
@@ -198,7 +298,7 @@ first set color[v] = v
 		    // remains, then process immediately, else keep in overflow
 		    // bucket
 		    return expr::make_seq(
-			select_col( v ),
+			select_col_fusion( v ),
 			_1(v) // process immediately
 			);
 		} ),
@@ -332,7 +432,7 @@ private:
     int iter;
     api::vertexprop<VID,VID,var_color> color;
     api::vertexprop<VID,VID,var_priority> priority;
-    api::edgeprop<FlagTy,EID,var_usedcol> usedcol;
+    api::edgeprop<FlagTy,EID,var_usedcol,FlagEnc> usedcol;
     // expr::rnd::prng<VID> prng;
     std::vector<info> info_buf;
 };
