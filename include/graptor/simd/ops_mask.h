@@ -112,6 +112,13 @@ auto reduce_logicalor( simd::detail::mask_impl<Tr> m ) {
 }
 
 template<typename Tr>
+auto reduce_logicaland( simd::detail::mask_impl<Tr> m ) {
+    using Tr1 = typename Tr::template rebindVL<1>::type;
+    return simd::detail::mask_impl<Tr1>(
+	simd::detail::mask_impl<Tr>::traits::reduce_logicaland( m.get() ) );
+}
+
+template<typename Tr>
 auto reduce_bitwiseor( simd::detail::mask_impl<Tr> v ) {
     using Tr1 = typename Tr::template rebindVL<1>::type;
     return simd::detail::mask_impl<Tr1>(

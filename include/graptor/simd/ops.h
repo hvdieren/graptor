@@ -179,6 +179,21 @@ auto mul( simd::detail::vec<Tr,Layout1> s,
 
 namespace simd {
 
+template<typename Tr, typename MTr, simd::layout_t Layout>
+auto find_first( simd::detail::vec<Tr,Layout> v,
+		 simd::detail::mask_impl<MTr> m,
+		 typename std::enable_if<simd::matchVLtt<Tr,MTr>::value>::type *
+		 = nullptr ) {
+    return simd::detail::vec<simd::ty<uint32_t,1>,simd::lo_constant>(
+	Tr::traits::find_first( v.data(), m.get() ) );
+}
+
+template<typename Tr, simd::layout_t Layout>
+auto find_first( simd::detail::vec<Tr,Layout> v ) {
+    return simd::detail::vec<simd::ty<uint32_t,1>,simd::lo_constant>(
+	Tr::traits::find_first( v.data() ) );
+}
+
 template<typename Tr, layout_t Layout1, layout_t Layout2>
 auto min( detail::vec<Tr,Layout1> a,
 	  detail::vec<Tr,Layout2> b ) {
