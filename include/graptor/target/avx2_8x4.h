@@ -40,6 +40,8 @@ public:
     using vmask_type = __m256i;
 
     using half_traits = sse42_8x2<T>;
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
     using int_traits = avx2_8x4<int_type>;
 
     using mask_traits = mask_type_traits<vlen>;
