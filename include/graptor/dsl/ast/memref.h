@@ -227,7 +227,7 @@ struct bitarray_ro : bitarray_intl<T,U,AID_> {
 	return refop<bitarray_ro<T,U,AID>, E, E::VL>( *this, idx );
     }
 
-    GG_INLINE stype *ptr() { return m_ptr; }
+    GG_INLINE stype *ptr() const { return m_ptr; }
 
 private:
     stype * m_ptr;
