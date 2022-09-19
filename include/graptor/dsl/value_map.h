@@ -237,20 +237,6 @@ private:
 template<typename T>
 using is_value_map_entry = std::is_base_of<value_map_entry,T>;
 
-#if 0 // -- deprecated
-template<typename Head, typename Tail>
-__attribute__((always_inline))
-static inline constexpr auto create_value_map_cons( Head head, Tail tail ) {
-    return value_map_cons<Head,Tail>( head, tail );
-}
-
-template<typename Head>
-__attribute__((always_inline))
-static inline constexpr auto create_value_map_cons( Head head ) {
-    return value_map_cons<Head,void>( head );
-}
-#endif // 0 -- deprecated
-
 template<value_kind vkind, typename T, unsigned short VL>
 __attribute__((always_inline))
 static inline constexpr auto create_entry( simd_vector<T,VL> val ) {
@@ -268,82 +254,6 @@ __attribute__((always_inline))
 static inline constexpr auto create_entry( simd::detail::mask_impl<Tr> val ) {
     return value_map_entry_mask<Tr,vkind>( val );
 }
-
-#if 0 // deprecated
-
-template<unsigned short VLS, unsigned short VLD, typename Head>
-__attribute__((always_inline))
-static inline constexpr auto create_value_map_chain( Head head ) {
-    return value_map_chain<VLS,VLD,Head>( head );
-}
-
-template<unsigned short VLS, unsigned short VLD, typename E>
-__attribute__((always_inline))
-static inline constexpr auto create_value_map( E ent ) {
-    static_assert( is_value_map_entry<E>::value, "must be value_map_entry" );
-    return create_value_map_chain<VLS,VLD>( create_value_map_cons( ent ) );
-}
-
-template<unsigned short VLS, unsigned short VLD,
-	 typename E0, typename E1>
-__attribute__((always_inline))
-static inline auto create_value_map( E0 ent0, E1 ent1 ) {
-    static_assert( is_value_map_entry<E0>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E1>::value, "must be value_map_entry" );
-    return create_value_map_chain<VLS,VLD>(
-	create_value_map_cons( ent0, create_value_map_cons( ent1 ) ) );
-}
-
-template<unsigned short VLS, unsigned short VLD,
-	 typename E0, typename E1, typename E2>
-__attribute__((always_inline))
-static inline auto create_value_map( E0 ent0, E1 ent1, E2 ent2 ) {
-    static_assert( is_value_map_entry<E0>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E1>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E2>::value, "must be value_map_entry" );
-    return create_value_map_chain<VLS,VLD>(
-	create_value_map_cons(
-	    ent0, create_value_map_cons(
-		ent1, create_value_map_cons( ent2 ) ) ) );
-}
-
-template<unsigned short VLS, unsigned short VLD,
-	 typename E0, typename E1, typename E2, typename E3>
-__attribute__((always_inline))
-static inline auto create_value_map( E0 ent0, E1 ent1, E2 ent2, E3 ent3 ) {
-    static_assert( is_value_map_entry<E0>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E1>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E2>::value, "must be value_map_entry" );
-    static_assert( is_value_map_entry<E3>::value, "must be value_map_entry" );
-    return create_value_map_chain<VLS,VLD>(
-	create_value_map_cons(
-	    ent0, create_value_map_cons(
-		ent1, create_value_map_cons(
-		    ent2, create_value_map_cons( ent3 ) ) ) ) );
-}
-
-template<typename T>
-struct is_map_entry : std::false_type { };
-
-template<unsigned Index, typename ValueTy>
-struct is_map_entry<map_entry<Index,ValueTy>> : std::true_type { };
-
-template<typename Head>
-struct is_map_chain : std::false_type { };
-
-template<typename Head>
-struct is_map_chain<map_chain<Head>> : std::true_type { };
-
-template<typename Head, typename Tail>
-static inline constexpr auto create_map_cons( Head head, Tail tail ) {
-    return map_cons<Head,Tail>( head, tail );
-}
-
-template<typename Head>
-static inline constexpr auto create_map_cons( Head head ) {
-    return map_cons<Head,void>( head );
-}
-#endif // 0 -- deprecated
 
 template<unsigned Index, typename ValueTy>
 static inline constexpr auto create_map_entry( ValueTy val ) {
