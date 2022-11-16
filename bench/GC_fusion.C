@@ -54,9 +54,9 @@ public:
 	  color( GA.get_partitioner(), "color" ),
 	  posscol( GA.get_partitioner(), "possible colors" ),
 	  priority( GA.get_partitioner(), "priority" ),
-	  prng( GA.get_partitioner(),
-		static_cast<VID>( static_cast<float>( GA.getCSR().max_degree() )
-				  * ( 1.0 + mu ) ) ),
+	  // prng( GA.get_partitioner(),
+		// static_cast<VID>( static_cast<float>( GA.getCSR().max_degree() )
+				  // * ( 1.0 + mu ) ) ),
 	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -112,10 +112,85 @@ public:
 	VID colours;
     };
 
+    /* Notes fusion with roaming bit masks
+       - as before: add color and bound; shift mask if lowest color taken
+       - need to check if color assignment failed, i.e., mask shifts into bound
+         and no colors available
+       - these vertices need to be replayed (pull style?)
+       - in this setting, the situation is solely due to the order of presenting
+         the neighbours (and their colors), because the defined neighbour colors
+	 are final.
+       - the mask is valid up to the bound, the lowest color remains the lowest
+         available color. As such, we can keep lowest color + mask and set
+	 bound to infinity before revisting neighbours.
+       - No fusion: can interleave push phase with pull-based revisit phase
+       - Fusion: ???
+       - Could we proceed knowing a lower bound to the selected color, i.e.,
+         indicate that color[v] >= bound[v], then allow vertices to complete
+	 as long as they find a color[v] < bound[neighbour(v)]?
+       - Then when we run out of vertices, revisit those with failing bound,
+         then redo fusion/non-fusion push
+       - Sketch:
+       emap:
+	 if( color[s] known ) {
+	     if( color[s] == color[d] ) {
+		 color[d] = next from mask
+		 shift mask up
+	     } else if( color[s] > color[d] && color[s] < color[d] + w ) {
+		 set bit in mask
+	     } else if( color[s] > color[d] + w ) {
+		 bound[d] = min( bound[d], color[s] );
+	     }
+	 } else {
+	     // only know that color[s] >= bound[s]
+	     count-down prio[d] if color[d] < bound[s]
+	 }
+       vmap check:
+         if( color[v] + w >= bound[v] && all bits in mask[v] up to bound-color
+	     are set ) {
+	     need replay;
+	     flag color[v] >= bound[v];
+	 }
+       ALT:
+         csk = color[s] != ~0
+	 match = color[s] == color[d]
+	 sbnd = ( color[s] > color[d] + w )
+	 inmsk = ( color[s] > color[d] && !sbnd )
+         lo = tzcnt(mask[d])
+	 alt_mask1 = mask[d] >> ( lo + 1 )
+	 alt_mask2 = mask[d] | (1 << (color[s] - color[d]))
+	 bound1 = min( bound[d], color[s] )
+
+	 color[d] = ( csk && match ) ? color[d] + lo + 1 : color[d];
+	 mask[d] = ( csk && match ) ? alt_mask1
+	                            : ( csk && inmsk ) ? alt_mask2 ; mask[d];
+	 bound[d] = ( csk && sbnd ) ? bound1 : bound[d];
+	 prio[d].count_down( _0, !csk && color[d] < bound[s] );
+	 
+       ALT:
+         diff = color[s] - color[d] (signed)
+	 csk = color[s] != ~0
+	 match = ( diff == 0 )
+	 sbnd = ( diff >_signed w )
+	 inmsk = ( diff >> log_w ) == 0
+
+	 lo = tzcnt( mask[d] )
+	 alt_mask1 = mask[d] >> lo
+	 alt_mask2 = mask[d] | ( 1 << diff )
+	 bound1 = min( bound[d], color[s] )
+
+	 color[d] += _p( lo + 1, csk && match )
+	 mask[d] = ( match ? alt_mask1 : ( csk && inmsk ) ? alt_mask2: mask[d] )
+	 bound[d] = _p( bound1, csk && sbnd )
+	 prio[d].count_down( _0, !csk && color[d] < bound[s] )
+     */
+
     void run() {
 	const partitioner &part = GA.get_partitioner();
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
+
+	constexpr bool debug_verbose = false;
 
 	timer tm_iter;
 	tm_iter.start();
@@ -153,7 +228,8 @@ first set color[v] = v
 #endif
 	};
 
-	frontier roots, badv;
+	frontier roots;
+	// frontier badv;
 	api::edgemap(
 	    GA,
 	    api::config( api::always_dense ), // because of edge numbering
@@ -170,23 +246,28 @@ first set color[v] = v
 		auto w = _c( W );
 		auto lsb = _1(posscol[v]);
 		return posscol[v]
-		    = expr::iif( priority[v] < w, _0,
+		    = expr::iif( priority[v] < w, _1s,
 				 ( lsb << expr::cast<BitMaskTy>( priority[v] + _1 ) ) - _1 );
 	    } )
+/*
 	    .vertex_filter( GA, ftrue, badv,
 			    [&]( auto v ) {
 				return posscol[v] == _0 && degree[v] != _0;
 			    } )
+*/
 	    .materialize();
 
+/*
 	assert( badv.nActiveVertices() == 0
 		&& "cannot encode posscol in available bits" );
 	badv.del();
+*/
 
 	log( iter, tm_iter, ftrue, ik_prio );
 
 	while( !roots.isEmpty() ) {
 	    frontier new_roots;
+	    frontier badv;
 	    api::edgemap(
 		GA,
 		api::config( api::always_sparse ),
@@ -230,9 +311,19 @@ first set color[v] = v
 		    [&]( auto v ) {
 			return posscol[v] &= ~( posscol[v] - _1 );
 		    } )
+#if 1
+		.vertex_filter( GA, new_roots, badv,
+				[&]( auto v ) {
+				    return posscol[v] == _0;
+				} )
+#endif
 		.materialize();
 
-	    if( debug ) {
+	    assert( badv.nActiveVertices() == 0
+		    && "run out of colours" );
+	    badv.del();
+
+	    if( debug && debug_verbose ) {
 		roots.toSparse( part );
 		new_roots.toSparse( part );
 
@@ -367,7 +458,7 @@ private:
     api::vertexprop<VID,VID,var_color> color;
     api::vertexprop<BitMaskTy,VID,var_posscol> posscol;
     api::vertexprop<VID,VID,var_priority> priority;
-    expr::rnd::prng<VID> prng;
+    // expr::rnd::prng<VID> prng;
     std::vector<info> info_buf;
 };
 
