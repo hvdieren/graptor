@@ -1426,11 +1426,16 @@ struct op_def {
 	auto s = expr::value<simd::ty<VID,1>,expr::vk_src>();
 	auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
 	auto e = expr::value<simd::ty<EID,1>,expr::vk_edge>();
+#if 0
 	return map_merge(
 	    map_merge(
 		expr::extract_pointer_set_with( pset, relax( s, d, e ) ),
 		expr::extract_pointer_set( vertexop( d ) ) ),
 	    expr::extract_pointer_set( fusionop( d ) ) );
+#else
+	return expr::extract_pointer_set_with(
+	    pset, relax( s, d, e ), vertexop( d ), fusionop( d ) );
+#endif
     }
 
     auto get_ptrset() const { // TODO - redundant
