@@ -8,8 +8,8 @@
 
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
-    bool symmetric = P.getOptionValue("-s");
-    bool binary = P.getOptionValue("-b");             //Galois binary format
+    bool symmetric = P.getOptionValue( "-s" );
+    bool mtx_mkt = P.getOptionValue( "-m" );            // Matrix market format
 
     const char * ifile = P.getOptionValue( "-i" );
     const char * wfile = P.getOptionValue("-weights"); // file with weights
@@ -19,7 +19,9 @@ int main( int argc, char *argv[] ) {
 
     GraphCSx G( ifile, -1, symmetric, wfile );
 
-    std::cerr << "Creating output file " << ofile << "...\n";
+    std::cerr << "Vertices: " << G.numVertices()
+	      << "\nEdges: " << G.numEdges()
+    	      << "\nCreating output file " << ofile << "...\n";
 
     std::string wel = std::string( ofile );
     ofstream file( wel, ios::out | ios::trunc );
@@ -39,6 +41,14 @@ int main( int argc, char *argv[] ) {
     constexpr size_t THRESHOLD = size_t(1) << 32; // 4 GiB
     std::stringstream buffer;
 
+    if( mtx_mkt ) {
+	buffer << "%%MatrixMarket matrix coordinate real ";
+	if( !symmetric )
+	    buffer << "un";
+	buffer << "symmetric\n";
+	buffer << n << ' ' << n << ' ' << ( symmetric ? m/2 : m ) << "\n";
+    }
+
     for( VID u=0; u < n; ++u ) {
 	EID es = index[u];
 	EID ee = index[u+1];
@@ -50,9 +60,16 @@ int main( int argc, char *argv[] ) {
 		std::stringstream().swap(buffer);
 	    }
 
-	    buffer << u << ' ' << v;
-	    if( weights )
-		buffer << ' ' << weights[e];
+	    if( mtx_mkt ) {
+		if( u > v ) {
+		    buffer << u << ' ' << v
+			   << ' ' << ( weights ? weights[e] : -1.0f );
+		}
+	    } else {
+		buffer << u << ' ' << v;
+		if( weights )
+		    buffer << ' ' << weights[e];
+	    }
 	    buffer << '\n';
 	}
     }
