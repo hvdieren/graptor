@@ -2076,7 +2076,7 @@ template<unsigned short A,
 struct array_encoding_intlv2_ifc {
     using base_encoding = array_encoding_intlv2<StoredTy0,StoredTy1,MaxVL_>;
 
-    using stored_type = typename base_encoding::stored_type_sel<A>;
+    using stored_type = typename base_encoding::template stored_type_sel<A>;
     using storage_type = stored_type;
     
     template<typename index_type>
