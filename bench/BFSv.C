@@ -235,7 +235,9 @@ private:
     std::vector<info> info_buf;
 };
 
+#ifndef NOBENCH
 template <class GraphType>
 using Benchmark = BFSv<GraphType>;
 
 #include "driver.C"
+#endif // NOBENCH
