@@ -15,7 +15,7 @@ struct ternop : public expr_base {
 		   || std::is_same_v<TernOp,loopop_while>,
 		   "vector lengths must match" );
 
-    using data_type = typename TernOp::types<E1,E2,E3>::result_type;
+    using data_type = typename TernOp::template types<E1,E2,E3>::result_type;
     using type = typename data_type::member_type;
     static constexpr unsigned short VL = data_type::VL;
     using arg1_type = E1;
