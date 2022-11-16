@@ -74,8 +74,8 @@ template<typename PtrSet, typename T, typename U, short AID,
 	 typename Enc, bool NT>
 static constexpr
 auto extract_ptrset( array_ro<T, U, AID, Enc, NT> a, PtrSet && set ) {
-    return map_set_if_absent<(unsigned)aid_key(array_aid(AID))>(
-	std::forward<PtrSet>( set ), cvt( a.ptr() ) );
+    return map_set_if_absent_v2<(unsigned)aid_key(array_aid(AID))>(
+	set, cvt( a.ptr() ) );
 }
 
 template<typename PtrSet, typename T, typename U, short AID,
@@ -94,14 +94,14 @@ auto extract_ptrset( bitarray_intl<T, U, AID> a, PtrSet && set ) {
 template<typename PtrSet, typename T, typename U, short AID>
 static constexpr
 auto extract_ptrset( bitarray_ro<T, U, AID> a, PtrSet && set ) {
-    return map_set_if_absent<(unsigned)aid_key(array_aid(AID))>(
-	std::forward<PtrSet>( set ), cvt( a.ptr() ) );
+    return map_set_if_absent_v2<(unsigned)aid_key(array_aid(AID))>(
+	set, cvt( a.ptr() ) );
 }
 
 template<typename PtrSet, typename Tr, value_kind VKind>
 static constexpr
 auto extract_ptrset( value<Tr, VKind>, PtrSet && set ) {
-    return set;
+    return std::forward<PtrSet>( set );
 }
 
 template<typename PtrSet, typename Expr, typename UnOp>
@@ -127,7 +127,8 @@ static constexpr auto extract_ptrset( ternop<E1,E2,E3,TernOp> e, PtrSet && set )
 template<typename PtrSet, typename A, typename T, unsigned short VL>
 static constexpr
 auto extract_ptrset( refop<A,T,VL> r, PtrSet && set ) {
-    return extract_ptrset( r.array(), extract_ptrset( r.index(), std::forward<PtrSet>( set ) ) );
+    auto set2 = extract_ptrset( r.index(), std::forward<PtrSet>( set ) );
+    return extract_ptrset( r.array(), std::forward<decltype(set2)>( set2 ) );
 }
 
 template<typename PtrSet, typename A, typename T, typename M, unsigned short VL>
@@ -175,34 +176,62 @@ template<typename PtrSet, typename C, typename... Cs>
 static constexpr
 auto extract_ptrset( expr::cache<C,Cs...> cache, PtrSet && set ) {
     return extract_ptrset( expr::car( cache ).get_ref(),
-			   extract_ptrset( expr::cdr( cache ), std::forward<PtrSet>( set ) ) );
+			   extract_ptrset( expr::cdr( cache ),
+					   std::forward<PtrSet>( set ) ) );
 }
 
 } // namespace ast_ptrset
 
 // Also accepting expr::cache<> as argument and will iterate of its references
-template<typename AST>
-static constexpr
-auto extract_pointer_set( AST ast ) {
-    return ast_ptrset::extract_ptrset( ast, create_map() );
-}
-
-template<typename AST0, typename... AST>
-static constexpr
-auto extract_pointer_set( AST0 ast0, AST... astn ) {
-    return ast_ptrset::extract_ptrset( ast0, extract_pointer_set( astn... ) );
-}
-
 template<typename PtrSet, typename AST>
 static constexpr
-auto extract_pointer_set_with( const PtrSet & ptrset, AST ast ) {
+auto extract_pointer_set_with_extend( const PtrSet & ptrset, AST ast ) {
+    // Assumes PtrSet already contains all relevant entries
     return ast_ptrset::extract_ptrset( ast, ptrset );
 }
 
 template<typename PtrSet, typename AST0, typename... AST>
 static constexpr
+auto extract_pointer_set_with_extend( const PtrSet & ptrset, AST0 ast0, AST... astn ) {
+    // Assumes PtrSet already contains all relevant entries
+    return ast_ptrset::extract_ptrset( ast0, extract_pointer_set_with_extend( ptrset, astn... ) );
+}
+
+template<typename AST>
+static constexpr
+auto extract_pointer_set( AST ast ) {
+    using map_type = decltype(ast_ptrset::extract_ptrset( ast, create_map() ));
+    return ast_ptrset::extract_ptrset( ast, map_type() );
+}
+
+template<typename AST0, typename... AST>
+static constexpr
+auto extract_pointer_set( AST0 ast0, AST... astn ) {
+    using map_type = decltype(ast_ptrset::extract_ptrset( ast0, extract_pointer_set( astn... ) ));
+    map_type m;
+    auto x = ast_ptrset::extract_ptrset(
+	ast0, extract_pointer_set_with_extend( std::forward<map_type>( m ),
+					       astn... ) );
+    static_assert( std::is_same_v<std::remove_reference_t<decltype(x)>,map_type>, "oops" );
+    return x;
+}
+
+template<typename PtrSet, typename AST>
+static constexpr
+auto extract_pointer_set_with( const PtrSet & ptrset, AST ast ) {
+    using map_type = decltype(ast_ptrset::extract_ptrset( ast, ptrset ));
+    map_type m;
+    initialize_map( m, ptrset.get_entries() );
+    return ast_ptrset::extract_ptrset( ast, std::forward<map_type>( m ) );
+}
+
+template<typename PtrSet, typename AST0, typename... AST>
+static constexpr
 auto extract_pointer_set_with( const PtrSet & ptrset, AST0 ast0, AST... astn ) {
-    return ast_ptrset::extract_ptrset( ast0, extract_pointer_set_with( ptrset, astn... ) );
+    using map_type = decltype(ast_ptrset::extract_ptrset( ast0, extract_pointer_set_with( ptrset, astn... ) ));
+    map_type m;
+    initialize_map( m, ptrset.get_entries() );
+    return ast_ptrset::extract_ptrset( ast0, extract_pointer_set_with_extend( m, astn... ) );
 }
 
 } // namespace expr

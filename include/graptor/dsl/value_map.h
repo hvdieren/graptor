@@ -24,7 +24,7 @@ struct map_entry {
 
     static constexpr index_type index = Index;
 
-    map_entry() { }
+    map_entry() : m_val( 0 ) { }
     explicit map_entry( const value_type & val ) : m_val( val ) { }
     explicit map_entry( value_type && val )
 	: m_val( std::forward<value_type>( val ) ) { }
@@ -99,6 +99,7 @@ private:
     vector_type m_val;
 };
 
+#if 0 // deprecated
 template<typename Head, typename Tail = void>
 struct value_map_cons
 {
@@ -233,6 +234,7 @@ struct value_map_chain
 private:
     Head m_head;
 };
+#endif // 0 -- deprecated
 
 template<typename T>
 using is_value_map_entry = std::is_base_of<value_map_entry,T>;
@@ -260,16 +262,19 @@ static inline constexpr auto create_map_entry( ValueTy val ) {
     return map_entry<Index,ValueTy>( val );
 }
 
+#if 0 // deprecated
 template<typename Head>
 static inline constexpr auto create_map_chain( Head head ) {
     return map_chain<Head>( head );
 }
+#endif // 0 -- deprecated
 
 template<typename... Entries>
 class map_new {
 public:
     static constexpr size_t num_entries = sizeof...(Entries);
     
+    template <std::size_t N = num_entries, typename std::enable_if<(N>0), int>::type = 0>
     map_new( Entries &&... entries )
 	: m_entries( std::forward<Entries>( entries )... ) { }
 
@@ -277,6 +282,9 @@ public:
 	: m_entries( map.m_entries ) { }
     map_new( map_new<Entries...> && map )
 	: m_entries( std::move( map.m_entries ) ) { }
+
+    // uninitialized map - internal use only (currently for ptrset.h)
+    map_new() : m_entries() { }
 
 private:
     template<typename...>
@@ -295,14 +303,27 @@ public:
     auto get_entries() const { return m_entries; }
 
     template<typename Entry>
-    map_new<Entry, Entries...> copy_and_add( Entry && e ) const {
-	return map_new<Entry,Entries...>(
-	    std::tuple_cat( std::tuple<Entry>( std::forward<Entry>( e ) ),
-			    m_entries ) );
+    map_new<Entries...,Entry> copy_and_add( Entry && e ) const {
+	return map_new<Entries...,Entry>(
+	    std::tuple_cat( m_entries,
+			    std::tuple<Entry>( std::forward<Entry>( e ) ) ) );
     }
 
     static map_new<Entries...> from_tuple( std::tuple<Entries...> && t ) {
 	return map_new<Entries...>( std::forward<std::tuple<Entries...>>( t ) );
+    }
+
+    // Specifically for ptrset.h
+    template<unsigned Index, typename T>
+    void set_if_null( T * p ) {
+	auto & r = get<Index>();
+	if( p != nullptr && r == nullptr )
+	    r = p;
+    }
+    template<unsigned Index, typename T>
+    void set( T * p ) {
+	if( p != nullptr )
+	    get<Index>() = p;
     }
 
 private:
@@ -333,6 +354,29 @@ private:
 template<typename... Entries>
 auto create_map_new( Entries &&... entry ) {
     return map_new<Entries...>( std::forward<Entries>( entry )... );
+}
+
+template<typename Map>
+void initialize_map( Map & map ) {
+}
+
+template<typename Map, unsigned Index, typename Value>
+void map_set_entry( Map & map, const map_entry<Index,Value> & ent ) {
+    map.template get<Index>() = ent.get();
+}
+    
+template<unsigned It, typename Map, typename... Entries>
+void initialize_map_helper(
+    Map & map,
+    const std::tuple<Entries ...> & entries ) {
+    map_set_entry( map, std::get<It>( entries ) );
+    if constexpr ( It+1 < sizeof...(Entries) )
+	initialize_map_helper<It+1>( map, entries );
+}
+
+template<typename Map, typename... Entries>
+void initialize_map( Map & map, const std::tuple<Entries...> & entries ) {
+    initialize_map_helper<0>( map, entries );
 }
 
 template<typename... Entries>
@@ -407,6 +451,7 @@ map_replace_or_set_helper( const tuple<Entry,Entries...> & t, T * p ) {
 template<unsigned Index, typename Map, typename T>
 static inline constexpr auto
 map_replace_or_set( const Map & m, T * p ) {
+    // do: m.get<Index>() = p; - in-place change
     return create_map_new_from_tuple(
 	map_replace_or_set_helper<Index>( m.get_entries(), p ) );
 }
@@ -425,6 +470,24 @@ template<unsigned Index, typename Map, typename T>
 static inline constexpr auto
 map_set_if_absent( Map && m, T * p,
 		   typename std::enable_if<!map_contains<Index,Map>::value>::type * = nullptr ) {
+    return m.copy_and_add( create_map_entry<Index>( p ) );
+}
+
+template<unsigned Index, typename Map, typename T>
+constexpr auto
+map_set_if_absent_v2(
+    Map & m, T * p,
+    typename std::enable_if<map_contains<Index,Map>::value>::type * = nullptr ) {
+    m.template set/*_if_null*/<Index>( p );
+    return m;
+}
+
+template<unsigned Index, typename Map, typename T>
+static inline constexpr auto
+map_set_if_absent_v2(
+    Map & m, T * p,
+    typename std::enable_if<!map_contains<Index,Map>::value>::type * = nullptr ) {
+    // Creates a new copy of the map
     return m.copy_and_add( create_map_entry<Index>( p ) );
 }
 
@@ -452,6 +515,24 @@ map_replace_all( const Map1 & m_base, const Map2 & m_override ) {
     return create_map_new_from_tuple(
 	map_replace_all_helper( m_base.get_entries(), m_override.get_entries() ) );
 }
+
+/*
+template<typename... Entries>
+struct map_builder;
+
+template<typename... Entries>
+struct map_builder<map_new<Entries...>>
+{
+    using map_type = map_new<Entries...>;
+
+    template<typename Index, typename Value>
+    using set_if_absent_type =
+	std::conditional_t<map_contains<Index,map_type>::value,
+			   map_type,
+			   map_new<std::tuple<map_entry<Index,Value>,
+					      Entries...>>>;
+};
+*/
 
 /***********************************************************************
  * Alternative approach
