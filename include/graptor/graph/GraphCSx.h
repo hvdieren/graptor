@@ -2511,6 +2511,9 @@ public:
 
     VID getDegree( VID v ) const { return index[v+1] - index[v]; }
     VID getNeighbor( VID v, VID pos ) const { return edges[index[v]+pos]; }
+    bool hasNeighbor( VID v, VID ngh ) const {
+	return std::binary_search( &edges[index[v]], &edges[index[v+1]], ngh );
+    }
 
     VID getMaxDegreeVertex() const { return nmaxdeg; }
     void setMaxDegreeVertex( VID v ) { nmaxdeg = v; }
