@@ -26,9 +26,9 @@ using expr::_1;
 #define MEMO 0
 
 template <class GraphType>
-class BFSv {
+class BFSLVLv {
 public:
-    BFSv( GraphType & _GA, commandLine & P )
+    BFSLVLv( GraphType & _GA, commandLine & P )
 	: GA( _GA ),
 	  a_level( GA.get_partitioner(), "current level" ),
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
@@ -51,7 +51,7 @@ public:
 	    std::cerr << "FUSION=" << FUSION << "\n";
 	}
     }
-    ~BFSv() {
+    ~BFSLVLv() {
 	a_level.del();
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
 	a_prev_level.del();
@@ -265,6 +265,8 @@ public:
 #endif
     }
 
+    const VID * get_level() const { return a_level.get_ptr(); }
+
 private:
     const GraphType & GA;
     bool itimes, debug, calculate_active;
@@ -277,7 +279,9 @@ private:
     std::vector<info> info_buf;
 };
 
+#ifndef NOBENCH
 template <class GraphType>
-using Benchmark = BFSv<GraphType>;
+using Benchmark = BFSLVLv<GraphType>;
 
 #include "driver.C"
+#endif // NOBENCH
