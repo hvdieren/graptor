@@ -374,6 +374,11 @@ void initialize_map_helper(
 	initialize_map_helper<It+1>( map, entries );
 }
 
+template<typename Map>
+void initialize_map( Map & map, const std::tuple<> & entries ) {
+    // Nothing to do
+}
+
 template<typename Map, typename... Entries>
 void initialize_map( Map & map, const std::tuple<Entries...> & entries ) {
     initialize_map_helper<0>( map, entries );
