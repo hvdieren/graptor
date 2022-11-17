@@ -67,7 +67,7 @@ auto make_ternop( E1 e1, E2 e2, E3 e3, TernOp op ) {
 struct ternop_iif {
     template<typename C, typename E1, typename E2>
     struct types {
-	using result_type = typename E2::type;
+	using result_type = typename E2::data_type;
     };
 
     static constexpr char const * name = "ternop_iif";
