@@ -707,7 +707,11 @@ struct evaluator {
 	    // a relevant mask exists in the mask pack. Then iterate the loop as
 	    // validness of lanes is not affected throughout iterations.
 	    // TODO: convert mask if necessary.
-	    if( cnd.data() ) {
+
+	    // Build mask
+	    auto m0 = mpack.get_mask_for( cnd );
+
+	    if( m0.data() && cnd.data() ) {
 		do {
 		    // Execute loop body
 		    auto b = evaluate( op.data2(), mpack );
