@@ -125,9 +125,9 @@ static __attribute__((flatten)) void coo_vector_loop(
 }
 
 
-template<typename EMapConfig, typename Operator>
-static inline void emap_ireg(
-    const GraphGGVEBO & G, Operator & op, const partitioner & part ) {
+template<typename EMapConfig, typename GraphType, typename Operator>
+static inline void emap_ireg_graphgrind(
+    const GraphType & G, Operator & op, const partitioner & part ) {
     constexpr unsigned short VL = EMapConfig::VL;
 
     EID m = G.numEdges();
@@ -225,6 +225,18 @@ static inline void emap_ireg(
     }
 
     accum_destroy( accum );
+}
+
+template<typename EMapConfig, typename Operator>
+static inline void emap_ireg(
+    const GraphGGVEBO & G, Operator & op, const partitioner & part ) {
+    emap_ireg_graphgrind<EMapConfig>( G, op, part );
+}
+
+template<typename EMapConfig, typename COOType, typename Operator>
+static inline void emap_ireg(
+    const GraphGG_tmpl<COOType> & G, Operator & op, const partitioner & part ) {
+    emap_ireg_graphgrind<EMapConfig>( G, op, part );
 }
 
 #endif // GRAPTOR_DSL_EMAP_GRAPHCOO_H

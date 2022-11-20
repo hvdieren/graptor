@@ -5,15 +5,20 @@
 // This class is not up to date with the latest requirements around
 // - frontier selection: getPullVLBound, select_traversal, etc
 // - EID retrievers (which are being phased out)
+// Note: a fixup has been made w/ little testing
 //
 // Should consider making this class a specialisation of GraphGGVEBO
 
 template<typename COOType>
 class GraphGG_tmpl {
+    using EIDRemapper = NullEIDRemapper<VID,EID>;
+    using EIDRetriever = IdempotentEIDRetriever<VID,EID>;
+
     GraphCSx * csr, * csc; // for transpose
     GraphCSx csr_act, csc_act;
     COOType * coo;
     partitioner part;
+    EIDRetriever eid_retriever;
 
 public:
     template<class vertex>
@@ -116,28 +121,72 @@ public:
     }
 
     const partitioner & get_partitioner() const { return part; }
+    const EIDRetriever & get_eid_retriever() const { return eid_retriever; }
 
     const GraphCSx & getCSC() const { return *csc; }
     const GraphCSx & getCSR() const { return *csr; }
     const COOType & get_edge_list_partition( int p ) const { return coo[p]; }
 
+    PartitionedCOOEIDRetriever<VID,EID>
+    get_edge_list_eid_retriever( int p ) const {
+	return PartitionedCOOEIDRetriever<VID,EID>( part.edge_start_of( p ) );
+    }
+
     VID originalID( VID v ) const { return v; }
     VID remapID( VID v ) const { return v; }
 
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
+    VID getOutNeighbor( VID v, VID pos ) const { return getCSR().getNeighbor( v, pos ); }
+    const VID * getOutDegree() const { return getCSR().getDegree(); }
 
     // This graph only supports scalar processing in our system as destinations
     // are not laid out in a way that excludes conflicts across vector lanes
     // in the COO representation.
-    // unsigned short getMaxVLCOO() const { return 1; }
-    // unsigned short getMaxVLCSC() const { return VLUpperBound; }
-    // static constexpr unsigned short getVLCOOBound() { return 1; }
-    // static constexpr unsigned short getVLCSCBound() { return VLUpperBound; }
+    static constexpr unsigned short getPullVLBound() { return 1; }
+    static constexpr unsigned short getPushVLBound() { return 1; }
+    static constexpr unsigned short getIRegVLBound() { return 1; }
 
-    static constexpr unsigned short getMaxVLCOO() { return 1; }
-    static constexpr unsigned short getMaxVLCSC() { return 1; }
-    static constexpr unsigned short getVLCOOBound() { return 1; }
-    static constexpr unsigned short getVLCSCBound() { return 1; }
+    graph_traversal_kind select_traversal(
+	bool fsrc_strong,
+	bool fdst_strong,
+	bool adst_strong,
+	bool record_strong,
+	frontier F,
+	bool is_sparse ) const {
+
+	if( is_sparse )
+	    return graph_traversal_kind::gt_sparse;
+
+#if GG_ALWAYS_MEDIUM
+#if OWNER_READS
+	return graph_traversal_kind::gt_push;
+#else
+	return graph_traversal_kind::gt_pull;
+#endif
+#endif
+
+	// threshold not configurable
+	EID nactv = (EID)F.nActiveVertices();
+	EID nacte = F.nActiveEdges();
+	EID threshold2 = numEdges() / 2;
+	if( nactv + nacte <= threshold2 ) {
+#if OWNER_READS
+	    return graph_traversal_kind::gt_push;
+#else
+	    return graph_traversal_kind::gt_pull;
+#endif
+	} else
+	    return graph_traversal_kind::gt_ireg;
+    }
+
+    static constexpr bool is_privatized( graph_traversal_kind gtk ) {
+#if OWNER_READS
+	return gtk == graph_traversal_kind::gt_push;
+#else
+	return gtk == graph_traversal_kind::gt_pull;
+#endif
+    }
+
 };
 
 using GraphGG = GraphGG_tmpl<GraphCOO>;
