@@ -51,6 +51,15 @@ public:
 		COOType & el = coo[p];
 		new ( &el ) COOType( WG, part, p );
 	    } );
+
+	// set up edge partitioner - determines how to allocate edge properties
+	EID * counts = part.edge_starts();
+	EID ne = 0;
+	for( unsigned short p=0; p < npart; ++p ) {
+	    counts[p] = ne;
+	    ne += coo[p].numEdges();
+	}
+	counts[npart] = ne;	
     }
     GraphGG_tmpl( const GraphCSx & Gcsr,
 		  int npart, bool balance_vertices )
@@ -90,8 +99,16 @@ public:
 		      << ": ne=" << coo[p].numEdges()
 		      << "\n";
 	}
-    }
 
+    	// set up edge partitioner - determines how to allocate edge properties
+	EID * counts = part.edge_starts();
+	EID ne = 0;
+	for( unsigned short p=0; p < npart; ++p ) {
+	    counts[p] = ne;
+	    ne += coo[p].numEdges();
+	}
+	counts[npart] = ne;
+    }
 
     void del() {
 	csr_act.del();
