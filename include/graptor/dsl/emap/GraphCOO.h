@@ -151,6 +151,7 @@ static inline void emap_ireg_graphgrind(
 
     auto expr0 = op.vertexop( vid );
     auto accum = expr::extract_accumulators( expr0 );
+    expr::accum_create( part, accum );
     auto expr1 = expr::rewrite_privatize_accumulators( expr0, part, accum, pid );
     auto pvop0 = expr::accumulate_privatized_accumulators( pid, accum );
     auto pvopf0 = expr::final_accumulate_privatized_accumulators( pid, accum );
