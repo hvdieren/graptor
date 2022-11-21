@@ -135,6 +135,8 @@ public:
     VID originalID( VID v ) const { return v; }
     VID remapID( VID v ) const { return v; }
 
+    auto get_remapper() const { return RemapVertexIdempotent<VID>(); }
+
     VID getOutDegree( VID v ) const { return getCSR().getDegree( v ); }
     VID getOutNeighbor( VID v, VID pos ) const { return getCSR().getNeighbor( v, pos ); }
     const VID * getOutDegree() const { return getCSR().getDegree(); }
