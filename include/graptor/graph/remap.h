@@ -89,8 +89,7 @@ public:
     static frontier createValidFrontier( const GraphTy & G ) {
 	using traits = gtraits<GraphTy>;
 	const partitioner & part = traits::getPartitioner( G );
-	return frontier::all_true( part,
-				   traits::numVertices( G ),
+	return frontier::all_true( traits::numVertices( G ),
 				   traits::numEdges( G ) );
     }
 };
