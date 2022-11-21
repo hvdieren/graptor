@@ -17,7 +17,7 @@ struct UniqueCount
         values(_values), count(_count), n(_n), others(_others),
 	frontier(_frontier) {}
     inline bool operator () ( VID i ) {
-	if( frontier[i] ) {
+	/* if( frontier[i] ) */ { // implied that Frontier is true
 	    if( values[i] < 0 || values[i] >= n )
 		__sync_fetch_and_add( others, 1 );
 	    else
