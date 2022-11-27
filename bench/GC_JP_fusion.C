@@ -309,8 +309,13 @@ first set color[v] = v
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    return expr::make_seq(
 			// Can we do ECL optimisations?
+			// Only set destination colour if we have priority
+			// over destination. Otherwise, this is an
+			// unnecessary store operation.
 			usedcol[index[d]+expr::cast<EID>(color[s])]
-			= _p( _1s(usedcol[e]), color[s] < degree[d] ),
+			= _p( _1s(usedcol[e]), // set flag: colour used
+			      prio_fn( s, d ) && // will stored value be used?
+			      color[s] < degree[d] ), // array bounds check
 			priority[d].count_down(
 			    _p( _0(priority[d]), prio_fn( s, d ) ) )
 			);
