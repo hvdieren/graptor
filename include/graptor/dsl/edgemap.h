@@ -967,8 +967,15 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 	if( ret.value().data() ) {
 	    // Set frontier, once.
 	    if( zf[dst.data()] == 0
+#if 0
 		&& __sync_fetch_and_or( (unsigned char *)&zf[dst.data()],
-					(unsigned char)1 ) == 0 ) {
+					(unsigned char)1 ) == 0
+#else
+		&& __atomic_exchange_n(
+		    (unsigned char *)&zf[dst.data()],
+		    (unsigned char)1, __ATOMIC_RELAXED ) == 0
+#endif
+		) {
 		// first time being set
 		frontier[fidx++] = dst.data();
 	    }

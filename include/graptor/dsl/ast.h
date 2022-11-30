@@ -24,6 +24,7 @@
 #include "graptor/dsl/ast/redop.h"
 #include "graptor/dsl/ast/dfsaop.h"
 #include "graptor/dsl/ast/ctrl.h"
+#include "graptor/dsl/ast/random.h"
 
 #include "graptor/dsl/value_map.h"
 
