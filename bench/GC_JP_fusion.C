@@ -28,6 +28,11 @@ using expr::_p;
 #if FUSION == 0
 #undef VECTORIZE
 #define VECTORIZE 1
+
+#if VECTORIZE == 0
+#error VECTORIZE may not be zero
+#endif
+
 #endif
 
 #ifndef FLAG_TYPE
@@ -230,6 +235,15 @@ first set color[v] = v
 	    )
 	    .materialize();
 
+	// Set color of roots (vertex property is not initialised)
+	// TODO: link in with edgemap above, set color to 1 if priority==1
+	//       and to 0 otherwise; record roots as priority==1. Still need
+	//       to traverse all edges for vertices with priority==0 to update
+	//       priority of all neighbours, which tempers performance benefit.
+	make_lazy_executor( part )
+	    .vertex_map( roots, [&]( auto v ) { return color[v] = _0; } )
+	    .materialize();
+
 	log( iter, tm_iter, ftrue, ik_prio );
 
 	auto select_col = [&]( auto v ) {
@@ -300,6 +314,7 @@ first set color[v] = v
 		    return expr::make_seq(
 			select_col_fusion( v ),
 			_1(v) // process immediately
+// TODO: drop if zero-degree!
 			);
 		} ),
 #endif
