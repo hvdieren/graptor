@@ -6,8 +6,22 @@
 #include <cstdint>
 #include <atomic>
 
+#include "graptor/dsl/emap/edgechunk.h"
+
 #define MANUALLY_ALIGNED_ARRAYS 1
-#define DEBUG_WORK_LIST 0
+#define DEBUG_WORK_LIST 1
+
+#ifndef FUSION_EDGE_BALANCE
+#define FUSION_EDGE_BALANCE 1
+#endif
+
+#ifndef FUSION_DROP_ZDEG
+#define FUSION_DROP_ZDEG 1
+#endif
+
+#ifndef FUSION_EARLY_PUSH
+#define FUSION_EARLY_PUSH 0
+#endif
 
 #if DEBUG_WORK_LIST
 namespace {
@@ -66,15 +80,23 @@ class work_list {
 public:
     using type = T;
     static constexpr size_t CHUNK = CHUNK_;
+    static constexpr EID mm_block = 2048;
+    static constexpr EID mm_threshold = 2048;
+#if FUSION_EDGE_BALANCE
+    using buffer_type = edge_buffer<VID,EID>;
+#else
+    using buffer_type = vertex_buffer<VID,EID>;
+#endif
 
     class list_node {
 	template<typename T_, unsigned CHUNK__>
 	friend class work_list;
 
     private:
-	list_node( type * buf, size_t fill )
-	    : m_next( nullptr ), m_buf( buf ),
-	      m_fill( fill ) { }
+	list_node( type * buf )
+	    : m_next( nullptr ), m_buf( buf, CHUNK ) { }
+	list_node( type * buf, VID fill, const EID * const idx )
+	    : m_next( nullptr ), m_buf( buf, CHUNK, fill, idx ) { }
 	~list_node() = delete;
 
 	static list_node * create() {
@@ -82,7 +104,7 @@ public:
 	    uint8_t * p = new uint8_t[size];
 	    list_node * l = reinterpret_cast<list_node *>( p );
 	    type * b = reinterpret_cast<type *>( &p[sizeof(list_node)] );
-	    new ( l ) list_node( b, 0 );
+	    new ( l ) list_node( b );
 
 #if DEBUG_WORK_LIST
 	    n_alloc_full++;
@@ -90,11 +112,12 @@ public:
 	    
 	    return l;
 	}
-	static list_node * create( type * buf, size_t fill ) {
+	static list_node * create( type * buf, size_t fill,
+				   const EID * idx ) {
 	    size_t size = sizeof(list_node);
 	    uint8_t * p = new uint8_t[size];
 	    list_node * l = reinterpret_cast<list_node *>( p );
-	    new ( l ) list_node( buf, fill );
+	    new ( l ) list_node( buf, fill, idx );
 
 #if DEBUG_WORK_LIST
 	    n_alloc_half++;
@@ -103,6 +126,7 @@ public:
 	    return l;
 	}
 	static void destroy( list_node * l ) {
+	    assert( l->m_buf.size() <= CHUNK );
 #if DEBUG_WORK_LIST
 	    n_destroy++;
 #endif
@@ -129,28 +153,48 @@ public:
 #endif
 	}
 	
-	const T * begin() const { return m_buf; }
-	const T * end() const { return &m_buf[m_fill]; }
+	auto vertex_begin() const {
+	    return m_buf.vertex_begin();
+	}
+	auto vertex_end() const {
+	    return m_buf.vertex_end();
+	}
+	auto edge_begin( const EID * idx ) const {
+	    return m_buf.edge_begin( idx );
+	}
+	auto edge_end( const EID * idx ) const {
+	    return m_buf.edge_end( idx );
+	}
 
-	void push_back( T & value ) {
-	    m_buf[m_fill++] = value;
-	    // assert( m_fill <= CHUNK );
+	void push_back( const T & value, const EID * const idx ) {
+	    m_buf.push_back( value, idx );
+	}
+
+	void close( const EID * idx ) {
+	    m_buf.close( idx );
+	}
+
+	bool has_space( VID v, EID e ) const {
+	    return m_buf.has_space( v, e, mm_block );
+	} 
+	bool is_empty() const {
+	    return m_buf.is_empty();
+	}
+	VID size() const {
+	    return m_buf.size();
+	}
+	void set( const edge_partition<VID,EID> & ep,
+		  const VID * const v = nullptr ) {
+	    m_buf.set( ep, v );
 	}
 
 	list_node * get_next() { return m_next; }
 	const list_node * get_next() const { return m_next; }
 	void set_next( list_node * p ) { m_next = p; }
 
-	bool has_space( size_t n ) const {
-	    return m_fill + n <= CHUNK;
-	    // assert( m_fill <= CHUNK );
-	} 
-	bool is_empty() const { return m_fill == 0; }
-
     protected:
 	list_node * m_next;
-	type * m_buf;
-	size_t m_fill;
+	buffer_type m_buf;
     };
 
 public:
@@ -159,8 +203,9 @@ public:
     static list_node * create_list_node() {
 	return list_node::create();
     };
-    static list_node * create_list_node( type * buf, size_t fill ) {
-	return list_node::create( buf, fill );
+    static list_node * create_list_node( type * buf, size_t fill,
+					 const EID * idx ) {
+	return list_node::create( buf, fill, idx );
     };
     
     void setup( list_node * n ) {
@@ -218,8 +263,9 @@ public:
     using buffer_type = typename queue_type::list_node;
     static constexpr size_t CHUNK = CHUNK_;
 
-    work_stealing( unsigned threads )
-	: m_threads( threads ), m_working( m_threads ), m_processed( nullptr ) {
+    work_stealing( unsigned threads, const GraphCSx & G )
+	: m_threads( threads ), m_working( m_threads ), m_processed( nullptr ),
+	  m_G( G ) {
 #if MANUALLY_ALIGNED_ARRAYS
 	size_t space = sizeof(queue_type)*m_threads+16;
 	m_queues_alloc = new char[space];
@@ -286,14 +332,23 @@ public:
     }
     
     void push( unsigned self_id, type value ) {
-	reserve( self_id, 1 )->push_back( value );
+	const EID * const idx = m_G.getIndex();
+	const EID degree = idx[value+1] - idx[value];
+#if FUSION_DROP_ZDEG
+	const bool do_push = degree != 0;
+#else
+	const bool do_push = true;
+#endif
+	if( do_push )
+	    reserve( self_id, 1, degree )->push_back( value, m_G.getIndex() );
     }
 
     void push_safe( unsigned self_id, type value ) {
 	m_active[self_id]->push_back( value );
+	assert( 0 && "needs checking" );
     }
 
-    buffer_type * reserve( unsigned self_id, unsigned num ) {
+    buffer_type * reserve( unsigned self_id, unsigned num, EID edges ) {
 	assert( num < CHUNK && "can reserve at most CHUNK elements" );
 	buffer_type * buf = m_active[self_id];
 	// If we don't have a buffer, or the buffer has insufficient space,
@@ -305,13 +360,24 @@ public:
 	    if( buf )
 		push_buffer( buf, self_id );
 	    m_active[self_id] = buf = queue_type::create_list_node();
+	else if( !buf->is_empty() ) {
+	    if( !buf->has_space( num, edges )
+#if FUSION_EARLY_PUSH
+		|| 4*m_working.load() < 3*m_threads && m_threads > 1
+#endif
+		) {
+		push_buffer( buf, self_id );
+		m_active[self_id] = buf = queue_type::create_list_node();
+	    }
 	}
 	return buf;
     }
 
-    void create_buffer( unsigned self_id, type * buf, size_t fill ) {
+    void create_buffer( unsigned self_id, type * buf, size_t fill,
+			const EID * idx ) {
 	if( fill > 0 )
-	    push_buffer( queue_type::create_list_node( buf, fill ), self_id );
+	    push_buffer( queue_type::create_list_node( buf, fill, idx ),
+			 self_id );
     }
 
     buffer_type * steal( unsigned self_id ) {
@@ -323,6 +389,8 @@ public:
 	if( m_active[self_id] && !m_active[self_id]->is_empty() ) {
 	    buffer_type * buf = m_active[self_id];
 	    m_active[self_id] = queue_type::create_list_node();
+	    // buf->close( m_G.getIndex() );
+	    buf = close_and_split( buf, self_id );
 	    return buf;
 	}
 
@@ -350,7 +418,67 @@ public:
 
 private:
     void push_buffer( buffer_type * buf, unsigned self_id ) {
+	// buf->close( m_G.getIndex() );
+	buf = close_and_split( buf, self_id );
 	m_queues[self_id].push( buf );
+    }
+
+    buffer_type * close_and_split( buffer_type * buf, unsigned self_id ) {
+	const EID * const idx = m_G.getIndex();
+
+	// Close buffer (book-keeping)
+	buf->close( idx );
+
+#if FUSION_EDGE_BALANCE == 1
+	// Check if it is worthwhile to split the buffer.
+	if( m_working.load() >= m_threads || m_threads == 1 )
+	    return buf;
+
+	// For every part, push it to the queue. Return one part that
+	// has not been pushed.
+
+	// Calculate info on the degrees of the vertices and total number of
+	// edges
+	VID m = buf->size();
+	EID * degree = new EID[2*m+1];
+	const VID * const s = buf->vertex_begin();
+	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
+	    degree[i] = idx[s[i]+1] - idx[s[i]];
+	} );
+
+	EID* voffsets = &degree[m];
+	EID mm = voffsets[m] = sequence::plusScan( degree, voffsets, m );
+
+	VID mm_parts = std::min( VID( m_threads ) * 4,
+				 VID( ( mm + queue_type::mm_block - 1 ) / queue_type::mm_block ) );
+
+	// If there are no edges, just return the buffer
+	// If there are few parts, don't split
+	if( mm == 0 || mm_parts == 1 ) {
+	    delete[] degree;
+	    return buf;
+	}
+
+	// Create buffers with balanced number of edges, cutting high-degree
+	// vertices over multiple buffers.
+	partition_vertex_list<VID,EID,queue_type::mm_block,
+			      queue_type::mm_threshold>(
+	    s, m, voffsets, idx, mm, mm_parts,
+	    [&]( VID p, VID from, VID to, EID fstart, EID lend, EID offset ) {
+		edge_partition<VID,EID> ep( from, to, fstart, lend, offset );
+		if( p == 0 )
+		    buf->set( ep );
+		else {
+		    buffer_type * sbuf = queue_type::create_list_node();
+		    sbuf->set( ep, s );
+		    m_queues[self_id].push( sbuf );
+		}
+	    } );
+
+	delete[] degree;
+#endif
+
+	return buf;
     }
 
 
@@ -363,6 +491,7 @@ private:
     queue_type * m_queues;
     buffer_type ** m_active;
     buffer_type ** m_processed;
+    const GraphCSx & m_G;
 };
 
 
