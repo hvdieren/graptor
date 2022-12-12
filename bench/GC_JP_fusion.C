@@ -208,7 +208,7 @@ first set color[v] = v
 	auto prio_fn = [&]( auto s, auto d ) {
 #if LLF
 	    return expr::make_unop_lzcnt<VID>( degree[s] )
-		> expr::make_unop_lzcnt<VID>( degree[d] )
+		< expr::make_unop_lzcnt<VID>( degree[d] )
 		|| ( expr::make_unop_lzcnt<VID>( degree[s] )
 		     == expr::make_unop_lzcnt<VID>( degree[d] )
 		     && s < d );
