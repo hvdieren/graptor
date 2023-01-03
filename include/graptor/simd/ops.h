@@ -109,6 +109,13 @@ auto operator ^ ( simd::detail::vec<Tr,Layout1> l,
 }
 
 template<typename Tr, layout_t Layout1, layout_t Layout2>
+auto operator && ( simd::detail::vec<Tr,Layout1> l,
+		   simd::detail::vec<Tr,Layout2> r ) {
+    return simd::detail::vec<Tr,_arith_cst(Layout1,Layout2)>(
+	Tr::traits::logical_and( l.data(), r.data() ) );
+}
+
+template<typename Tr, layout_t Layout1, layout_t Layout2>
 auto operator + ( simd::detail::vec<Tr,Layout1> l,
 		  simd::detail::vec<Tr,Layout2> r ) {
     return simd::detail::vec<Tr,_arith_add(Layout1,Layout2)>(
