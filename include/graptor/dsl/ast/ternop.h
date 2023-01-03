@@ -128,6 +128,31 @@ iif( C c, E1 e1, E2 e2 ) {
     return make_ternop( c, e1, e2, ternop_iif() );
 }
 
+/* find_first: find first element in a range equal to constant value
+ */
+struct ternop_find_first {
+    template<typename S, typename E, typename V>
+    struct types {
+	using result_type = typename S::data_type;
+    };
+
+    static constexpr char const * name = "ternop_find_first";
+};
+
+template<typename S, typename E, typename V>
+static constexpr auto
+find_first( S s, E e, V v ) {
+    static_assert( std::is_base_of<expr_base,S>::value, "requirement" );
+    static_assert( std::is_base_of<expr_base,E>::value, "requirement" );
+    static_assert( std::is_base_of<expr_base,V>::value, "requirement" );
+
+    if constexpr ( v.opcode == op_constant )
+	return make_ternop( s, e, expand_cst( v, s ), ternop_find_first() );
+    else
+	return make_ternop( s, e, v, ternop_find_first() );
+}
+
+
 // An algorithm
 template<short AID_Kahan_Y, short AID_Kahan_T,
 typename Compensation, typename State, typename Expr>
