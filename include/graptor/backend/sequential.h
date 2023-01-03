@@ -11,6 +11,20 @@ inline uint32_t graptor_num_threads() {
     return 1;
 }
 
+template<typename T, typename Fn>
+void parallel_loop( const T it_start, const T it_end, Fn fn ) {
+    for( T i=it_start; i != it_end; ++i ) {
+	fn( i );
+    }
+}
+
+template<typename T, typename Fn>
+void parallel_loop( const T it_start, const T it_end, const int grain, Fn fn ) {
+    for( T i=it_start; i != it_end; ++i ) {
+	fn( i );
+    }
+}
+
 template<typename Fn>
 void map_partitionL( const partitioner & part, Fn fn ) {
     map_partition_serialL( part, fn );
