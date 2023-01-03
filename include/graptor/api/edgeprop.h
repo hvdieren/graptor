@@ -61,6 +61,22 @@ public:
 	mem.del( m_name );
     }
 
+    /*! Obtain syntax tree element for array
+     *
+     * @return The syntax representing the array
+     */
+    auto get_array() const {
+	return array_ty( mem.get() );
+    }
+
+    /*! Implicit cast to syntax tree element for array
+     *
+     * @return The syntax representing the array
+     */
+    operator array_ty () const {
+	return get_array();
+    }
+    
     /*! Subscript operator overload for syntax trees
      * This operator builds a syntax tree that represents an array index
      * operation.
