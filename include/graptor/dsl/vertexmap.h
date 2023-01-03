@@ -452,12 +452,6 @@ private:
 
 	// Map
 	map_partitionL( part, [&]( int p ) {
-		// TODO: Code generation is sub-optimal as we do address
-		//       calculation out of the vidx which is a set1inc
-		//       which is then converted from vector to scalar when
-		//       used. simd_vector with a set1inc should only record
-		//       the scalar and operate on that. data() should call
-		//       traits::set1inc() while load() should use scalar.
 		VID s = part.start_of( p );
 		VID e = part.end_of( p );
 
@@ -468,6 +462,8 @@ private:
 		// VL. Only the final partition can have a number of vertices
 		// that is not a multiple of VL and every partition starts
 		// at a multiple of VL.
+		// The code here fixes this problem by using scalar operations
+		// at the start and end of a partition.
 		// assert( (s % VL) == 0 && "partition should be vector-aligned" );
 
 		VID v=s;
