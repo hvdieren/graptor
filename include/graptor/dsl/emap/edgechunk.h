@@ -7,6 +7,7 @@ static VID
 process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 		    VID * frontier, bool *zf,
 		    Cache & c, const Environment & env, const Expr & e );
+
 template<typename lVID, typename lEID>
 struct basic_edge_iterator {
     using VID = lVID;
@@ -246,7 +247,7 @@ public:
 		      bool * zf,
 		      const EID * idx,
 		      const VID * edges,
-		      const Cache & c,
+		      Cache & c,
 		      const Environment & env, 
 		      const Expr & expr ) const {
 	EID n_out = 0;
@@ -459,7 +460,7 @@ public:
 		      bool * zf,
 		      const EID * idx,
 		      const VID * edges,
-		      const Cache & c,
+		      Cache & c,
 		      const Environment & env, 
 		      const Expr & expr ) const {
 	return m_partition.template process_push<need_atomic>(
