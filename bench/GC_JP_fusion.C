@@ -14,6 +14,15 @@ using expr::_p;
 #define FUSION 1
 #endif
 
+#ifndef TWO_STEP
+#define TWO_STEP 1
+#endif
+
+#if TWO_STEP
+#undef FUSION
+#define FUSION 0
+#endif
+
 // VECTORIZE indicates vector length of fusion operation with
 // scalar destination. 1 means no vectorization (scalar baseline),
 // 8 is typical vector length for AVX2 with 4-byte flags, 16 is typical
@@ -25,14 +34,12 @@ using expr::_p;
 
 // Vectorization applies to the fusion operation. The same operation in
 // vertex_map is vectorized differently.
-#if FUSION == 0
-#undef VECTORIZE
-#define VECTORIZE 1
+// #if FUSION == 0
+// #undef VECTORIZE
+// #define VECTORIZE 1
 
 #if VECTORIZE == 0
 #error VECTORIZE may not be zero
-#endif
-
 #endif
 
 #ifndef FLAG_TYPE
@@ -52,6 +59,7 @@ enum gc_variable_name {
     var_usedcol = 5,
     var_index = 6,
     var_tmp = 7,
+    var_sel = 8,
     var_degrees_ro = expr::aid_graph_degree
 };
 
@@ -59,7 +67,8 @@ enum iteration_kind {
     ik_prio,
     ik_depth,
     ik_color,
-    ik_post
+    ik_post,
+    ik_step1
 };
 
 std::ostream & operator << ( ostream & os, iteration_kind k ) {
@@ -68,6 +77,7 @@ std::ostream & operator << ( ostream & os, iteration_kind k ) {
     case ik_depth: os << "DAG-depth"; break;
     case ik_color: os << "coloring"; break;
     case ik_post: os << "post-process"; break;
+    case ik_step1: os << "step-1"; break;
     default: os << "<unknown>"; break;
     }
     return os;
@@ -121,6 +131,7 @@ public:
 	if( !once ) {
 	    once = true;
 	    std::cerr << "FUSION=" << FUSION << "\n";
+	    std::cerr << "TWO_STEP=" << TWO_STEP << "\n";
 	    std::cerr << "VECTORIZE=" << VECTORIZE << "\n";
 	    std::cerr << "FLAG_TYPE=" << FLAG_TYPE
 		      << " width=" << sizeof(FlagTy) << "\n";
@@ -259,8 +270,19 @@ first set color[v] = v
 		);
 	};
 
+/*
+	auto select_col_pull = [&]( auto s, auto d, auto e ) {
+	    auto min_col = expr::make_scalar<var_min_col,VID,decltype(v)::VL>();
+	    return min_col.arg_min( expr::cast<VID>( e - index[d] ), 
+				    usedcol[e] == _0 );
+	};
+*/
+
 #if VECTORIZE != 1
 	auto select_col_fusion = [&]( auto v ) {
+	    if constexpr ( decltype(v)::VL != 1 )
+		return select_col( v );
+	    else {
 	    static_assert( decltype(v)::VL == 1, "assumption" );
 	    static constexpr unsigned short VL = VECTORIZE;
 	    static constexpr unsigned short lgVL = ilog2( VL );
@@ -295,6 +317,7 @@ first set color[v] = v
 			)
 		    )
 		);
+	    }
 	};
 #else
 	auto select_col_fusion = select_col;
@@ -337,11 +360,36 @@ first set color[v] = v
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
+#if TWO_STEP
+/*
+		.materialize();
+	    api::edgemap(
+		GA,
+		api::filter( api::dst, api::strong, new_roots ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    return color[d] = expr::cast<VID>(
+			expr::find_first( usedcol[index[d]],
+					  usedcol[index[d+_1]], _0 )
+			- index[d] );
+		} )
+		)
+*/
 		.vertex_map(
 		    new_roots,
-		    [&]( auto v ) { return select_col( v ); }
+		    [&]( auto v ) {
+			return color[v] = expr::cast<VID>(
+			    expr::find_first( usedcol[index[v]],
+					      usedcol[index[v+_1]], _0 )
+			    - index[v] );
+		    } )
+		.materialize();
+#else
+		.vertex_map(
+		    new_roots,
+		    [&]( auto v ) { return select_col_fusion( v ); }
 		    )
 		.materialize();
+#endif
 
 	    if( debug && debug_verbose ) {
 		roots.toSparse( part );
