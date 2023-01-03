@@ -182,10 +182,6 @@ static inline void GraptorCSCDataParCached(
 	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
 	}
 
-	{
-	    static int x = 0;
-	    ++x;
-	}
 	cache_commit( env, vcaches, c, m /*, mpack*/ );
 	sdst += sstep;
     }
@@ -308,13 +304,25 @@ static inline void emap_pull(
 
     // Override pointer for vk_eweight with the relevant permutation of the
     // weights for the GA graph.
+#if 0
     auto ew_pset = expr::create_map2<expr::vk_eweight>(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-					 
+
+    auto op_pset = op.get_ptrset( ew_pset );
+
     // TODO maybe need to include aexpr0
     auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), all_caches,
-	/*aexpr,*/ m_vexpr0, /*m_rexpr,*/ pvop0, pvopf0 );
+	// op.get_ptrset( ew_pset ), all_caches,
+	op_pset, all_caches );
+#else
+    auto env = expr::eval::create_execution_environment_op(
+	op, all_caches,
+	GA.getWeights() ? GA.getWeights()->get() : nullptr );
+#endif
+#if 0
+	,
+	/*aexpr,*/ m_vexpr0, /*m_rexpr,*/ pvop0, pvopf0, vop2 );
+#endif
 
     // Loop termination condition (active check)
     auto aexpr0 = op.active( v_dst ); // mask

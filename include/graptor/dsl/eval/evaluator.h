@@ -739,7 +739,172 @@ struct evaluator {
 	    }
 	}
     }
-    
+
+    template<typename S, typename E, typename V, typename MPack>
+    auto evaluate( const ternop<S,E,V,ternop_find_first> & op,
+		   const MPack & mpack ) {
+	return evaluate_find_first( op, mpack );
+    }
+
+    template<typename ATr, typename VTr, short AID, typename Enc, bool NT,
+	     layout_t Layout1, layout_t Layout2, layout_t Layout3,
+	     typename MPack>
+    auto evaluate_find_first_loop(
+	const array_intl<typename VTr::member_type,typename ATr::member_type,
+			 AID,Enc,NT> & array,
+	simd::vec<ATr,Layout1> start,
+	simd::vec<ATr,Layout2> end,
+	simd::vec<VTr,Layout3> value,
+	const MPack & mpack ) {
+	static_assert( ATr::VL == 1, "scalar assumption" );
+	using type_list = typename expr::detail::create_type_list<
+	    typename VTr::member_type>;
+#if __AVX512F__
+	using recommendation
+	    = expr::detail::recommended_vectorization<type_list,64,16,true>;
+#elif __AVX2__
+	using recommendation
+	    = expr::detail::recommended_vectorization<type_list,32,16,true>;
+#else
+	using recommendation
+	    = expr::detail::recommended_vectorization<type_list,1,1,true>;
+#endif
+	static constexpr short VL = recommendation::vlen;
+	using ATrVL = typename ATr::rebindVL<VL>::type;
+	using ATy = typename ATr::member_type;
+
+	// Loop index
+	auto idx = start;
+	
+	// Loop increment
+	auto inc = simd::create_scalar<ATr>( VL );
+
+	if( value.data() == 0 ) { // TODO: adjust target::find_first
+	    // Allow to over-run end of range, then correct
+	    auto cnd = idx < end;
+	    while( cnd.data() ) { 
+		// Execute loop body
+		auto velm = evaluate_incseq<VL,false>(
+		    array, make_rvalue( idx, expr::sb::mask_pack<>() )
+		    ).value();
+		auto fnd = simd::find_first( velm );
+		if( fnd.data() < VL ) {
+		    auto fst = fnd.template convert_data_type<ATr>() + idx;
+		    if( fst.data() >= end.data() )
+			return make_rvalue( end, mpack );
+		    else
+			return make_rvalue( fst, mpack );
+		}
+
+		// Evaluate condition
+		idx += inc;
+		cnd = idx < end;
+	    }
+	    return make_rvalue( end, mpack );
+	} else {
+	    auto cnd = idx < end;
+	    auto one = simd::create_scalar<ATr>( 1 );
+	    while( cnd.data() ) { 
+		// Execute loop body
+		auto elm = evaluate( array, make_rvalue( idx, mpack ) ).value();
+		if( elm.data() == value.data() )
+		    return make_rvalue( idx, mpack );
+
+		// Evaluate condition
+		idx += one;
+		cnd = idx < end;
+	    }
+	    return make_rvalue( end, mpack );
+	}
+    }
+
+    template<typename S, typename E, typename V, typename MPack>
+    auto evaluate_find_first( const ternop<S,E,V,ternop_find_first> & op,
+			      const MPack & mpack ) {
+	static_assert( S::array_type::AID == E::array_type::AID,
+		       "Start and end range must refer to same array" );
+
+	// Note: leaves mask_pack unmodified.
+	    
+	// Evaluate condition.
+	// It is assumed that S and E are simple refop
+	auto array = op.data1().array();
+	auto start = evaluate( op.data1().index(), mpack ).value();
+	auto end = evaluate( op.data2().index(), mpack ).value();
+	auto value = evaluate( op.data3(), mpack ).value();
+	auto idx = start;
+	auto cnd = idx < end;
+	using ATr = typename decltype(idx)::data_type;
+	using ATy = typename ATr::member_type;
+
+	if constexpr ( decltype(cnd)::VL == 1 ) {
+	    // Build mask
+	    if constexpr ( !MPack::is_empty() ) {
+		if( !mpack.template get_any<ATr>().data() )
+		    // Re-package as scalar such that all exit points have
+		    // the same metadata (layout) on the return value.
+		    return make_rvalue( simd::create_scalar<ATr>( end.data() ),
+					mpack );
+	    }
+
+	    // For high-degree vertices / long arrays, use nested parallelism.
+	    ATy range = end.data() - start.data();
+	    static constexpr ATy granularity = 2048;
+
+	    auto num_threads = graptor_num_threads();
+	    if( num_threads > 1 && range > 2 * granularity ) {
+		// Chunks and their sizes
+		const ATy chunks
+		    = std::min( ATy( num_threads * 8 ),
+				ATy( range / granularity ) );
+		const ATy chunk_size
+		    = ( ( range + chunks - 1 ) / chunks + 31 ) & ~ATy(31);
+
+		// Shared variable to cancel unnecessary work
+		volatile ATy lowest = end.data();
+
+		// std::cerr << "chunks=" << chunks << " size=" << chunk_size << "\n";
+
+		parallel_loop( (ATy)0, chunks, [&]( ATy k ) {
+		    auto s_start = k * granularity;
+		    auto s_end = std::min( range, ( k + 1 ) * chunk_size );
+		    auto v_start = start + simd::create_scalar<ATr>( s_start );
+		    auto v_end = start + simd::create_scalar<ATr>( s_end );
+
+		    if( lowest >= v_end.data() ) {
+			auto res = evaluate_find_first_loop(
+			    op.data1().array(), v_start, v_end, value, mpack )
+			    .value().data();
+			if( res != v_end.data() ) {
+			    ATy l;
+			    do {
+				l = lowest;
+				if( l < res )
+				    break;
+			    } while( !__sync_bool_compare_and_swap(
+					 &lowest, l, res ) );
+			}
+		    }
+		} );
+
+		// Post-process
+		ATy result = lowest;
+
+		return make_rvalue( simd::create_scalar<ATr>( result ), mpack );
+	    } else {
+		auto res = evaluate_find_first_loop(
+		    op.data1().array(), start, end, value, mpack ).value();
+		return make_rvalue( simd::create_scalar<ATr>( res.data() ),
+				    mpack );
+	    } 
+	} else {
+	    // static_assert( 0, "NYI" );
+	    assert( 0 && "NYI" );
+	    return evaluate( op.data2().index(), mpack ); // end of array (not found)
+	    // return make_rvalue( simd::create_scalar<ATr>( 0 ), mpack );
+	}
+    }
+
 private:
     template<array_aid AID>
     auto get_ptr() const {

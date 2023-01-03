@@ -17,6 +17,7 @@ public:
 	: m_aid_to_address( std::forward<address_map_t>( amap ) ) { }
     execution_environment( const address_map_t & amap )
 	: m_aid_to_address( std::move( amap ) ) { }
+    execution_environment() { }
 
     template<typename cache_map_type, typename value_map_type, typename Expr>
     __attribute__((always_inline))
@@ -80,6 +81,8 @@ public:
 	    return execution_environment<replaced_map_t>( aid_replaced );
     }
 
+    address_map_t & get_map() { return m_aid_to_address; }
+
 private:
     address_map_t m_aid_to_address;
 };
@@ -96,10 +99,45 @@ template<typename PtrSet, typename... Expr>
 GG_INLINE inline
 auto create_execution_environment_with(
     const PtrSet & ptrset, Expr &&... expr ) {
-    auto aid_to_address =
-	extract_pointer_set_with( ptrset, std::forward<Expr>( expr )... );
-    using address_map_t = decltype(aid_to_address);
-    return execution_environment<address_map_t>( std::move( aid_to_address ) );
+/*
+    using address_map_t = decltype(
+	extract_pointer_set_with( ptrset, std::forward<Expr>( expr )... ) );
+    return execution_environment<address_map_t>(
+	std::forward<address_map_t>(
+	    extract_pointer_set_with( ptrset, std::forward<Expr>( expr )... )
+	    ) );
+*/
+    using address_map_t
+	= typename expr::ast_ptrset::ptrset_list<PtrSet,Expr...>::map_type;
+    execution_environment<address_map_t> env;
+    expr::map_copy_entries( env.get_map(), ptrset ); // copy supplied pointers
+    expr::ast_ptrset::ptrset_list<PtrSet,Expr...>::initialize(
+	env.get_map(), expr... );
+    return env;
+	
+}
+
+template<typename Operator, typename Cache, typename WeightTy>
+GG_INLINE inline
+auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
+    using ew_pset
+	= typename expr::ast_ptrset::ptrset_pointer<
+	    expr::vk_eweight, WeightTy, expr::map_new<>>::map_type;
+    using op_pset
+	= typename Operator::template ptrset<ew_pset>::map_type;
+    using address_map_t
+	= typename expr::ast_ptrset::ptrset_list<op_pset,Cache>::map_type;
+
+    execution_environment<address_map_t> env;
+
+    expr::ast_ptrset::ptrset_pointer<
+	expr::vk_eweight, WeightTy, expr::map_new<>>::initialize(
+	    env.get_map(), w );
+    Operator::template ptrset<ew_pset>::initialize( env.get_map(), op );
+    expr::ast_ptrset::ptrset_list<op_pset,Cache>::initialize(
+	env.get_map(), c );
+
+    return env;
 }
     
 } // namespace eval

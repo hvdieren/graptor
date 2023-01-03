@@ -332,6 +332,27 @@ struct arg_filter_op {
 	return get_ptrset( expr::create_map() );
     }
 
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_old_f,
+	    typename frontier_params<ftype,EMapConfig::VL>::type,
+	    map_type1
+	    >::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const arg_filter_op & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_old_f,
+		typename frontier_params<ftype,EMapConfig::VL>::type,
+		map_type1
+		>::initialize( map, op.m_frontier.getDense<ftype>() );
+	}
+    };
+
     const auto get_config() const { return m_op.get_config(); }
 
 private:
@@ -469,6 +490,19 @@ struct arg_filter_a_op {
     auto get_ptrset() const { // TODO - redundant
 	return get_ptrset( expr::create_map() );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::merge_maps<map_type1, ptrset_ty>::type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const arg_filter_a_op & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
+	    expr::map_copy_entries( map, op.m_ptrset );
+	}
+    };
 
     template<frontier_type ftype>
     void setup( const partitioner & part ) { }
@@ -746,6 +780,47 @@ struct arg_record_reduction_op {
 	return get_ptrset( expr::create_map() );
     }
 
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 =
+	    typename Operator::ptrset<map_type0>::map_type;
+	using map_type2 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_new,
+	    typename frontier_params<ftype,EMapConfig::VL>::type,
+	    map_type1
+	    >::map_type;
+	using map_type3 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nacte, EID, map_type2>::map_type;
+	using map_type4 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nactv, VID, map_type3>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_graph_degree, VID, map_type4>::map_type;
+    
+	template<typename MapTy>
+	static void initialize( MapTy & map,
+				const arg_record_reduction_op & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_new,
+		typename frontier_params<ftype,EMapConfig::VL>::type,
+		map_type1
+		>::initialize( map, op.m_frontier.getDense<ftype>() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nacte, EID, map_type2
+		>::initialize( map, op.m_frontier.nActiveEdgesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nactv, VID, map_type3
+		>::initialize( map, op.m_frontier.nActiveVerticesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_graph_degree, VID, map_type4
+		>::initialize( map, op.m_degree );
+	}
+    };
+
     const auto get_config() const { return m_op.get_config(); }
 
 private:
@@ -838,6 +913,37 @@ struct arg_record_reduction_op<
     auto get_ptrset() const { // TODO - redundant
 	return get_ptrset( expr::create_map() );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 =
+	    typename Operator::ptrset<map_type0>::map_type;
+	using map_type2 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nacte, EID, map_type1>::map_type;
+	using map_type3 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nactv, EID, map_type2>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_graph_degree, EID, map_type3>::map_type;
+    
+	template<typename MapTy>
+	static void initialize( MapTy & map,
+				const arg_record_reduction_op & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nacte, EID, map_type1
+		>::initialize( map, op.m_frontier.nActiveEdgesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nactv, EID, map_type2
+		>::initialize( map, op.m_frontier.nActiveVerticesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_graph_degree, EID, map_type3
+		>::initialize( map, op.m_degree );
+	}
+    };
+
 
     const auto get_config() const { return m_op.get_config(); }
 
@@ -970,6 +1076,51 @@ struct arg_record_method_op {
     auto get_ptrset() const { // TODO - redundant
 	return get_ptrset( expr::create_map() );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 =
+	    typename Operator::ptrset<map_type0>::map_type;
+	using map_type2 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nacte, EID, map_type1>::map_type;
+	using map_type3 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nactv, VID, map_type2>::map_type;
+	using map_type4 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_graph_degree, VID, map_type3>::map_type;
+	using map_type =
+	    std::conditional_t<
+	    ftype == frontier_type::ft_unbacked,
+	    map_type4,
+	    typename expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_new,
+		typename frontier_params<ftype,EMapConfig::VL>::type,
+		map_type4
+		>::map_type>;
+	    
+	template<typename MapTy>
+	static void initialize( MapTy & map,
+				const arg_record_method_op & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nacte, EID, map_type1
+		>::initialize( map, op.m_frontier.nActiveEdgesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nactv, VID, map_type2
+		>::initialize( map, op.m_frontier.nActiveVerticesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_graph_degree, VID, map_type3
+		>::initialize( map, op.m_degree );
+	    if constexpr ( ftype != frontier_type::ft_unbacked )
+		expr::ast_ptrset::ptrset_pointer<
+		    expr::aid_frontier_new,
+		    typename frontier_params<ftype,EMapConfig::VL>::type,
+		    map_type4
+		    >::initialize( map, op.m_frontier.getDense<ftype>() );
+	}
+    };
 
     const auto get_config() const { return m_op.get_config(); }
 
@@ -1441,6 +1592,36 @@ struct op_def {
     auto get_ptrset() const { // TODO - redundant
 	return get_ptrset( expr::create_map() );
     }
+
+    template<typename PSet>
+    struct ptrset {
+	using relax_expr = decltype(
+	    static_cast<op_def*>( nullptr )->
+	    relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+		   expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+		   expr::value<simd::ty<EID,1>,expr::vk_edge>() ) );
+	using vertexop_expr = decltype(
+	    static_cast<op_def*>( nullptr )->
+	    vertexop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
+	using fusionop_expr = decltype(
+	    static_cast<op_def*>( nullptr )->
+	    fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
+					
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    PSet,relax_expr,vertexop_expr,fusionop_expr>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const op_def & op ) {
+	    auto s = expr::value<simd::ty<VID,1>,expr::vk_src>();
+	    auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
+	    auto e = expr::value<simd::ty<EID,1>,expr::vk_edge>();
+
+	    expr::ast_ptrset::ptrset_list<
+		PSet,relax_expr,vertexop_expr,fusionop_expr>
+		::initialize( map, op.relax( s, d, e ), op.vertexop( d ),
+			      op.fusionop( d ) );
+	}
+    };
 
     bool is_true_src_frontier() const {
 	return m_filter_src.is_true_frontier();

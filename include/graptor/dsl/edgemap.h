@@ -619,8 +619,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
     return output;
 }
 
-// Sparse CSR traversal (GraphCSx) with no new frontier calculated
-//template<typename config, typename Operator>
+// Sparse CSC traversal (GraphCSx) with no new frontier calculated
 template<typename config, typename Operator>
 static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
     config && cfg,
@@ -641,11 +640,13 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
     auto vcaches = expr::extract_local_vars( vexpr0 );
     auto vexpr1 = expr::rewrite_caches<expr::vk_zero>( vexpr0, vcaches );
 
-    // Match vector lengths and move masks
-    auto vexpr = expr::rewrite_mask_main( vexpr1 );
+    // Replace array_ro by array_intl
+    auto vexpr = expr::rewrite_internal( vexpr1 );
 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(), vcaches, vexpr );
+    // auto env = expr::eval::create_execution_environment_with(
+    // op.get_ptrset(), vcaches, vexpr );
+    auto env = expr::eval::create_execution_environment_op(
+	op, vcaches, GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     const VID *edge = GA.getEdges();
     if constexpr ( !std::decay_t<config>::is_parallel() ) {
@@ -1115,7 +1116,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     const partitioner & part,
     frontier & old_frontier,
     bool * zf,
-    Operator op ) {
+    const Operator & op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
@@ -1242,7 +1243,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     const EIDRetriever & eid_retriever,
     const partitioner & part,
     frontier & old_frontier,
-    Operator op ) {
+    const Operator & op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
@@ -1279,10 +1280,16 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     EID outEdgeCount = mm;
     voffsets[m] = mm;
 
-    constexpr VID mm_block = 2048;
-    constexpr VID mm_threshold = 2048;
+#ifndef EMAP_BLOCK_SIZE
+    constexpr EID mm_block = 2048;
+    constexpr EID mm_threshold = 2048;
+#else
+    static constexpr EID mm_block = EMAP_BLOCK_SIZE;
+    static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
+#endif
     VID mm_parts = std::min( graptor_num_threads() * 4,
 			     VID( ( mm + mm_block - 1 ) / mm_block ) );
+    // std::cerr << "v=" << m << " e=" << mm << " p=" << mm_parts << "\n";
 #endif
 
     // Every call with a fusion operation defined will be executed in the
@@ -1394,11 +1401,16 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
 
+/*
     auto ew_pset = expr::create_map2<expr::vk_eweight>(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr );
+*/
+    auto env = expr::eval::create_execution_environment_op(
+	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
+    
 
     const VID *edge = GA.getEdges();
 
@@ -1411,8 +1423,45 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     frontier new_frontier;
 
 #if ABCD
-    if( zerof && outEdgeCount > EID(GA.numVertices()) ) {
-	assert( 0 && "wrong path" );
+    if( false && zerof && outEdgeCount > EID(GA.numVertices()) ) {
+	// Case of potentially high number of activated vertices
+#if 0
+// todo: adjust load balance
+	parallel_loop( EID(0), mm_parts, [&]( EID p ) {
+	    parts[p].template process_sparse<need_atomic,um_flags_only>(
+		s, outEdges, zf, idx, edge, c, env, vexpr );
+	    VID v = sources[k];
+	    EID o = offsets[k];
+	    VID d = degrees[k];
+	    EID x = index[k];
+	    process_csr_sparse<need_atomic,um_flags_only>(
+		&edge[x], x, d, v,
+		nullptr, zf, c, env, vexpr );
+	} );
+#endif
+	assert( 0 && "NYI" );
+
+	// Construct frontier based on zerof flags and simultaneously
+	// restore zero frontier to all zeros
+	GraphCSRAdaptor GA_csr( GA );
+	frontier ftrue = frontier::all_true( GA.numVertices(), GA.numEdges() );
+	expr::array_ro<bool,VID,expr::aid_emap_zerof> a_zerof( zf );
+	make_lazy_executor( part )
+	    .vertex_filter(
+		GA_csr,
+		ftrue,
+		new_frontier,
+		[&]( auto v ) {
+		    return expr::let<expr::aid_emap_let>(
+			a_zerof[v],
+			[&]( auto z ) {
+			    return expr::make_seq(
+				a_zerof[v] = expr::_0,
+				z != expr::_0 ); }
+			);
+		} )
+	    .materialize();
+	ftrue.del();
     } else {
 	// Case of likely sparse output frontier
 	assert( outEdgeCount <= EID(std::numeric_limits<VID>::max())
@@ -1627,6 +1676,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // Clean up and return
 #if ABCD
     delete[] degree;
+    delete[] parts;
 #else
     delete[] degrees;
     delete[] sources;

@@ -31,6 +31,7 @@ struct map_entry {
 
     value_type get() const { return m_val; }
     value_type & get() { return m_val; }
+    void set( value_type & v ) { m_val = v; }
 
     template<unsigned Dist>
     map_entry<Index+Dist,value_type> shift() const {
@@ -404,12 +405,6 @@ auto map_shift( const map_new<Entries...> & map ) {
 				   map.get_entries() );
 }
 
-template<typename Map1, typename Map2>
-auto map_merge( Map1 && m1, Map2 && m2 ) {
-    return create_map_new_from_tuple(
-	std::tuple_cat( m1.get_entries(), m2.get_entries() ) );
-}
-
 template<typename... Es>
 static inline auto create_map( Es &&... es ) {
     return map_new<Es...>( std::forward<Es>( es )... );
@@ -428,6 +423,9 @@ struct map_contains<QIndex,map_new<Entry,Entries...>> {
     static constexpr bool value = ( Entry::index == QIndex ) ?
 	true : map_contains<QIndex,map_new<Entries...>>::value;
 };
+
+template<unsigned QIndex, typename Map>
+static constexpr bool map_contains_v = map_contains<QIndex,Map>::value;
 
 template<std::size_t... Ns, typename... Ts>
 static inline constexpr auto
@@ -495,6 +493,46 @@ map_set_if_absent_v2(
     // Creates a new copy of the map
     return m.copy_and_add( create_map_entry<Index>( p ) );
 }
+
+/*
+template<typename Map1, typename Map2>
+auto map_merge( Map1 && m1, Map2 && m2 ) {
+    return create_map_new_from_tuple(
+	std::tuple_cat( m1.get_entries(), m2.get_entries() ) );
+}
+*/
+
+template<unsigned Pos, typename Map1, typename Map2>
+auto map_merge_helper( Map1 && m1, Map2 && m2 ) {
+    if constexpr ( Pos < std::decay_t<Map2>::num_entries ) {
+	const auto & entry = std::get<Pos>( m2.get_entries() );
+	return map_merge_helper<Pos+1>(
+	    map_set_if_absent<std::decay_t<decltype(entry)>::index>(
+		m1, entry.get() ), m2 );
+    } else
+	return m1;
+}
+
+template<typename Map1, typename Map2>
+auto map_merge( Map1 && m1, Map2 && m2 ) {
+    return map_merge_helper<0>( m1, m2 );
+}
+
+template<unsigned Pos, typename Map1, typename Map2>
+void map_copy_entries_helper( Map1 & m1, const Map2 & m2 ) {
+    if constexpr ( Pos < std::decay_t<Map2>::num_entries ) {
+	const auto & entry = std::get<Pos>( m2.get_entries() );
+	static constexpr unsigned index = std::decay_t<decltype(entry)>::index;
+	m1.template get<index>() = entry.get();
+	map_copy_entries_helper<Pos+1>( m1, m2 );
+    }
+}
+
+template<typename Map1, typename Map2>
+void map_copy_entries( Map1 & m1, const Map2 & m2 ) {
+    return map_copy_entries_helper<0>( m1, m2 );
+}
+
 
 // Case with nothing to override
 template<typename... Base>
