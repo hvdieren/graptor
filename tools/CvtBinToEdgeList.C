@@ -63,14 +63,14 @@ int main( int argc, char *argv[] ) {
 	    if( mtx_mkt ) {
 		if( u > v ) {
 		    buffer << u << ' ' << v
-			   << ' ' << ( weights ? weights[e] : -1.0f );
+			   << ' ' << ( weights ? weights[e] : -1.0f ) << '\n';
 		}
 	    } else {
 		buffer << u << ' ' << v;
 		if( weights )
 		    buffer << ' ' << weights[e];
+		buffer << '\n';
 	    }
-	    buffer << '\n';
 	}
     }
 
