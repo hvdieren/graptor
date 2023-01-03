@@ -247,9 +247,9 @@ auto rewrite_mask( dfsaop<S,U,C,DFSAOp> op ) {
 
 template<typename Expr>
 static inline __attribute__((always_inline))
-auto rewrite_mask_main( Expr e ) {
+auto & rewrite_mask_main( Expr & e ) {
     // auto r = rewrite_mask<false>( e );
-    auto r = e; // rewrite_mask<false>( e );
+    auto & r = e; // rewrite_mask<false>( e );
     // Throwing away the top-level mask entirely seems erroneous as it
     // is necessary, e.g., for BFS. Perhaps a sufficient portion of the mask
     // is kept down for other algorihms, but for BFS, we don't have a refop
