@@ -80,8 +80,13 @@ class work_list {
 public:
     using type = T;
     static constexpr size_t CHUNK = CHUNK_;
+#ifndef FUSION_BLOCK_SIZE
     static constexpr EID mm_block = 2048;
     static constexpr EID mm_threshold = 2048;
+#else
+    static constexpr EID mm_block = FUSION_BLOCK_SIZE;
+    static constexpr EID mm_threshold = FUSION_BLOCK_SIZE;
+#endif
 #if FUSION_EDGE_BALANCE
     using buffer_type = edge_buffer<VID,EID>;
 #else
