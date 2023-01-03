@@ -124,6 +124,8 @@ count_unique( GraphType &GA, const T * values, std::ostream &os ) {
     unique.del();
     count.del();
 
+    delete[] packed.A;
+
     return nunique;
 }
 
