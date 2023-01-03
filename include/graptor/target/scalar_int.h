@@ -242,6 +242,10 @@ public:
 	}
     }
 
+    static type find_first( const member_type v ) {
+	return v == 0 ? 0 : 1;
+    }
+
     static constexpr bool has_ternary = false;
 
     static type load( const member_type *a ) { return *a; }
