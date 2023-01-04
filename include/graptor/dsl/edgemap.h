@@ -520,7 +520,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k], vexpr, vcaches, env );
 	}
     } else {
-	parallel_loop( VID(0), m, [&]( VID k ) {
+	parallel_loop( VID(0), m, 1, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually do parallel processing of neighbours as we
@@ -595,7 +595,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
 		vcaches, env );
 	}
     } else {
-	parallel_loop( VID(0), m, [&]( VID k ) {
+	parallel_loop( VID(0), m, 1, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually do parallel processing of neighbours as we
@@ -657,7 +657,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 					    vcaches, env );
 	}
     } else {
-	parallel_loop( VID(0), m, [&]( VID k ) {
+	parallel_loop( VID(0), m, 1, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    // We cannot actually process neighbours in parallel as we have not
@@ -1336,7 +1336,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     constexpr VID mm_block = 2048;
     VID mm_parts = ( m + mm_block - 1 ) / mm_block;
     EID * mm_off = new EID[mm_parts*2]; //!< number of ghost vertices / block
-    parallel_loop( VID(0), mm_parts, [&]( VID k ) {
+    parallel_loop( VID(0), mm_parts, 1, [&]( VID k ) {
 	VID start = k * mm_block;
 	VID end = std::min( start + mm_block, m );
 	EID mmk = 0;
@@ -1355,7 +1355,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     VID * sources = new VID[mm];
     EID * index = &degrees[2*mm];
 
-    parallel_loop( VID(0), mm_parts, [&]( VID k ) {
+    parallel_loop( VID(0), mm_parts, 1, [&]( VID k ) {
 	VID start = k * mm_block;
 	VID end = std::min( start + mm_block, m );
 	VID j = mm_off[mm_parts+k];
@@ -1427,7 +1427,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// Case of potentially high number of activated vertices
 #if 0
 // todo: adjust load balance
-	parallel_loop( EID(0), mm_parts, [&]( EID p ) {
+	parallel_loop( EID(0), mm_parts, 1, [&]( EID p ) {
 	    parts[p].template process_sparse<need_atomic,um_flags_only>(
 		s, outEdges, zf, idx, edge, c, env, vexpr );
 	    VID v = sources[k];
@@ -1472,7 +1472,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
 	// Count number of activated vertices for each block. Append them to
 	// a per-block list.
-	parallel_loop( VID(0), mm_parts, [&]( VID p ) {
+	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
 	    n_out_block[p] = parts[p].template process_push<need_atomic>(
 		s, outEdges, zf, idx, edge, c, env, vexpr );
 	} );
@@ -1486,7 +1486,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// Compact the per-block lists into a single list
 	new_frontier = frontier::sparse( GA.numVertices(), n_out );
 	VID* nextIndices = new_frontier.getSparse();
-	parallel_loop( VID(0), mm_parts, [&]( VID p ) {
+	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
 	    std::copy( &outEdges[parts[p].get_offset()],
 		       &outEdges[parts[p].get_offset()+n_out_block[p]],
 		       &nextIndices[n_out_block[mm_parts+p]] );
@@ -1593,7 +1593,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 			( mm + par_blocks - 1 ) / par_blocks );
 	const EID num_blocks = ( mm + block_size - 1 ) / block_size;
 	EID* n_out_block = new EID[num_blocks*2+1];
-	parallel_loop( EID(0), num_blocks, [&]( EID b ) {
+	parallel_loop( EID(0), num_blocks, 1, [&]( EID b ) {
 	    EID kmin = block_size * b;
 	    EID kmax = std::min( mm, kmin + block_size );
 	    EID n_out = 0;
@@ -1618,7 +1618,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// Compact the per-block lists into a single list
 	new_frontier = frontier::sparse( GA.numVertices(), n_out );
 	VID* nextIndices = new_frontier.getSparse();
-	parallel_loop( EID(0), num_blocks, [&]( EID b ) {
+	parallel_loop( EID(0), num_blocks, 1, [&]( EID b ) {
 	    EID kmin = block_size * b;
 	    std::copy( &outEdges[offsets[kmin]],
 		       &outEdges[offsets[kmin]+n_out_block[b]],
@@ -1737,7 +1737,7 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
 		nullptr, nullptr, c, env, vexpr );
 	}
     } else {
-	parallel_loop( VID(0), m, [&]( VID k ) {
+	parallel_loop( VID(0), m, 1, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
 	    if( __builtin_expect( d < 1000, 1 ) ) {

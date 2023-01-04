@@ -928,7 +928,7 @@ private:
 
 	VID nactv = fref.nActiveVertices();
 	const VID * f_array = fref.getSparse();
-	parallel_loop( (VID)0, nactv, [&]( auto i ) {
+	parallel_loop( (VID)0, nactv, 1, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 // TODO: race conditions on p...
@@ -1007,7 +1007,7 @@ private:
 
 	const VID * f_array = fref.getSparse();
 	VID * n_array = nfrontier.getSparse();
-	parallel_loop( (VID)0, nactv, [&]( auto i ) {
+	parallel_loop( (VID)0, nactv, 1, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );

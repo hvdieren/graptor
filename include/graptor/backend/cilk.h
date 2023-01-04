@@ -58,6 +58,7 @@ struct PartitionOp {
 	PartitionOp<Fn> * datap = reinterpret_cast<PartitionOp<Fn> *>( data );
 	parallel_loop( datap->part.numa_start_of( low ),
 		       datap->part.numa_start_of( high ),
+		       1, // Iterate over few partitions per NUMA node
 		       [&]( uint64_t n ) { datap->data( n ); } );
     }
 };
@@ -75,12 +76,14 @@ struct VertexOp {
 	VertexOp<Fn> * datap = reinterpret_cast<VertexOp<Fn> *>( data );
 	// TODO: single parallel_loop over all vertices in partition?
 	//       how to deal with padding vertices at end of each partition?
+	const partitioner & part = datap->part;
 	parallel_loop(
-	    datap->part.numa_start_of(low),
-	    datap->part.numa_start_of(high),
+	    part.numa_start_of(low),
+	    part.numa_start_of(high),
+	    1, // Iterate over few partitions
 	    [&]( auto p ) {
-		VID ps = datap->part.start_of_vbal( p );
-		VID pe = datap->part.end_of_vbal( p );
+		VID ps = part.start_of_vbal( p );
+		VID pe = part.end_of_vbal( p );
 		for( VID v=ps; v < pe; ++v ) {
 		    datap->data( v );
 		}
@@ -102,6 +105,7 @@ struct EdgeOp {
 	parallel_loop(
 	    datap->part.numa_start_of(low),
 	    datap->part.numa_start_of(high),
+	    1, // Iterate over few partitions
 	    [&]( auto p ) {
 		EID ps = datap->part.edge_start_of( p );
 		EID pe = datap->part.edge_end_of( p );
@@ -122,8 +126,10 @@ struct LoopOp {
 
     static void func(void *data, uint64_t low, uint64_t high) {
 	LoopOp<Fn> * datap = reinterpret_cast<LoopOp<Fn> *>( data );
+	const uint64_t start = datap->it_start;
+	Fn & data_fn = datap->data;
 	for( uint64_t i=low; i < high; ++i ) {
-	    datap->data( datap->it_start + i );
+	    data_fn( start + i );
 	}
     }
 };
@@ -133,7 +139,8 @@ void parallel_loop( const T it_start, const T it_end, Fn fn ) {
     LoopOp<Fn> op( static_cast<uint64_t>( it_start ), fn );
     __cilkrts_cilk_for_64( &LoopOp<Fn>::func,
 			   reinterpret_cast<void *>( &op ),
-			   static_cast<uint64_t>( it_end - it_start ), 1 );
+			   static_cast<uint64_t>( it_end - it_start ),
+			   2048 );
 }
 
 template<typename T, typename Fn>
@@ -158,7 +165,7 @@ void map_partitionL( const partitioner & part, Fn fn ) {
 template<typename Fn>
 void map_partitionL( const partitioner & part, Fn fn ) {
     VID _np = part.get_num_partitions();
-    parallel_loop( VID(0), _np, [&]( uint64_t i ) { fn( i ); } );
+    parallel_loop( VID(0), _np, 1, [&]( uint64_t i ) { fn( i ); } );
 }
 #endif // NUMA
 

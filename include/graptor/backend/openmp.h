@@ -30,6 +30,7 @@ inline uint32_t graptor_num_threads() {
 
 template<typename T, typename Fn>
 void parallel_loop( const T it_start, const T it_end, Fn fn ) {
+    // TODO: cilk backend has granularity of 2048 on this loop
 #pragma omp parallel for
     for( T i=it_start; i != it_end; ++i ) {
 	fn( i );

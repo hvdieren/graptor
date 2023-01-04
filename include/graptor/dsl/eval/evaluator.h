@@ -865,8 +865,8 @@ struct evaluator {
 
 		// std::cerr << "chunks=" << chunks << " size=" << chunk_size << "\n";
 
-		parallel_loop( (ATy)0, chunks, [&]( ATy k ) {
-		    auto s_start = k * granularity;
+		parallel_loop( (ATy)0, chunks, 1, [&]( ATy k ) {
+		    auto s_start = k * chunk_size;
 		    auto s_end = std::min( range, ( k + 1 ) * chunk_size );
 		    auto v_start = start + simd::create_scalar<ATr>( s_start );
 		    auto v_end = start + simd::create_scalar<ATr>( s_end );

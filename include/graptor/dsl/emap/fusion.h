@@ -387,7 +387,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
     if( num_threads > 1 ) {
-	parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
+	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 	    VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
 	    VID to = std::min( uint64_t(m),
 			       ( uint64_t(t + 1) * uint64_t(m) )
@@ -409,7 +409,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	if constexpr ( need_strong_checking ) {
 	    // Vertices already processed leave info in zf[] that is not
 	    // easily cleared. So we need to traverse the whole array.
-	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
+	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 		// Strange stuff with zf check, compiler erroneously
 		// evading it because it looks like bool(?). Hence the cast.
 		unsigned char * uczf = (unsigned char*)zf;
@@ -442,7 +442,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		zf[v] = false;
 */
 	    work_queues.shift_processed();
-	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
+	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 		while( auto * buffer = work_queues.steal( t ) ) {
 		    auto I = buffer->vertex_begin();
 		    auto E = buffer->vertex_end();
@@ -461,7 +461,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 */
 	} else {
 	    // Vertices already processed leave no info in zf[]
-	    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
+	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 		VID outEdgeCount = F[t].size();
 		VID * outEdges = &F[t][0];
 		for( VID k=0; k < outEdgeCount; ++k )
@@ -481,7 +481,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     // Merge all the resultant frontiers (copy - could do in parallel)
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
-    parallel_loop( (uint32_t)0, num_threads, [&]( uint32_t t ) {
+    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 	std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
     } );
 
