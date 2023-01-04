@@ -352,10 +352,11 @@ first set color[v] = v
 			// unnecessary store operation.
 			usedcol[index[d]+expr::cast<EID>(color[s])]
 			= _p( _1s(usedcol[e]), // set flag: colour used
-			      prio_fn( s, d ) && // will stored value be used?
+			      // prio_fn( s, d ) && // will stored value be used?
 			      color[s] < degree[d] ), // array bounds check
 			priority[d].count_down(
-			    _p( _0(priority[d]), prio_fn( s, d ) ) )
+			    _0(priority[d]) )
+			    // _p( _0(priority[d]), prio_fn( s, d ) ) )
 			);
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
