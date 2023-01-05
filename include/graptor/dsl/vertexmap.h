@@ -239,6 +239,8 @@ constexpr auto append_vop2vop( VOperator1 vop1, VOperator0 vop0 ) {
 template<bool IsScan, typename VOperator, typename EOperator>
 struct AppendVOpToEOp
 {
+    using self_type = AppendVOpToEOp<IsScan, VOperator, EOperator>;
+    
     VOperator vop;
     EOperator eop;
 
@@ -289,6 +291,19 @@ struct AppendVOpToEOp
     auto get_ptrset() const { // TODO - redundant
 	return get_ptrset( expr::create_map() );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename EOperator::ptrset<map_type0>::map_type;
+	using map_type = typename VOperator::ptrset<map_type1>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    EOperator::template ptrset<map_type0>::initialize( map, op.eop );
+	    VOperator::template ptrset<map_type1>::initialize( map, op.vop );
+	}
+    };
+
 
     bool is_true_src_frontier() const { return eop.is_true_src_frontier(); }
     bool is_true_dst_frontier() const { return eop.is_true_dst_frontier(); }
