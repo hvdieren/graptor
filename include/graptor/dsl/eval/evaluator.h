@@ -818,6 +818,100 @@ struct evaluator {
 	}
     }
 
+    template<typename ATr, typename VTr, short AID, typename Enc, bool NT,
+	     layout_t Layout1, layout_t Layout2, layout_t Layout3,
+	     layout_t Layout4, typename MPack>
+    auto evaluate_find_first_vec(
+	const array_intl<typename VTr::member_type,typename ATr::member_type,
+			 AID,Enc,NT> & array,
+	simd::vec<ATr,Layout1> start,
+	simd::vec<ATr,Layout2> end,
+	simd::vec<VTr,Layout3> value,
+	simd::vec<ATr,Layout4> result,
+	const MPack & mpack ) {
+
+	static_assert( ATr::VL != 1, "vector assumption" );
+	using ATy = typename ATr::member_type;
+
+	// Evaluate condition.
+	auto idx = start;
+	auto cnd = idx < end;
+
+	// Build mask
+	auto m0 = mpack.get_mask_for( cnd );
+
+	// Disable terminated lanes
+	auto m = m0 && cnd;
+	
+	if( m.is_all_false() ) {
+	    return result;
+	} else {
+	    // Create mask_pack with terminated lanes disabled
+	    auto mpack2 = sb::create_mask_pack( m );
+
+	    // Execute loop body
+	    auto velm = evaluate( array, make_rvalue( idx, mpack2 ) ).value();
+	    auto fnd = velm == value;
+	    auto mc = m.template convert_data_type<typename VTr::prefmask_traits>();
+	    auto updated = ::iif( mc && fnd, result, idx );
+	    auto one = simd::detail::vector_impl<ATr>::one_val();
+	    auto nxt = idx + one;
+
+	    auto mpack3 = sb::create_mask_pack( mc && !fnd );
+	    return evaluate_find_first_vec( array, nxt, end, value,
+					    updated, mpack3 );
+	}
+    }
+
+#if 0
+    template<typename VTr, typename ATr, short AID, typename Enc, bool NT,
+	     layout_t Layout1, layout_t Layout2, layout_t Layout3,
+	     layout_t Layout4, typename MPack>
+    auto evaluate_find_first_vec_wide(
+	const array_intl<typename VTr::member_type,typename ATr::member_type,
+			 AID,array_encoding<VTy>,NT> & array,
+	simd::vec<ATr,Layout1> start,
+	simd::vec<ATr,Layout2> end,
+	simd::vec<VTr,Layout3> value,
+	simd::vec<ATr,Layout4> result,
+	const MPack & mpack ) {
+
+	static_assert( VTr::W == ATr::W, "width must match" );
+	static_assert( ATr::VL != 1, "vector assumption" );
+	using ATy = typename ATr::member_type;
+
+	// Evaluate condition.
+	auto idx = start;
+	auto cnd = idx < end;
+
+	// Build mask
+	auto m0 = mpack.get_mask_for( cnd );
+
+	// Disable terminated lanes
+	auto m = m0 && cnd;
+	
+	if( m.is_all_false() ) {
+	    return result;
+	} else {
+	    // Create mask_pack with terminated lanes disabled
+	    auto mpack2 = sb::create_mask_pack( m );
+
+	    // Execute loop body
+	    auto velm = evaluate( array, make_rvalue( idx, mpack2 ) ).value();
+	    auto fnd = velm == value;
+	    auto mc = m.template convert_data_type<typename VTr::prefmask_traits>();
+	    auto updated = ::iif( mc && fnd, result, idx );
+	    auto one = simd::detail::vector_impl<ATr>::one_val();
+	    auto nxt = idx + one;
+
+	    auto mpack3 = sb::create_mask_pack( mc && !fnd );
+	    return evaluate_find_first_vec( array, nxt, end, value,
+					    updated, mpack3 );
+	}
+    }
+#endif
+
+
     template<typename S, typename E, typename V, typename MPack>
     auto evaluate_find_first( const ternop<S,E,V,ternop_find_first> & op,
 			      const MPack & mpack ) {
@@ -898,11 +992,44 @@ struct evaluator {
 				    mpack );
 	    } 
 	} else {
-	    // static_assert( 0, "NYI" );
-	    assert( 0 && "NYI" );
-	    return evaluate( op.data2().index(), mpack ); // end of array (not found)
-	    // return make_rvalue( simd::create_scalar<ATr>( 0 ), mpack );
-	}
+		using ArrayTy = decltype( array );
+		using T = typename ArrayTy::type;
+		if constexpr (
+		    std::is_integral_v<T> &&
+		    std::is_same_v<typename ArrayTy::encoding,
+		    array_encoding<T>>
+#if __AVX512F__
+		    && false
+#endif
+		    ) {
+		    // In case of integral values, do a wide gather.
+		    // Pre-convert the sought value to the wider width.
+		    // This will avoid any conversion of vector lane width
+		    // during find_first_vec.
+		    // This is disabled when AVX512 is available, as this
+		    // uses 1-bit masks for comparisons, regardless of
+		    // lane width.
+		    using encoding = array_encoding_wide<T>;
+		    using basic_wide_type = int_type_of_size_t<sizeof(ATy)>;
+		    using wide_type = std::conditional_t<
+			std::is_signed_v<T>,
+			std::make_signed_t<basic_wide_type>,
+			std::make_unsigned_t<basic_wide_type>>;
+		    using array_wide = array_intl<
+			wide_type, typename ArrayTy::index_type,
+			ArrayTy::AID, encoding, ArrayTy::NT>;
+
+		    auto cvalue = value.template convert_to<wide_type>();
+
+		    auto pos = evaluate_find_first_vec(
+			array_wide(), start, end, cvalue, end, mpack );
+		    return make_rvalue( pos, mpack );
+		} else {
+		    auto pos = evaluate_find_first_vec(
+			array, start, end, value, end, mpack );
+		    return make_rvalue( pos, mpack );
+		}
+	    }
     }
 
 private:
