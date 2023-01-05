@@ -340,6 +340,7 @@ struct step_vmap_dense;
 template<typename OperatorTy>
 struct step_vmap_dense<false,OperatorTy> { // vmap
     using Operator = OperatorTy;
+    using self_type = step_vmap_dense<false,Operator>;
     using vexpr_type = decltype( ((Operator*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
 
     static constexpr vmap_kind vkind = vmap_map;
@@ -537,6 +538,21 @@ private:
 #endif
     }
 
+public:
+    template<typename map_type0>
+    struct ptrset {
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type0,vexpr_type>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
+	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
+		::initialize( map, op.op( v ) );
+	}
+    };
+
 private:
     Operator op;
 };
@@ -544,6 +560,7 @@ private:
 template<typename OperatorTy>
 struct step_vmap_dense<true,OperatorTy> { // vscan
     using Operator = OperatorTy;
+    using self_type = step_vmap_dense<true,Operator>;
     using vexpr_type = decltype( ((Operator*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
 
     // The accumulator type is only meaningfull for scan steps
@@ -891,6 +908,21 @@ private:
 #endif
     }
 
+public:
+    template<typename map_type0>
+    struct ptrset {
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type0,vexpr_type>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
+	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
+		::initialize( map, op.op( v ) );
+	}
+    };
+
 private:
     Operator op;
 };
@@ -898,6 +930,7 @@ private:
 template<typename OperatorTy>
 struct step_vmap_sparse {
     using Operator = OperatorTy;
+    using self_type = step_vmap_sparse<Operator>;
     using vexpr_type = decltype( ((Operator*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
 
     static const bool has_frontier = true;
@@ -1060,6 +1093,21 @@ private:
 	vmap_record_time<Operator>( tm.next() );
 #endif
     }
+
+public:
+    template<typename map_type0>
+    struct ptrset {
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type0,vexpr_type>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
+	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
+		::initialize( map, op.op( v ) );
+	}
+    };
     
 private:
     Operator op;
@@ -1991,6 +2039,9 @@ public:
  ***********************************************************************/
 template<bool IsScan, typename T>
 struct vmap_wrap_scan : public T {
+    using self_type = vmap_wrap_scan<IsScan,T>;
+    using vexpr_type = decltype( ((T*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
+    
     // static constexpr bool is_scan = IsScan;
     static constexpr vmap_kind vkind = IsScan ? vmap_scan : vmap_map;
     static constexpr bool is_filter = false;
@@ -2004,6 +2055,21 @@ struct vmap_wrap_scan : public T {
 	return T::operator() ( vid );
     }
 */
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type0,vexpr_type>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
+	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
+		::initialize( map, op( v ) );
+	}
+    };
+    
 };
 
 template<typename Operator>
