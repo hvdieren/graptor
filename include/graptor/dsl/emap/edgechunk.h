@@ -8,6 +8,13 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 		    VID * frontier, bool *zf,
 		    Cache & c, const Environment & env, const Expr & e );
 
+template<bool atomic, update_method um,
+	 typename Cache, typename Environment, typename Expr>
+static void
+process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
+		    bool *zf, Cache & c, const Environment & env,
+		    const Expr & e );
+
 template<typename lVID, typename lEID>
 struct basic_edge_iterator {
     using VID = lVID;
@@ -253,16 +260,35 @@ public:
 	EID n_out = 0;
 	VID *f_out = &out_edges[m_offset];
 	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
-		VID v = vertices[j];
-		EID x = j == js ? m_fstart : idx[v];
-		EID y = j == je-1 ? m_lend : idx[v+1];
-		// assert( y >= x );
-		VID d = y-x;
-		n_out += process_csr_append<need_atomic>(
-		    &edges[x], x, d, v,
-		    &f_out[n_out], zf, c, env, expr );
+	    VID v = vertices[j];
+	    EID x = j == js ? m_fstart : idx[v];
+	    EID y = j == je-1 ? m_lend : idx[v+1];
+	    // assert( y >= x );
+	    VID d = y-x;
+	    n_out += process_csr_append<need_atomic>(
+		&edges[x], x, d, v, &f_out[n_out], zf, c, env, expr );
 	}
 	return n_out;
+    }
+
+    template<bool need_atomic, update_method um,
+	     typename Cache, typename Environment, typename Expr>
+    void
+    process_push_many( const VID * vertices,
+		       const EID * idx,
+		       const VID * edges,
+		       bool *zf,
+		       Cache & c, const Environment & env,
+		       const Expr & expr ) const {
+	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
+	    VID v = vertices[j];
+	    EID x = j == js ? m_fstart : idx[v];
+	    EID y = j == je-1 ? m_lend : idx[v+1];
+	    // assert( y >= x );
+	    VID d = y-x;
+	    process_csr_sparse<need_atomic,um>(
+		&edges[x], x, d, v, nullptr, zf, c, env, expr );
+	}
     }
 
 private:
@@ -465,6 +491,19 @@ public:
 		      const Expr & expr ) const {
 	return m_partition.template process_push<need_atomic>(
 	    m_vertices, out_edges, zf, idx, edges, c, env, expr );
+    }
+
+    template<bool need_atomic, update_method um,
+	     typename Cache, typename Environment, typename Expr>
+    void
+    process_push_many( const VID * vertices,
+		       const EID * idx,
+		       const VID * edges,
+		       bool *zf,
+		       Cache & c, const Environment & env,
+		       const Expr & expr ) const {
+	return m_partition.template process_push_many<need_atomic,um>(
+	    vertices, idx, edges, zf, c, env, expr );
     }
 
     VID size() const { return get_to() - get_from(); }

@@ -25,6 +25,14 @@
 #include "graptor/dsl/emap/utils.h"
 #include "graptor/dsl/emap/emap_scan.h"
 
+enum update_method {
+    um_none,
+    um_list,
+    um_list_must_init,
+    um_list_must_init_unique,
+    um_flags_only
+};
+
 #include "graptor/dsl/emap/fusion.h"
 #include "graptor/dsl/emap/edgechunk.h"
 
@@ -301,14 +309,6 @@ struct ValidVID
     bool operator() ( VID a ) {
         return a != ~(VID)0;
     }
-};
-
-enum update_method {
-    um_none,
-    um_list,
-    um_list_must_init,
-    um_list_must_init_unique,
-    um_flags_only
 };
 
 template<update_method um>
@@ -1425,11 +1425,10 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 #if ABCD
     if( false && zerof && outEdgeCount > EID(GA.numVertices()) ) {
 	// Case of potentially high number of activated vertices
-#if 0
-// todo: adjust load balance
-	parallel_loop( EID(0), mm_parts, 1, [&]( EID p ) {
-	    parts[p].template process_sparse<need_atomic,um_flags_only>(
-		s, outEdges, zf, idx, edge, c, env, vexpr );
+	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
+	    parts[p].template process_push_many<need_atomic,um_flags_only>(
+		s, idx, edge, zf, c, env, vexpr );
+/*
 	    VID v = sources[k];
 	    EID o = offsets[k];
 	    VID d = degrees[k];
@@ -1437,9 +1436,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	    process_csr_sparse<need_atomic,um_flags_only>(
 		&edge[x], x, d, v,
 		nullptr, zf, c, env, vexpr );
+*/
 	} );
-#endif
-	assert( 0 && "NYI" );
 
 	// Construct frontier based on zerof flags and simultaneously
 	// restore zero frontier to all zeros
@@ -1486,11 +1484,19 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// Compact the per-block lists into a single list
 	new_frontier = frontier::sparse( GA.numVertices(), n_out );
 	VID* nextIndices = new_frontier.getSparse();
-	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
-	    std::copy( &outEdges[parts[p].get_offset()],
-		       &outEdges[parts[p].get_offset()+n_out_block[p]],
-		       &nextIndices[n_out_block[mm_parts+p]] );
-	} );
+	if( n_out > 2048 ) {
+	    parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
+		std::copy( &outEdges[parts[p].get_offset()],
+			   &outEdges[parts[p].get_offset()+n_out_block[p]],
+			   &nextIndices[n_out_block[mm_parts+p]] );
+	    } );
+	} else {
+	    for( VID p=0; p < mm_parts; ++p ) {
+		std::copy( &outEdges[parts[p].get_offset()],
+			   &outEdges[parts[p].get_offset()+n_out_block[p]],
+			   &nextIndices[n_out_block[mm_parts+p]] );
+	    }
+	}
 	VID nextM = n_out;
 
 	// Calculate the number of active edges
