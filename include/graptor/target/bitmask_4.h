@@ -36,7 +36,17 @@ struct mask_type_traits<4> {
 	return ~l ^ r;
     }
 
+    static uint32_t find_first( type a ) {
+	return _tzcnt_u32( ~(uint32_t)a );
+    }
+
+    static uint32_t find_first( type a, type m ) {
+	// see bitmask_8.h for explanation
+	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
+    }
+
     static type logical_and( type l, type r ) { return l & r; }
+    static type logical_andnot( type l, type r ) { return ~l & r; }
     static type logical_or( type l, type r ) { return l | r; }
     static type logical_invert( type a ) { return ~a & ( (type(1) << 2) - 1 ); }
 

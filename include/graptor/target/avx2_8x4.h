@@ -314,6 +314,13 @@ public:
 	return setzero();
 #endif
     }
+
+    static uint32_t find_first( type v ) {
+	return mask_traits::find_first( asmask( v ) );
+    }
+    static uint32_t find_first( type v, vmask_type m ) {
+	return mask_traits::find_first( asmask( v ), asmask( m ) );
+    }
     
     static type castint( type a ) { return a; }
     static __m256d castfp( type a ) { return _mm256_castsi256_pd( a ); }
