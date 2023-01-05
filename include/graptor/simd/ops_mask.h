@@ -81,6 +81,11 @@ simd::detail::mask_impl<Tr> operator ~ ( simd::detail::mask_impl<Tr> a ) {
 }
 
 template<typename Tr>
+simd::detail::mask_impl<Tr> operator ! ( simd::detail::mask_impl<Tr> a ) {
+    return simd::detail::mask_impl<Tr>( simd::detail::mask_impl<Tr>::traits::logical_invert( a.get() ) );
+}
+
+template<typename Tr>
 auto operator != ( mask_impl<Tr> l, mask_impl<Tr> r ) {
     return mask_impl<Tr>( mask_impl<Tr>::traits::cmpne(
 			      l.get(), r.get(), typename Tr::tag_type() ) );
