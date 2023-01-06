@@ -967,7 +967,7 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 	// Note: set evaluator to use atomics
 	auto ret = env.template evaluate<atomic>( c, m, e );
 	if( ret.value().data() ) {
-#if 0 // for particular cases, no need to use zerof
+#if 0 // for particular cases, no need to use zerof (e.g. count_down)
 	    // Set frontier, once.
 	    if( zf[dst.data()] == 0
 #if 0
@@ -1148,11 +1148,16 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
 
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+/*
+    auto ew_pset = expr::create_map2<(unsigned)aid_key(array_aid(expr::aid_eweight)>(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 					 
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr );
+*/
+
+    auto env = expr::eval::create_execution_environment_op(
+	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     // Cache local variables; no need to destruct/commit cache
     auto mi = expr::create_value_map_new<1>();
@@ -1720,11 +1725,15 @@ static __attribute__((noinline)) frontier csr_sparse_no_f(
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr0 );
 
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+/*
+    auto ew_pset = expr::create_map2<(unsigned)aid_key(array_aid(expr::aid_eweight)>(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     auto env = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), l_cache, vexpr );
+*/
+    auto env = expr::eval::create_execution_environment_op(
+	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     const VID *edge = GA.getEdges();
 

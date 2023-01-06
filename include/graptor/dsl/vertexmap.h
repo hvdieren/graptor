@@ -295,7 +295,10 @@ struct AppendVOpToEOp
     template<typename map_type0>
     struct ptrset {
 	using map_type1 = typename EOperator::ptrset<map_type0>::map_type;
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 0" );
 	using map_type = typename VOperator::ptrset<map_type1>::map_type;
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 1" );
+
 
 	template<typename MapTy>
 	static void initialize( MapTy & map, const self_type & op ) {
@@ -459,10 +462,13 @@ private:
 	auto cache_vid = cache_cat( cache_pid, cache_use, cache_let );
 	auto cache_vid1 = cache_cat( cache_pid1, cache_use1, cache_let1 );
 	auto cache_all = cache_cat( cache_vid, cache_vid1 );
+/*
 	auto env = expr::eval::create_execution_environment(
 	    // cache_cat( cache_pid, cache_pid1, cache_vid, cache_vid1 ),
 	    cache_all,
 	    sexpr, expr ); 
+*/
+	auto env = expr::eval::create_execution_environment_op( op, cache_all );
 
 	// fail_expose<std::is_class>( cache_vid1 );
 
@@ -783,8 +789,11 @@ private:
 					cache_cat( cache_vid, cache_vid1 ),
 					cache_l1 ) );
 
+/*
 	auto env = expr::eval::create_execution_environment(
 	    cache_all, sexpr, expr, pexpr, pfexpr ); 
+*/
+	auto env = expr::eval::create_execution_environment_op( op, cache_all );
 
 	// fail_expose<std::is_class>( sexpr0 );
 	// fail_expose<std::is_class>( cache_l );
@@ -969,7 +978,8 @@ private:
 	auto expr2 = expr::rewrite_caches<expr::vk_pid>( expr1, cache_pid1 );
 
 	auto cache_all = cache_cat( l_cache, cache_pid1 );
-	auto env = expr::eval::create_execution_environment( expr2, cache_all ); 
+	// auto env = expr::eval::create_execution_environment( expr2, cache_all ); 
+	auto env = expr::eval::create_execution_environment_op( op, cache_all );
 
 	auto expr = rewrite_internal( expr2 );
 
@@ -1009,7 +1019,8 @@ private:
 	auto l_cache = expr::extract_local_vars( expr0, expr::cache<>() );
 	auto expr1 = expr::rewrite_caches<expr::vk_zero>( expr0, l_cache );
 
-	auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+	// auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+	auto env = expr::eval::create_execution_environment_op( op, l_cache );
 
 	auto expr = rewrite_internal( expr1 );
 
@@ -1049,7 +1060,8 @@ private:
 	auto l_cache = expr::extract_local_vars( expr0, expr::cache<>() );
 	auto expr1 = expr::rewrite_caches<expr::vk_zero>( expr0, l_cache );
 
-	auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+	// auto env = expr::eval::create_execution_environment( expr1, l_cache ); 
+	auto env = expr::eval::create_execution_environment_op( op, l_cache );
 
 	auto expr = rewrite_internal( expr1 );
 
@@ -1370,8 +1382,12 @@ struct step_flat_emap {
 					cache_cat( cache_vid, cache_vid1 ),
 					cache_l1 ) );
 
+/*
 	auto env = expr::eval::create_execution_environment(
 	    cache_all, sexpr, expr, pexpr, pfexpr ); 
+*/
+	auto env = expr::eval::create_execution_environment_op(
+	    m_op, cache_all );
 
 	// Map
 	map_partitionL( part, [&]( int p ) {
@@ -2012,6 +2028,9 @@ auto merge_step( Step1 step1,
 template<typename GraphType, typename Operator>
 class vmap_wrap_filter {
 public:
+    using self_type = vmap_wrap_filter<GraphType,Operator>;
+    using vexpr_type = decltype( ((Operator*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
+
     // static constexpr bool is_scan = true; // always a scan (on frontier count)
     static constexpr vmap_kind vkind = vmap_filter;
     static constexpr bool is_filter = true;
@@ -2028,6 +2047,20 @@ public:
     auto operator() ( VIDTy vid ) {
 	return m_op( vid );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type0,vexpr_type>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
+	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
+		::initialize( map, op.m_op( v ) );
+	}
+    };
 
     const GraphType & m_G;
     frontier & m_f;
@@ -2061,15 +2094,17 @@ struct vmap_wrap_scan : public T {
 	using map_type = typename expr::ast_ptrset::ptrset_list<
 	    map_type0,vexpr_type>::map_type;
 
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 1" );
+
 	template<typename MapTy>
 	static void initialize( MapTy & map, const self_type & op ) {
 	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
 
 	    expr::ast_ptrset::ptrset_list<map_type0,vexpr_type>
-		::initialize( map, op( v ) );
+		::initialize( map, op.operator () ( v ) );
 	}
     };
-    
 };
 
 template<typename Operator>

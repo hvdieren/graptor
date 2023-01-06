@@ -133,13 +133,13 @@ private:
  * @param <Encoding> optional in-memory array encoding specification
  ************************************************************************/
 template<typename T, typename U, typename Encoding>
-class edgeprop<T,U,expr::vk_eweight,Encoding>
-    : private NonCopyable<edgeprop<T,U,expr::vk_eweight,Encoding>> {
+class edgeprop<T,U,expr::aid_eweight,Encoding>
+    : private NonCopyable<edgeprop<T,U,expr::aid_eweight,Encoding>> {
 public:
     using type = T; 	 	 	//!< type of array elements
     using index_type = U; 	 	//!< index type of property
     using encoding = Encoding; 	 	//!< data encoding in memory
-    static constexpr short AID = expr::vk_eweight; //!< array ID of property
+    static constexpr short AID = expr::aid_eweight; //!< array ID of property
     //! type of array syntax tree for this property
     using array_ty = expr::array_ro<type,index_type,AID,encoding>;
 
@@ -183,7 +183,7 @@ public:
 
     /*! Subscript operator overload for native C++ array operation.
      * Indexes the array and returns the value at index #e of the array.
-     * This operator is deleted for vk_eweight; the class does not
+     * This operator is deleted for aid_eweight; the class does not
      * contain the data.
      *
      * @param[in] e array index

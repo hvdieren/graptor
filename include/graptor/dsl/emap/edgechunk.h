@@ -2,7 +2,8 @@
 #ifndef GRAPTOR_DSL_EMAP_EDGE_CHUNK_H
 #define GRAPTOR_DSL_EMAP_EDGE_CHUNK_H
 
-template<bool atomic, typename Cache, typename Environment, typename Expr>
+template<bool atomic,
+	 typename Cache, typename Environment, typename Expr>
 static VID
 process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 		    VID * frontier, bool *zf,
@@ -11,9 +12,9 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 template<bool atomic, update_method um,
 	 typename Cache, typename Environment, typename Expr>
 static void
-process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
-		    bool *zf, Cache & c, const Environment & env,
-		    const Expr & e );
+process_csr_sparse( const VID *out, EID be, VID deg, VID srcv,
+		    VID *frontier, bool *zf,
+		    Cache & c, const Environment & env, const Expr & e );
 
 template<typename lVID, typename lEID>
 struct basic_edge_iterator {

@@ -48,6 +48,7 @@ enum array_aid {
     aid_rnd_tmp2 = -272,
     aid_udiv_p = -288,
     aid_udiv_m = -304,
+    aid_eweight = -320,
     aid_priv = -1024 // a very big downward range is required
 };
 

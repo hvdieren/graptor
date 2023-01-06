@@ -122,7 +122,7 @@ GG_INLINE inline
 auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
     using ew_pset
 	= typename expr::ast_ptrset::ptrset_pointer<
-	    expr::vk_eweight, WeightTy, expr::map_new<>>::map_type;
+	    expr::aid_eweight, WeightTy, expr::map_new<>>::map_type;
     using op_pset
 	= typename Operator::template ptrset<ew_pset>::map_type;
     using address_map_t
@@ -131,13 +131,19 @@ auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
     execution_environment<address_map_t> env;
 
     expr::ast_ptrset::ptrset_pointer<
-	expr::vk_eweight, WeightTy, expr::map_new<>>::initialize(
+	expr::aid_eweight, WeightTy, expr::map_new<>>::initialize(
 	    env.get_map(), w );
     Operator::template ptrset<ew_pset>::initialize( env.get_map(), op );
     expr::ast_ptrset::ptrset_list<op_pset,Cache>::initialize(
 	env.get_map(), c );
 
     return env;
+}
+
+template<typename Operator, typename Cache>
+GG_INLINE inline
+auto create_execution_environment_op( Operator & op, Cache & c ) {
+    return create_execution_environment_op( op, c, (VID *)nullptr );
 }
     
 } // namespace eval

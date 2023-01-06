@@ -342,6 +342,10 @@ struct arg_filter_op {
 	    map_type1
 	    >::map_type;
 
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 1" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 2" );
+
 	template<typename MapTy>
 	static void initialize( MapTy & map, const arg_filter_op & op ) {
 	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
@@ -494,13 +498,24 @@ struct arg_filter_a_op {
     template<typename map_type0>
     struct ptrset {
 	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	// using map_type =
+	// typename expr::ast_ptrset::merge_maps<map_type1, ptrset_ty>::type;
+	using mexpr_type = decltype( ((std::decay_t<Fn>*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
 	using map_type =
-	    typename expr::ast_ptrset::merge_maps<map_type1, ptrset_ty>::type;
+	    typename expr::ast_ptrset::ptrset_list<map_type1,mexpr_type>::map_type;
+
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 1" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 2" );
 
 	template<typename MapTy>
 	static void initialize( MapTy & map, const arg_filter_a_op & op ) {
+	    auto v = expr::value<simd::ty<VID,1>,expr::vk_vid>();
+
 	    Operator::template ptrset<map_type0>::initialize( map, op.m_op );
-	    expr::map_copy_entries( map, op.m_ptrset );
+	    expr::ast_ptrset::ptrset_list<map_type1,mexpr_type>
+		::initialize( map, op.m_method( v ) );
+	    // expr::map_copy_entries( map, op.m_ptrset );
 	}
     };
 
@@ -800,6 +815,13 @@ struct arg_record_reduction_op {
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_graph_degree, VID, map_type4>::map_type;
     
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 1" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type2>, "check 2" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type3>, "check 3" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type4>, "check 4" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 5" );
+
 	template<typename MapTy>
 	static void initialize( MapTy & map,
 				const arg_record_reduction_op & op ) {
@@ -927,6 +949,12 @@ struct arg_record_reduction_op<
 	using map_type =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_graph_degree, EID, map_type3>::map_type;
+
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 1" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type2>, "check 2" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type3>, "check 3" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 4" );
     
 	template<typename MapTy>
 	static void initialize( MapTy & map,
@@ -1609,6 +1637,9 @@ struct op_def {
 					
 	using map_type = typename expr::ast_ptrset::ptrset_list<
 	    PSet,relax_expr,vertexop_expr,fusionop_expr>::map_type;
+
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),PSet>, "check 0" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 1" );
 
 	template<typename MapTy>
 	static void initialize( MapTy & map, const op_def & op ) {

@@ -345,6 +345,7 @@ struct wrap_frontier_update_m {
 template<typename GraphType, typename Operator, frontier_type ftype,
 	 unsigned short VL>
 struct wrap_filter {
+    using self_type = wrap_filter<GraphType,Operator,ftype,VL>;
     using StoreTy = typename frontier_params<ftype,VL>::type;
     using array_ty =
 	typename expr::array_select<ftype,StoreTy,VID,
@@ -396,11 +397,48 @@ struct wrap_filter {
 	    }
 	    );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type2 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_new_f,StoreTy,map_type1>::map_type;
+	using map_type3 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nacte, EID, map_type2>::map_type;
+	using map_type4 =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_nactv, VID, map_type3>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_graph_degree, VID, map_type4>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_new_f,
+		typename frontier_params<ftype,VL>::type,
+		map_type1
+		>::initialize( map, op.f.template getDense<ftype>() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nacte, EID, map_type2
+		>::initialize( map, op.f.nActiveEdgesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_nactv, VID, map_type3
+		>::initialize( map, op.f.nActiveVerticesPtr() );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_graph_degree, VID, map_type4
+		>::initialize( map, const_cast<VID *>( op.G.getOutDegree() ) );
+	}
+    };
 };
 
 // Version operating on k-mask
 template<typename Operator, frontier_type ftype, unsigned short VL>
 struct wrap_frontier_read_m {
+    using self_type = wrap_frontier_read_m<Operator,ftype,VL>;
     using StoreTy = typename frontier_params<ftype,VL>::type;
     using array_ty = typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_old_f,array_encoding<StoreTy>,false,true>::type;
     array_ty frontier;
@@ -463,10 +501,27 @@ struct wrap_frontier_read_m {
 		expr::make_unop_cvt_to_mask<Tr>( frontier[remove_mask( vid )] ),
 		op( remove_mask( vid ) ) ) );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_old_f,StoreTy,map_type1>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_old_f, StoreTy, map_type1
+		>::initialize( map, op.frontier.ptr() );
+	}
+    };
 };
 
 template<typename Operator, unsigned short VL>
 struct wrap_frontier_read_m<Operator,frontier_type::ft_bit2,VL> {
+    using self_type = wrap_frontier_read_m<Operator,frontier_type::ft_bit2,VL>;
     using StoreTy = typename frontier_params<frontier_type::ft_bit2,VL>::type;
     using array_ty = typename expr::array_select<frontier_type::ft_bit2,bitfield<2>,VID,expr::aid_frontier_old_f,array_encoding_bit<2>,false,true>::type;
     array_ty frontier;
@@ -526,6 +581,22 @@ struct wrap_frontier_read_m<Operator,frontier_type::ft_bit2,VL> {
 		expr::make_unop_cvt_to_mask<Tr>( frontier[remove_mask(vid)] ),
 		op( remove_mask( vid ) ) ) );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type =
+	    typename expr::ast_ptrset::ptrset_pointer<
+	    expr::aid_frontier_old_f,StoreTy,map_type1>::map_type;
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    Operator::template ptrset<map_type0>::initialize( map, op.op );
+	    expr::ast_ptrset::ptrset_pointer<
+		expr::aid_frontier_old_f, StoreTy, map_type1
+		>::initialize( map, op.frontier.ptr() );
+	}
+    };
 };
 
 

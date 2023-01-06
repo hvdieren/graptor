@@ -86,6 +86,7 @@ template<short AID, typename T, typename Map>
 struct ptrset_pointer {
     using entry_type = expr::map_entry<(unsigned)aid_key(array_aid(AID)), T *>;
     using map_type = add_if_absent_t<entry_type,Map>;
+    static_assert( expr::map_contains_v<entry_type::index,map_type>, "check" );
 
     template<typename MapTy>
     static void initialize( MapTy & map, T * p ) {
@@ -297,7 +298,7 @@ struct ptrset_list<Map,C> {
     using map_type = typename ptrset<std::decay_t<C>,Map>::map_type;
 
     template<typename MapTy>
-    static void initialize( MapTy & map, C & c ) {
+    static void initialize( MapTy & map, C c ) {
 	ptrset<std::decay_t<C>,Map>::initialize( map, c );
     }
 };
