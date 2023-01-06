@@ -98,7 +98,7 @@ template<typename T, typename U, short AID, typename Enc, bool NT,
 	 typename Map>
 struct ptrset<array_ro<T, U, AID, Enc, NT>, Map> {
     using entry_type = expr::map_entry<(unsigned)aid_key(array_aid(AID)),
-				       typename Enc::stored_type *>;
+				       typename Enc::storage_type *>;
     using map_type = add_if_absent_t<entry_type,Map>;
 
     template<typename MapTy>
