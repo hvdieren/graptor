@@ -1030,6 +1030,27 @@ struct array_encoding_wide {
 	stored_traits<Tr::VL>::store( &base[idx], value );
     }
 
+    template<typename Tr, typename index_type, typename mask_type>
+    static void
+    store( storage_type * base, index_type idx,
+	   typename Tr::type raw, mask_type mask ) {
+	if constexpr( sizeof(index_type) == sizeof(mask_type) ) {
+	    auto value = conversion_traits<
+		typename Tr::member_type,
+		typename stored_traits<Tr::VL>::member_type,
+		Tr::VL>::convert( raw );
+	    auto cmask = conversion_traits<
+		typename Tr::member_type,
+		typename stored_traits<Tr::VL>::member_type,
+		Tr::VL>::convert( mask );
+	    auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	    auto upd = stored_traits<Tr::VL>::blend( cmask, old, value );
+	    stored_traits<Tr::VL>::store( &base[idx], upd );
+	} else {
+	    assert( 0 && "NYI" );
+	}
+    }
+
     template<typename Tr, typename index_type>
     static void
     storeu( storage_type * base, index_type idx,
