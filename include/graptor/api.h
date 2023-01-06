@@ -997,6 +997,8 @@ struct record_store_type<frontier_type::ft_unbacked,VL> {
 template<typename EMapConfig, bool IsPriv, typename Operator,
 	 typename Fn, typename PtrSet>
 struct arg_record_method_op {
+    using self_type =
+	arg_record_method_op<EMapConfig,IsPriv,Operator,Fn,PtrSet>;
     static constexpr frontier_type ftype = EMapConfig::wr_ftype;
     static constexpr bool is_priv = IsPriv;
     using StoreTy = typename record_store_type<ftype,EMapConfig::VL>::type;
@@ -1107,6 +1109,9 @@ struct arg_record_method_op {
 
     template<typename map_type0>
     struct ptrset {
+	using method_expr = decltype(
+	    static_cast<self_type*>( nullptr )->
+	    m_method( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
 	using map_type1 =
 	    typename Operator::ptrset<map_type0>::map_type;
 	using map_type2 =
@@ -1118,7 +1123,7 @@ struct arg_record_method_op {
 	using map_type4 =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_graph_degree, VID, map_type3>::map_type;
-	using map_type =
+	using map_type5 =
 	    std::conditional_t<
 	    ftype == frontier_type::ft_unbacked,
 	    map_type4,
@@ -1127,6 +1132,8 @@ struct arg_record_method_op {
 		typename frontier_params<ftype,EMapConfig::VL>::type,
 		map_type4
 		>::map_type>;
+	using map_type = typename expr::ast_ptrset::ptrset_list<
+	    map_type5,method_expr>::map_type;
 	    
 	template<typename MapTy>
 	static void initialize( MapTy & map,
@@ -1147,6 +1154,10 @@ struct arg_record_method_op {
 		    typename frontier_params<ftype,EMapConfig::VL>::type,
 		    map_type4
 		    >::initialize( map, op.m_frontier.getDense<ftype>() );
+
+	    auto d = expr::value<simd::ty<VID,1>,expr::vk_dst>();
+	    expr::ast_ptrset::ptrset_list<map_type5,method_expr>
+		::initialize( map, op.m_method( d ) );
 	}
     };
 
