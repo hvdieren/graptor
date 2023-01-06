@@ -213,6 +213,8 @@ void vmap_record_time( double delay ) {
 template<vmap_kind VKind, typename VOperator1, typename VOperator0>
 struct AppendVOpToVOp
 {
+    using self_type = AppendVOpToVOp<VKind, VOperator1, VOperator0>;
+
     VOperator1 vop1;
     VOperator0 vop0;
 
@@ -227,6 +229,19 @@ struct AppendVOpToVOp
     auto operator ()( VIDDst d ) {
 	return expr::make_seq( vop0( d ), vop1( d ) );
     }
+
+    template<typename map_type0>
+    struct ptrset {
+	using map_type1 = typename VOperator0::ptrset<map_type0>::map_type;
+	using map_type = typename VOperator1::ptrset<map_type1>::map_type;
+
+
+	template<typename MapTy>
+	static void initialize( MapTy & map, const self_type & op ) {
+	    VOperator0::template ptrset<map_type0>::initialize( map, op.vop0 );
+	    VOperator1::template ptrset<map_type1>::initialize( map, op.vop1 );
+	}
+    };
 };
 
 template<typename VOperator1, typename VOperator0>
