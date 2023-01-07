@@ -215,6 +215,7 @@ public:
 
     VID get_from() const { return m_from; }
     VID get_to() const { return m_to; }
+    VID num_vertices() const { return m_to - m_from; }
 
     void set_from( VID from ) { m_from = from; }
     void set_to( VID to ) { m_to = to; }
@@ -243,6 +244,17 @@ public:
     EID get_fstart() const { return m_fstart; }
     EID get_lend() const { return m_lend; }
     EID get_offset() const { return m_offset; }
+    EID num_edges( const VID * vertices, const EID * idx ) const {
+	EID ne = 0;
+	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
+	    VID v = vertices[j];
+	    EID x = j == js ? m_fstart : idx[v];
+	    EID y = j == je-1 ? m_lend : idx[v+1];
+	    VID d = y-x;
+	    ne += d;
+	}
+	return ne;
+    }
 
     void set_fstart( EID fstart ) { m_fstart = fstart; }
     void set_lend( EID lend ) { m_lend = lend; }
@@ -516,6 +528,7 @@ public:
 	return true;
     }
     bool is_empty() const { return m_partition.is_empty(); }
+    const VID * get_vertices() const { return m_vertices; }
 
     void set( const edge_partition<VID,EID> & ep,
 	      const VID * const v = nullptr ) {

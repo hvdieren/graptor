@@ -16,7 +16,7 @@
 
 #include "graptor/dsl/emap/work_list.h"
 
-template<bool zerof, bool need_strong_checking,
+template<bool need_strong_checking,
 	 typename config, typename WorkQueues, typename Operator>
 std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
     config & cfg,
@@ -128,7 +128,9 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
 			// multiple threads, possibly concurrently.
 			// Multiple threads may insert the vertex in their
 			// active list, then concurrent processing may occur.
-			// outEdges[nactv++] = sdst;
+			// Alternatively, the operator would not enable
+			// a vertex for processing more than once (e.g.,
+			// count_down, setif).
 			work_queues.push( self_id, sdst );
 		    }
 		} else if( immediate == 0 ) {
@@ -225,7 +227,7 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
     return unprocessed;
 }
 
-template<bool zerof, bool need_strong_checking,
+template<bool need_strong_checking,
 	 typename config, typename WorkQueues, typename Operator>
 std::vector<VID> csr_sparse_with_f_seq_fusion(
     config & cfg,
@@ -333,6 +335,9 @@ std::vector<VID> csr_sparse_with_f_seq_fusion(
 			// multiple threads, possibly concurrently.
 			// Multiple threads may insert the vertex in their
 			// active list, then concurrent processing may occur.
+			// Alternatively, the operator would not enable
+			// a vertex for processing more than once (e.g.,
+			// count_down, setif).
 			work_queues.push( self_id, sdst );
 		    }
 		} else if( immediate == 0 ) {
@@ -354,14 +359,13 @@ std::vector<VID> csr_sparse_with_f_seq_fusion(
     return unprocessed;
 }
 
-template<bool zerof, typename config, typename EIDRetriever, typename Operator>
+template<typename config, typename EIDRetriever, typename Operator>
 static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     config & cfg,
     const GraphCSx & GA,
     const EIDRetriever & eid_retriever,
     const partitioner & part,
     frontier & old_frontier,
-    bool * zf,
     Operator op ) {
 
     if( old_frontier.nActiveVertices() == 0 )
@@ -382,7 +386,11 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     auto vexpr = vexpr0 && uexpr0;
     constexpr bool need_strong_checking
 		  = !( expr::is_idempotent<decltype(fexpr)>::value
-		       && expr::is_idempotent<decltype(vexpr)>::value );
+		       && expr::is_idempotent<decltype(vexpr)>::value )
+		  && !expr::is_single_trigger<decltype(vexpr)>::value;
+    bool * zf = nullptr;
+    if constexpr ( need_strong_checking )
+	zf = GA.get_flags( part );
 
     // Split the list of active vertices over the number of threads, and
     // have each thread run through multiple iterations until complete.
@@ -403,80 +411,78 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 			       / uint64_t(num_threads) );
 	    work_queues.create_buffer( t, &s[from], to-from, GA.getIndex() );
 	    F[t] =
-		csr_sparse_with_f_seq_fusion_stealing<zerof,need_strong_checking>(
+		csr_sparse_with_f_seq_fusion_stealing<need_strong_checking>(
 		    cfg, GA, part, work_queues, t, zf, op );
 	} );
     } else {
 	work_queues.create_buffer( 0, s, m, GA.getIndex() );
-	F[0] = csr_sparse_with_f_seq_fusion<zerof,need_strong_checking>(
+	F[0] = csr_sparse_with_f_seq_fusion<need_strong_checking>(
 	    cfg, GA, part, work_queues, 0, zf, op );
     }
 
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
-    if constexpr ( zerof ) {
-	if constexpr ( need_strong_checking ) {
-	    // Vertices already processed leave info in zf[] that is not
-	    // easily cleared. So we need to traverse the whole array.
-	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-		// Strange stuff with zf check, compiler erroneously
-		// evading it because it looks like bool(?). Hence the cast.
-		unsigned char * uczf = (unsigned char*)zf;
-		VID outEdgeCount = F[t].size();
-		VID * outEdges = &F[t][0];
-		// If a vertex has been processed immediately, then any copy
-		// introduced previously for postponed processing can be
-		// removed.
-		VID nv_new = 0;
-		for( VID k=0; k < outEdgeCount; ++k ) {
-		    VID v = outEdges[k];
-		    if( !( uczf[v] & (unsigned char)2 ) )
-			outEdges[nv_new++] = v;
-		    uczf[v] = 0;
-		}
-		F[t].resize( nv_new );
-	    } );
-
-	    VID n = GA.numVertices();
-/*
-	    parallel_for( VID v=0; v < n; ++v )
-		zf[v] = false;
-*/
-/*
-	    uint64_t * zf64 = reinterpret_cast<uint64_t *>( zf );
-	    VID n64 = n / 8;
-	    parallel_for( VID v=0; v < n64; ++v )
-		zf64[v] = 0;
-	    for( VID v=n64*8; v < n; ++v )
-		zf[v] = false;
-*/
-	    work_queues.shift_processed();
-	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-		while( auto * buffer = work_queues.steal( t ) ) {
-		    auto I = buffer->vertex_begin();
-		    auto E = buffer->vertex_end();
-		    for( ; I != E; ++I ) {
-			VID v = *I;
-			zf[v] = false;
-		    }
-		    buffer->destroy();
-		}
-	    } );
-/*
-	    for( VID v=0; v < n; ++v ) {
-		if( zf[v] != 0 )
-		    std::cerr << "zf[" << v << "]=" << (unsigned int)zf[v] << "\n";
+    if constexpr ( need_strong_checking ) {
+	// Vertices already processed leave info in zf[] that is not
+	// easily cleared. So we need to traverse the whole array.
+	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+	    // Strange stuff with zf check, compiler erroneously
+	    // evading it because it looks like bool(?). Hence the cast.
+	    unsigned char * uczf = (unsigned char*)zf;
+	    VID outEdgeCount = F[t].size();
+	    VID * outEdges = &F[t][0];
+	    // If a vertex has been processed immediately, then any copy
+	    // introduced previously for postponed processing can be
+	    // removed.
+	    VID nv_new = 0;
+	    for( VID k=0; k < outEdgeCount; ++k ) {
+		VID v = outEdges[k];
+		if( !( uczf[v] & (unsigned char)2 ) )
+		    outEdges[nv_new++] = v;
+		uczf[v] = 0;
 	    }
+	    F[t].resize( nv_new );
+	} );
+
+	VID n = GA.numVertices();
+/*
+	parallel_for( VID v=0; v < n; ++v )
+	    zf[v] = false;
 */
-	} else {
-	    // Vertices already processed leave no info in zf[]
-	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-		VID outEdgeCount = F[t].size();
-		VID * outEdges = &F[t][0];
-		for( VID k=0; k < outEdgeCount; ++k )
-		    zf[outEdges[k]] = false;
-	    } );
+/*
+	uint64_t * zf64 = reinterpret_cast<uint64_t *>( zf );
+	VID n64 = n / 8;
+	parallel_for( VID v=0; v < n64; ++v )
+	    zf64[v] = 0;
+	for( VID v=n64*8; v < n; ++v )
+	    zf[v] = false;
+*/
+	work_queues.shift_processed();
+	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+	    while( auto * buffer = work_queues.steal( t ) ) {
+		auto I = buffer->vertex_begin();
+		auto E = buffer->vertex_end();
+		for( ; I != E; ++I ) {
+		    VID v = *I;
+		    zf[v] = false;
+		}
+		buffer->destroy();
+	    }
+	} );
+/*
+	for( VID v=0; v < n; ++v ) {
+	    if( zf[v] != 0 )
+		std::cerr << "zf[" << v << "]=" << (unsigned int)zf[v] << "\n";
 	}
+*/
+    } else {
+	// Vertices already processed leave no info in zf[]
+	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+	    VID outEdgeCount = F[t].size();
+	    VID * outEdges = &F[t][0];
+	    for( VID k=0; k < outEdgeCount; ++k )
+		zf[outEdges[k]] = false;
+	} );
     }
 
     // Tally all activated vertices

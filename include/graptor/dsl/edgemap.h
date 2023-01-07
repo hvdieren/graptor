@@ -967,15 +967,16 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 	// Note: set evaluator to use atomics
 	auto ret = env.template evaluate<atomic>( c, m, e );
 	if( ret.value().data() ) {
-#if 0 // for particular cases, no need to use zerof (e.g. count_down)
-	    // Set frontier, once.
-	    if( zf[dst.data()] == 0
-#if 0
-		&& __sync_fetch_and_or( (unsigned char *)&zf[dst.data()],
-					(unsigned char)1 ) == 0 )
-		// first time being set
-#endif
-	    {
+	    if constexpr ( !expr::is_single_trigger<Expr>::value ) {
+		// for particular cases, no need to use zerof (e.g. count_down)
+		// Set frontier, once.
+		if( zf[dst.data()] == 0
+		    && __sync_fetch_and_or( (unsigned char *)&zf[dst.data()],
+					    (unsigned char)1 ) == 0 )
+		    // first time being set
+		    frontier[fidx++] = dst.data();
+	    } else {
+		// first time and only time being set
 		frontier[fidx++] = dst.data();
 	    }
 	}
@@ -1253,24 +1254,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
 
-    static constexpr bool zerof = true; // !expr::is_idempotent<decltype(vexpr)>::value;
+    // timer tm;
+    // tm.start();
+    
+    // static constexpr bool zerof = true; // !expr::is_idempotent<decltype(vexpr)>::value;
+    static constexpr bool zerof = !expr::is_single_trigger_op<Operator>::value;
     bool * zf = nullptr;
-    if constexpr ( zerof ) {
-	// A dense bool frontier initially all zero, returned to all zero
-	extern frontier * zero_frontier;
-	if( zero_frontier != nullptr
-	    && zero_frontier->nVertices() != part.get_num_elements() ) {
-	    zero_frontier->del();
-	    delete zero_frontier;
-	    zero_frontier = nullptr;
-	}
-	if( zero_frontier == nullptr ) {
-	    zero_frontier = new frontier;
-	    *zero_frontier
-		= frontier::template create<frontier_type::ft_bool>( part );
-	}
-	zf = zero_frontier->template getDense<frontier_type::ft_bool>();
-    }
+    if constexpr ( zerof )
+	zf = GA.get_flags( part );
 
 #define ABCD 1
 #if ABCD
@@ -1286,8 +1277,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     voffsets[m] = mm;
 
 #ifndef EMAP_BLOCK_SIZE
-    constexpr EID mm_block = 2048;
-    constexpr EID mm_threshold = 2048;
+    constexpr EID mm_block = 128;
+    constexpr EID mm_threshold = 128;
 #else
     static constexpr EID mm_block = EMAP_BLOCK_SIZE;
     static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
@@ -1306,16 +1297,22 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	if( !expr::is_readonly_fusion_op<Operator>::value
 	    || ( cfg.is_parallel() && /* m >= 1024 */ mm_parts > 2 ) ) {
 	    delete[] degree;
-	    return csr_sparse_with_f_fusion_stealing<zerof>(
-		cfg, GA, eid_retriever, part, old_frontier, zf, op );
+	    return csr_sparse_with_f_fusion_stealing(
+		cfg, GA, eid_retriever, part, old_frontier, op );
 	}
-    }
+    } else
+	std::cerr << "no fusion; mm_parts=" << mm_parts
+		  << " has=" << (int)api::has_fusion_op_v<Operator>
+		  << " ro=" << (int)expr::is_readonly_fusion_op<Operator>::value
+		  << "\n";
 
     if( /* m < 1024 */ mm_parts <= 2 || !cfg.is_parallel() ) {
 	delete[] degree;
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
     }
+
+    // auto tm1 = tm.next();
 
 // TODO: Question: can we remove/ignore 0-degree vertices from frontier?
 //   ... requires to rewrite s[], and modify input frontier
@@ -1386,6 +1383,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     assert( outEdgeCount == mm );
 #endif
 
+    // auto tm2 = tm.next();
+
     // Compilation steps
     
     // CSR requires no check that destination is active.
@@ -1425,7 +1424,13 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     auto mi = expr::create_value_map_new<1>();
     auto c = cache_create( env, l_cache, mi );
 
+    // auto tm3 = tm.next();
+    // decltype(tm3) tm4a, tm4b, tm4c, tm4d, tm4e;
+    // decltype(tm3) * tm_parts = new decltype(tm3)[mm_parts]();
+
     frontier new_frontier;
+
+    EID* n_out_block = new EID[mm_parts*2+1];
 
 #if ABCD
     if( false && zerof && outEdgeCount > EID(GA.numVertices()) ) {
@@ -1471,20 +1476,27 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 		&& "limitation due to cast in frontier construction" );
 
 	VID* outEdges = new VID[outEdgeCount]; //!< activated edges
-	EID* n_out_block = new EID[mm_parts*2+1];
+	// EID* n_out_block = new EID[mm_parts*2+1];
 
 	// Count number of activated vertices for each block. Append them to
 	// a per-block list.
 	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
+	    // timer tm;
+	    // tm.start();
 	    n_out_block[p] = parts[p].template process_push<need_atomic>(
 		s, outEdges, zf, idx, edge, c, env, vexpr );
+	    // tm_parts[p] = tm.next();
 	} );
+
+	// tm4a = tm.next();
 
 	// Scan on number of activated vertices per block to calculate
 	// offsets for aggregating the lists in a single list.
 	EID n_out = sequence::plusScan(
 	    n_out_block, &n_out_block[mm_parts], mm_parts );
 	n_out_block[2*mm_parts] = n_out;
+
+	// tm4b = tm.next();
 
 	// Compact the per-block lists into a single list
 	new_frontier = frontier::sparse( GA.numVertices(), n_out );
@@ -1504,9 +1516,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
 	VID nextM = n_out;
 
+	// tm4c = tm.next();
+
 	// Calculate the number of active edges
 	// Note: there are no duplicates if zerof == true
-	if constexpr ( expr::is_idempotent<decltype(vexpr)>::value || zerof ) {
+	// Note: there are no duplicates if the expression triggers at most
+	//       once per vertex
+	if constexpr ( expr::is_idempotent<decltype(vexpr)>::value || zerof
+		       || expr::is_single_trigger<decltype(vexpr)>::value ) {
 	    // Operation is idempotent, i.e., we are allowed to process each
 	    // edge multiple times. No need to remove duplicates.
 	    // OR: we used the zero flags array to avoid duplicates.
@@ -1535,8 +1552,12 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
 	    tmp.del();
 	}
+
+	// tm4d = tm.next();
     
 	new_frontier.calculateActiveCounts( GA, part, nextM );
+
+	// tm4e = tm.next();
 
 	// Restore zero frontier to all zeros
 	if constexpr ( zerof ) {
@@ -1547,7 +1568,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
 
 	delete [] outEdges;
-	delete [] n_out_block;
+	// delete [] n_out_block;
     }
 #else
     // Handle differently if estimated activated vertices is very large
@@ -1683,6 +1704,32 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	delete [] n_out_block;
     }
 #endif
+
+/*
+    auto tm4 = tm.next();
+    std::cerr << tm1 << ' ' << tm2 << ' ' << tm3 << ' '
+	      << mm_parts << ' '
+	      << tm4a << ' '
+	      << tm4b << ' '
+	      << tm4c << ' '
+	      << tm4d << ' '
+	      << tm4e << ' '
+	      << tm4
+	      << " parts: ";
+    decltype(tm1) tmin = std::numeric_limits<decltype(tm1)>::max();
+    decltype(tm1) tmax = 0;
+    decltype(tm1) tsum = 0;
+    for( VID p=0; p < mm_parts; ++p ) {
+	auto nv = parts[p].num_vertices();
+	auto ne = parts[p].num_edges( s, idx );
+	std::cerr << tm_parts[p] << "(" << nv << ',' << ne << ',' << n_out_block[p] << ") ";
+	tmax = std::max( tm_parts[p], tmax );
+	tmin = std::min( tm_parts[p], tmin );
+	tsum = tm_parts[p] + tsum;
+    }
+    std::cerr << " [" << tsum << ' ' << tmin << ' ' << tmax << ']';
+    std::cerr << '\n';
+*/
 
     // Clean up and return
 #if ABCD

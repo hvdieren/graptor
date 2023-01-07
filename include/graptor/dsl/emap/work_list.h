@@ -9,7 +9,7 @@
 #include "graptor/dsl/emap/edgechunk.h"
 
 #define MANUALLY_ALIGNED_ARRAYS 1
-#define DEBUG_WORK_LIST 1
+#define DEBUG_WORK_LIST 0
 
 #ifndef FUSION_EDGE_BALANCE
 #define FUSION_EDGE_BALANCE 1
@@ -104,6 +104,13 @@ public:
 	    : m_next( nullptr ), m_buf( buf, CHUNK, fill, idx ) { }
 	~list_node() = delete;
 
+	bool is_pre_init() const {
+	    const uint8_t * p = reinterpret_cast<const uint8_t *>( this );
+	    const type * b = reinterpret_cast<const type *>(
+		&p[sizeof(list_node)] );
+	    return b != m_buf.get_vertices();
+	}
+
 	static list_node * create() {
 	    size_t size = sizeof(list_node) + CHUNK * sizeof(type);
 	    uint8_t * p = new uint8_t[size];
@@ -131,7 +138,9 @@ public:
 	    return l;
 	}
 	static void destroy( list_node * l ) {
-	    assert( l->m_buf.size() <= CHUNK );
+	    // The initial (pre-initialised) buffers may be larger than the
+	    // chunk size.
+	    assert( l->m_buf.size() <= CHUNK || l->is_pre_init() );
 #if DEBUG_WORK_LIST
 	    n_destroy++;
 #endif
@@ -173,6 +182,7 @@ public:
 
 	void push_back( const T & value, const EID * const idx ) {
 	    m_buf.push_back( value, idx );
+	    assert( m_buf.size() <= CHUNK );
 	}
 
 	void close( const EID * idx ) {
