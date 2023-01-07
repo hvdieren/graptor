@@ -14,15 +14,6 @@ using expr::_p;
 #define FUSION 1
 #endif
 
-#ifndef TWO_STEP
-#define TWO_STEP 1
-#endif
-
-#if TWO_STEP
-#undef FUSION
-#define FUSION 0
-#endif
-
 // VECTORIZE indicates vector length of fusion operation with
 // scalar destination. 1 means no vectorization (scalar baseline),
 // 8 is typical vector length for AVX2 with 4-byte flags, 16 is typical
@@ -131,7 +122,6 @@ public:
 	if( !once ) {
 	    once = true;
 	    std::cerr << "FUSION=" << FUSION << "\n";
-	    std::cerr << "TWO_STEP=" << TWO_STEP << "\n";
 	    std::cerr << "VECTORIZE=" << VECTORIZE << "\n";
 	    std::cerr << "FLAG_TYPE=" << FLAG_TYPE
 		      << " width=" << sizeof(FlagTy) << "\n";
@@ -270,14 +260,6 @@ first set color[v] = v
 		);
 	};
 
-/*
-	auto select_col_pull = [&]( auto s, auto d, auto e ) {
-	    auto min_col = expr::make_scalar<var_min_col,VID,decltype(v)::VL>();
-	    return min_col.arg_min( expr::cast<VID>( e - index[d] ), 
-				    usedcol[e] == _0 );
-	};
-*/
-
 #if VECTORIZE != 1
 	auto select_col_fusion = [&]( auto v ) {
 	    if constexpr ( decltype(v)::VL != 1 )
@@ -361,36 +343,18 @@ first set color[v] = v
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
-#if TWO_STEP
-/*
-		.materialize();
-	    api::edgemap(
-		GA,
-		api::filter( api::dst, api::strong, new_roots ),
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    return color[d] = expr::cast<VID>(
-			expr::find_first( usedcol[index[d]],
-					  usedcol[index[d+_1]], _0 )
-			- index[d] );
-		} )
-		)
-*/
 		.vertex_map(
 		    new_roots,
 		    [&]( auto v ) {
+/*
 			return color[v] = expr::cast<VID>(
 			    expr::find_first( usedcol[index[v]],
 					      usedcol[index[v+_1]], _0 )
 			    - index[v] );
+*/
+			return select_col( v );
 		    } )
 		.materialize();
-#else
-		.vertex_map(
-		    new_roots,
-		    [&]( auto v ) { return select_col_fusion( v ); }
-		    )
-		.materialize();
-#endif
 
 	    if( debug && debug_verbose ) {
 		roots.toSparse( part );
