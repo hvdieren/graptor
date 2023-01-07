@@ -265,12 +265,13 @@ class GraphCSx {
     bool symmetric;
 
     mm::buffer<float> * weights;
+    mutable mm::buffer<bool> flags;
 
 public:
     GraphCSx() { }
     GraphCSx( const std::string & infile, int allocation = -1,
 	      bool _symmetric = false, const char * wfile = nullptr ) 
-	: symmetric( _symmetric ), weights( nullptr ) {
+	: symmetric( _symmetric ), weights( nullptr ), flags( 0 ) {
 	if( allocation == -1 ) {
 	    numa_allocation_interleaved alloc;
 	    readFromBinaryFile( infile, alloc );
@@ -285,13 +286,13 @@ public:
     }
     GraphCSx( const std::string & infile, const numa_allocation & allocation,
 	      bool _symmetric )
-	: symmetric( _symmetric ), weights( nullptr ) {
+	: symmetric( _symmetric ), weights( nullptr ), flags( 0 ) {
 	readFromBinaryFile( infile, allocation );
     }
     GraphCSx( VID n_, EID m_, int allocation, bool symmetric_ = false,
 	      bool weights_ = false )
 	: n( n_ ), nmaxdeg( ~VID(0) ), m( m_ ), symmetric( symmetric_ ),
-	  weights( nullptr ) {
+	  weights( nullptr ), flags( 0 ) {
 	if( allocation == -1 ) {
 	    allocateInterleaved();
 	    if( weights_ )
@@ -311,6 +312,7 @@ public:
 	    weights->del();
 	    delete weights;
 	}
+	flags.del( "GraphCSx flags array" );
     }
     template<typename vertex>
     GraphCSx( const wholeGraph<vertex> & WG, int allocation )
@@ -2538,6 +2540,17 @@ public:
     }
 
     const mm::buffer<float> * getWeights() const { return weights; }
+
+    bool * get_flags( const partitioner & part ) const {
+	if( !flags.get() ) {
+	    using std::swap;
+	    mm::buffer<bool> buf( n, numa_allocation_partitioned( part ),
+				  "GraphCSx flags array" );
+	    swap( flags, buf );
+	    buf.del();
+	}
+	return flags.get();
+    }
 
 private:
     void allocate( const numa_allocation & alloc ) {
