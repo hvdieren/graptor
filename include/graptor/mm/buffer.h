@@ -16,7 +16,8 @@ public:
     using value_type = T;
     
 public:
-    buffer() { }
+    buffer() { } // un-initialised
+    buffer( int ) : alc( 0 ) { } // zero-initialise
     buffer( size_t elements, const numa_allocation & alloc,
 	    const char * reason = nullptr ) {
 	switch( alloc.get_kind() ) {

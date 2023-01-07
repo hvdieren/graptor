@@ -11,6 +11,8 @@ namespace mm {
 class allocation {
 public:
     allocation() { }
+    allocation( int )
+	: m_ptr( 0 ), m_size( 0 ), m_mapped( 0 ), m_aligned( 0 ) { }
     allocation( intptr_t ptr, size_t size,
 		bool mapped = false, bool aligned = false )
 	: m_ptr( ptr ), m_size( size ),
