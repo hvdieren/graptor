@@ -66,6 +66,7 @@ struct redop_logicalor {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_logicalor";
@@ -236,6 +237,7 @@ struct redop_bitwiseor {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_bitwiseor";
@@ -438,6 +440,7 @@ struct redop_logicaland {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_logicaland";
@@ -531,6 +534,7 @@ struct redop_bitwiseand {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_bitwiseand";
@@ -614,6 +618,7 @@ struct redop_min {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_min";
@@ -800,6 +805,7 @@ struct redop_max {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_max";
@@ -984,6 +990,7 @@ struct redop_add {
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
     static constexpr bool conditional = conditional_;
     
     // TODO: should have an ID here instead of string
@@ -1114,6 +1121,7 @@ struct redop_count_down {
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = conditional_;
     static constexpr bool conditional = conditional_;
 
     // TODO: should have an ID here instead of string
@@ -1244,6 +1252,7 @@ struct redop_mul {
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
+    static constexpr bool is_single_trigger = false;
 
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_mul";
@@ -1378,6 +1387,7 @@ struct redop_setif {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = true; // store-only
+    static constexpr bool is_single_trigger = true;
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_setif";
@@ -1532,6 +1542,7 @@ struct redop_find_first {
 
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false;
+    static constexpr bool is_single_trigger = false;
     
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_find_first";
