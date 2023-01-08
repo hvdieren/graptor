@@ -425,6 +425,7 @@ public:
 	return m_fill + v <= m_bufsize;
     }
     bool is_empty() const { return m_fill == 0; }
+    const VID * get_vertices() const { return m_buf; }
 
     void set( const edge_partition<VID,EID> & ep,
 	      const VID * const v = nullptr ) {
