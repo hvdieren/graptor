@@ -46,11 +46,21 @@ struct mask_type_traits<8> {
 	return m >> 4;
     }
 
+    static uint32_t find_first( type a ) {
+    	return _tzcnt_u32( ~(uint32_t)a );
+    }
+    static uint32_t find_first( type a, type m ) {
+	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
+    }
+
     static auto logical_invert( type k ) {
 	return _knot_mask8( k );
     }
     static type logical_and( type l, type r ) {
 	return _kand_mask8( l, r );
+    }
+    static type logical_andnot( type l, type r ) {
+	return _kandn_mask8( l, r );
     }
     static type logical_or( type l, type r ) {
 	return _kor_mask8( l, r );
