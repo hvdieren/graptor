@@ -1115,17 +1115,13 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     const GraphCSx & GA,
     const EIDRetriever & eid_retriever,
     const partitioner & part,
+    EID outEdgeCount,
     frontier & old_frontier,
     bool * zf,
     const Operator & op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
-
-    // Calculate maximum number of activated out-edges
-    EID outEdgeCount = 0;
-    for( VID i=0; i < m; ++i )
-	outEdgeCount += idx[s[i]+1] - idx[s[i]];
 
     // if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
     // outEdgeCount += m; // Add in m vertices in old frontier
@@ -1148,14 +1144,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
-
-/*
-    auto ew_pset = expr::create_map2<(unsigned)aid_key(array_aid(expr::aid_eweight)>(
-	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-					 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), l_cache, vexpr );
-*/
+    using Expr = std::decay_t<decltype(vexpr)>;
 
     auto env = expr::eval::create_execution_environment_op(
 	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
@@ -1170,17 +1159,16 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     EID nacte = 0;
     for( VID k = 0; k < m; k++ ) {
 	VID v = s[k];
-	VID d = idx[s[k]+1] - idx[s[k]];
-	const VID * out = &edge[idx[s[k]]];
+	EID x = idx[v];
+	EID y = idx[v+1];
 
 	// Sequential, so dump in sequential locations in outEdges[]
 	auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
 
-	for( VID j=0; j < d; j++ ) {
+	for( EID e=x; e < y; ++e ) {
 	    // EID seid = eid_retriever.get_edge_eid( v, j );
-	    EID seid = idx[s[k]]+j;
-	    auto dst = simd::template load_from<simd::ty<VID,1>>( &out[j] );
-	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
+	    auto dst = simd::template load_from<simd::ty<VID,1>>( &edge[e] );
+	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( e );
 	    auto m = expr::create_value_map_new<1>(
 		expr::create_entry<expr::vk_dst>( dst ),
 		expr::create_entry<expr::vk_edge>( eid ),
@@ -1189,18 +1177,21 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 	    auto ret = env.evaluate( c, m, vexpr );
 	    if( ret.value().data() ) {
 		bool add = false;
-		VID dst = out[j];
-		if constexpr ( zerof ) {
-		    if( !zf[dst] ) {
-			zf[dst] = true;
+		VID sdst = dst.data();
+		if constexpr ( !expr::is_single_trigger<Expr>::value ) {
+		    if constexpr ( zerof ) {
+			if( !zf[sdst] ) {
+			    zf[sdst] = true;
+			    add = true;
+			}
+		    } else
 			add = true;
-		    }
 		} else
 		    add = true;
 
 		if( add ) {
-		    outEdges[nactv++] = dst;
-		    nacte += idx[dst+1] - idx[dst];
+		    outEdges[nactv++] = sdst;
+		    nacte += idx[sdst+1] - idx[sdst];
 		}
 	    }
 	}
@@ -1222,7 +1213,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
-    if constexpr ( zerof ) {
+    if constexpr ( zerof && !expr::is_single_trigger<Expr>::value ) {
 	for( VID k=0; k < outEdgeCount; ++k ) {
 	    // assert( zf[outEdges[k]] );
 	    zf[outEdges[k]] = false;
@@ -1237,7 +1228,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 
     return new_frontier;
 }
-
 
 // Sparse CSR traversal (GraphCSx) with a new frontier
 // Uses internal array for removing duplicates, contrasted to the explicit
@@ -1267,14 +1257,25 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 #if ABCD
     // Calculate info on the degrees of the vertices and total number of edges
     EID * degree = new EID[2*m+1];
-    parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
-	degree[i] = idx[s[i]+1] - idx[s[i]];
-    } );
-
     EID* voffsets = &degree[m];
-    EID mm = sequence::plusScan( degree, voffsets, m );
-    EID outEdgeCount = mm;
+    EID mm;
+    if( m > 2048 ) {
+	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
+	    degree[i] = idx[s[i]+1] - idx[s[i]];
+	} );
+	mm = sequence::plusScan( degree, voffsets, m );
+    } else {
+	mm = 0;
+	for( VID i=0; i < (VID)m; ++i ) {
+	    EID deg = idx[s[i]+1] - idx[s[i]];
+	    // degree[i] = deg; -- unused
+	    voffsets[i] = mm;
+	    mm += deg;
+	}
+    }
     voffsets[m] = mm;
+
+    EID outEdgeCount = mm;
 
 #ifndef EMAP_BLOCK_SIZE
     constexpr EID mm_block = 128;
@@ -1283,8 +1284,13 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     static constexpr EID mm_block = EMAP_BLOCK_SIZE;
     static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
 #endif
-    VID mm_parts = std::min( graptor_num_threads() * 4,
+    VID mm_parts = std::min( graptor_num_threads() * 16,
 			     VID( ( mm + mm_block - 1 ) / mm_block ) );
+    // Require at least 32 parts before running in parallel. This is based on
+    // the sequential version not requiring atomics and being much more
+    // efficient than the parallel version, so a high degree of parallelism
+    // is needed to offset the efficiency loss.
+    static constexpr VID mm_min = 32;
     // std::cerr << "v=" << m << " e=" << mm << " p=" << mm_parts << "\n";
 #endif
 
@@ -1295,21 +1301,17 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // do if a sequential execution is preferred.
     if constexpr ( api::has_fusion_op_v<Operator> ) {
 	if( !expr::is_readonly_fusion_op<Operator>::value
-	    || ( cfg.is_parallel() && /* m >= 1024 */ mm_parts > 2 ) ) {
+	       || ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) ) {
 	    delete[] degree;
 	    return csr_sparse_with_f_fusion_stealing(
 		cfg, GA, eid_retriever, part, old_frontier, op );
 	}
-    } else
-	std::cerr << "no fusion; mm_parts=" << mm_parts
-		  << " has=" << (int)api::has_fusion_op_v<Operator>
-		  << " ro=" << (int)expr::is_readonly_fusion_op<Operator>::value
-		  << "\n";
+    }
 
-    if( /* m < 1024 */ mm_parts <= 2 || !cfg.is_parallel() ) {
+    if( /* m < 1024 */ mm_parts < mm_min || !cfg.is_parallel() ) {
 	delete[] degree;
 	return csr_sparse_with_f_seq<zerof>(
-	    cfg, GA, eid_retriever, part, old_frontier, zf, op );
+	    cfg, GA, eid_retriever, part, mm, old_frontier, zf, op );
     }
 
     // auto tm1 = tm.next();
@@ -1480,7 +1482,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
 	// Count number of activated vertices for each block. Append them to
 	// a per-block list.
-	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
+	parallel_loop( VID(0), mm_parts, 1, [=,&c,&env,&vexpr]( VID p ) {
 	    // timer tm;
 	    // tm.start();
 	    n_out_block[p] = parts[p].template process_push<need_atomic>(
