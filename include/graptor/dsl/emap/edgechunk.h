@@ -270,18 +270,48 @@ public:
 		      Cache & c,
 		      const Environment & env, 
 		      const Expr & expr ) const {
-	EID n_out = 0;
+	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
+
 	VID *f_out = &out_edges[m_offset];
 	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
 	    VID v = vertices[j];
 	    EID x = j == js ? m_fstart : idx[v];
-	    EID y = j == je-1 ? m_lend : idx[v+1];
+	    EID y = j+1 == je ? m_lend : idx[v+1];
 	    // assert( y >= x );
-	    VID d = y-x;
+	    /*
 	    n_out += process_csr_append<need_atomic>(
 		&edges[x], x, d, v, &f_out[n_out], zf, c, env, expr );
+	    */
+	    auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	    for( EID e=x; e < y; ++e ) {
+		auto dst = simd::template load_from<simd::ty<VID,1>>( &edges[e] );
+		auto eid = simd::template create_scalar<simd::ty<EID,1>>( e );
+		auto m = expr::create_value_map_new<1>(
+		    expr::create_entry<expr::vk_dst>( dst ),
+		    expr::create_entry<expr::vk_edge>( eid ),
+		    expr::create_entry<expr::vk_src>( src ) );
+		// Note: set evaluator to use atomics
+		auto ret = env.template evaluate<need_atomic>( c, m, expr );
+		if( ret.value().data() ) {
+		    // for particular cases, no need to use zerof
+		    // (e.g. count_down).
+		    if constexpr ( !expr::is_single_trigger<Expr>::value ) {
+			// Set frontier, once.
+			if( zf[dst.data()] == 0
+			    && __sync_fetch_and_or(
+				(unsigned char *)&zf[dst.data()],
+				(unsigned char)1 ) == 0 )
+			    // first time being set
+			    *f_out++ = dst.data();
+		    } else {
+			// first time and only time being set
+			*f_out++ = dst.data();
+		    }
+		}
+	    }
 	}
-	return n_out;
+	return f_out - &out_edges[m_offset];
     }
 
     template<bool need_atomic, update_method um,
@@ -296,7 +326,7 @@ public:
 	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
 	    VID v = vertices[j];
 	    EID x = j == js ? m_fstart : idx[v];
-	    EID y = j == je-1 ? m_lend : idx[v+1];
+	    EID y = j+1 == je ? m_lend : idx[v+1];
 	    // assert( y >= x );
 	    VID d = y-x;
 	    process_csr_sparse<need_atomic,um>(
