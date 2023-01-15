@@ -115,7 +115,7 @@ struct vmap_kind_merge {
 
 template<typename Operator, typename Analysis>
 __attribute__((noinline))
-std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
+std::ostream & vmap_report( std::ostream & os, const char * str ) {
     static bool printed = false;
     if( printed )
 	return os;
@@ -127,7 +127,7 @@ std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
 }
 
 template<typename Operator, unsigned short VL>
-std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
+std::ostream & vmap_report( std::ostream & os, const char * str ) {
     static bool printed = false;
     if( printed )
 	return os;
@@ -135,6 +135,17 @@ std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
     printed = true;
 
     return os << str << " { VL: " << VL << " }\n";
+}
+
+template<typename Operator, typename Analysis>
+__attribute__((noinline))
+std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
+    return vmap_report<Operator,Analysis>( os, str.c_str() );
+}
+
+template<typename Operator, unsigned short VL>
+std::ostream & vmap_report( std::ostream & os, const std::string & str ) {
+    return vmap_report<Operator,VL>( os, str.c_str() );
 }
 
 class vmap_time_queue {
@@ -1001,7 +1012,7 @@ private:
 
 	VID nactv = fref.nActiveVertices();
 	const VID * f_array = fref.getSparse();
-	parallel_loop( (VID)0, nactv, 1, [&]( auto i ) {
+	parallel_loop( (VID)0, nactv, 256, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 // TODO: race conditions on p...
@@ -1082,7 +1093,7 @@ private:
 
 	const VID * f_array = fref.getSparse();
 	VID * n_array = nfrontier.getSparse();
-	parallel_loop( (VID)0, nactv, 1, [&]( auto i ) {
+	parallel_loop( (VID)0, nactv, 256, [&]( auto i ) {
 	    VID v = f_array[i];
 	    auto vv = simd::template create_unknown<simd::ty<VID,VL>>( v );
 	    auto m = expr::create_value_map_new2<VL,expr::vk_vid>( vv );
