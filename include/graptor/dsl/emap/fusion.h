@@ -56,13 +56,6 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
     auto fexpr = expr::rewrite_mask_main( fexpr2 );
 
-#if 0
-    auto ew_pset = expr::create_map2<(unsigned)aid_key(array_aid(expr::aid_eweight))>(
-	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-					 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), l_cache, vexpr, fexpr );
-#endif
     auto env = expr::eval::create_execution_environment_op(
 	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
