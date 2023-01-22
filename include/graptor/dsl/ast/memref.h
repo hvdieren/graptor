@@ -568,38 +568,6 @@ struct storeop<false,R,T> : public expr_base {
     const R & ref() const { return m_ref; }
     const T & value() const { return m_val; }
 
-    template<typename VTr1, typename MTr1,
-	     typename VTr2, typename MTr2,
-	     layout_t Layout1, layout_t Layout2,
-	     typename I, typename Enc, bool NT>
-    __attribute__((always_inline))
-    static inline auto
-    evaluate( lvalue<VTr1,I,MTr1,Enc,NT,Layout1> l,
-	      rvalue<VTr2,Layout2,MTr2> r ) {
-	static_assert( !std::is_void_v<VTr1>, "require a type to store" );
-
-	if constexpr ( std::is_void_v<VTr2> ) {
-	    static_assert( simd::detail::is_mask_traits<VTr1>::value,
-			   "a mask should be stored to a mask location" );
-	
-	    // Convert rvalue to correct type, matching lvalue
-	    auto v = r.mask().template convert_data_type<VTr1>();
-	    auto m = l.mask();
-
-	    // Store the value conditionally for those lanes enabled by the mask
-	    l.value().store( v, m );
-	    return make_rvalue( v, m );
-	} else {
-	    // Convert rvalue to correct type, matching lvalue
-	    auto v = r.value().template convert_data_type<VTr1>();
-	    auto m = force_mask<VTr1>( join_mask<VTr1>( l.mask(), r.mask() ) );
-
-	    // Store the value conditionally for those lanes enabled by the mask
-	    l.value().store( v, m );
-	    return make_rvalue( v, m );
-	}
-    }
-
     template<typename VTr1, layout_t Layout1,
 	     typename VTr2, layout_t Layout2,
 	     typename I, typename Enc, bool NT, typename MPack>
