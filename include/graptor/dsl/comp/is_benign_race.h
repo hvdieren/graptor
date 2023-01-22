@@ -11,9 +11,16 @@ namespace expr {
  * conditions if the modified memory location(s) were subject to
  * concurrent updates.
  *
- * Any number of updates are allowed. Store operations are not benign
+ * Any number of updates are allowed. All updates must be benign for
+ * the expression to have benign races (only).
+ *
+ * Old behaviour:
+ * Store operations are not benign
  * races as we do not know anything about the value being stored.
  * Only for specific redop operations will data races be benign.
+ * New behaviour:
+ * Stores are not benign, except when the stored value is known constant.
+ * In that case, it does not matter which store executes.
  **********************************************************************/
 
 namespace detail {
@@ -74,7 +81,8 @@ struct is_benign_race<maskrefop<A,T,M,VL>> {
 
 template<bool nt, typename R, typename T>
 struct is_benign_race<storeop<nt,R,T>> {
-    static constexpr bool value = false; // NOT benign
+    // benign only if stored value is constant
+    static constexpr bool value = is_constant_expr<T>::value;
 };
 
 template<unsigned cid, typename Tr>
