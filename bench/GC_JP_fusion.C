@@ -248,143 +248,80 @@ first set color[v] = v
 	    api::record( roots, [&]( auto d ) { return priority[d] == _0; },
 			 api::strong )
 	    )
-	    .materialize();
-
-	// Set color of roots (vertex property is not initialised)
-	// TODO: link in with edgemap above, set color to 1 if priority==1
-	//       and to 0 otherwise; record roots as priority==1. Still need
-	//       to traverse all edges for vertices with priority==0 to update
-	//       priority of all neighbours, which tempers performance benefit.
-	make_lazy_executor( part )
+	    // Set color of roots (initial color = _1s to indicate undefined)
 	    .vertex_map( roots, [&]( auto v ) { return color[v] = _0; } )
 	    .materialize();
 
 	log( iter, tm_iter, ftrue, ik_prio );
 
-	auto gather_col = [&]( auto v ) {
-	    auto idx = expr::make_scalar<var_i,VID,decltype(v)::VL>();
+	auto check_color = [&]( auto s, auto d, auto color_d ) {
 	    return expr::make_seq(
-		idx = _0,
-		expr::make_loop(
-		    // condition
-		    idx < degree[v],
-		    // loop body and increment
-		    expr::let<var_nghcol>(
-			color[edge[index[v]+expr::cast<EID>(idx)]],
-			[&]( auto ngh ) {
-			    return expr::make_seq(
-				usedcol[index[v]+expr::cast<EID>(ngh)] =
-				_p( _1s(usedcol[index[v]]),
-				    ngh < degree[v] ), // assumes unsigned col
-				idx += _1 );
-			} ),
-		    // final value - anything
-		    _0(idx)
-		    )
-		);
-	};
-
-	auto select_col = [&]( auto v ) {
-	    auto idx = expr::make_scalar<var_i,VID,decltype(v)::VL>();
-	    return expr::make_seq(
-		idx = _0,
-		color[v] = expr::make_loop(
-		    idx < degree[v]
-		    && usedcol[index[v]+expr::cast<EID>(idx)] < _0, // condition
-		    idx += _1, // loop body and increment
-		    idx // final value
-		    )
-		);
-	};
-
-#if VECTORIZE != 1
-	auto select_col_fusion = [&]( auto v ) {
-	    if constexpr ( decltype(v)::VL != 1 )
-		return select_col( v );
-	    else {
-	    static_assert( decltype(v)::VL == 1, "assumption" );
-	    static constexpr unsigned short VL = VECTORIZE;
-	    static constexpr unsigned short lgVL = ilog2( VL );
-	    auto idx = expr::make_scalar<var_i,VID,1>();
-	    auto tmp = expr::make_scalar<var_tmp,FlagTy,VL>();
-	    return expr::make_seq(
-		idx = _0,
-		tmp = usedcol[expr::make_unop_incseq<VL,false>(index[v])],
-		color[v] = expr::make_loop(
-		    // condition: do not exceed degree of vertex, and require
-		    // all fields are non-zero
-		    // Note: any lane with this condition requires continuation
-		    //       of the loop, hence resort to scalar condition
-		    idx + expr::slli<lgVL>( _1(idx) ) < degree[v]
-		    && expr::make_unop_reduce(
-			// tmp < _0,
-			tmp != _0,
-			expr::redop_logicaland() ),
-		    // loop body and increment
+		// Mark color as used
+		usedcol[index[d]+expr::cast<EID>(color[s])]
+		= _p( _1s(usedcol[expr::cast<EID>(d)]), // set flag: colour used
+		      color[s] < degree[d] // array bounds check
+		    ), // && s != d ), // not a self-edge
+		// Scan forward if conflict
+		expr::set_mask(
+		    // Only perform loop if conflict
+		    color[s] == color_d && s != d,
 		    expr::make_seq(
-			idx += expr::slli<lgVL>( _1(idx) ),
-			tmp = usedcol[expr::make_unop_incseq<VL,false>(
-				index[v]+expr::cast<EID>(idx))]
-			),
-		    // final value. Allow to overrun end of neighbour list,
-		    // correct by taking minimum with degree.
-		    expr::min(
-			degree[v],
-			idx + expr::cast<VID>(
-			    expr::make_unop_reduce(
-				tmp, expr::redop_find_first() ) )
-			)
-		    )
+			color_d += _1,
+			expr::make_loop(
+			    // condition: color in use and possible
+			    // to increase
+			    usedcol[index[d]+expr::cast<EID>(color_d)] < _0
+			    && color_d < degree[d],
+			    // loop body and increment
+			    color_d += _1,
+			    // return value - anything
+			    _0(d) )
+			) )
 		);
-	    }
 	};
-#else
-	auto select_col_fusion = select_col;
-#endif
 
 	while( !roots.isEmpty() ) {
 	    frontier new_roots;
 #if FUSION
+	    auto select_col_pull = [&]( auto v ) {
+		auto idx = expr::make_scalar<var_i,VID,decltype(v)::VL>();
+		auto col = expr::make_scalar<var_tmp,VID,decltype(v)::VL>();
+		return expr::make_seq(
+		    col = _0,
+		    // color[v] = _0,
+		    idx = _0,
+		    expr::make_loop(
+			idx < degree[v], // condition
+			// loop body and increment
+			expr::make_seq(
+			    expr::let<var_nghcol>(
+				edge[index[v]+expr::cast<EID>(idx)],
+				[&]( auto ngh ) {
+				    return check_color( ngh, v, col );
+				} ),
+			    idx += _1 ), // increment
+			// process immediately -- TODO: drop if degree 0
+			expr::make_seq(
+			    color[v] = col,
+			    _1(v) // final value
+			    )
+			)
+		    );
+	    };
 	    api::edgemap(
 		GA,
 		api::config( api::always_sparse ),
 		api::filter( api::src, api::strong, roots ),
 		api::fusion( [&]( auto v ) {
-		    // If priority drops to zero, or if only one color choice
-		    // remains, then process immediately, else keep in overflow
-		    // bucket
-		    return expr::make_seq(
-			select_col_fusion( v ),
-			_1(v) // process immediately
-// TODO: drop if zero-degree!
-			);
+		    return select_col_pull( v );
 		} ),
-		// Can we do ECL optimisations?
-		// Remove color of source from possible colors of d
-		// Destination is enabled if all predecessors removed,
-		// or (optimisation) only one color remains
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    return expr::make_seq(
-			// Only set destination colour if we have priority
-			// over destination. Otherwise, this is an
-			// unnecessary store operation.
-/*
-			usedcol[index[d]+expr::cast<EID>(color[s])]
-			= _p( _1s(usedcol[e]), // set flag: colour used
-			      // prio_fn( s, d ) && // will stored value be used?
-			      color[s] < degree[d] ), // array bounds check
-*/
-			priority[d].count_down(
-			    _0(priority[d]) )
-			    // _p( _0(priority[d]), prio_fn( s, d ) ) )
-			);
+		    return priority[d].count_down( _0(priority[d]) );
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
-		.vertex_map(
-		    new_roots,
-		    [&]( auto v ) { return select_col( v ); } )
 		.materialize();
+
 #else // non-fusion case below
 	    // Push edgemap: count-down predecessors of our neighbours
 	    api::edgemap(
@@ -392,117 +329,21 @@ first set color[v] = v
 		api::config( api::always_sparse ),
 		api::filter( api::src, api::strong, roots ),
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    return expr::make_seq(
-			priority[d].count_down(
-			    _0(priority[d]) )
-			    // _p( _0(priority[d]), prio_fn( s, d ) ) )
-			);
+		    return priority[d].count_down( _0(priority[d]) );
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
 		.materialize();
 	    // Pull edgemap: gather colours of neighbours of activated vertices
-/*
-	    make_lazy_executor( part )
-		.vertex_map(
-		    new_roots,
-		    [&]( auto v ) { return gather_col( v ); } )
-		.materialize();
-	    make_lazy_executor( part )
-		.vertex_map(
-		    new_roots,
-		    [&]( auto v ) { return select_col( v ); } )
-		.materialize();
-*/
-
-// First sparse pull has benign races, but how to determine?
-// We could use setif (when flipping mask) - always benign
-// Alternative: check that stored value is constant...
-// Multi-version csc_sparse_aset:
-// * sequential
-// * edge-balanced with benign races
-// * vertex-balanced
-//
-// Should find a way to apply the two operations per vertex at a time
-// but that wouldn't allow the edge-balanced execution of one...
-//
-// Explore solution that tracks minimum value as we go along:
-// Update colour-so-far by +1 if color[ngh] == so-far
-// store mask anyway
-// Then, at end of first edgemap, only need to incrementally update col-so-far
-// Unless if we embed loopop in relax
-// Could accelerate with bitmask
-#if 1
-	    make_lazy_executor( part )
-		.vertex_map( new_roots,
-			     [&]( auto v ) { return color[v] = _0; } )
-		.materialize();
 	    api::edgemap(
 		GA,
 		api::config( api::always_sparse ),
 		api::filter( api::dst, api::strong, new_roots ),
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    return expr::make_seq(
-			// Mark color as used
-			usedcol[index[d]+expr::cast<EID>(color[s])]
-			= _p( _1s(usedcol[e]), // set flag: colour used
-			      color[s] < degree[d] // array bounds check
-			    ), // && s != d ), // not a self-edge
-			// Scan forward if conflict
-			expr::set_mask(
-			    // Only perform loop if conflict
-			    color[s] == color[d] && s != d,
-			    expr::make_seq(
-				color[d] += _1,
-				expr::make_loop(
-				    // condition: color in use and possible
-				    // to increase
-				    usedcol[index[d]+expr::cast<EID>(color[d])]
-				    < _0
-				    && color[d] < degree[d],
-				    // loop body and increment
-				    color[d] += _1,
-				    // return value - anything
-				    _0(d) )
-				) )
-			);
+		    return check_color( s, d, color[d] );
 		} )
 		)
 		.materialize();
-#else
-	    api::edgemap(
-		GA,
-		api::config( api::always_sparse ),
-		api::filter( api::dst, api::strong, new_roots ),
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    return usedcol[index[d]+expr::cast<EID>(color[s])]
-			= _p( _1s(usedcol[e]), // set flag: colour used
-			      color[s] < degree[d] ); // array bounds check
-		} )
-		)
-		.materialize();
-	    api::edgemap(
-		GA,
-		api::config( api::always_sparse ),
-		api::filter( api::dst, api::strong, new_roots ),
-		api::filter( api::dst, api::weak,
-			     [&]( auto v ) { return color[v] == _1s; } ),
-		api::relax( [&]( auto s, auto d, auto e ) {
-		    // Assumes color is initialised with largest possible value
-		    // return color[d].min( expr::cast<VID>( e - index[d] ),
-		    // usedcol[e] == _0 && color[d] == _1s );
-		    return color[d] = _p( expr::cast<VID>( e - index[d] ),
-					  usedcol[e] == _0 /* && color[d] == _1s */ );
-		} )
-		)
-		.materialize();
-#endif
-/*
-		.vertex_map(
-		    new_roots,
-		    [&]( auto v ) { return select_col( v ); } )
-		.materialize();
-*/
 #endif // fusion/no-fusion
 
 	    if( debug && debug_verbose ) {
