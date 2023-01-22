@@ -31,6 +31,7 @@ template<class Traits>
 class vec<Traits,lo_variable> {
 public:
     static constexpr unsigned short VL = Traits::VL;
+    static constexpr layout_t layout = lo_variable;
 
     using vector_traits = Traits;
     using data_type = vector_traits;
