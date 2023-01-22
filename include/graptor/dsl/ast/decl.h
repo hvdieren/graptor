@@ -449,6 +449,30 @@ struct is_indexed_by_zero : std::false_type { };
 template<typename A, typename T, unsigned short VL>
 struct is_indexed_by_zero<refop<A,T,VL>> : is_constant_zero<T> { };
 
+template<typename Expr>
+struct is_constant_expr : std::false_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_zero>> : std::true_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_cstone>> : std::true_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_true>> : std::true_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_false>> : std::true_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_truemask>> : std::true_type { };
+
+template<typename Tr>
+struct is_constant_expr<value<Tr,vk_inc>> : std::true_type { };
+
+template<typename E, typename M>
+struct is_constant_expr<binop<E,M,binop_mask>> : is_constant_expr<E> { };
+
 /***********************************************************************
  * Does an expression contain a binop_mask or maskrefop?
  ***********************************************************************/
