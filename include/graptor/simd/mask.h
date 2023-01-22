@@ -189,6 +189,7 @@ template<class Traits>
 class mask_impl {
 public:
     static constexpr unsigned short VL = Traits::VL;
+    static constexpr layout_t layout = lo_unknown;
 
     using mask_traits = Traits;
     using data_type = mask_traits;
