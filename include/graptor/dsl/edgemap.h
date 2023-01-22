@@ -379,18 +379,23 @@ void conditional_set( VID * f, simd::nomask<1>, VID d ) {
 }
 
 
-template<bool setf, typename Expr, typename Cache, typename Environment>
+template<bool setf, typename Expr, typename Cache, typename CacheDesc,
+	 typename Environment>
 static DBG_NOINLINE void
 process_csc_sparse_aset( const VID *out, VID deg, VID p, VID dstv, EID eid,
 			 VID *fr,
 			 const Expr & e, const Cache & vcaches,
+			 const CacheDesc & vcaches_dst,
 			 const Environment & env ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     auto dst = simd::template create_constant<simd::ty<VID,1>>( dstv );
 
     // Cache containing local variables only
-    auto c = expr::cache_create( env, vcaches, expr::create_value_map_new<1>() );
+    auto mdst = expr::create_value_map_new<1>( 
+	expr::create_entry<expr::vk_dst>( dst ) );
+    auto c = expr::cache_create_no_init( vcaches, mdst );
+    expr::cache_init( env, c, vcaches_dst, mdst );
 
     // using output_type = simd::container<simd::ty<typename Expr::type, 1>>;
     using output_type = simd::container<typename Expr::data_type>;
@@ -412,6 +417,8 @@ process_csc_sparse_aset( const VID *out, VID deg, VID p, VID dstv, EID eid,
 	    output.lor_assign( ret.value() );
     }
     conditional_set<setf,false,true>( fr, nullptr, output.data(), dstv );
+
+    expr::cache_commit( env, vcaches_dst, c, mdst );
 }
 
 template<bool setf, typename Expr, typename RExpr,
@@ -619,6 +626,84 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
     return output;
 }
 
+/**=====================================================================*
+ * \brief Calculate the number of parts in an edge-balanced partitioning
+ *
+ * If the ret_degree argument is provided, then it must point to an array
+ * of length 2*m+1 at least. The first m entries will be filled with the
+ * degrees of the m vertices; the next m+1 entries will be filled with
+ * the cumulative degree (plus scan).
+ *
+ * \param s list of vertex IDs
+ * \param m number of vertex IDs in list \see s
+ * \param idx graph's index array to determine degree
+ * \param ret_degree optional return value of degree and cumulative degree
+ *
+ * \return the number of advised parts for parallel execution
+ *======================================================================*/
+VID calculate_edge_balanced_parts(
+    VID * const s,
+    VID m,
+    const EID * const idx,
+    EID * ret_degree = nullptr ) {
+    // Calculate info on the degrees of the vertices and total number of edges
+    EID mm;
+
+    // Is there enough data to warrant parallel processing?
+    if( m > 2048 ) {
+	// Reserve space if none was provided
+	EID * degree = ret_degree;
+	if( !ret_degree )
+	    degree = new EID[m];
+	
+	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
+	    degree[i] = idx[s[i]+1] - idx[s[i]];
+	} );
+	if( ret_degree ) {
+	    EID * const voffsets = &degree[m];
+	    voffsets[m] = mm = sequence::plusScan( degree, voffsets, m );
+	} else {
+	    // TODO: apply plusReduce with operator that calculates degree
+	    //       without storing to memory. Avoids allocation of temporary 
+	    //       storage.
+	    mm = sequence::plusReduce( degree, m );
+	    delete[] degree;
+	}
+    } else {
+	if( ret_degree ) {
+	    EID * const degree = ret_degree;
+	    EID * const voffsets = &degree[m];
+	    mm = 0;
+	    for( VID i=0; i < (VID)m; ++i ) {
+		EID deg = idx[s[i]+1] - idx[s[i]];
+		degree[i] = deg;
+		voffsets[i] = mm;
+		mm += deg;
+	    }
+	    voffsets[m] = mm;
+	} else {
+	    // No additional space required if no return of details and
+	    // doing sequential processing
+	    mm = 0;
+	    for( VID i=0; i < (VID)m; ++i ) {
+		mm += idx[s[i]+1] - idx[s[i]];
+	    }
+	}
+    }
+
+#ifndef EMAP_BLOCK_SIZE
+    constexpr EID mm_block = 128;
+    constexpr EID mm_threshold = 128;
+#else
+    static constexpr EID mm_block = EMAP_BLOCK_SIZE;
+    static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
+#endif
+    VID mm_parts = std::min( graptor_num_threads() * 16,
+			     VID( ( mm + mm_block - 1 ) / mm_block ) );
+
+    return mm_parts;
+}
+
 // Sparse CSC traversal (GraphCSx) with no new frontier calculated
 template<typename config, typename Operator>
 static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
@@ -635,28 +720,67 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
     auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
 			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+    auto aexpr0 = op.active( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
 
-    // Rewrite local variables
-    auto vcaches = expr::extract_local_vars( vexpr0 );
-    auto vexpr1 = expr::rewrite_caches<expr::vk_zero>( vexpr0, vcaches );
+    // Rewrite local variables; extract cacheable references
+    auto vcaches_dst = expr::extract_cacheable_refs<expr::vk_dst>( vexpr0 );
+    auto vcaches_let = expr::extract_local_vars( vexpr0, vcaches_dst );
+    auto vcaches = expr::cache_cat( vcaches_dst, vcaches_let );
+
+    auto vexpr1 = expr::rewrite_caches<expr::vk_zero>( vexpr0, vcaches_let );
+    auto vexpr2 = expr::rewrite_caches<expr::vk_dst>( vexpr1, vcaches_dst );
+    auto aexpr1 = expr::rewrite_caches<expr::vk_zero>( aexpr0, vcaches_let );
+    auto aexpr2 = expr::rewrite_caches<expr::vk_dst>( aexpr1, vcaches_dst );
 
     // Replace array_ro by array_intl
-    auto vexpr = expr::rewrite_internal( vexpr1 );
+    auto vexpr = expr::rewrite_internal( vexpr2 );
+    auto aexpr = expr::rewrite_internal( aexpr2 );
 
     // auto env = expr::eval::create_execution_environment_with(
     // op.get_ptrset(), vcaches, vexpr );
     auto env = expr::eval::create_execution_environment_op(
 	op, vcaches, GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
-    const VID *edge = GA.getEdges();
-    if constexpr ( !std::decay_t<config>::is_parallel() ) {
+    // Number of partitions
+    EID * degree = new EID[2*m+1];
+    VID mm_parts = calculate_edge_balanced_parts( s, m, idx, degree );
+
+    // Require at least 32 parts before running in parallel. This is based on
+    // the sequential version not requiring atomics and being much more
+    // efficient than the parallel version, so a high degree of parallelism
+    // is needed to offset the efficiency loss.
+    static constexpr VID mm_min = 32;
+
+    // Process edges
+    if( !std::decay_t<config>::is_parallel() || mm_parts < mm_min ) {
+	// Edge array (convenience)
+	const VID *edge = GA.getEdges();
+
 	for( VID k = 0; k < m; k++ ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
-	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], nullptr, vexpr,
-					    vcaches, env );
+	    process_csc_sparse_aset<false>(
+		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], nullptr,
+		vexpr, vcaches, vcaches_dst, env );
 	}
     } else {
+#ifndef EMAP_BLOCK_SIZE
+	static constexpr EID mm_block = 128;
+	static constexpr EID mm_threshold = 128;
+#else
+	static constexpr EID mm_block = EMAP_BLOCK_SIZE;
+	static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
+#endif
+
+	EID * voffsets = &degree[m];
+	EID mm = voffsets[m];
+	vertex_partition<VID,EID> * parts = new vertex_partition<VID,EID>[mm_parts];
+	partition_vertex_list<mm_block,mm_threshold,VID,EID>(
+	    s, m, voffsets, idx, mm, mm_parts,
+	    [&]( VID p, VID from, VID to ) {
+		new ( &parts[p] ) vertex_partition<VID,EID>( from, to );
+	    } );
+#if 0
 	parallel_loop( VID(0), m, 1, [&]( VID k ) {
 	    VID v = s[k];
 	    intT d = idx[v+1]-idx[v];
@@ -667,7 +791,18 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 	    process_csc_sparse_aset<false>( &edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], nullptr, vexpr,
 					    vcaches, env );
 	} );
+#else
+	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
+	    // Edge array (convenience)
+	    const VID *edge = GA.getEdges();
+
+	    parts[p].process_pull( s, idx, edge, vcaches, vcaches_dst,
+				   env, vexpr, aexpr );
+	} );
+#endif
     }
+
+    delete[] degree;
 
     // return
     return frontier::all_true( GA.numVertices(), GA.numEdges() );
@@ -1323,7 +1458,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 #if ABCD
     // Break high-degree vertices over multiple blocks
     edge_partition<VID,EID> * parts = new edge_partition<VID,EID>[mm_parts];
-    partition_vertex_list<VID,EID,mm_block,mm_threshold>(
+    partition_edge_list<mm_block,mm_threshold,VID,EID>(
 	s, m, voffsets, idx, mm, mm_parts,
 	[&]( VID p, VID from, VID to, EID fstart, EID lend, EID offset ) {
 	    new ( &parts[p] )

@@ -222,9 +222,92 @@ public:
 
     bool is_empty() const { return m_to == m_from; }
 
+    template<typename Cache, typename Environment, typename Expr>
+    void process_pull( const VID * const vertices,
+		       const EID * const idx,
+		       const VID * const edges,
+		       Cache & c,
+		       const Environment & env, 
+		       const Expr & expr ) const {
+	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
+
+	for( VID js=get_from(), je=get_to(), j=js; j < je; ++j ) {
+	    VID v = vertices[j];
+	    EID x = idx[v];
+	    EID y = idx[v+1];
+	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	    using output_type = simd::container<typename Expr::data_type>;
+	    auto output = output_type::false_mask();
+
+	    for( EID e=x; e < y; ++e ) {
+		auto src
+		    = simd::template load_from<simd::ty<VID,1>>( &edges[e] );
+		auto edg = simd::template create_constant<simd::ty<EID,1>>( e );
+		auto m = expr::create_value_map_new<1>(
+		    expr::create_entry<expr::vk_edge>( edg ),
+		    expr::create_entry<expr::vk_dst>( dst ),
+		    expr::create_entry<expr::vk_src>( src ) );
+		// Note: CSC, sequential per vertex, no atomics required
+		auto ret = env.template evaluate<false>( c, m, expr );
+	    }
+	}
+    }
+
+    template<typename AllCacheDesc, typename CacheDesc,
+	     typename Environment, typename Expr,
+	     typename AExpr>
+    void process_pull( const VID * const vertices,
+		       const EID * const idx,
+		       const VID * const edges,
+		       const AllCacheDesc & cdesc_all,
+		       const CacheDesc & cdesc,
+		       const Environment & env, 
+		       const Expr & expr,
+		       const AExpr & aexpr ) const {
+	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
+
+	auto c = expr::cache_create_no_init(
+	    cdesc_all, expr::create_value_map_new<1>() );
+
+	for( VID js=get_from(), je=get_to(), j=js; j < je; ++j ) {
+	    VID v = vertices[j];
+	    EID x = idx[v];
+	    EID y = idx[v+1];
+	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	    auto mdst = expr::create_value_map_new<1>(
+		expr::create_entry<expr::vk_dst>( dst ) );
+	    cache_init( env, c, cdesc, mdst ); // partial init
+
+	    using output_type = simd::container<typename Expr::data_type>;
+	    auto output = output_type::false_mask();
+
+	    for( EID e=x; e < y; ++e ) {
+		auto src
+		    = simd::template load_from<simd::ty<VID,1>>( &edges[e] );
+		auto edg = simd::template create_constant<simd::ty<EID,1>>( e );
+		auto m = expr::create_value_map_new<1>(
+		    expr::create_entry<expr::vk_edge>( edg ),
+		    expr::create_entry<expr::vk_dst>( dst ),
+		    expr::create_entry<expr::vk_src>( src ) );
+
+		// Check if active
+		auto act = env.template evaluate<false>( c, m, aexpr );
+		if( !act.value().data() )
+		    break;
+
+		// Note: CSC, sequential per vertex, no atomics required
+		env.template evaluate<false>( c, m, expr );
+	    }
+
+	    cache_commit( env, cdesc, c, mdst );
+	}
+    }
+
+
 private:
     VID m_from, m_to;
-    EID m_offset;
 };
 
 template<typename lVID, typename lEID>
@@ -334,19 +417,54 @@ public:
 	}
     }
 
+    template<typename Cache, typename Environment, typename Expr>
+    void process_pull( const VID * const vertices,
+		       const EID * const idx,
+		       const VID * const edges,
+		       Cache & c,
+		       const Environment & env, 
+		       const Expr & expr ) const {
+	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
+
+	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
+	    VID v = vertices[j];
+	    EID x = j == js ? m_fstart : idx[v];
+	    EID y = j+1 == je ? m_lend : idx[v+1];
+	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( v );
+
+	    using output_type = simd::container<typename Expr::data_type>;
+	    auto output = output_type::false_mask();
+
+	    for( EID e=x; e < y; ++e ) {
+		auto src
+		    = simd::template load_from<simd::ty<VID,1>>( &edges[e] );
+		auto edg = simd::template create_constant<simd::ty<EID,1>>( e );
+		auto m = expr::create_value_map_new<1>(
+		    expr::create_entry<expr::vk_edge>( edg ),
+		    expr::create_entry<expr::vk_dst>( dst ),
+		    expr::create_entry<expr::vk_src>( src ) );
+		// Note: CSC, sequential per vertex, no atomics required
+		auto ret = env.template evaluate<false>( c, m, expr );
+	    }
+	}
+    }
+
 private:
     EID m_fstart, m_lend, m_offset;
 };
 
 
 /************************************************************************
- * @brief Calculate a partition of the edge set of the edges incident to the
- * vertices in a list.
+ * @brief Calculate a partition of the set of vertices
  *
- * @param <lVID> the vertex ID type
- * @param <lEID> the edge ID type
+ * The method aims to edge-balance the partitions as well as possible
+ * without spreading edges incident to a vertex across partitions.
+ *
  * @param <mm_block> target number of edges per part
  * @param <mm_threshold> tolerance on the number of edges per part
+ * @param <lVID> the vertex ID type
+ * @param <lEID> the edge ID type
+ * @param <RecordFn> how to record each partition
  *
  * @param[in] s an array of vertices
  * @param[in] m number of vertices in array @see s
@@ -356,8 +474,8 @@ private:
  * @param[in] mm_parts number of partitions of the edge set to construct
  * @return a freshly allocated array of edge partition descriptors
  ************************************************************************/
-template<typename lVID, typename lEID,
-	 size_t mm_block=2048, size_t mm_threshold=2048, typename RecordFn>
+template<size_t mm_block=2048, size_t mm_threshold=2048,
+	 typename lVID, typename lEID, typename RecordFn>
 void partition_vertex_list(
     const lVID * s, // sparse frontier
     lVID m, // number of vertices in sparse frontier
@@ -366,7 +484,50 @@ void partition_vertex_list(
     lEID mm, // total number of edges
     lVID mm_parts,
     const RecordFn & record ) {
-    // edge_partition<lVID,lEID> * parts = new edge_partition<lVID,lEID>[mm_parts];
+    lEID e_done = 0;
+    lVID v_done = 0;
+
+    for( lVID p=0; p < mm_parts; ++p ) {
+	lEID avgdeg = ( mm - e_done ) / lEID( mm_parts - p );
+	const lEID * bnd = std::upper_bound( &cdegree[v_done], &cdegree[m],
+					     e_done + avgdeg );
+	lVID bnd_pos = bnd - cdegree;
+	record( p, v_done, bnd_pos );
+	v_done = bnd_pos;
+	e_done = *bnd;
+    }
+    assert( e_done == mm );
+    assert( v_done == m );
+}
+
+/************************************************************************
+ * @brief Calculate a partition of the edge set of the edges incident to the
+ * vertices in a list.
+ *
+ * @param <mm_block> target number of edges per part
+ * @param <mm_threshold> tolerance on the number of edges per part
+ * @param <lVID> the vertex ID type
+ * @param <lEID> the edge ID type
+ * @param <RecordFn> how to record each partition
+ *
+ * @param[in] s an array of vertices
+ * @param[in] m number of vertices in array @see s
+ * @param[in] cdegree an array with cumulative sum of degrees of the vertices
+ * @param[in] idx index array of a CSx representation
+ * @param[in] mm total number of edges incident to the vertices in @see s
+ * @param[in] mm_parts number of partitions of the edge set to construct
+ * @return a freshly allocated array of edge partition descriptors
+ ************************************************************************/
+template<size_t mm_block=2048, size_t mm_threshold=2048,
+	 typename lVID, typename lEID, typename RecordFn>
+void partition_edge_list(
+    const lVID * s, // sparse frontier
+    lVID m, // number of vertices in sparse frontier
+    const lEID * cdegree, // cumulative degrees of vertices in s
+    const lEID * idx, // index array CSx
+    lEID mm, // total number of edges
+    lVID mm_parts,
+    const RecordFn & record ) {
     lEID e_done = 0;
     lVID v_done = 0;
 
@@ -383,16 +544,12 @@ void partition_vertex_list(
 	    // assert( bnd == cdegree || excess <= ( *bnd - *(bnd-1) ) );
 	    lVID repeated = bnd - cdegree - 1;
 	    lEID pos = idx[s[repeated]+1] - excess;
-	    // new ( &parts[p] ) edge_partition<lVID,lEID>(
-	    // v_done, repeated+1, next_start, pos, e_done );
 	    record( p, v_done, repeated+1, next_start, pos, e_done );
 	    next_start = pos;
 	    v_done = repeated;
 	    e_done = *bnd - excess;
 	} else {
 	    lVID bnd_pos = bnd - cdegree;
-	    // parts[p] = edge_partition<lVID,lEID>(
-	    // v_done, bnd_pos, next_start, idx[s[bnd_pos-1]+1], e_done );
 	    record( p, v_done, bnd_pos, next_start, idx[s[bnd_pos-1]+1], e_done );
 	    v_done = bnd_pos;
 	    e_done = *bnd;
@@ -416,9 +573,8 @@ void partition_vertex_list(
     }
     assert( e_done == mm );
     assert( v_done == m );
-
-    // return parts;
 }
+
 
 /************************************************************************
  ************************************************************************/

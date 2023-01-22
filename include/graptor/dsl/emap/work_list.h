@@ -476,8 +476,8 @@ private:
 
 	// Create buffers with balanced number of edges, cutting high-degree
 	// vertices over multiple buffers.
-	partition_vertex_list<VID,EID,queue_type::mm_block,
-			      queue_type::mm_threshold>(
+	partition_edge_list<queue_type::mm_block,queue_type::mm_threshold,
+			    VID,EID>(
 	    s, m, voffsets, idx, mm, mm_parts,
 	    [&]( VID p, VID from, VID to, EID fstart, EID lend, EID offset ) {
 		edge_partition<VID,EID> ep( from, to, fstart, lend, offset );
