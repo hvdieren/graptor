@@ -133,11 +133,38 @@ struct evaluator {
 	    auto mpack2 = sb::create_mask_pack( mask );
 	    auto arg2 = evaluate( bop.data2(), mpack2 );
 	    return arg2;
-	} else
-	/*if constexpr ( std::is_same_v<BinOp,binop_mask> ) {
-	    // ignore binop_mask
-	    return evaluate( bop.data1(), mpack );
-	    } else*/ {
+	} else if constexpr ( std::is_same_v<BinOp,binop_seq> ) {
+	    // In a sequence, do not pass the mask pack from one command to
+	    // the other, because it is possible that some lanes in the first
+	    // command are not updated, but they are updated in the second
+	    // command and vice versa.
+	    // The downside is that a conversion of a mask may occur once
+	    // for every command in the sequence.
+	    // Evaluate first argument and return second argument.
+	    if constexpr ( E1::VL == 1 && !MPack::is_empty() ) {
+		// In case of scalar execution with a mask, do a short-circuit
+		// evaluation of the mask just once.
+		if( mpack.template get_mask<typename E1::data_type>().data() ) {
+		    auto empty = sb::mask_pack<>();
+		    evaluate( bop.data1(), empty );
+		    auto arg2 = evaluate( bop.data2(), empty );
+		    return make_rvalue( arg2.value(), mpack );
+		} else {
+		    // Copy the layout of the previous branch
+		    using ret_type = decltype( evaluate( bop.data2(),
+							 sb::mask_pack<>() ) );
+		    constexpr simd::layout_t layout
+				  = ret_type::value_type::layout;
+		    return make_rvalue(
+			simd::vec<typename E2::data_type,layout>(
+			    E2::data_type::traits::setzero() ),
+			mpack );
+		}
+	    } else {
+		evaluate( bop.data1(), mpack );
+		return evaluate( bop.data2(), mpack );
+	    }
+	} else {
 	    // Force evaluation order for lazy execution and binop_seq
 	    auto arg1 = evaluate( bop.data1(), mpack );
 	    auto arg2 = evaluate( bop.data2(), arg1.mpack() );
