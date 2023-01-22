@@ -2098,7 +2098,10 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 	    // Scalar pull op. Sparse code template will apply filter_dst.
 	    auto scalar_op =
 		filter_src.template
-		check_strength<cfg_scalar,graph_traversal_kind::gt_pull>( op );
+		check_strength<cfg_scalar,graph_traversal_kind::gt_pull>(
+		    active_dst.template
+		    check_strength<cfg_scalar,graph_traversal_kind::gt_pull>(
+			op ) );
 
 	    // Do we need to create a new frontier?
 	    if constexpr ( !std::is_same_v<decltype(record),
