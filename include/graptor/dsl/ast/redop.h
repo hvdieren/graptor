@@ -1385,8 +1385,13 @@ struct redop_setif {
 	using infer_type = typename E1::data_type;
     };
 
+    // It seems there are two options for sparse push:
+    // A. benign-race but not single-trigger, such that duplicates are removed
+    // B. not benign-race and single-trigger, such that no duplicates occur
+    // Case A will imply that the zero flags are used with CAS to ensure
+    // a vertex is woken up only once.
     static constexpr bool is_idempotent = true;
-    static constexpr bool is_benign_race = true; // store-only
+    static constexpr bool is_benign_race = false; // store-only
     static constexpr bool is_single_trigger = true;
     
     // TODO: should have an ID here instead of string
