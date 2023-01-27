@@ -260,6 +260,10 @@ first set color[v] = v
 		usedcol[index[d]+expr::cast<EID>(color[s])]
 		= _p( _1s(usedcol[expr::cast<EID>(d)]), // set flag: colour used
 		      color[s] < degree[d] // array bounds check
+		      // Could check color[s] > color_d over and above s != d
+		      // such that we don't store values for colors that have
+		      // already been discarded (not color_d incremented if
+		      // conflict without checking usedcol[color_d]).
 		    ), // && s != d ), // not a self-edge
 		// Scan forward if conflict
 		expr::set_mask(
@@ -333,6 +337,10 @@ first set color[v] = v
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
+		// Set color of new roots to 0
+		.vertex_map( new_roots, [&]( auto v ) {
+		    return color[v] = _0;
+		} )
 		.materialize();
 	    // Pull edgemap: gather colours of neighbours of activated vertices
 	    api::edgemap(
