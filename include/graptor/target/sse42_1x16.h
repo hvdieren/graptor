@@ -55,6 +55,8 @@ public:
 
     // using half_traits = mmx_1x8<T>;
     using half_traits = sse42_1xL<8,T>; // no half-traits if VL == 8 ...
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
     using int_traits = sse42_1xL<VL,int_type>;
     
     static constexpr unsigned short W = 1;

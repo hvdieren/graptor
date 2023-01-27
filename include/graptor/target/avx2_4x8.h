@@ -39,6 +39,8 @@ public:
 
     // using half_traits = vector_type_int_traits<member_type,16>;
     using half_traits = sse42_4x4<member_type>;
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
     using recursive_traits = vt_recursive<member_type,4,32,half_traits>;
     using int_traits = avx2_4x8<int_type>;
 

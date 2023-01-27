@@ -39,6 +39,8 @@ public:
     using mt_preferred = target::mt_vmask;
 
     using half_traits = mmx_4x2<T>;
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
     using int_traits = sse42_4x4<int_type>;
     
     static constexpr size_t W = 4;
