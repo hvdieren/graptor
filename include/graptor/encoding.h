@@ -97,10 +97,10 @@ struct array_encoding {
 	stored_traits<Tr::VL>::store( &base[idx], value );
     }
 
-    template<typename Tr, typename index_type, typename mask_type>
+    template<typename Tr, typename MTr, typename index_type>
     static void
     store( storage_type * base, index_type idx,
-	   typename Tr::type raw, mask_type mask ) {
+	   typename Tr::type raw, typename MTr::type mask ) {
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
@@ -463,7 +463,7 @@ struct array_encoding_bit {
     allocate( numa_allocation_partitioned kind ) {
 	// TODO: scale to match NUMA boundaries
 	partitioner part = kind.get_partitioner().contract_widen( factor );
-	return mmap_ptr<storage_type>( kind );
+	return mmap_ptr<storage_type>( numa_allocation_partitioned( part ) );
     }
 
     template<typename index_type>
@@ -547,11 +547,24 @@ struct array_encoding_bit {
 	storeu<Tr>( base, idx, raw );
     }
 
-    template<typename Tr, typename index_type, typename mask_type>
+    template<typename Tr, typename MTr, typename index_type>
     static void
     store( storage_type * base, index_type idx,
-	   typename Tr::type raw, mask_type mask ) {
-	assert( 0 );
+	   typename Tr::type raw, typename MTr::type mask ) {
+	if constexpr ( Tr::VL == 1 ) {
+	    if( mask )
+		storeu<Tr>( base, idx, raw );
+	} else {
+	    // Makes assumption on the size of mask and availability of blend
+	    // variants. May require to convert also mask to stored bit width.
+	    auto value = conversion_traits<
+		typename Tr::member_type,
+		typename stored_traits<Tr::VL>::member_type,
+		Tr::VL>::convert( raw );
+	    auto old = load<Tr>( base, idx );
+	    auto upd = stored_traits<Tr::VL>::blend( mask, old, value );
+	    storeu<simd::ty<stored_type,Tr::VL>>( base, idx, upd );
+	}
     }
 
     template<typename Tr, typename index_type>
@@ -1030,25 +1043,21 @@ struct array_encoding_wide {
 	stored_traits<Tr::VL>::store( &base[idx], value );
     }
 
-    template<typename Tr, typename index_type, typename mask_type>
+    template<typename Tr, typename MTr, typename index_type>
     static void
     store( storage_type * base, index_type idx,
-	   typename Tr::type raw, mask_type mask ) {
-	if constexpr( sizeof(index_type) == sizeof(mask_type) ) {
-	    auto value = conversion_traits<
-		typename Tr::member_type,
-		typename stored_traits<Tr::VL>::member_type,
-		Tr::VL>::convert( raw );
-	    auto cmask = conversion_traits<
-		typename Tr::member_type,
-		typename stored_traits<Tr::VL>::member_type,
-		Tr::VL>::convert( mask );
-	    auto old = stored_traits<Tr::VL>::load( &base[idx] );
-	    auto upd = stored_traits<Tr::VL>::blend( cmask, old, value );
-	    stored_traits<Tr::VL>::store( &base[idx], upd );
-	} else {
-	    assert( 0 && "NYI" );
-	}
+	   typename Tr::type raw, typename MTr::type mask ) {
+	auto value = conversion_traits<
+	    typename Tr::member_type,
+	    typename stored_traits<Tr::VL>::member_type,
+	    Tr::VL>::convert( raw );
+	auto cmask = conversion_traits<
+	    typename MTr::member_type,
+	    logical<stored_traits<Tr::VL>::W>,
+	    Tr::VL>::convert( mask );
+	auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	auto upd = stored_traits<Tr::VL>::blend( cmask, old, value );
+	stored_traits<Tr::VL>::store( &base[idx], upd );
     }
 
     template<typename Tr, typename index_type>

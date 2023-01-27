@@ -672,7 +672,7 @@ public:
 	    type upd = traits::blend( mask.data(), old, val.data() );
 	    encoding::template store<vector_traits>( m_addr, m_sidx, upd );
 */
-	    encoding::template store<vector_traits>( m_addr, m_sidx, val.data(), mask.data() );
+	    encoding::template store<vector_traits,MTr>( m_addr, m_sidx, val.data(), mask.data() );
 	    return;
 	}
 	UNREACHABLE_CASE_STATEMENT;
