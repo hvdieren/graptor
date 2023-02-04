@@ -1458,7 +1458,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 #if ABCD
     // Break high-degree vertices over multiple blocks
     edge_partition<VID,EID> * parts = new edge_partition<VID,EID>[mm_parts];
-    partition_edge_list<mm_block,mm_threshold,VID,EID>(
+    mm_parts = partition_edge_list<mm_block,mm_threshold,VID,EID>(
 	s, m, voffsets, idx, mm, mm_parts,
 	[&]( VID p, VID from, VID to, EID fstart, EID lend, EID offset ) {
 	    new ( &parts[p] )
