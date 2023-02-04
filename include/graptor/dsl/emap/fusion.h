@@ -88,7 +88,9 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
 		expr::create_entry<expr::vk_src>( src ) );
 
 	    // Set evaluator to use atomics
-	    // TODO: can drop atomics in case of benign races
+	    // TODO: can drop atomics in case of benign races, but they have
+	    // to be benign races also with the relax operation, which
+	    // may be runing concurrently.
 	    auto ret = env.template evaluate<true>( c, m, vexpr );
 
 	    if( ret.value().data() ) {
