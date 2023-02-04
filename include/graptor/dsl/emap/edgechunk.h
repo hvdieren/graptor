@@ -115,6 +115,9 @@ struct trimmed_edge_iterator {
 	    m_j_end = get_j_end( m_i );
 	    next();
 	    // assert( m_j <= m_j_end );
+
+	    assert( m_index[m_vertices[m_i]] <= m_j 
+		    && m_j < m_index[m_vertices[m_i]+1] );
 	}
     }
     // End iterator
@@ -317,7 +320,7 @@ public:
     using EID = lEID;
     using super = vertex_partition<lVID,lEID>;
 
-    edge_partition() : m_fstart( 0 ), m_lend( 0 ), m_offset( 0 ) { }
+    edge_partition() : super(), m_fstart( 0 ), m_lend( 0 ), m_offset( 0 ) { }
     edge_partition( VID from, VID to, EID fstart, EID lend, EID offset )
 	: super( from, to ), m_fstart( fstart ), m_lend( lend ),
 	  m_offset( offset ) {
@@ -504,6 +507,9 @@ void partition_vertex_list(
  * @brief Calculate a partition of the edge set of the edges incident to the
  * vertices in a list.
  *
+ * The function may call record fewer than mm_parts times, i.e., create
+ * fewer than mm_parts partitions.
+ *
  * @param <mm_block> target number of edges per part
  * @param <mm_threshold> tolerance on the number of edges per part
  * @param <lVID> the vertex ID type
@@ -520,7 +526,7 @@ void partition_vertex_list(
  ************************************************************************/
 template<size_t mm_block=2048, size_t mm_threshold=2048,
 	 typename lVID, typename lEID, typename RecordFn>
-void partition_edge_list(
+lVID partition_edge_list(
     const lVID * s, // sparse frontier
     lVID m, // number of vertices in sparse frontier
     const lEID * cdegree, // cumulative degrees of vertices in s
@@ -532,7 +538,8 @@ void partition_edge_list(
     lVID v_done = 0;
 
     lEID next_start = idx[s[0]];
-    for( lVID p=0; p < mm_parts; ++p ) {
+    lVID p = 0;
+    for( ; p < mm_parts && e_done < mm; ++p ) {
 	lEID avgdeg = ( mm - e_done ) / lEID(mm_parts - p);
 	const lEID * bnd = std::upper_bound( &cdegree[v_done], &cdegree[m],
 					     e_done + avgdeg );
@@ -549,6 +556,7 @@ void partition_edge_list(
 	    v_done = repeated;
 	    e_done = *bnd - excess;
 	} else {
+	    assert( slice > 0 );
 	    lVID bnd_pos = bnd - cdegree;
 	    record( p, v_done, bnd_pos, next_start, idx[s[bnd_pos-1]+1], e_done );
 	    v_done = bnd_pos;
@@ -573,6 +581,8 @@ void partition_edge_list(
     }
     assert( e_done == mm );
     assert( v_done == m );
+
+    return p;
 }
 
 
@@ -665,19 +675,26 @@ public:
 			      get_to() - get_from() );
     }
 
-    // non-zero return value: buffer is full
-    // zero return value: can take more
     void push_back( VID v, const EID * const idx ) {
 	assert( size() < m_bufsize );
 	
 	EID deg = idx[v+1] - idx[v];
-	if( get_to() == 0 )
-	    set_fstart( idx[v] );
+	if( get_to() == 0 ) {
+	    assert( get_fstart() == 0 );
+	    EID xxx = idx[v];
+	    set_fstart( xxx ); // idx[v] );
+	    assert( get_fstart() == idx[v] );
+	}
 	m_vertices[get_to()] = v;
 	set_to( get_to()+1 );
 	m_current_edges += deg;
 
 	assert( m_current_edges != 0 || deg == 0 );
+
+	assert( ( idx[m_vertices[get_from()]] <= get_fstart()
+		  && get_fstart() < idx[m_vertices[get_from()]+1] )
+		|| ( get_fstart() == idx[m_vertices[get_from()]]
+		     && get_fstart() == idx[m_vertices[get_from()]+1] ) );
     }
 
     template<bool need_atomic,
@@ -736,9 +753,15 @@ public:
     EID get_lend() const { return m_partition.get_lend(); }
 
     void set_to( VID to ) { m_partition.set_to( to ); }
-    void set_fstart( VID fstart ) { m_partition.set_fstart( fstart ); }
+    void set_fstart( EID fstart ) { m_partition.set_fstart( fstart ); }
 
     void close( const EID * idx ) {
+	assert( ( idx[m_vertices[get_from()]] <= get_fstart()
+		  && get_fstart() < idx[m_vertices[get_from()]+1] )
+		|| ( get_fstart() == idx[m_vertices[get_from()]]
+		     && get_fstart() == idx[m_vertices[get_from()]+1] )
+	    );
+
 	if( m_partition.get_lend() == 0 ) {
 	    if( get_to() - get_from() == 1 ) {
 		m_partition.set_lend( get_fstart() + m_current_edges );
