@@ -115,9 +115,6 @@ struct trimmed_edge_iterator {
 	    m_j_end = get_j_end( m_i );
 	    next();
 	    // assert( m_j <= m_j_end );
-
-	    assert( m_index[m_vertices[m_i]] <= m_j 
-		    && m_j < m_index[m_vertices[m_i]+1] );
 	}
     }
     // End iterator
@@ -539,7 +536,7 @@ lVID partition_edge_list(
 
     lEID next_start = idx[s[0]];
     lVID p = 0;
-    for( ; p < mm_parts && e_done < mm; ++p ) {
+    for( ; p < mm_parts && v_done < m; ++p ) {
 	lEID avgdeg = ( mm - e_done ) / lEID(mm_parts - p);
 	const lEID * bnd = std::upper_bound( &cdegree[v_done], &cdegree[m],
 					     e_done + avgdeg );
@@ -555,8 +552,16 @@ lVID partition_edge_list(
 	    next_start = pos;
 	    v_done = repeated;
 	    e_done = *bnd - excess;
+	} else if( slice == 0 ) {
+	    // A partition with vertices with zero degree
+	    // Skip it, under the assumption that we care to iterate edges.
+	    // The loop below ensures the assertion at the end (v_done == m)
+	    // succeeds.
+	    assert( e_done == mm );
+	    while( v_done < m && idx[s[v_done]] == idx[s[v_done]+1] )
+		++v_done;
+	    break;
 	} else {
-	    assert( slice > 0 );
 	    lVID bnd_pos = bnd - cdegree;
 	    record( p, v_done, bnd_pos, next_start, idx[s[bnd_pos-1]+1], e_done );
 	    v_done = bnd_pos;
