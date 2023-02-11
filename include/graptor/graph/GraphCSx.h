@@ -2546,6 +2546,7 @@ public:
 	    using std::swap;
 	    mm::buffer<bool> buf( n, numa_allocation_partitioned( part ),
 				  "GraphCSx flags array" );
+	    map_vertexL( part, [&]( auto v ) { buf[v] = false; } );
 	    swap( flags, buf );
 	    buf.del();
 	}
