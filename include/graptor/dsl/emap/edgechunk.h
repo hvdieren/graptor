@@ -684,12 +684,8 @@ public:
 	assert( size() < m_bufsize );
 	
 	EID deg = idx[v+1] - idx[v];
-	if( get_to() == 0 ) {
-	    assert( get_fstart() == 0 );
-	    EID xxx = idx[v];
-	    set_fstart( xxx ); // idx[v] );
-	    assert( get_fstart() == idx[v] );
-	}
+	if( get_to() == 0 )
+	    set_fstart( idx[v] );
 	m_vertices[get_to()] = v;
 	set_to( get_to()+1 );
 	m_current_edges += deg;
