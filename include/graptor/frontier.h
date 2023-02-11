@@ -1084,6 +1084,74 @@ public:
 	}
     }
 
+    frontier copySparse( const partitioner & part ) {
+	frontier nf = *this;
+	switch( ftype ) {
+	case frontier_type::ft_true: break;
+	case frontier_type::ft_sparse:
+	{
+	    nf = frontier::sparse( nv, nactv );
+	    const VID * s = get_s();
+	    std::copy( &s[0], &s[nv], nf.get_s() );
+	    break;
+	}
+	case frontier_type::ft_unbacked:
+	{
+	    // Assume nactv is correct; simply allocate backing storage.
+	    nf.get_s() = new VID[nactv];
+	    nf.ftype = frontier_type::ft_sparse;
+	    break;
+	}
+	case frontier_type::ft_bool:
+	{
+	    _seq<VID> R = packDense( part, get_b().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_bit:
+	{
+	    _seq<VID> R = packDenseBit( part, get_bit().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_bit2:
+	{
+	    _seq<VID> R = packDenseBit2( part, get_bit2().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_logical1:
+	{
+	    _seq<VID> R = packDense( part, get_l<1>().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_logical2:
+	{
+	    _seq<VID> R = packDense( part, get_l<2>().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_logical4:
+	case frontier_type::ft_msb4:
+	{
+	    // Same code applies to ft_logical4 and ft_msb4 as we should only
+	    // consult the MSB to decide on true/false in both cases
+	    _seq<VID> R = packDense( part, get_l<4>().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	case frontier_type::ft_logical8:
+	{
+	    _seq<VID> R = packDense( part, get_l<8>().get() );
+	    nf.override_storage( R );
+	    break;
+	}
+	default: UNREACHABLE_CASE_STATEMENT;
+	}
+	return nf;
+    }
+	
     void toSparse( const partitioner & part ) {
 	switch( ftype ) {
 	case frontier_type::ft_true: break;
@@ -1608,6 +1676,10 @@ private:
 
     void replace_storage( _seq<VID> sparse ) {
 	clear_storage();
+	get_s() = sparse.A;
+	ftype = frontier_type::ft_sparse;
+    }
+    void override_storage( _seq<VID> sparse ) {
 	get_s() = sparse.A;
 	ftype = frontier_type::ft_sparse;
     }
