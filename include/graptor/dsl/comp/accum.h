@@ -46,6 +46,11 @@ struct accumulator_info {
     using value_type = typename orig_redop_type::val_type::type;
     using orig_ref_type = typename orig_redop_type::ref_type;
 
+    using array_type = 
+	array_ro<value_type, VID,
+		 cid_to_aid(cid), array_encoding<value_type>,
+		 false>;
+
     accumulator_info( R red )
 	: m_ref( red.ref() ), m_priv( nullptr ), m_alloc( nullptr ) { }
 
@@ -136,6 +141,15 @@ private:
     value_type * m_priv;
     value_type * m_alloc;
 };
+
+template<typename T>
+struct is_accumulator_info : public std::false_type { };
+
+template<unsigned CID, typename R>
+struct is_accumulator_info<accumulator_info<CID,R>> : public std::true_type { };
+
+template<typename T>
+constexpr bool is_accumulator_info_v = is_accumulator_info<T>::value;
 
 template<unsigned ACID, typename R>
 accumulator_info<ACID,R> make_accumulator_info( R r ) {
