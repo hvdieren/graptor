@@ -24,6 +24,7 @@ constexpr unsigned short VLUpperBound = ~(unsigned short)0;
 #include "graptor/graph/GraphGG.h"
 #include "graptor/graph/GraphGGVEBO.h"
 #include "graptor/graph/GraphCSx.h"
+#include "graptor/graph/GraphCSR.h"
 
 
 // TODO:
