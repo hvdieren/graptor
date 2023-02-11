@@ -274,17 +274,43 @@ struct ptrset<expr::cache<>, Map> {
     template<typename MapTy>
     static void initialize( MapTy & map, cache<>& ) { }
 };
+
+template<typename C, typename map_type0>
+struct ptrset_cache_item {
+    using ref_type = typename C::orig_ref_type;
+    using map_type = typename ptrset<ref_type,map_type0>::map_type;
+
+    template<typename MapTy>
+    static void initialize( MapTy & map, const C & c ) {
+	ptrset<ref_type,map_type0>::initialize( map, c.get_ref() );
+    }
+};
+
+template<unsigned CID, typename R, typename map_type0>
+struct ptrset_cache_item<accumulator_info<CID,R>,map_type0> {
+    using accum_type = accumulator_info<CID,R>;
+    using array_type = typename accum_type::array_type;
+    using ref_type = typename accum_type::orig_ref_type;
+    using map_type1 = typename ptrset<ref_type,map_type0>::map_type;
+    using map_type = typename ptrset<array_type,map_type1>::map_type;
+
+    template<typename MapTy>
+    static void initialize( MapTy & map, const accum_type & c ) {
+	ptrset<ref_type,map_type0>::initialize( map, c.get_ref() );
+	map.template get<(unsigned)aid_key(cid_to_aid(CID))>()
+	    = cvt( c.get_accum() );
+    }
+};
     
 template<typename C, typename... Cs, typename Map>
 struct ptrset<expr::cache<C,Cs...>, Map> {
     using entry_type = void;
     using map_type0 = typename ptrset<expr::cache<Cs...>,Map>::map_type;
-    using ref_type = typename C::orig_ref_type;
-    using map_type = typename ptrset<ref_type,map_type0>::map_type;
+    using map_type = typename ptrset_cache_item<C,map_type0>::map_type;
 
     template<typename MapTy>
     static void initialize( MapTy & map, const cache<C,Cs...> & c ) {
-	ptrset<ref_type,map_type0>::initialize( map, expr::car( c ).get_ref() );
+	ptrset_cache_item<C,Map>::initialize( map, expr::car( c ) );
 	if constexpr ( sizeof...( Cs ) > 0 )
 	    ptrset<expr::cache<Cs...>,Map>::initialize( map, expr::cdr( c ) );
     }
