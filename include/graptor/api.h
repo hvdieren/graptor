@@ -815,12 +815,11 @@ struct arg_record_reduction_op {
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_graph_degree, VID, map_type4>::map_type;
     
-	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type0>, "check 0" );
 	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 1" );
-	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type2>, "check 2" );
-	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type3>, "check 3" );
-	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type4>, "check 4" );
-	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 5" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_frontier_new)),map_type2>, "check 2" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_frontier_nacte)),map_type3>, "check 3" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_frontier_nactv)),map_type4>, "check 4" );
+	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_graph_degree)),map_type>, "check 5" );
 
 	template<typename MapTy>
 	static void initialize( MapTy & map,
