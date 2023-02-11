@@ -121,7 +121,8 @@ template <class GraphType>
 class MISv {
 public:
     __attribute__((noinline)) 
-    MISv( GraphType & _GA, commandLine & P ) : GA( _GA ), info_buf( 60 ) {
+    MISv( const GraphType & _GA, commandLine & P )
+	: GA( _GA ), info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
 	calculate_active = P.getOption( "-cactive" );
@@ -479,6 +480,10 @@ public:
 	}
     }
 
+    bool is_in( VID v ) const {
+	return Enc::get( m_flags, v ) == mis_state_t::mis_in;
+    }
+
 private:
     const GraphType & GA;
     bool itimes, debug, calculate_active;
@@ -488,7 +493,9 @@ private:
     std::vector<info> info_buf;
 };
 
+#ifndef NOBENCH
 template <class GraphType>
 using Benchmark = MISv<GraphType>;
 
 #include "driver.C"
+#endif // NOBENCH
