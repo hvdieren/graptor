@@ -226,8 +226,8 @@ static inline void DBG_NOINLINE csr_loop(
     auto v_dst = expr::value<simd::ty<VID,1>,expr::vk_dst>();
     auto v_edge = expr::value<simd::ty<EID,1>,expr::vk_edge>();
 
-    auto expr0 = op.relax( v_src, v_dst, v_edge );
-    auto vop0 = op.vertexop( v_dst );
+    auto expr0 = rewrite_internal( op.relax( v_src, v_dst, v_edge ) );
+    auto vop0 = rewrite_internal( op.vertexop( v_dst ) );
 
     auto licm = expr::template licm_split<is_ownwr>( expr0 );
     auto expr1 = licm.le();
@@ -274,21 +274,24 @@ static inline void DBG_NOINLINE csr_loop(
 
     // Post-processing
     auto accum = expr::extract_accumulators( vop1 );
+    expr::accum_create( part, accum );
 // TODO: spread out accumulators for different partitions on different cache blocks ???
     auto vop2 = expr::rewrite_privatize_accumulators( vop1, part, accum, pid );
-    auto pvop = expr::accumulate_privatized_accumulators( pid, accum );
-    auto pvopf = expr::final_accumulate_privatized_accumulators( pid, accum );
-    auto vop = expr::rewrite_mask_main( vop2 );
+    auto pvop0 = expr::accumulate_privatized_accumulators( pid, accum );
+    auto pvopf0 = expr::final_accumulate_privatized_accumulators( pid, accum );
+    auto pvop = expr::rewrite_internal( pvop0 );
+    auto pvopf = rewrite_internal( pvopf0 );
+    auto vop = expr::rewrite_internal( vop2 );
 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset(),
-	s_cache, d_cache, l_cache, f_cache, accum, expr5,
-#if ELIDE_LOAD_ZERO
-	aexpr,
-#endif
-	vop, fexpr, pvop, pvopf );
+    auto all_caches = expr::cache_cat(
+	expr::cache_cat( expr::cache_cat( s_cache, d_cache ),
+			 expr::cache_cat( l_cache, f_cache ) ),
+	accum );
+    auto env = expr::eval::create_execution_environment_op(
+	op, all_caches,
+	G.getWeights() ? G.getWeights()->get() : nullptr );
 
-    auto expr = rewrite_internal( expr5 );
+    auto expr = expr5;
 
     static constexpr bool ID = expr::is_idempotent<decltype(expr)>::value;
     static constexpr bool InitZero
@@ -457,6 +460,19 @@ static inline void emap_push(
 
     GraphCSx_csr::csr_loop<EMapConfig,false>(
 	G, G.get_eid_retriever(), op, part );
+}
+
+template<typename EMapConfig, typename Operator>
+GG_INLINE
+static inline void emap_push(
+    const GraphCSRAdaptor & G, Operator & op, const partitioner & part ) {
+    constexpr unsigned short VL = EMapConfig::VL;
+    static_assert( VL == 1,
+		   "GraphCSRAdaptor designed for scalar execution only" );
+    assert( G.isSymmetric() && "This interpretes graph in inverse direction" );
+
+    GraphCSx_csr::csr_loop<EMapConfig,false>(
+	G.getCSR(), G.get_eid_retriever(), op, part );
 }
 
 #endif // GRAPTOR_DSL_EMAP_GRAPHCSX_CSR_H
