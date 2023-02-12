@@ -34,10 +34,8 @@ static __attribute__((flatten)) void coo_vector_loop(
     
     // Override pointer for aid_eweight with the relevant permuation of the
     // weights for the el graph.
-    auto ew_pset = expr::create_map2<expr::aid_eweight>( el.getWeights() );
-					 
-    auto venv = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), vcaches, vexpr );
+    auto venv = expr::eval::create_execution_environment_op(
+	op, vcaches, el.getWeights() );
 
     EID i = 0;
     for( ; i+VL-1 < m; i += VL ) {
@@ -75,8 +73,8 @@ static __attribute__((flatten)) void coo_vector_loop(
     auto sexpr2 = expr::rewrite_caches<expr::vk_zero>( sexpr1, scaches );
     auto sexpr = expr::rewrite_mask_main( sexpr2 );
 
-    auto senv = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), scaches, sexpr );
+    auto senv = expr::eval::create_execution_environment_op(
+	op, scaches, el.getWeights() );
 
     for( ; i < m; ++i ) {
 	auto src = simd_vector<VID,1>::load_from( &src_arr[i] );	
@@ -172,12 +170,9 @@ static inline void emap_ireg_graphgrind(
     map_partitionL( part, [&]( int p ) {
 	// Override pointer for aid_eweight with the relevant permuation of the
 	// weights for the el graph.
-	auto ew_pset = expr::create_map2<expr::aid_eweight>(
-	    const_cast<float *>( G.get_edge_list_partition( p ).getWeights() )
-	    );
-					 
-	auto env = expr::eval::create_execution_environment_with(
-	    op.get_ptrset( ew_pset ), vcaches, vexpr3, expr2, pvop0, pvopf0  );
+	const auto * weights = G.get_edge_list_partition( p ).getWeights();
+	auto env = expr::eval::create_execution_environment_op(
+	    op, vcaches, weights ? weights->get() : nullptr );
 
 	// edgemap part
 	coo_vector_loop<VL>( G.get_edge_list_partition( p ),
