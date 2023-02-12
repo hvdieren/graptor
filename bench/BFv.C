@@ -669,7 +669,7 @@ private:
     api::vertexprop<FloatTy,VID,var_cur,EncCur> cur_dist;
 #endif
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
-    api::edgeprop<FloatTy,EID,expr::vk_eweight,EncEdge> edge_weight;
+    api::edgeprop<FloatTy,EID,expr::aid_eweight,EncEdge> edge_weight;
     float lo_frac, hi_frac, tgt_frac;
     std::vector<info> info_buf;
 };

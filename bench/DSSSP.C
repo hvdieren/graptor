@@ -741,7 +741,7 @@ private:
 #endif
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
     api::vertexprop<FloatTy,VID,var_new2,EncNew> new_dist_final;
-    api::edgeprop<FloatTy,EID,expr::vk_eweight,EncEdge> edge_weight;
+    api::edgeprop<FloatTy,EID,expr::aid_eweight,EncEdge> edge_weight;
     std::vector<info> info_buf;
 };
 
