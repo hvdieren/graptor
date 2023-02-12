@@ -660,6 +660,11 @@ public:
 	  m_vertices( vertices ), m_bufsize( bufsize ),
 	  m_current_edges( 0 ) { }
 
+    edge_buffer( VID * vertices, const edge_partition<VID,EID> & ep )
+	: m_partition( ep ),
+	  m_vertices( vertices ), m_bufsize( ep.get_to() - ep.get_from() ),
+	  m_current_edges( 0 ) { }
+
     edge_buffer( VID * vertices, VID bufsize )
 	: m_partition(), m_vertices( vertices ), m_bufsize( bufsize ),
 	  m_current_edges( 0 ) { }
@@ -738,6 +743,8 @@ public:
     void set( const edge_partition<VID,EID> & ep,
 	      const VID * const v = nullptr ) {
 	VID k = ep.get_to() - ep.get_from();
+if( k > m_bufsize && v == nullptr )
+std::cerr << "ooops: k=" << k << " m_bufsize=" << m_bufsize << "\n";
 	assert( k <= m_bufsize );
 	if( v )
 	    std::copy( v+ep.get_from(), v+ep.get_to(), m_vertices );

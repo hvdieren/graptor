@@ -11,6 +11,10 @@
 #define MANUALLY_ALIGNED_ARRAYS 1
 #define DEBUG_WORK_LIST 0
 
+#ifndef FUSION_BLOCK_SIZE
+#define FUSION_BLOCK_SIZE 2048
+#endif
+
 #ifndef FUSION_EDGE_BALANCE
 #define FUSION_EDGE_BALANCE 1
 #endif
@@ -48,7 +52,8 @@ inline bool cas( volatile types::uint128_t * src,
 		 types::uint128_t with ) {
     // cmp can be by reference so the caller's value is updated on failure.
 
-    // suggestion: use __sync_bool_compare_and_swap and compile with -mcx16 instead of inline asm
+    // suggestion: use __sync_bool_compare_and_swap and compile with -mcx16
+    // instead of inline asm
     bool result;
     __asm__ __volatile__
     (
@@ -73,35 +78,42 @@ inline bool cas( volatile types::uint128_t * src,
  * buffer are allocated in a single memory allocation step.
  *
  * @param <T> the type of the work items
- * @param <CHUNK_> the number of work items per array buffer
+ * @param <block_target_> the number of work items (vertices) per array buffer
+ * @param <block_threshold_> threshold on edges for spilling into new block
  ************************************************************************/
-template<typename T, unsigned CHUNK_>
+template<typename T,
+	 EID block_target_ = FUSION_BLOCK_SIZE,
+	 EID block_threshold_ = FUSION_BLOCK_SIZE>
 class work_list {
 public:
     using type = T;
-    static constexpr size_t CHUNK = CHUNK_;
-#ifndef FUSION_BLOCK_SIZE
-    static constexpr EID mm_block = 2048;
-    static constexpr EID mm_threshold = 2048;
-#else
-    static constexpr EID mm_block = FUSION_BLOCK_SIZE;
-    static constexpr EID mm_threshold = FUSION_BLOCK_SIZE;
-#endif
+
+    static_assert( sizeof(T) == sizeof(VID) );
+
 #if FUSION_EDGE_BALANCE
     using buffer_type = edge_buffer<VID,EID>;
 #else
     using buffer_type = vertex_buffer<VID,EID>;
 #endif
 
+    static constexpr EID mm_block =
+	block_target_ - ( sizeof(intptr_t) + sizeof(buffer_type) ) / sizeof(T);
+    static constexpr EID mm_threshold = block_threshold_;
+    static_assert( mm_block > 0, "Need non-zero space to store information" );
+
     class list_node {
-	template<typename T_, unsigned CHUNK__>
+	template<typename, EID, EID>
 	friend class work_list;
 
     private:
-	list_node( type * buf )
-	    : m_next( nullptr ), m_buf( buf, CHUNK ) { }
-	list_node( type * buf, VID fill, const EID * const idx )
-	    : m_next( nullptr ), m_buf( buf, CHUNK, fill, idx ) { }
+	list_node( type * elms )
+	    : m_next( nullptr ), m_buf( elms, mm_block ) { }
+	list_node( type * elms, VID fill, const EID * const idx )
+	    : m_next( nullptr ), m_buf( elms, fill, fill, idx ) { }
+#if FUSION_EDGE_BALANCE
+	list_node( type * buf, const edge_partition<VID,EID> & ep )
+	    : m_next( nullptr ), m_buf( buf, ep ) { }
+#endif
 	~list_node() = delete;
 
 	bool is_pre_init() const {
@@ -112,7 +124,8 @@ public:
 	}
 
 	static list_node * create() {
-	    size_t size = sizeof(list_node) + CHUNK * sizeof(type);
+	    constexpr size_t size = sizeof(list_node) + mm_block * sizeof(type);
+	    static_assert( size == sizeof(type) * block_target_ );
 	    uint8_t * p = new uint8_t[size];
 	    list_node * l = reinterpret_cast<list_node *>( p );
 	    type * b = reinterpret_cast<type *>( &p[sizeof(list_node)] );
@@ -137,10 +150,25 @@ public:
 
 	    return l;
 	}
+#if FUSION_EDGE_BALANCE
+	static list_node * create( type * buf,
+				   const edge_partition<VID,EID> & ep ) {
+	    size_t size = sizeof(list_node);
+	    uint8_t * p = new uint8_t[size];
+	    list_node * l = reinterpret_cast<list_node *>( p );
+	    new ( l ) list_node( buf, ep );
+
+#if DEBUG_WORK_LIST
+	    n_alloc_half++;
+#endif
+
+	    return l;
+	}
+#endif
 	static void destroy( list_node * l ) {
 	    // The initial (pre-initialised) buffers may be larger than the
 	    // chunk size.
-	    assert( l->m_buf.size() <= CHUNK || l->is_pre_init() );
+	    assert( l->m_buf.size() <= mm_block || l->is_pre_init() );
 #if DEBUG_WORK_LIST
 	    n_destroy++;
 #endif
@@ -182,7 +210,7 @@ public:
 
 	void push_back( const T & value, const EID * const idx ) {
 	    m_buf.push_back( value, idx );
-	    assert( m_buf.size() <= CHUNK );
+	    assert( m_buf.size() <= mm_block );
 	}
 
 	void close( const EID * idx ) {
@@ -222,6 +250,12 @@ public:
 					 const EID * idx ) {
 	return list_node::create( buf, fill, idx );
     };
+#if FUSION_EDGE_BALANCE
+    static list_node * create_list_node( type * buf,
+					 const edge_partition<VID,EID> & ep ) {
+	return list_node::create( buf, ep );
+    };
+#endif
     
     void setup( list_node * n ) {
 	m_head_tag.lo = reinterpret_cast<uint64_t>( n );
@@ -268,15 +302,14 @@ private:
  * A work stealing structure, based on one work_list per thread.
  *
  * @param <T> the type of the work items
- * @param <CHUNK_> the number of work items per array buffer
+ * @param <retain_chunks> remember all chunks active at the end
  ************************************************************************/
-template<typename T, bool retain_chunks, unsigned CHUNK_ = 4096-64/sizeof(T)>
+template<typename T, bool retain_chunks>
 class work_stealing {
 public:
     using type = T;
-    using queue_type = work_list<T,CHUNK_>;
+    using queue_type = work_list<T>;
     using buffer_type = typename queue_type::list_node;
-    static constexpr size_t CHUNK = CHUNK_;
 
     work_stealing( unsigned threads, const GraphCSx & G )
 	: m_threads( threads ), m_working( m_threads ), m_processed( nullptr ),
@@ -364,7 +397,8 @@ public:
     }
 
     buffer_type * reserve( unsigned self_id, unsigned num, EID edges ) {
-	assert( num < CHUNK && "can reserve at most CHUNK elements" );
+	assert( num < queue_type::mm_block
+		&& "can reserve at most queue_type::mm_block elements" );
 	buffer_type * buf = m_active[self_id];
 	// If we don't have a buffer, or the buffer has insufficient space,
 	// or if the amount of parallelism is low, then push out the buffer
@@ -484,8 +518,9 @@ private:
 		if( p == 0 )
 		    buf->set( ep );
 		else {
-		    buffer_type * sbuf = queue_type::create_list_node();
-		    sbuf->set( ep, s );
+		    // Cast away const-ness, but won't be modified
+		    buffer_type * sbuf = queue_type::create_list_node(
+			const_cast<VID *>( s ), ep );
 		    m_queues[self_id].push( sbuf );
 		}
 	    } );
