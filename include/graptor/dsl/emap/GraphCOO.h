@@ -32,9 +32,9 @@ static __attribute__((flatten)) void coo_vector_loop(
     constexpr EID BLOCK_SIZE = 64 / sizeof(VID);
     constexpr EID PREFETCH_DISTANCE = 128; // (2<<20) / sizeof(VID);
     
-    // Override pointer for vk_eweight with the relevant permuation of the
+    // Override pointer for aid_eweight with the relevant permuation of the
     // weights for the el graph.
-    auto ew_pset = expr::create_map2<expr::vk_eweight>( el.getWeights() );
+    auto ew_pset = expr::create_map2<expr::aid_eweight>( el.getWeights() );
 					 
     auto venv = expr::eval::create_execution_environment_with(
 	op.get_ptrset( ew_pset ), vcaches, vexpr );
@@ -170,9 +170,9 @@ static inline void emap_ireg_graphgrind(
     auto expr = rewrite_internal( expr2 );
 
     map_partitionL( part, [&]( int p ) {
-	// Override pointer for vk_eweight with the relevant permuation of the
+	// Override pointer for aid_eweight with the relevant permuation of the
 	// weights for the el graph.
-	auto ew_pset = expr::create_map2<expr::vk_eweight>(
+	auto ew_pset = expr::create_map2<expr::aid_eweight>(
 	    const_cast<float *>( G.get_edge_list_partition( p ).getWeights() )
 	    );
 					 

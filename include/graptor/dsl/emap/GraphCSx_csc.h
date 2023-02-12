@@ -257,9 +257,9 @@ void DBG_NOINLINE csc_loop(
     auto aexpr3 = expr::rewrite_vectors_main( aexpr2 );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
-    // Override pointer for vk_eweight with the relevant permuation of the
+    // Override pointer for aid_eweight with the relevant permuation of the
     // weights for the G graph.
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+    auto ew_pset = expr::create_map2<expr::aid_eweight>(
 	G.getWeights() ? G.getWeights()->get() : nullptr );
 					 
     auto env = expr::eval::create_execution_environment_with(
@@ -387,9 +387,9 @@ void DBG_NOINLINE csc_loop(
     auto aexpr3 = expr::rewrite_vectors_main( aexpr2 );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
-    // Override pointer for vk_eweight with the relevant permuation of the
+    // Override pointer for aid_eweight with the relevant permuation of the
     // weights for the G graph.
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+    auto ew_pset = expr::create_map2<expr::aid_eweight>(
 	G.getWeights() ? G.getWeights()->get() : nullptr );
 					 
     auto env = expr::eval::create_execution_environment_with(

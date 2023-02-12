@@ -241,15 +241,11 @@ static inline void emap_push(
     static_assert( Cfg::max_vector_length() >= VL,
 		   "Cannot respect config option of maximum vector length" );
 
-    // Override pointer for vk_eweight with the relevant permutation of the
+    // Override pointer for aid_eweight with the relevant permutation of the
     // weights for the GA graph.
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
+    auto env = expr::eval::create_execution_environment_op(
+	op, vcaches,
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-					 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), vcaches,
-	vexpr, m_vexpr0, rexpr, m_rexpr,
-	pvop0, pvopf0 );
 
     map_partition<Cfg::is_parallel()>( part, [&]( int p ) {
 	    GraptorCSRDataParNotCachedDriver<VL>(

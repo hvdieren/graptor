@@ -1542,13 +1542,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
 
-/*
-    auto ew_pset = expr::create_map2<expr::vk_eweight>(
-	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), l_cache, vexpr );
-*/
     auto env = expr::eval::create_execution_environment_op(
 	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
     

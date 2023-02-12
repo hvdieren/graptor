@@ -130,12 +130,12 @@ auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
 
     execution_environment<address_map_t> env;
 
-    expr::ast_ptrset::ptrset_pointer<
-	expr::aid_eweight, WeightTy, expr::map_new<>>::initialize(
-	    env.get_map(), w );
     Operator::template ptrset<ew_pset>::initialize( env.get_map(), op );
     expr::ast_ptrset::ptrset_list<op_pset,Cache>::initialize(
 	env.get_map(), c );
+    expr::ast_ptrset::ptrset_pointer<
+	expr::aid_eweight, WeightTy, expr::map_new<>>::initialize(
+	    env.get_map(), w );
 
     return env;
 }
