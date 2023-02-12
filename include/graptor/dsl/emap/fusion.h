@@ -130,13 +130,17 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
 		    }
 		} else if( immediate == 0 ) {
 		    // Include in unprocessed list, if not already done so
-		    unsigned char flg = 1;
-		    unsigned char val = uczf[sdst];
-		    if( ( val & flg ) == 0 ) {
-			unsigned char old
-			    = __sync_fetch_and_or( &uczf[sdst], flg );
-			if( ( old & (unsigned char)3 ) == 0 )
-			    unprocessed.push_back( sdst );
+		    if constexpr ( need_strong_checking ) {
+			unsigned char flg = 1;
+			unsigned char val = uczf[sdst];
+			if( ( val & flg ) == 0 ) {
+			    unsigned char old
+				= __sync_fetch_and_or( &uczf[sdst], flg );
+			    if( ( old & (unsigned char)3 ) == 0 )
+				unprocessed.push_back( sdst );
+			}
+		    } else {
+			unprocessed.push_back( sdst );
 		    }
 		}
 	    }
@@ -472,12 +476,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 */
     } else {
 	// Vertices already processed leave no info in zf[]
+/*
 	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 	    VID outEdgeCount = F[t].size();
 	    VID * outEdges = &F[t][0];
 	    for( VID k=0; k < outEdgeCount; ++k )
 		zf[outEdges[k]] = false;
 	} );
+*/
     }
 
     // Tally all activated vertices
