@@ -71,6 +71,7 @@ public:
 	  maxVL( maxVL_ ),
 	  edges( mv_ * maxVL_, numa_allocation_local( numa_node ) ),
 	  weights( weights_ ) {
+	assert( 1 == (DegreeBits+maxVL-1)/maxVL && "hard-coded in constexpr" );
     }
     void del() {
 	edges.del();
@@ -98,10 +99,12 @@ public:
     EID numSIMDEdgesDeltaPar() const { return numSIMDEdges(); }
 
     unsigned short getMaxVL() const { return maxVL; }
-    unsigned short getDegreeBits() const { return (DegreeBits+maxVL-1)/maxVL; }
-    unsigned short getDegreeShift() const {
+    static constexpr unsigned short getDegreeBits() {
+	// return (DegreeBits+maxVL-1)/maxVL;
+	return 1;
+    }
+    static constexpr unsigned short getDegreeShift() {
 	return sizeof(VID)*8 - getDegreeBits();
-
     }
 };
 

@@ -729,8 +729,9 @@ public:
 	}
 	type get_mask() const { return bitwise_invert( mask ); }
     };
+    template<unsigned degree_bits, unsigned degree_shift>
     static sse42_epi32_extract_degree
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+    create_extractor() {
 	return sse42_epi32_extract_degree( degree_bits, degree_shift );
     }
 };

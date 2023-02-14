@@ -48,6 +48,7 @@ public:
 	  edges( mv_ * maxVL_, numa_allocation_local( numa_node ) ),
 	  weights( weights_ ),
 	  redir( redir_ ), redir_nnz( redir_nnz_ ) {
+	assert( 1 == (DegreeBits+maxVL-1)/maxVL && "hard-coded in constexpr" );
     }
 
     GraptorDataParPushPartition(
@@ -58,6 +59,8 @@ public:
 	) : n( rcsr.numVertices() ),
 	    nv( roundup_multiple_pow2( n, (VID)maxVL_ ) ),
 	    vlo( part.start_of( p ) ), mpad( 0 ), maxVL( maxVL_ ) {
+	assert( 1 == (DegreeBits+maxVL-1)/maxVL && "hard-coded in constexpr" );
+
 	// 0. Short-hands
 	const unsigned P = part.get_num_partitions();
 	const VID n = rcsr.numVertices();
@@ -328,8 +331,11 @@ public:
     VID getRedirNNZ() const { return redir_nnz; }
 
     unsigned short getMaxVL() const { return maxVL; }
-    unsigned short getDegreeBits() const { return (DegreeBits+maxVL-1)/maxVL; }
-    unsigned short getDegreeShift() const {
+    constexpr unsigned short getDegreeBits() {
+	// return (DegreeBits+maxVL-1)/maxVL;
+	return 1;
+    }
+    constexpr unsigned short getDegreeShift() {
 	return sizeof(VID)*8 - getDegreeBits();
     }
     unsigned short getSkipBits() const { return (SkipBits+maxVL-1)/maxVL; }

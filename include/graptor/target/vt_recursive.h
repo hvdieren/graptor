@@ -666,15 +666,15 @@ struct vt_recursive {
 				 mtraits::upper_half( mask ) );
     }
 
+    template<unsigned degree_bits, unsigned degree_shift>
     class vtrec_extract_degree_bits {
-	decltype(lo_half_traits::create_extractor( 0, 0 )) lo_extract;
-	decltype(hi_half_traits::create_extractor( 0, 0 )) hi_extract;
+	decltype(lo_half_traits::create_extractor<degree_bits,degree_shift>()) lo_extract;
+	decltype(hi_half_traits::create_extractor<degree_bits,degree_shift>()) hi_extract;
 
     public:
 	vtrec_extract_degree_bits( unsigned degree_bits,
 				   unsigned degree_shift )
-	    : lo_extract( degree_bits, degree_shift ),
-	      hi_extract( degree_bits, degree_shift ) { }
+	    : lo_extract(), hi_extract() { }
 	    
 	auto extract_degree( type v ) const {
 	    // Cannot have more meta-data bits encoded than the size of
@@ -698,9 +698,10 @@ struct vt_recursive {
 	    return type { lo_extract.get_mask(), hi_extract.get_mask() };
 	}
     };
+    template<unsigned degree_bits, unsigned degree_shift>
     static vtrec_extract_degree_bits
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
-	return vtrec_extract_degree_bits( degree_bits, degree_shift );
+    create_extractor() {
+	return vtrec_extract_degree_bits<degree_bits,degree_shift>();
     }
 };
 

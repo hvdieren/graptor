@@ -672,13 +672,15 @@ public:
 	type get_mask() const { return mask; }
     };
 #if GRAPTOR_EXTRACT_OPT
+    template<unsigned degree_bits, unsigned degree_shift>
     static avx512f_epi32_extract_degree16
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+    create_extractor() {
 	return avx512f_epi32_extract_degree16( degree_bits, degree_shift );
     }
 #else
+    template<unsigned degree_bits, unsigned degree_shift>
     static avx512f_epi32_extract_degree
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+    create_extractor() {
 	return avx512f_epi32_extract_degree( degree_bits, degree_shift );
     }
 #endif

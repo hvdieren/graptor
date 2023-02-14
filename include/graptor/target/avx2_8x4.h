@@ -693,8 +693,9 @@ public:
 	    return blend( cmpeq( x, inv, mt_vmask() ), x, setone() );
 	}
     };
+    template<unsigned degree_bits, unsigned degree_shift>
     static avx2_epi64_extract_degree
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+    create_extractor() {
 	return avx2_epi64_extract_degree( degree_bits, degree_shift );
     }
 };

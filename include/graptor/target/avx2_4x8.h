@@ -124,7 +124,10 @@ public:
     }
 
     // Logical mask - only test msb
-    static bool is_all_false( type a ) { return is_zero( srli( a, B-1 ) ); }
+    static bool is_all_false( type a ) {
+	// return is_zero( srli( a, B-1 ) ); // vpsrld + vptest (1 + 3 cy)
+	return asmask( a ) == 0; // vmvmskps + scalar cmp (2 + 1 cy)
+    }
 
     static type blend( vmask_type m, type l, type r ) {
 	// see also https://stackoverflow.com/questions/40746656/howto-vblend
@@ -778,16 +781,16 @@ public:
     }
 #endif
 
+    template<unsigned degree_bits_, unsigned degree_shift_>
     class avx2_epi32_extract_degree {
 	type mask, shift;
-	member_type degree_bits;
+	static constexpr member_type degree_bits = degree_bits_;
+	static constexpr member_type degree_shift = degree_shift_;
 
     public:
 	type get_mask() const { return mask; }
-	avx2_epi32_extract_degree( unsigned degree_bits_,
-				   unsigned degree_shift )
-	    : degree_bits( degree_bits_ ) {
-	    member_type smsk
+	avx2_epi32_extract_degree() {
+	    constexpr member_type smsk
 		= ( (member_type(1)<<degree_bits)-1 ) << degree_shift;
 	    mask = bitwise_invert( set1( smsk ) );
 
@@ -799,15 +802,19 @@ public:
 	    shift = sub( sh3, sh2 );
 	}
 	member_type extract_degree( type v ) const {
-	    type vs = _mm256_andnot_si256( mask, v );
-	    type bits = _mm256_srlv_epi32( vs, shift );
-	    // member_type degree = reduce_add( bits );
-	    type s0 = _mm256_shuffle_epi32( bits, 0b00011110 );
-	    type s1 = _mm256_or_si256( bits, s0 );
-	    type s2 = _mm256_shuffle_epi32( s1, 0b00000001 );
-	    type s3 = _mm256_or_si256( s1, s2 );
-	    member_type degree = lane0( s3 ) | lane4( s3 );
-	    return degree;
+	    if constexpr ( degree_bits == 1 ) {
+		return asmask( v );
+	    } else {
+		type vs = _mm256_andnot_si256( mask, v );
+		type bits = _mm256_srlv_epi32( vs, shift );
+		// member_type degree = reduce_add( bits );
+		type s0 = _mm256_shuffle_epi32( bits, 0b00011110 );
+		type s1 = _mm256_or_si256( bits, s0 );
+		type s2 = _mm256_shuffle_epi32( s1, 0b00000001 );
+		type s3 = _mm256_or_si256( s1, s2 );
+		member_type degree = lane0( s3 ) | lane4( s3 );
+		return degree;
+	    }
 	}
 	type extract_source( type v ) const {
 	    type x = _mm256_and_si256( mask, v );
@@ -871,20 +878,23 @@ public:
 #endif // __AVX512F__
 #if GRAPTOR_EXTRACT_OPT
 #if __AVX512F__
+    template<unsigned degree_bits, unsigned degree_shift>
     static avx2_epi32_extract_degree8
     create_extractor( unsigned degree_bits, unsigned degree_shift ) {
 	return avx2_epi32_extract_degree8( degree_bits, degree_shift );
     }
 #elif __AVX2__
-    static avx2_epi32_extract_degree
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
-	return avx2_epi32_extract_degree( degree_bits, degree_shift );
+    template<unsigned degree_bits, unsigned degree_shift>
+    static avx2_epi32_extract_degree<degree_bits, degree_shift>
+    create_extractor() {
+	return avx2_epi32_extract_degree<degree_bits, degree_shift>();
     }
 #endif
 #else
-    static avx2_epi32_extract_degree
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
-	return avx2_epi32_extract_degree( degree_bits, degree_shift );
+    template<unsigned degree_bits, unsigned degree_shift>
+    static avx2_epi32_extract_degree<degree_bits, degree_shift>
+    create_extractor() {
+	return avx2_epi32_extract_degree<degree_bits, degree_shift>();
     }
 #endif
 };
