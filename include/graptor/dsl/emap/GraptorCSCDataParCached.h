@@ -49,8 +49,11 @@ static inline void GraptorCSCDataParCached(
     auto m_pid = expr::create_value_map_new<VL>(
 	expr::create_entry<expr::vk_pid>( pvec1 ) );
 
-    auto extractor = vid_type::traits::create_extractor(
-	GP.getDegreeBits(), GP.getDegreeShift() );
+    // auto extractor = vid_type::traits::create_extractor(
+    // GP.getDegreeBits(), GP.getDegreeShift() );
+    auto extractor = vid_type::traits::template create_extractor<
+	GraphCSxSIMDDegreeMixed<Mode>::getDegreeBits(),
+	GraphCSxSIMDDegreeMixed<Mode>::getDegreeShift()>();
 
     const simd::vec<vid_type,lo_unknown> vmask( extractor.get_mask() );
 
@@ -193,6 +196,16 @@ static inline void GraptorCSCDataParCached(
     // vk_smk.
     // Note: changes in api.h imply that vk_smk is no longer used. The info
     // is read from a cached array, which may be unbacked.
+    //
+    // TODO: as the m_rexpr for a large part exists to construct the frontier,
+    //       and a reduction-type frontier will add zero vertices and edges
+    //       for zero-degree vertices, it makes sense to specialise m_vexpr
+    //       for that case, i.e., assume all vertices inactive. This
+    //       optimisation may not be suitable for a method-based record.
+    //       As such, may be necessary to specialise in api::op_def which would
+    //       be fairly intrusive in terms of code changes.
+    //       Alternatively, could see if we could do constant propagation of
+    //       degree[v] == 0?
     while( sdst.at(0) < send ) {
 	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
@@ -201,25 +214,12 @@ static inline void GraptorCSCDataParCached(
 	    expr::create_entry<expr::vk_pid>( pvec1 ) );
 	cache_init( env, c, vcaches, m ); // partial init
 
-	// Determine valid lanes
-	// auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
-	// auto mpack = expr::sb::create_mask_pack( vdst < vpend );
+	// Evaluate expression. Assumes all vertices exists, i.e., the number
+	// of vertices in a partition is a multiple of the vector length.
+	env.evaluate( c, m, m_rexpr );
 
-	// Evaluate hoisted part of expression.
-	{
-	    using logicalVID = typename add_logical<VID>::type;
-	    // auto input = output_type::false_mask();
-
-	    auto m = expr::create_value_map_new<VL>(
-		// expr::create_entry<expr::vk_smk>( input ),
-		expr::create_entry<expr::vk_mask>( vpend ),
-		expr::create_entry<expr::vk_dst>( sdst ),
-		expr::create_entry<expr::vk_pid>( pvec1 ) );
-	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
-	}
-
-	cache_commit( env, vcaches, c, m /*, mpack*/ );
-	// vdst.set_unsafe( vdst + vstep );
+	// Write back cached values to memory
+	cache_commit( env, vcaches, c, m );
 	sdst += sstep;
     }
 

@@ -162,8 +162,9 @@ static inline void GraptorCSRDataParCachedDriver(
 	expr::create_entry<expr::vk_pid>( pvec1 ) );
     simd_vector<VID, VL> pzero;
 
-    auto extractor = simd_vector<VID,VL>::traits::create_extractor(
-	GP.getDegreeSkipBits(), GP.getDegreeSkipShift() );
+    auto extractor = vid_type::traits::template create_extractor<
+	GraphCSRSIMDDegreeMixed<M>::getDegreeBits(),
+	GraphCSRSIMDDegreeMixed<M>::getDegreeShift()>();
 
     // Split caches with pid cache hoisted out of loop
     // This is only valid when storedVL == VL.
