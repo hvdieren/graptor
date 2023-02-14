@@ -646,49 +646,132 @@ struct evaluator {
 	}
     }
 	
+#if 0
     template<unsigned cid, typename TrC, typename E2, typename C,
-	     typename RedOp, typename MPack>
+	     typename RedOp, typename MPack, typename TTT>
     GG_INLINE
-    auto evaluate( const redop<cacheop<cid,TrC>,binop<E2,C,binop_predicate>,RedOp> & op,
+    auto evaluate( const redop<cacheop<cid,TrC>,unop<binop<E2,C,binop_predicate>,unop_cvt_data_type<TTT>>,
+		   RedOp> & op,
 		   const MPack & mpack ) {
 	// Special case: avoid store operations such that the cached value
 	// can live in registers
-	auto i = evaluate( op.val().data1(), mpack );
-	auto& r = m_cache.template get<cid>(); // reference into cache
-	static_assert( decltype(i)::VL == 1 ||
-		       decltype(i)::VL == std::remove_reference<decltype(r)>::type::VL,
-		       "VL match" ); // we may have long vector with scalar access
+	if constexpr ( RedOp::is_commutative
+		       && is_unop_cvt_data_type<E2>::value ) {
+	    // For vector-masks (AVX2), avoid conversion of the width of both
+	    // the value and the mask. Use the unit of the redop (v+unit ==v)
+	    // to replace the mask with disabled values.
+	    // This works, provided that the RedOp's update-condition does not
+	    // need to be converted itself.
+	    
+	    // Evaluate value before conversion
+	    auto val = evaluate( op.val().data1().data(), mpack );
+	    // Evaluate mask without conversion
+	    auto mask = evaluate( op.val().data2(), val.mpack() );
+	    auto cond = binop_mask::update_mask( mask );
+	    // Replace disabled lanes with the RedOp's unit (v+unit == v)
+	    auto dis
+		= set_unit_if_disabled<RedOp>( val.uvalue(), cond.uvalue() );
+	    // No need to be selective as the end result is the same
+	    auto empty_mpack = sb::create_mask_pack();
+	    // Perform cast operation
+	    auto cst = E2::unop_type::evaluate( dis.uvalue(), empty_mpack );
 
-	auto mask = evaluate( op.val().data2(), i.mpack() );
-	auto cond = binop_mask::update_mask( mask );
-	auto tmppack = sb::create_mask_pack( cond.value() );
+	    auto r = evaluate_redop<RedOp,cid,TrC>( cst.uvalue(), empty_mpack );
+	    return make_rvalue( r.value(), cond.mpack() );
+	} else {
+	    auto val = evaluate( op.val().data1(), mpack );
+	    auto mask = evaluate( op.val().data2(), val.mpack() );
+	    auto cond = binop_mask::update_mask( mask );
+	    auto redop_mpack = sb::create_mask_pack( cond.value() );
+
+	    auto r = evaluate_redop<RedOp,cid,TrC>( val.uvalue(), redop_mpack );
+	    return make_rvalue( r.value(), cond.mpack() );
+	}
+    }
+#else
+    template<unsigned cid, typename TrC, typename E2, typename C,
+	     typename RedOp, typename MPack>
+    GG_INLINE
+    auto evaluate( const redop<cacheop<cid,TrC>,binop<E2,C,binop_predicate>,
+		   RedOp> & op,
+		   const MPack & mpack ) {
+	// Special case: avoid store operations such that the cached value
+	// can live in registers
+	if constexpr ( RedOp::is_commutative
+		       && is_unop_cvt_data_type<E2>::value ) {
+	    // For vector-masks (AVX2), avoid conversion of the width of both
+	    // the value and the mask. Use the unit of the redop (v+unit ==v)
+	    // to replace the mask with disabled values.
+	    // This works, provided that the RedOp's update-condition does not
+	    // need to be converted itself.
+	    
+	    // Evaluate value before conversion
+	    auto val = evaluate( op.val().data1().data(), mpack );
+	    // Evaluate mask without conversion
+	    auto mask = evaluate( op.val().data2(), val.mpack() );
+	    auto cond = binop_mask::update_mask( mask );
+	    // Replace disabled lanes with the RedOp's unit (v+unit == v)
+	    auto dis
+		= set_unit_if_disabled<RedOp>( val.uvalue(), cond.uvalue() );
+	    // No need to be selective as the end result is the same
+	    auto empty_mpack = sb::create_mask_pack();
+	    // Perform cast operation
+	    auto cst = E2::unop_type::evaluate( dis.uvalue(), empty_mpack );
+
+	    auto r = evaluate_redop<RedOp,cid,TrC>( cst.uvalue(), empty_mpack );
+	    return make_rvalue( r.value(), cond.mpack() );
+	} else {
+	    auto val = evaluate( op.val().data1(), mpack );
+	    auto mask = evaluate( op.val().data2(), val.mpack() );
+	    auto cond = binop_mask::update_mask( mask );
+	    auto redop_mpack = sb::create_mask_pack( cond.value() );
+
+	    auto r = evaluate_redop<RedOp,cid,TrC>( val.uvalue(), redop_mpack );
+	    return make_rvalue( r.value(), cond.mpack() );
+	}
+    }
+#endif
+
+    template<typename RedOp, unsigned cid, typename TrC,
+	     typename VTr, layout_t Layout,
+	     typename MPack>
+    GG_INLINE
+    auto evaluate_redop(
+	sb::rvalue<VTr,Layout> val,
+	const MPack & redop_mpack ) {
+	// Special case: avoid store operations such that the cached value
+	// can live in registers
+
+	auto& r = m_cache.template get<cid>(); // reference into cache
+	static_assert( decltype(val)::VL == 1 ||
+		       decltype(val)::VL == std::remove_reference<decltype(r)>::type::VL,
+		       "VL match" ); // we may have long vector with scalar access
 
 	// bitarray vs array cases
 	if constexpr ( std::is_void_v<typename TrC::member_type> ) {
-	    using Tr = TrC;
-
 	    using U = index_type_of_size<sizeof(VID)>;
 
-	    auto vr = simd::template create_vector_ref_scalar<Tr,U,array_encoding<typename Tr::element_type>,false,lo_linalgn>(
-		reinterpret_cast<typename Tr::pointer_type *>( &r.data() ), U(0) );
-	    auto l = make_lvalue( vr, i.mpack() );
-	    auto r = RedOp::evaluate( l.uvalue(), i.uvalue(), tmppack );
-	    return make_rvalue( r.value(), cond.mpack() );
+	    auto vr = simd::template create_vector_ref_scalar<VTr,U,array_encoding<typename VTr::element_type>,false,lo_linalgn>(
+		reinterpret_cast<typename VTr::pointer_type *>( &r.data() ), U(0) );
+	    auto l = make_lvalue( vr, redop_mpack );
+	    auto r = RedOp::evaluate( l.uvalue(), val, redop_mpack );
+	    return r;
 	} else {
-	    using Tr = typename TrC::template rebindVL<decltype(i)::VL>::type;
-
 	    // Cut of at too wide widths
 	    // 4-byte int is more likely index supported in gather than
 	    // 1 or 2-byte int
-	    using U = index_type_of_size<std::max(Tr::W,(unsigned short)4)>;
+	    using U = index_type_of_size<std::max(VTr::W,(unsigned short)4)>;
 
-	    auto vr = simd::template create_vector_ref_scalar<Tr,U,array_encoding<typename Tr::member_type>,false,lo_linalgn>(
-		reinterpret_cast<typename Tr::pointer_type *>( &r.data() ), U(0) );
+	    auto vr = simd::template create_vector_ref_scalar<
+		VTr,U,array_encoding<typename VTr::member_type>,
+		false,lo_linalgn>(
+		    reinterpret_cast<typename VTr::pointer_type *>( &r.data() ),
+		    U(0) );
 
-	    auto l = make_lvalue( vr, i.mpack() );
+	    auto l = make_lvalue( vr, redop_mpack );
 	    static_assert( sizeof(typename decltype(l.value())::index_type) != 1, "err" );
-	    auto r = RedOp::evaluate( l.uvalue(), i.uvalue(), tmppack );
-	    return make_rvalue( r.value(), cond.mpack() );
+	    auto r = RedOp::evaluate( l.uvalue(), val, redop_mpack );
+	    return r;
 	}
     }
 
