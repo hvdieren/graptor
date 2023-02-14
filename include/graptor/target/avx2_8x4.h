@@ -17,6 +17,8 @@
 #include "graptor/target/mmx_2x4.h" // for tzcnt
 #endif // __AVX2__
 
+alignas(64) extern const uint64_t avx2_1x4_convert_to_8x4_lut[64];
+
 namespace target {
 
 /***********************************************************************
@@ -118,12 +120,20 @@ public:
     }
     
     static type asvector( mask_type mask ) {
+#if 0
 	// Need to work with 8 32-bit integers as there is no 64-bit srai
 	// in AVX2. Luckily, this works just as well.
 	type vmask = _mm256_set1_epi32( (int)mask );
 	const __m256i cnt = _mm256_set_epi32( 28, 28, 29, 29, 30, 30, 31, 31 );
 	type vmask2 = _mm256_sllv_epi32( vmask, cnt );
 	return _mm256_srai_epi32( vmask2, 31 );
+#else
+	// Use a lookup table. The table spans 8 64-byte cache lines.
+	// Each "row" of the table contains vlen elements;
+	unsigned idx = ( mask & 0xff ) * vlen;
+	return load( reinterpret_cast<const member_type *>(
+			 &avx2_1x4_convert_to_8x4_lut[idx] ) );
+#endif
     }
     template<typename T2>
     static type asvector(
