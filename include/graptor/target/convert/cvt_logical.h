@@ -60,12 +60,17 @@ struct int_conversion_traits<logical<B>, logical<C>, VL> {
 					 typename dst_traits::int_type,
 					 VL>::convert( b );
 	} else {
+#if __AVX512F__
 	    // Do a widening signed integer conversion to replicate the
 	    // most significant bit of the logical
 	    return int_conversion_traits<
 		std::make_signed_t<typename src_traits::int_type>,
 		std::make_signed_t<typename dst_traits::int_type>,
 		VL>::convert( a );
+#else
+	    // Extract mask and re-distribute
+	    return dst_traits::asvector( src_traits::asmask( a ) );
+#endif
 	}
     }
 };
