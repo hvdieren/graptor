@@ -641,7 +641,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f_record(
  *
  * \return the number of advised parts for parallel execution
  *======================================================================*/
-VID calculate_edge_balanced_parts(
+inline VID calculate_edge_balanced_parts(
     VID * const s,
     VID m,
     const EID * const idx,
