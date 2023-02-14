@@ -162,7 +162,7 @@ static inline void GraptorCSRDataParCachedDriver(
 	expr::create_entry<expr::vk_pid>( pvec1 ) );
     simd_vector<VID, VL> pzero;
 
-    auto extractor = vid_type::traits::template create_extractor<
+    auto extractor = simd::ty<VID,VL>::traits::template create_extractor<
 	GraphCSRSIMDDegreeMixed<M>::getDegreeBits(),
 	GraphCSRSIMDDegreeMixed<M>::getDegreeShift()>();
 
