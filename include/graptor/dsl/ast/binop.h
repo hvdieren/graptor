@@ -283,10 +283,20 @@ auto add_predicate( E1 val, E2 mask ) {
     
     // Align width of predicates
     else if constexpr ( E1::data_type::B != E2::data_type::B ) {
-	using Tr =
-	    simd::detail::mask_preferred_traits_type<typename E1::type, E1::VL>;
-	auto smask = make_unop_cvt_data_type<Tr>( mask );
-	return make_binop( val, smask, binop_predicate() );
+	// In case of predicating a cast, align predicate to width of value
+	// before the cast based on the fact that we will fiddle with that
+	// during evaluation
+	if constexpr ( is_unop_cvt_data_type<E1>::value ) {
+	    using Tr =
+		simd::detail::mask_preferred_traits_type<typename E1::arg_type::type, E1::VL>;
+	    auto smask = make_unop_cvt_data_type<Tr>( mask );
+	    return make_binop( val, smask, binop_predicate() );
+	} else {
+	    using Tr =
+		simd::detail::mask_preferred_traits_type<typename E1::type, E1::VL>;
+	    auto smask = make_unop_cvt_data_type<Tr>( mask );
+	    return make_binop( val, smask, binop_predicate() );
+	}
     }
     // Default
     else
