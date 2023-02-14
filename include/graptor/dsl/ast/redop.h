@@ -42,6 +42,16 @@ private:
     val_type m_val;
 };
 
+template<typename RedOp,
+	 typename VTr, layout_t Layout1,
+	 typename MTr, layout_t Layout2>
+static auto
+set_unit_if_disabled( sb::rvalue<VTr,Layout1> v,
+		      sb::rvalue<MTr,Layout2> m ) {
+    auto u = RedOp::template vunit<VTr>();
+    return make_rvalue( ::iif( m.value(), u, v.value() ), sb::create_mask_pack() );
+}
+
 template<typename E1, typename E2, typename RedOp>
 static constexpr
 auto make_redop( E1 e1, E2 e2, RedOp op ) {
@@ -451,8 +461,9 @@ struct redop_logicaland {
     // template<typename T>
     // static constexpr auto zero() { return ~T(0); }
 
+    // Caution -- "fixed" without debugging
     template<typename T>
-    static constexpr auto unit() { return typename T::element_type(0); }
+    static constexpr auto unit() { return ~typename T::element_type(0); }
 
     template<typename VTr, layout_t Layout1, layout_t Layout2,
 	     typename I, typename Enc, bool NT, typename MPack>
@@ -542,8 +553,9 @@ struct redop_bitwiseand {
     template<typename E1, typename E2>
     using enable = std::true_type; // enable_if_compatible<U1,U2>;
 
+    // Caution -- "fixed" without debugging
     template<typename T>
-    static constexpr auto unit() { return typename T::element_type(0); }
+    static constexpr auto unit() { return ~typename T::element_type(0); }
 
     template<typename VTr, layout_t Layout1, layout_t Layout2,
 	     typename I, typename Enc, bool NT, typename MPack>
@@ -988,6 +1000,7 @@ struct redop_add {
 	using infer_type = typename E1::data_type;
     };
 
+    static constexpr bool is_commutative = true;
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
     static constexpr bool is_single_trigger = false;
@@ -996,8 +1009,10 @@ struct redop_add {
     // TODO: should have an ID here instead of string
     static constexpr char const * name = "redop_add";
 
-    template<typename T>
-    static constexpr auto unit() { return typename T::element_type(0); }
+    template<typename DT>
+    static constexpr auto unit() { return typename DT::element_type(0); }
+    template<typename DT>
+    static constexpr auto vunit() { return simd::create_zero<DT>(); }
 
     template<typename E1, typename E2>
     using enable = std::true_type; // enable_if_compatible<U1,U2>;
@@ -1390,6 +1405,7 @@ struct redop_setif {
     // B. not benign-race and single-trigger, such that no duplicates occur
     // Case A will imply that the zero flags are used with CAS to ensure
     // a vertex is woken up only once.
+    static constexpr bool is_commutative = false;
     static constexpr bool is_idempotent = true;
     static constexpr bool is_benign_race = false; // store-only
     static constexpr bool is_single_trigger = true;
@@ -1400,8 +1416,10 @@ struct redop_setif {
     template<typename E1, typename E2>
     using enable = std::true_type; // enable_if_compatible<U1,U2>;
 
-    template<typename T>
-    static constexpr auto unit() { return ~typename T::element_type(0); }
+    template<typename DT>
+    static constexpr auto unit() { return ~typename DT::element_type(0); }
+    template<typename DT>
+    static constexpr auto vunit() { return simd::create_allones<DT>(); }
 
     template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
 	     layout_t Layout, typename MPack>
