@@ -3,7 +3,11 @@
 
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
+#if __AVX512__
 #define DEFERRED_UPDATE 1
+#else
+#define DEFERRED_UPDATE 0
+#endif
 #endif
 
 #ifndef CONVERGENCE
