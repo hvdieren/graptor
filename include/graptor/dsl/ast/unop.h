@@ -287,60 +287,6 @@ struct unop_cvt_data_type {
 	    a.value().template convert_data_type<data_type>(),
 	    mpack );
     }
-
-    template<typename VTr, layout_t Layout>
-    static auto
-    evaluate( rvalue<VTr,Layout,void> a,
-	      typename std::enable_if<simd::matchVLtu<VTr,VL>::value>::type *
-	      = nullptr ) {
-	auto r = make_rvalue( a.value().template convert_to<T>() );
-	static_assert( std::is_same<typename decltype(r)::value_traits, data_type>::value, "check conversion to data_type" );
-	return r;
-    }
-    template<typename VTr, layout_t Layout, typename MTr>
-    static auto
-    evaluate( rvalue<VTr,Layout,MTr> a,
-	      typename std::enable_if<simd::matchVLttu<VTr,MTr,VL>::value>::type *
-	      = nullptr ) {
-	using mask_type = typename data_type::prefmask_traits;
-	auto r = make_rvalue( a.value().template convert_to<T>(),
-			      a.mask().template convert<mask_type>() );
-	static_assert( std::is_same<typename decltype(r)::value_traits, data_type>::value, "check conversion to data_type" );
-	return r;
-    }
-/*
-    template<typename V>
-    static auto
-    evaluate( rvalue<V,sizeof(V),VL> r,
-	      typename std::enable_if<sizeof(V)!=sizeof(T)>::type * = nullptr ) {
-	return make_rvalue( r.value().template convert_to<T>(),
-			    r.mask().template convert_width<sizeof(T)>() );
-    }
-*/
-    template<layout_t Layout,typename MTr>
-    static auto
-    evaluate( rvalue<void,Layout,MTr> r,
-	      typename std::enable_if<simd::matchVLtu<MTr,VL>::value
-	      && !std::is_same<MTr,data_type>::value>::type *
-	      = nullptr ) {
-	auto rr = make_rvalue( r.mask().template convert<data_type>() );
-	static_assert( std::is_void<typename decltype(rr)::value_traits>::value, "must be mask" );
-	return rr;
-    }
-    template<layout_t Layout>
-    static auto
-    evaluate( rvalue<void,Layout,data_type> r ) {
-	return r;
-    }
-    template<typename VTr, layout_t Layout>
-    static auto
-    evaluate( rvalue<VTr,Layout,simd::detail::mask_bool_traits> r,
-	      typename std::enable_if<!std::is_void<VTr>::value
-	      && simd::matchVLtu<VTr,VL>::value>::type * = nullptr ) {
-	auto rr = make_rvalue( r.value().template convert_to<T>(), r.mask() );
-	static_assert( std::is_same<typename decltype(rr)::value_traits, data_type>::value, "check conversion to data_type" );
-	return rr;
-    }
 };
 
 template<typename Tr, typename Expr>
@@ -359,25 +305,6 @@ make_unop_cvt_data_type( Expr e ) {
     } else
 	return make_unop( e, unop_cvt_data_type<Tr>() );
 }
-
-#if 0
-template<typename T, typename Expr>
-auto
-make_unop_cvt_data_type( Expr e,
-			 typename std::enable_if<!std::is_same<typename Expr::type,typename T::element_type>::value>::type * = nullptr ) {
-    static_assert( T::VL == Expr::VL, "VL match in unop_cvt_data_type" );
-    return make_unop( e, unop_cvt_data_type<T>() );
-}
-
-template<typename T, typename Expr>
-auto
-make_unop_cvt_data_type( Expr e,
-			 typename std::enable_if<std::is_same<typename Expr::type,typename T::element_type>::value>::type * = nullptr ) {
-    static_assert( T::VL == Expr::VL, "VL match in unop_cvt_data_type" );
-    // return make_unop( e, unop_cvt_data_type<T,Expr::VL>() );
-    return e;
-}
-#endif
 
 template<typename T, typename Expr>
 auto make_unop_cvt_type( Expr e ) {
