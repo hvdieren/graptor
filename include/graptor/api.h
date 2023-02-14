@@ -768,8 +768,7 @@ struct arg_record_reduction_op {
 	return expr::make_seq(
 	    m_op.vertexop( vid ),
 	    nacte[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::make_unop_cvt_type<EID>( degree[vid] ),
-				 mask ),
+	    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 	    nactv[expr::zero_val(vid)] +=
 	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
     }
@@ -910,8 +909,7 @@ struct arg_record_reduction_op<
 	return expr::make_seq(
 	    m_op.vertexop( vid ),
 	    nacte[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::make_unop_cvt_type<EID>( degree[vid] ),
-				 mask ),
+	    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 	    nactv[expr::zero_val(vid)] +=
 	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
     }
@@ -1053,8 +1051,7 @@ struct arg_record_method_op {
 	    return expr::make_seq(
 		m_op.vertexop( vid ),
 		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::make_unop_cvt_type<EID>( degree[vid] ),
-				     mask ),
+		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 		nactv[expr::zero_val(vid)] +=
 		expr::add_predicate( expr::constant_val_one(vid), mask ) );
 	} else if constexpr ( is_priv ) {
@@ -1064,8 +1061,7 @@ struct arg_record_method_op {
 		m_op.vertexop( vid ),
 		m_array[vid] = expr::make_unop_switch_to_vector( mask ),
 		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::make_unop_cvt_type<EID>( degree[vid] ),
-				     mask ),
+		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 		nactv[expr::zero_val(vid)] +=
 		expr::add_predicate( expr::constant_val_one(vid), mask ) );
 	} else {
@@ -1075,8 +1071,7 @@ struct arg_record_method_op {
 		m_op.vertexop( vid ),
 		m_array[vid] |= expr::make_unop_switch_to_vector( mask ),
 		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::make_unop_cvt_type<EID>( degree[vid] ),
-				     mask ),
+		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 		nactv[expr::zero_val(vid)] +=
 		expr::add_predicate( expr::constant_val_one(vid), mask ) );
 	}
