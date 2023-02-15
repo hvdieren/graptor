@@ -160,32 +160,16 @@ static inline void GraptorCSCDataParCached(
 #endif
 	    && s < nvec );
 
-	// std::cerr << "SIMD group END s=" << s << " code="
-	// << code << " sdst.at(0)=" << sdst.at(0) << "\n";
-
-	// for( unsigned short l=0; l < VL; ++l ) {
-	    // if( output.at(l) )
-		// std::cerr << VID(sdst.at(0)+l) << "\n";
-	// }
-
-	// auto vdst = simd::create_set1inc<vid_type,true>( sdst.data() );
-	// auto mpack = expr::sb::create_mask_pack( vdst < vpend );
-
 	// Evaluate hoisted part of expression.
 	{
-	    // using logicalVID = typename add_logical<VID>::type;
-	    // auto input = output.template asvector<logicalVID>();
-	    // auto input = output;
-
 	    auto m = expr::create_value_map_new<VL>(
-		// expr::create_entry<expr::vk_smk>( input ),
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
-	    env.evaluate( c, m, /*mpack,*/ m_rexpr );
+	    env.evaluate( c, m, m_rexpr );
 	}
 
-	cache_commit( env, vcaches, c, m /*, mpack*/ );
+	cache_commit( env, vcaches, c, m );
 	sdst += sstep;
     }
 
