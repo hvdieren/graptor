@@ -303,22 +303,6 @@ public:
 	tm_iter.start();
 
 	while( iter < max_iter && sdelta > tol ) {
-	    // Power iteration step
-	    // frontier output;
-
-	    // timer tm_e;
-
-#if 0
-#if MEMO
-	    // tm_e.start();
-	    auto lazy = vEdgeMap( GA, ftrue, output, PR_F( y_mem, contrib_mem ) );
-	    // tm_e.stop();
-#else
-	    // tm_e.start();
-	    auto lazy = vEdgeMap( GA, ftrue, output, PR_Base_F( y_mem, d, x_mem, outdeg_mem ) );
-	    // tm_e.stop();
-#endif
-#else // 0
 	    auto lazy = api::edgemap(
 		GA,
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -331,7 +315,6 @@ public:
 #endif
 		    } )
 		);
-#endif // 0
 
 	    s = 0;
 	    lazy
