@@ -476,7 +476,7 @@ private:
  */
 template<unsigned cid,      //!< unique ID of cacheop within expression
 	 typename Tr,       //!< data type of value held
-	 array_id aid_,     //!< array ID of cached array, if any
+	 short aid_,        //!< array ID of cached array, if any
 	 cacheop_flags flags_> //!< semantic properties
 struct cacheop : public expr_base {
     using data_type = Tr;
@@ -484,7 +484,7 @@ struct cacheop : public expr_base {
 
     static constexpr op_codes opcode = op_cacheop;
     static constexpr unsigned short VL = data_type::VL;
-    static constexpr array_aid aid = aid_;
+    static constexpr short aid = aid_;
     static constexpr cacheop_flags flags = flags_;
 
     cacheop() { }

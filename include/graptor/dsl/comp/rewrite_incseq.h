@@ -97,7 +97,7 @@ auto rewrite_incseq( maskrefop<A,T,M,VL> r ) {
 	make_maskrefop( r.array(), rewrite_incseq( r.index() ), r.mask() ) );
 }
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static constexpr
 auto rewrite_incseq( cacheop<cid,Tr,aid,flags> c ) {
     return c;

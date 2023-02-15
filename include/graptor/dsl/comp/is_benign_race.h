@@ -85,7 +85,7 @@ struct is_benign_race<storeop<nt,R,T>> {
     static constexpr bool value = is_constant_expr<T>::value;
 };
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags>
 struct is_benign_race<cacheop<cid,Tr,aid,flags>> {
     static constexpr bool value = true;
 };

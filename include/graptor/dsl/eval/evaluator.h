@@ -495,9 +495,10 @@ struct evaluator {
 	return evaluate( op.array(), make_rvalue( i.value(), m.mpack() ) );
     }
 
-    template<unsigned cid, typename Tr, typename MPack>
+    template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
+	     typename MPack>
     GG_INLINE
-    auto evaluate( const cacheop<cid,Tr> & op, const MPack & mpack ) {
+    auto evaluate( const cacheop<cid,Tr,aid,flags> & op, const MPack & mpack ) {
 	// Note: the cached values are sized to meet the vector length
 	//       of the computation
 	auto val = m_cache.template get<cid>();
@@ -505,9 +506,10 @@ struct evaluator {
 	return make_rvalue( val, mpack );
     }
 
-    template<unsigned cid, typename Tr, typename MPack>
+    template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
+	     typename MPack>
     GG_INLINE
-    auto levaluate( const cacheop<cid,Tr> & op, const MPack & mpack ) {
+    auto levaluate( const cacheop<cid,Tr,aid,flags> & op, const MPack & mpack ) {
 	// Note: vector length must always be VLS in the supported use cases:
 	//       1) VLS>1 and VLD=1
 	//       2) VLS=VLD
@@ -519,9 +521,10 @@ struct evaluator {
 	return make_lvalue( lv, mpack );
     }
 
-    template<unsigned cid, typename Tr, typename M, typename MPack>
+    template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
+	     typename M, typename MPack>
     GG_INLINE
-    auto levaluate( const binop<cacheop<cid,Tr>,M,binop_predicate> & op,
+    auto levaluate( const binop<cacheop<cid,Tr,aid,flags>,M,binop_predicate> & op,
 		    const MPack & mpack ) {
 	auto mask = evaluate( op.data2(), mpack );
 	using index_type = typename Tr::index_type;
@@ -532,9 +535,10 @@ struct evaluator {
 	return make_lvalue( lv, mask.value(), mask.mpack() );
     }
 
-    template<unsigned cid, typename Tr, typename M, typename MPack>
+    template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
+	     typename M, typename MPack>
     GG_INLINE
-    auto levaluate( const binop<cacheop<cid,Tr>,M,binop_mask> & op,
+    auto levaluate( const binop<cacheop<cid,Tr,aid,flags>,M,binop_mask> & op,
 		    const MPack & mpack ) {
 	// ignore mask entirely -- not
 	auto mask = evaluate( op.data2(), mpack );
@@ -607,10 +611,11 @@ struct evaluator {
 	}
     }
     
-    template<unsigned cid, typename TrC, typename E2,
+    template<unsigned cid, typename TrC, short aid, cacheop_flags flags,
+	     typename E2,
 	     typename RedOp, typename MPack>
     GG_INLINE
-    auto evaluate( const redop<cacheop<cid,TrC>,E2,RedOp> & op,
+    auto evaluate( const redop<cacheop<cid,TrC,aid,flags>,E2,RedOp> & op,
 		   const MPack & mpack ) {
 	// Special case: avoid store operations such that the cached value
 	// can live in registers
@@ -647,10 +652,11 @@ struct evaluator {
     }
 	
 #if 0
-    template<unsigned cid, typename TrC, typename E2, typename C,
+    template<unsigned cid, typename TrC, short aid, cacheop_flags flags,
+	     typename E2, typename C,
 	     typename RedOp, typename MPack, typename TTT>
     GG_INLINE
-    auto evaluate( const redop<cacheop<cid,TrC>,unop<binop<E2,C,binop_predicate>,unop_cvt_data_type<TTT>>,
+    auto evaluate( const redop<cacheop<cid,TrC,aid,flags>,unop<binop<E2,C,binop_predicate>,unop_cvt_data_type<TTT>>,
 		   RedOp> & op,
 		   const MPack & mpack ) {
 	// Special case: avoid store operations such that the cached value
@@ -689,10 +695,11 @@ struct evaluator {
 	}
     }
 #else
-    template<unsigned cid, typename TrC, typename E2, typename C,
+    template<unsigned cid, typename TrC, short aid, cacheop_flags flags,
+	     typename E2, typename C,
 	     typename RedOp, typename MPack>
     GG_INLINE
-    auto evaluate( const redop<cacheop<cid,TrC>,binop<E2,C,binop_predicate>,
+    auto evaluate( const redop<cacheop<cid,TrC,aid,flags>,binop<E2,C,binop_predicate>,
 		   RedOp> & op,
 		   const MPack & mpack ) {
 	// Special case: avoid store operations such that the cached value
@@ -715,11 +722,34 @@ struct evaluator {
 		= set_unit_if_disabled<RedOp>( val.uvalue(), cond.uvalue() );
 	    // No need to be selective as the end result is the same
 	    auto empty_mpack = sb::create_mask_pack();
-	    // Perform cast operation
-	    auto cst = E2::unop_type::evaluate( dis.uvalue(), empty_mpack );
 
-	    auto r = evaluate_redop<RedOp,cid,TrC>( cst.uvalue(), empty_mpack );
-	    return make_rvalue( r.value(), cond.mpack() );
+	    // Perform cast operation
+	    // Where possible, allow the reduced values to end up in any lane.
+	    // It is hard to know at this place in the code when this is
+	    // valid. In general, it should be valid when all lanes will be
+	    // reduced to a single scalar and the reduction operation is
+	    // commutative.
+	    // In this instance, we will consider this for counting active
+	    // edges, as this will be correct.
+#if 0
+	    if constexpr ( cid == expr::aid_graph_degree-somethingelse ) {
+		auto cst = E2::unop_type::evaluate_confuse_lanes(
+		    dis.uvalue() );
+
+		auto r = evaluate_redop<RedOp,cid,TrC>(
+		    cst.uvalue(), empty_mpack );
+		auto redop_mpack = sb::create_mask_pack( cond.value() );
+		return make_rvalue( r.value(), redop_mpack );
+	    } else
+#endif
+	    {
+		auto cst = E2::unop_type::evaluate( dis.uvalue(), empty_mpack );
+
+		auto r = evaluate_redop<RedOp,cid,TrC>(
+		    cst.uvalue(), empty_mpack );
+		auto redop_mpack = sb::create_mask_pack( cond.value() );
+		return make_rvalue( r.value(), redop_mpack );
+	    }
 	} else {
 	    auto val = evaluate( op.val().data1(), mpack );
 	    auto mask = evaluate( op.val().data2(), val.mpack() );

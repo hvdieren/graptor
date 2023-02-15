@@ -42,7 +42,7 @@ template<typename Tr, value_kind VKind, typename Cache>
 static constexpr
 auto rewrite_scalarize( value<Tr, VKind> v, const Cache & c );
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
 	 typename Cache>
 auto rewrite_scalarize( cacheop<cid, Tr, aid, flags> o, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * = nullptr );
@@ -59,7 +59,7 @@ template<typename E1, typename E2, typename BinOp, typename Cache>
 static constexpr
 auto rewrite_scalarize( binop<E1,E2,BinOp> b, const Cache & c );
 
-template<bool nt, unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+template<bool nt, unsigned cid, typename Tr, short aid, cacheop_flags flags,
 	 typename U, typename Cache>
 static constexpr
 auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr,aid,flags>,U> r, const Cache & c,
@@ -76,7 +76,7 @@ auto rewrite_scalarize( refop<A,T,VL> r, const Cache & c,
 			typename std::enable_if<!is_cacheop<A>::value>::type * = nullptr );
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
 	 typename E2, typename RedOp, typename Cache>
 constexpr
 auto rewrite_scalarize( redop<cacheop<cid,Tr,aid,flags>,E2,RedOp> r, const Cache & c,
@@ -107,7 +107,7 @@ auto rewrite_scalarize( value<Tr, VKind> v, const Cache & c ) {
     }
 }
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
 	 typename Cache>
 auto rewrite_scalarize( cacheop<cid, Tr, aid, flags> o, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * ) {
@@ -129,7 +129,7 @@ void rewrite_scalarize( storeop<cacheop<cid,T,VL>,U> r, const Cache & c,
 */
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, bool nt, typename Tr, array_aid aid, cacheop_flags flags,
+template<unsigned cid, bool nt, typename Tr, short aid, cacheop_flags flags,
 	 typename U, typename Cache>
 static constexpr
 auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr,aid,flags>,U> r, const Cache & c,
@@ -222,7 +222,7 @@ void rewrite_scalarize( redop<cacheop<cid,T,VL>,E2,RedOp> r, const Cache & c,
 */
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
 	 typename E2, typename RedOp, typename Cache>
 constexpr
 auto rewrite_scalarize( redop<cacheop<cid,Tr,aid,flags>,E2,RedOp> r, const Cache & c,

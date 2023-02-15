@@ -21,7 +21,7 @@ static constexpr auto rewrite_redop_to_store( storeop<nt,R,T> s );
 template<typename E1, typename E2, typename BinOp>
 static constexpr auto rewrite_redop_to_store( binop<E1,E2,BinOp> b );
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static constexpr auto rewrite_redop_to_store( cacheop<cid,Tr,aid,flags> c );
 
 template<typename A, typename T, unsigned short VL>
@@ -96,7 +96,7 @@ auto rewrite_redop_to_store( storeop<nt,R,T> s ) {
 			 rewrite_redop_to_store( s.value() ) );
 }
 
-template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static constexpr
 auto rewrite_redop_to_store( cacheop<cid,Tr,aid,flags> c ) {
     return c;

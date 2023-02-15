@@ -2,6 +2,7 @@
 #ifndef GRAPTOR_DSL_PTRSET_H
 #define GRAPTOR_DSL_PTRSET_H
 
+#include "graptor/dsl/ast/decl.h"
 #include "graptor/dsl/ast.h"
 #include "graptor/dsl/comp/cache.h"
 
@@ -228,13 +229,14 @@ struct ptrset<storeop<nt,R,T>, Map> {
     }
 };
 
-template<unsigned cid, typename Tr, typename Map>
-struct ptrset<cacheop<cid,Tr>, Map> {
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename Map>
+struct ptrset<cacheop<cid,Tr,aid,flags>, Map> {
     using entry_type = void;
     using map_type = Map;
 
     template<typename MapTy>
-    static void initialize( MapTy & map, const cacheop<cid,Tr> & ) { }
+    static void initialize( MapTy & map, const cacheop<cid,Tr,aid,flags> & ) { }
 };
 
 template<typename E1, typename E2, typename RedOp, typename Map>
@@ -355,8 +357,10 @@ template<typename PtrSet, typename E1, typename E2, typename E3,
 	 typename TernOp>
 static constexpr auto extract_ptrset( ternop<E1,E2,E3,TernOp> b, PtrSet && set );
 
-template<typename PtrSet, unsigned cid, typename Tr>
-static constexpr auto extract_ptrset( cacheop<cid,Tr> c, PtrSet && set );
+template<typename PtrSet, unsigned cid, typename Tr,
+	 array_aid aid, cacheop_flags flags>
+static constexpr auto
+extract_ptrset( cacheop<cid,Tr,aid,flags> c, PtrSet && set );
 
 template<typename PtrSet, typename A, typename T, unsigned short VL>
 static constexpr auto extract_ptrset( refop<A,T,VL> r, PtrSet && set );
@@ -453,9 +457,10 @@ auto extract_ptrset( storeop<nt,R,T> s, PtrSet && set ) {
     return extract_ptrset( s.ref(), extract_ptrset( s.value(), std::forward<PtrSet>( set ) ) );
 }
 
-template<typename PtrSet, unsigned cid, typename Tr>
+template<typename PtrSet,
+	 unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto extract_ptrset( cacheop<cid,Tr> c, PtrSet && set ) {
+auto extract_ptrset( cacheop<cid,Tr,aid,flags> c, PtrSet && set ) {
     return set;
 }
 

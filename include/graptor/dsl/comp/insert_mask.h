@@ -26,7 +26,7 @@ template<value_kind VKind, typename Mask, typename E1, typename E2, typename Bin
 static constexpr auto insert_mask( binop<E1,E2,BinOp> b, Mask mask );
 
 template<value_kind VKind, typename Mask,
-	 unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+	 unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static constexpr auto insert_mask( cacheop<cid,Tr,aid,flags> c, Mask mask );
 
 template<value_kind VKind, typename Mask, typename A, typename T, unsigned short VL>
@@ -107,7 +107,7 @@ auto insert_mask( storeop<nt,R,T> s, Mask mask ) {
 }
 
 template<value_kind VKind, typename Mask,
-	 unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+	 unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static constexpr
 auto insert_mask( cacheop<cid,Tr,aid,flags> c, Mask mask ) {
     return c;

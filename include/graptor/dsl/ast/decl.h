@@ -173,7 +173,7 @@ template<typename S, typename U, typename C, typename TernOp>
 struct ternop;
 
 template<unsigned cid, typename Tr,
-	 array_aid aid = 0, cacheop_flags = cacheop_flags::none>
+	 short aid = 0, cacheop_flags = cacheop_flags::none>
 struct cacheop;
 
 template<typename A, typename T, unsigned short VL_>
@@ -335,8 +335,9 @@ struct is_cacheop {
 template<typename E>
 struct is_masked_cacheop : public std::false_type { };
 
-template<unsigned cid, typename Tr, typename M>
-struct is_masked_cacheop<binop<cacheop<cid,Tr>,M,binop_mask>>
+template<unsigned cid, typename Tr, short aid, cacheop_flags flags,
+	 typename M>
+struct is_masked_cacheop<binop<cacheop<cid,Tr,aid,flags>,M,binop_mask>>
     : public std::true_type { };
 
 template<typename T>

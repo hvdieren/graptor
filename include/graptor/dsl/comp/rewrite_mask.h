@@ -53,7 +53,7 @@ auto rewrite_mask( value<Tr, VKind> v ) {
     return v;
 }
 
-template<bool LV, unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+template<bool LV, unsigned cid, typename Tr, short aid, cacheop_flags flags>
 static __attribute__((always_inline)) inline constexpr
 auto rewrite_mask( cacheop<cid,Tr,aid,flags> c ) {
     return c;
