@@ -231,22 +231,22 @@ alignas(64) const uint8_t avx512_1x32_array_encoding_permute_lut_vl8[64] = {
 };
 
 alignas(64) const uint64_t avx2_1x4_convert_to_8x4_lut[64] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, // 0 0 0 0
-    0xffffffff, 0x00000000, 0x00000000, 0x00000000, // 0 0 0 1
-    0x00000000, 0xffffffff, 0x00000000, 0x00000000, // 0 0 1 0
-    0xffffffff, 0xffffffff, 0x00000000, 0x00000000, // 0 0 1 1
-    0x00000000, 0x00000000, 0xffffffff, 0x00000000, // 0 1 0 0
-    0xffffffff, 0x00000000, 0xffffffff, 0x00000000, // 0 1 0 1
-    0x00000000, 0xffffffff, 0xffffffff, 0x00000000, // 0 1 1 0
-    0xffffffff, 0xffffffff, 0xffffffff, 0x00000000, // 0 1 1 1
-    0x00000000, 0x00000000, 0x00000000, 0xffffffff, // 1 0 0 0
-    0xffffffff, 0x00000000, 0x00000000, 0xffffffff, // 0 0 0 1
-    0x00000000, 0xffffffff, 0x00000000, 0xffffffff, // 1 0 1 0
-    0xffffffff, 0xffffffff, 0x00000000, 0xffffffff, // 1 0 1 1
-    0x00000000, 0x00000000, 0xffffffff, 0xffffffff, // 1 1 0 0
-    0xffffffff, 0x00000000, 0xffffffff, 0xffffffff, // 1 1 0 1
-    0x00000000, 0xffffffff, 0xffffffff, 0xffffffff, // 1 1 1 0
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff  // 1 1 1 1
+    0x00000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, // 0 0 0 0
+    0xffffffffffffffff, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, // 0 0 0 1
+    0x0000000000000000, 0xffffffffffffffff, 0x0000000000000000, 0x0000000000000000, // 0 0 1 0
+    0xffffffffffffffff, 0xffffffffffffffff, 0x0000000000000000, 0x0000000000000000, // 0 0 1 1
+    0x0000000000000000, 0x0000000000000000, 0xffffffffffffffff, 0x0000000000000000, // 0 1 0 0
+    0xffffffffffffffff, 0x0000000000000000, 0xffffffffffffffff, 0x0000000000000000, // 0 1 0 1
+    0x0000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, 0x0000000000000000, // 0 1 1 0
+    0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0x0000000000000000, // 0 1 1 1
+    0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0xffffffffffffffff, // 1 0 0 0
+    0xffffffffffffffff, 0x0000000000000000, 0x0000000000000000, 0xffffffffffffffff, // 0 0 0 1
+    0x0000000000000000, 0xffffffffffffffff, 0x0000000000000000, 0xffffffffffffffff, // 1 0 1 0
+    0xffffffffffffffff, 0xffffffffffffffff, 0x0000000000000000, 0xffffffffffffffff, // 1 0 1 1
+    0x0000000000000000, 0x0000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, // 1 1 0 0
+    0xffffffffffffffff, 0x0000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, // 1 1 0 1
+    0x0000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, // 1 1 1 0
+    0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff  // 1 1 1 1
 };
 
 const char * frontier_type_names[
