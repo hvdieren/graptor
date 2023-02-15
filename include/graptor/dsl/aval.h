@@ -493,7 +493,7 @@ auto create_mask_pack( simd::detail::mask_impl<MTr> m ) {
     return mask_pack<MTr>( m );
 }
 
-auto create_mask_pack() {
+inline auto create_mask_pack() {
     return mask_pack<>();
 }
 
