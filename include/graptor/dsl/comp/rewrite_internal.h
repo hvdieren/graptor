@@ -109,9 +109,9 @@ auto rewrite_internal( storeop<nt,R,T> s ) {
 			 rewrite_internal( s.value() ) );
 }
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto rewrite_internal( cacheop<cid,Tr> c ) {
+auto rewrite_internal( cacheop<cid,Tr,aid,flags> c ) {
     return c;
 }
 

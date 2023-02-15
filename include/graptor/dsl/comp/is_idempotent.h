@@ -122,8 +122,8 @@ struct is_idempotent<storeop<nt,R,T>> {
     static constexpr bool is_single_trigger = false;
 };
 
-template<unsigned cid, typename Tr>
-struct is_idempotent<cacheop<cid,Tr>> {
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+struct is_idempotent<cacheop<cid,Tr,aid,flags>> {
     static constexpr unsigned char seen_mod = 0;
     static constexpr bool value = true;
     static constexpr bool is_single_trigger = false;

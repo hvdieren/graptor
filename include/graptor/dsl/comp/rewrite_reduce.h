@@ -31,9 +31,9 @@ template<typename E1, typename E2, typename E3, typename TernOp>
 static constexpr
 auto rewrite_reduce( ternop<E1,E2,E3,TernOp> t );
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto rewrite_reduce( cacheop<cid,Tr> c );
+auto rewrite_reduce( cacheop<cid,Tr,aid,flags> c );
 
 template<typename A, typename T, unsigned short VL>
 static constexpr
@@ -76,9 +76,9 @@ auto rewrite_reduce( maskrefop<A,T,M,VL> r ) {
     return make_maskrefop( r.array(), rewrite_reduce( r.index() ), r.mask() );
 }
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto rewrite_reduce( cacheop<cid,Tr> c ) {
+auto rewrite_reduce( cacheop<cid,Tr,aid,flags> c ) {
     return c;
 }
 

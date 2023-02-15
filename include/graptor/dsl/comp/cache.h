@@ -133,7 +133,8 @@ struct reduction_info<CID,redop<E1,E2,RedOp>> {
     using cached_type = simd::container<data_type>;
     template<unsigned short VL>
     using cacheop_type
-	= cacheop<cid,typename data_type::template rebindVL<VL>::type>;
+    = cacheop<cid,typename data_type::template rebindVL<VL>::type,
+	      id,cacheop_flags::is_redop>;
 
     // Every cached value should have a natural/default vector length
     static constexpr unsigned short VL = orig_redop_type::VL;
@@ -396,7 +397,8 @@ struct reduction_info<CID,dfsaop<S,U,C,DFSAOp>> {
     using cached_type = simd::container<data_type>;
     template<unsigned short VL>
     using cacheop_type
-	= cacheop<cid,typename data_type::template rebindVL<VL>::type>;
+    = cacheop<cid,typename data_type::template rebindVL<VL>::type,
+	id,cacheop_flags::is_dfsaop>;
 
     // Every cached value should have a natural/default vector length
     static constexpr unsigned short VL = orig_redop_type::VL;
@@ -612,8 +614,9 @@ struct reduction_info<CID,refop<A,T,VL_>> {
     using data_type = typename orig_ref_type::data_type;
     using cached_type = simd::container<data_type>;
     template<unsigned short VL__>
-    using cacheop_type
-	= cacheop<cid,typename data_type::template rebindVL<VL__>::type>;
+    using cacheop_type =
+	cacheop<cid,typename data_type::template rebindVL<VL__>::type,
+		id,cacheop_flags::is_refop>;
 
     reduction_info( orig_ref_type ref ) : m_ref( ref ) { }
 
@@ -1716,9 +1719,9 @@ auto extract_cacheable_refs_helper( storeop<nt,R,T> s ) {
 		      extract_cacheable_refs_helper( s.value() ) );
 }
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_id aid, cacheop_flags flags>
 static constexpr
-auto extract_cacheable_refs_helper( cacheop<cid,Tr> c ) {
+auto extract_cacheable_refs_helper( cacheop<cid,Tr,aid,flags> c ) {
     return cache<>();
 }
 
@@ -1921,9 +1924,9 @@ auto extract_uses_helper( storeop<nt,R,T> s, LeftLdSt left_ls ) {
 }
 
 template<value_kind VKX, bool Write, bool Masked, typename LeftLdSt,
-	 unsigned cid, typename Tr>
+	 unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto extract_uses_helper( cacheop<cid,Tr> c, LeftLdSt left_ls ) {
+auto extract_uses_helper( cacheop<cid,Tr,aid,flags> c, LeftLdSt left_ls ) {
     return left_ls;
 }
 
@@ -2077,9 +2080,9 @@ auto extract_readonly_refs_helper( storeop<nt,R,T> s ) {
     return extract_readonly_refs_helper( s.value() );
 }
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static constexpr
-auto extract_readonly_refs_helper( cacheop<cid,Tr> c ) {
+auto extract_readonly_refs_helper( cacheop<cid,Tr,aid,flags> c ) {
     return cache<>();
 }
 
@@ -2166,9 +2169,10 @@ auto rewrite_caches( ternop<E1,E2,E3,TernOp> t, const Cache & c ) {
 }
 
 template<value_kind VKind, memory_access_method mam,
-	 unsigned cid, typename Tr, typename Cache>
+	 unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename Cache>
 static constexpr
-auto rewrite_caches( cacheop<cid,Tr> o, const Cache & c ) {
+auto rewrite_caches( cacheop<cid,Tr,aid,flags> o, const Cache & c ) {
     return o;
 }
 
@@ -2213,11 +2217,13 @@ auto rewrite_caches_ref( refop<A,T,VL> r, const Cache & c,
 // and results in SFINAE skipping Case I, II
 // TODO: should we nest cacheop in refop at all?
 template<value_kind VKind, memory_access_method mam,
-	 unsigned cid, typename Tr, typename U, typename Cache>
+	 unsigned cid, typename Tr,
+	 array_aid aid, cacheop_flags flags,
+	 typename U, typename Cache>
 static constexpr
-auto rewrite_caches_ref( refop<cacheop<cid,Tr>,U,Tr::VL> r, const Cache & c ) {
+auto rewrite_caches_ref( refop<cacheop<cid,Tr,aid,flags>,U,Tr::VL> r, const Cache & c ) {
     assert( 0 && "Is this case relevant at all?" );
-    return refop<cacheop<cid,Tr>,U,Tr::VL>(
+    return refop<cacheop<cid,Tr,aid,flags>,U,Tr::VL>(
 	transform_nt<mam == mam_nontemporal>( r.array() ),
 	rewrite_caches<VKind,mam>( r.index(), c ) );
 }

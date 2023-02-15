@@ -17,11 +17,12 @@
  * values should be deposited in the vectorized cache, in any lane.
  *
  * The translation works as follows:
- * - rvalue cacheop<cid,Tr> is replaced by unop_reduce( cacheop<cid,Tr> )
+ * - rvalue cacheop<cid,Tr,aid,flags> is replaced by
+ *   unop_reduce( cacheop<cid,Tr,aid,flags> )
  *   using the reduction operator in the context where the cacheop
  *   originally appeared. This holds if cid is in vcaches
- * - lvalue cacheop<cid,Tr> has unop_setl0 applied to the rvalue (either
- *   in a storeop or redop).
+ * - lvalue cacheop<cid,Tr,aid,flags> has unop_setl0 applied to the rvalue
+ *   (either in a storeop or redop).
  *   rule: if cid in vcaches -> only used as rvalue;
  *         else -> only used as lvalue
  * - refop with ref not a cacheop: fully transform to scalar (scalar store)
@@ -41,8 +42,9 @@ template<typename Tr, value_kind VKind, typename Cache>
 static constexpr
 auto rewrite_scalarize( value<Tr, VKind> v, const Cache & c );
 
-template<unsigned cid, typename Tr, typename Cache>
-auto rewrite_scalarize( cacheop<cid, Tr> o, const Cache & c,
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename Cache>
+auto rewrite_scalarize( cacheop<cid, Tr, aid, flags> o, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * = nullptr );
 
 template<typename Expr, typename UnOp, typename Cache>
@@ -57,10 +59,10 @@ template<typename E1, typename E2, typename BinOp, typename Cache>
 static constexpr
 auto rewrite_scalarize( binop<E1,E2,BinOp> b, const Cache & c );
 
-template<bool nt, unsigned cid, typename Tr, typename U,
-	 typename Cache>
+template<bool nt, unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename U, typename Cache>
 static constexpr
-auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr>,U> r, const Cache & c,
+auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr,aid,flags>,U> r, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * = nullptr );
 
 template<bool nt, typename R, typename T, typename Cache>
@@ -74,10 +76,10 @@ auto rewrite_scalarize( refop<A,T,VL> r, const Cache & c,
 			typename std::enable_if<!is_cacheop<A>::value>::type * = nullptr );
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, typename Tr,
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
 	 typename E2, typename RedOp, typename Cache>
 constexpr
-auto rewrite_scalarize( redop<cacheop<cid,Tr>,E2,RedOp> r, const Cache & c,
+auto rewrite_scalarize( redop<cacheop<cid,Tr,aid,flags>,E2,RedOp> r, const Cache & c,
 			typename std::enable_if<!cache_contains_cid<cid,Cache>::value>::type * = nullptr );
 
 template<typename E1, typename E2, typename RedOp, typename Cache>
@@ -105,8 +107,9 @@ auto rewrite_scalarize( value<Tr, VKind> v, const Cache & c ) {
     }
 }
 
-template<unsigned cid, typename Tr, typename Cache>
-auto rewrite_scalarize( cacheop<cid, Tr> o, const Cache & c,
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename Cache>
+auto rewrite_scalarize( cacheop<cid, Tr, aid, flags> o, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * ) {
     // R-value usage of cacheop
     // return c.template get<cid>().get_reduce_expr( c );
@@ -126,10 +129,10 @@ void rewrite_scalarize( storeop<cacheop<cid,T,VL>,U> r, const Cache & c,
 */
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, bool nt, typename Tr, typename U,
-	 typename Cache>
+template<unsigned cid, bool nt, typename Tr, array_aid aid, cacheop_flags flags,
+	 typename U, typename Cache>
 static constexpr
-auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr>,U> r, const Cache & c,
+auto rewrite_scalarize( storeop<nt,cacheop<cid,Tr,aid,flags>,U> r, const Cache & c,
 			typename std::enable_if<cache_contains_cid<cid,Cache>::value>::type * ) {
     return make_storeop_like<nt>(
 	r.ref(), make_unop_setl0<Tr>( rewrite_scalarize( r.value(), c ) ) );
@@ -219,10 +222,10 @@ void rewrite_scalarize( redop<cacheop<cid,T,VL>,E2,RedOp> r, const Cache & c,
 */
 
 // Case II: not-Cache-cached cacheop used as lvalue
-template<unsigned cid, typename Tr,
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags,
 	 typename E2, typename RedOp, typename Cache>
 constexpr
-auto rewrite_scalarize( redop<cacheop<cid,Tr>,E2,RedOp> r, const Cache & c,
+auto rewrite_scalarize( redop<cacheop<cid,Tr,aid,flags>,E2,RedOp> r, const Cache & c,
 			typename std::enable_if<!cache_contains_cid<cid,Cache>::value>::type * ) {
     return make_redop( r.ref(),
 		       make_unop_setl0<Tr>( rewrite_scalarize( r.val(), c ) ),

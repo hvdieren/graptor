@@ -73,8 +73,8 @@ struct vector_length<value<Tr, VKind>> {
     static constexpr unsigned short value = Tr::VL;
 };
 
-template<unsigned cid, typename Tr>
-struct vector_length<cacheop<cid,Tr>> {
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+struct vector_length<cacheop<cid,Tr,aid,flags>> {
     static constexpr unsigned short value = Tr::VL;
 };
 

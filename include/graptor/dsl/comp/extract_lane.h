@@ -20,8 +20,9 @@ static constexpr auto extract_lane( storeop<nt,R,T> s );
 template<unsigned short Lane, typename E1, typename E2, typename BinOp>
 static constexpr auto extract_lane( binop<E1,E2,BinOp> b );
 
-template<unsigned short Lane, unsigned cid, typename Tr>
-static constexpr auto extract_lane( cacheop<cid,Tr> c );
+template<unsigned short Lane, unsigned cid, typename Tr,
+	 array_aid aid, cacheop_flags flags>
+static constexpr auto extract_lane( cacheop<cid,Tr,aid,flags> c );
 
 template<unsigned short Lane, typename A, typename T, unsigned short VL>
 static constexpr auto extract_lane( refop<A,T,VL> r );
@@ -103,10 +104,9 @@ auto extract_lane( storeop<nt,R,T> s ) {
 			 extract_lane<Lane>( s.value() ) );
 }
 
-template<unsigned short Lane, unsigned cid, typename Tr>
-static constexpr
-auto extract_lane( cacheop<cid,Tr> c ) {
-    // return cacheop<cid,T,1>();
+template<unsigned short Lane, unsigned cid, typename Tr,
+	 array_aid aid, cacheop_flags flags>
+auto extract_lane( cacheop<cid,Tr,aid,flags> c ) {
     return cacheop<cid,typename Tr::template rebindVL<1>::type>();
 }
 

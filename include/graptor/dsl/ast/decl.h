@@ -73,6 +73,80 @@ enum op_codes {
     op_NUM
 };
 
+/* array_aid
+ * Internal IDs to disambiguate arrays. It was hoped that multiple AIDs
+ * could be used for old and new frontiers in order to track where the
+ * definition of the frontier came from. While we can map these to the
+ * some pointers using extract_pointer_set(), this idea breaks down when
+ * we assume that cached arrays are consistently remapped to the cache.
+ * Unfortunately, that mechanism does not recognize that dicstinct AIDs
+ * map to the same arrays.
+ */
+enum array_aid {
+    aid_graph_index = -16,
+    aid_frontier_old = -32,
+    aid_frontier_old_f = -32,
+    aid_frontier_old_2 = -32,
+    aid_frontier_new = -48,
+    aid_frontier_new_f = -48,
+    aid_frontier_new_2 = -48,
+    aid_frontier_new_2b = -48,
+    aid_frontier_new_store = -48,
+    aid_frontier_nactv = -64,
+    aid_frontier_nacte = -80,
+    aid_redir = -96,
+    aid_utilization_active = -112,
+    aid_utilization_vectors = -128,
+    aid_graph_degree = -144,
+    aid_frontier_a = -160,
+    aid_emap_zerof = -176,
+    aid_emap_let = -192,
+    aid_rnd_state0 = -208,
+    aid_rnd_state1 = -224,
+    aid_rnd_tmp0 = -240,
+    aid_rnd_tmp1 = -256,
+    aid_rnd_tmp2 = -272,
+    aid_udiv_p = -288,
+    aid_udiv_m = -304,
+    aid_eweight = -320,
+    aid_priv = -1024 // a very big downward range is required
+};
+
+static inline constexpr array_aid cid_to_aid( unsigned int cid ) {
+    return array_aid( unsigned(aid_priv) - cid * 16 );
+}
+
+static inline constexpr unsigned int aid_to_cid( array_aid aid ) {
+    return ( unsigned(aid_priv) - unsigned(aid) ) / 16;
+}
+
+constexpr short aid_key( array_aid a ) {
+    // Negative values alias, positive don't
+    return short(a) < 0 ? - ( short(-a) >> 4 ) : short(a);
+}
+
+template<array_aid AID0, array_aid AID1>
+struct aid_is_aliased {
+    static constexpr bool value = aid_key(AID0) == aid_key(AID1);
+};
+
+constexpr bool aid_aliased( array_aid a0, array_aid a1 ) {
+    return aid_key( a0 ) == aid_key( a1 );
+}
+
+/** cacheop_flags
+ * Semantic properties of the specific cacheop
+ */
+enum class cacheop_flags {
+    none = 0,
+    is_accum = 1,
+    is_redop = 2,
+    is_dfsaop = 4,
+    is_refop = 8,
+    reduces_to_scalar = 16
+};
+
+
 template<typename Cst, typename Expr>
 auto expand_cst( Cst c, Expr e );
 
@@ -98,7 +172,8 @@ struct binop;
 template<typename S, typename U, typename C, typename TernOp>
 struct ternop;
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr,
+	 array_aid aid = 0, cacheop_flags = cacheop_flags::none>
 struct cacheop;
 
 template<typename A, typename T, unsigned short VL_>

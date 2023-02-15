@@ -21,9 +21,9 @@ auto extract_mask( value<Tr, VKind> v ) {
     return value<Tr, vk_true>();
 }
 
-template<unsigned cid, typename Tr>
+template<unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
 static __attribute__((always_inline)) inline constexpr
-auto extract_mask( cacheop<cid,Tr> c ) {
+auto extract_mask( cacheop<cid,Tr,aid,flags> c ) {
     return value<Tr, vk_true>();
 }
 

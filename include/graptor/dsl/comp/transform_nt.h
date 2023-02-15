@@ -20,8 +20,8 @@ static constexpr auto transform_nt( storeop<nt,R,T> s );
 template<bool NT, typename E1, typename E2, typename BinOp>
 static constexpr auto transform_nt( binop<E1,E2,BinOp> b );
 
-template<bool NT, unsigned cid, typename Tr>
-static constexpr auto transform_nt( cacheop<cid,Tr> c );
+template<bool NT, unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+static constexpr auto transform_nt( cacheop<cid,Tr,aid,flags> c );
 
 template<bool NT, typename A, typename T, unsigned short VL>
 static constexpr auto transform_nt( refop<A,T,VL> r );
@@ -96,8 +96,8 @@ auto transform_nt( storeop<nt,R,T> s ) {
 			 transform_nt<NT>( s.value() ) );
 }
 
-template<bool NT, unsigned cid, typename Tr>
-static constexpr
+template<bool NT, unsigned cid, typename Tr, array_aid aid, cacheop_flags flags>
+static constexpr auto transform_nt( cacheop<cid,Tr,aid,flags> c ) {
 auto transform_nt( cacheop<cid,Tr> c ) {
     return c;
 }
