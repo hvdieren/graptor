@@ -2,8 +2,56 @@
 #ifndef GRAPTOR_DSL_EMAP_GRAPTORCSCDATAPARCACHED_H
 #define GRAPTOR_DSL_EMAP_GRAPTORCSCDATAPARCACHED_H
 
+#include "graptor/target/vector.h"
+
 // TODO:
 // + non-VEBO case, encode skip distance in final SIMD word.
+
+alignas(64) extern const uint32_t avx2_4x16_termination_lut_epi32[32];
+
+namespace {
+    
+/**
+ * Utility to generate a mask of active vertices, in order to deal with
+ * the last remaining iterations.
+ *
+ * Possible approaches:
+ * + Generate an integer bit mask. This is well-suited to AVX512 based on
+ *   the wide use of bit masks.
+ * + Load a mask from memory, from an array containing VL 0xf fields followed
+ *   by VL 0x0 fields. The index for the load is derived from send-dst such
+ *   that the right number of 0xf fields are loaded.
+ *   This approach is like a LUT with VL+1 vector entries, but the vectors are
+ *   overlapping due to their similarity.
+ *   This yields a vector mask, which is ideal for AVX2.
+ * + Load a bitmask from a LUT based on send-dst. There are VL+1 entries in
+ *   the LUT.
+ * + Do a wide shift across lanes. Wide shift is available for 128-bit lanes
+ *   (SSE sub-vectors), which would work for SSE4.2 but not AVX or higher.
+ */
+#if __AVX512F__
+template<unsigned short VL>
+auto get_end_mask( VID dst, VID send ) {
+    return simd::detail::template mask_impl<
+	simd::detail::template mask_bit_traits<VL>
+	>(
+	    ( (VID(1)<<( std::min( send-dst, VID(VL) ) )) << 1 ) - 1 );
+}
+#else
+template<unsigned short VL>
+auto get_end_mask( VID dst, VID send ) {
+    static_assert( VL <= 16, "limitation on size of LUT" );
+    static_assert( sizeof(VID) == 4, "dependence on the LUT element width" );
+    using L = logical<sizeof(VID)>;
+    using tr = vector_type_traits_vl<L,VL>;
+    auto val = tr::loadu(
+	reinterpret_cast<const L *>( &avx2_4x16_termination_lut_epi32[0] ),
+	VID(VL)-std::min(send-dst,VID(VL)) );
+    return simd::mask_logical<sizeof(L),VL>( val );
+}
+#endif
+
+} // namespace anonymous
 
 // This function implements a SlimSell-like vectorization although extended
 // to short-circuit inactive vertices.
@@ -68,13 +116,15 @@ static inline void GraptorCSCDataParCached(
     auto sstep = simd::template create_constant<svid_type>( (VID)VL );
 
     VID send = part.end_of(p);
-    auto vpend = simd::template create_constant<vid_type>( send );
+    // auto vpend = simd::template create_constant<vid_type>( send );
 
     EID sedge = part.edge_start_of( p );
     EID s = 0;
     const VID dmax = 1 << (GP.getMaxVL() * GP.getDegreeBits());
-    while( s < nvec && sdst.at(0) < send ) {
+    // The condition sdst.at(0) < send should be satisfied whenever s < nvec.
+    while( s < nvec /* && sdst.at(0) < send */ ) {
 	// Load cache for vdst
+	auto vpend = get_end_mask<VL>( sdst.at(0), send );
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
 	    expr::create_entry<expr::vk_mask>( vpend ),
@@ -106,8 +156,8 @@ static inline void GraptorCSCDataParCached(
 #endif
 
 	    // End of run of SIMD groups
-	    // EID smax = std::min( s + EID(deg) * VL, nvec );
 	    EID smax = s + EID(deg) * VL;
+	    // assert( smax <= nvec );
 
 	    // std::cerr << "SIMD group v0=" << sdst.at(0) << " s=" << s << " deg=" << deg << " nvec=" << nvec << " - new\n";
 
@@ -117,7 +167,6 @@ static inline void GraptorCSCDataParCached(
 		extractor.extract_source( edata.data() ) );
 
 	    while( s < smax ) {
-		assert( s < nvec );
 		// Check all lanes are active; using cached values.
 		if( !env.evaluate_bool( c, m, aexpr ) ) {
 		    s = smax;
@@ -162,6 +211,7 @@ static inline void GraptorCSCDataParCached(
 
 	// Evaluate hoisted part of expression.
 	{
+	    auto vpend = get_end_mask<VL>( sdst.at(0), send );
 	    auto m = expr::create_value_map_new<VL>(
 		expr::create_entry<expr::vk_mask>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
@@ -192,6 +242,7 @@ static inline void GraptorCSCDataParCached(
     //       degree[v] == 0?
     while( sdst.at(0) < send ) {
 	// Load cache for vdst
+	auto vpend = get_end_mask<VL>( sdst.at(0), send );
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
 	    expr::create_entry<expr::vk_mask>( vpend ),
@@ -243,7 +294,12 @@ static inline void emap_pull(
     auto v_edge = expr::template make_unop_incseq<VL>(
 	expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     // disables padding vertices
-    auto v_adst_cond = v_dst < expr::value<simd::ty<VID,VL>,expr::vk_mask>();
+    // auto v_adst_cond = v_dst < expr::value<simd::ty<VID,VL>,expr::vk_mask>();
+#if __AVX512F__
+    auto v_adst_cond = expr::value<simd::detail::mask_bit_traits<VL>,expr::vk_mask>();
+#else
+    auto v_adst_cond = expr::value<simd::detail::mask_logical_traits<sizeof(VID),VL>,expr::vk_mask>();
+#endif
     auto v_pid0 = expr::make_unop_incseq<VL>(
 	expr::value<simd::ty<VID,1>,expr::vk_pid>() );
     auto v_one = expr::value<simd::ty<VID,VL>,expr::vk_mask>();
@@ -288,7 +344,7 @@ static inline void emap_pull(
 
     // Override pointer for aid_eweight with the relevant permutation of the
     // weights for the GA graph.
-    auto env = expr::eval::create_execution_environment_op(
+    auto env = expr::eval::create_execution_environment_op<decltype(accum)>(
 	op, all_caches,
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
@@ -330,15 +386,15 @@ static inline void emap_pull(
 		   "Cannot respect config option of maximum vector length" );
 
     map_partition<Cfg::is_parallel()>( part, [&]( int p ) {
-	    constexpr bool ID = expr::is_idempotent<decltype(m_vexpr)>::value;
-	    GraptorCSCDataParCached<ID,VL>(
-		GA, p, GA.getCSC( p ), part,
-		aexpr, // rewrite_internal( aexpr ),
-		m_vexpr, // rewrite_internal( m_vexpr ),
-		m_rexpr, // rewrite_internal( m_rexpr ),
-		vop_caches, vcaches, vcaches_use, all_caches, env,
-		op.get_config() );
-	} );
+	constexpr bool ID = expr::is_idempotent<decltype(m_vexpr)>::value;
+	GraptorCSCDataParCached<ID,VL>(
+	    GA, p, GA.getCSC( p ), part,
+	    aexpr, // rewrite_internal( aexpr ),
+	    m_vexpr, // rewrite_internal( m_vexpr ),
+	    m_rexpr, // rewrite_internal( m_rexpr ),
+	    vop_caches, vcaches, vcaches_use, all_caches, env,
+	    op.get_config() );
+    } );
 
     // Scan across partitions
     if constexpr ( !expr::is_noop<decltype(pvop0)>::value

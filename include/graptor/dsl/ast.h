@@ -38,8 +38,12 @@ namespace expr {
 template<typename value_map_type, typename Cache>
 struct printer;
 
+template<typename... T>
+struct cache;
+
 template<typename value_map_type, typename Cache,
-	 typename array_map_type, bool AtomicUpdate = false>
+	 typename array_map_type, typename Accum = cache<>,
+	 bool AtomicUpdate = false>
 struct evaluator;
 
 } // namespace expr

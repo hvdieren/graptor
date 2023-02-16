@@ -22,7 +22,7 @@ namespace expr {
 
 // Evaluation
 template<typename value_map_type, typename Cache, typename array_map_type,
-	 bool AtomicUpdate>
+	 typename Accum, bool AtomicUpdate>
 struct evaluator {
     // static constexpr unsigned short VLS = value_map_type::VLS;
     // static constexpr unsigned short VLD = value_map_type::VLD;
@@ -731,8 +731,9 @@ struct evaluator {
 	    // commutative.
 	    // In this instance, we will consider this for counting active
 	    // edges, as this will be correct.
-#if 0
-	    if constexpr ( cid == expr::aid_graph_degree-somethingelse ) {
+	    if constexpr ( expr::cache_get_accum_aid<cid,Accum>::valid
+			   && expr::cache_get_accum_aid<cid,Accum>::aid
+			   == expr::aid_frontier_nacte ) {
 		auto cst = E2::unop_type::evaluate_confuse_lanes(
 		    dis.uvalue() );
 
@@ -740,9 +741,7 @@ struct evaluator {
 		    cst.uvalue(), empty_mpack );
 		auto redop_mpack = sb::create_mask_pack( cond.value() );
 		return make_rvalue( r.value(), redop_mpack );
-	    } else
-#endif
-	    {
+	    } else {
 		auto cst = E2::unop_type::evaluate( dis.uvalue(), empty_mpack );
 
 		auto r = evaluate_redop<RedOp,cid,TrC>(
@@ -1197,21 +1196,24 @@ private:
 };
 
 template<bool AtomicUpdate, typename Cache, typename value_map_type,
+	 typename Accum,
 	 typename Expr>
 __attribute__((always_inline))
 inline auto evaluate( Cache &c, const value_map_type & m, Expr e ) {
     auto array_map = extract_pointer_set( e );
     return expr::evaluator<value_map_type, Cache, decltype(array_map),
-			   AtomicUpdate>( c, m, array_map )
+			   Accum, AtomicUpdate>( c, m, array_map )
 	.evaluate( e, sb::mask_pack<>() );
 }
 
 template<typename Cache, typename value_map_type,
+	 typename Accum,
 	 typename Expr>
 __attribute__((always_inline))
 static inline auto evaluate( Cache &c, const value_map_type & m, Expr e ) {
     auto array_map = extract_pointer_set( e );
-    return expr::evaluator<value_map_type, Cache, decltype(array_map), false>(
+    return expr::evaluator<value_map_type, Cache, decltype(array_map), Accum,
+			   false>(
 	c, m, array_map ).evaluate( e );
 }
 
@@ -1225,7 +1227,7 @@ bool evaluate_bool( Cache & c, const ValueMap & m, Expr expr ) {
     if constexpr ( expr::is_constant_true<Expr>::value )
 	return true;
     else {
-	auto r = expr::evaluate( c, m, expr );
+	auto r = expr::evaluate<Cache,ValueMap,cache<>,Expr>( c, m, expr );
 	static_assert( decltype(r)::VL == 1, "expect 1D vector or kmask" );
 	return expr::is_true( r );
     }

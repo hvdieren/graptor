@@ -287,12 +287,16 @@ struct unop_cvt_data_type {
 	    a.value().template convert_data_type<data_type>(),
 	    mpack );
     }
-    template<typename VTr, layout_t Layout, typename MPack>
+    template<typename VTr, layout_t Layout>
     static GG_INLINE auto
     evaluate_confuse_lanes( sb::rvalue<VTr,Layout> a ) {
 	static_assert( VTr::VL == data_type::VL, "vector length must match" );
+	auto val = a.value();
+	auto res = target::confused_convert<
+	    typename VTr::member_type,T,VL>::compute( val.data() );
+	    
 	return make_rvalue(
-	    a.value().template convert_data_type_confused<data_type>()
+	    simd::detail::vec<data_type,Layout>( res ),
 	    sb::create_mask_pack() );
     }
 };

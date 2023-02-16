@@ -51,9 +51,6 @@ enum memory_access_method {
 };
 
 template<typename... T>
-struct cache;
-
-template<typename... T>
 struct cache {
     using type = std::tuple<T...>;
 
@@ -869,6 +866,25 @@ auto cache_select( const cache<C0,C...> & c,
 		   typename std::enable_if<id!=C0::id>::type * = nullptr ) {
     return cache_select<id>( cdr(c) );
 }
+
+template<unsigned cid, typename Accum, typename Enable = void>
+struct cache_get_accum_aid {
+    static constexpr bool valid = false;
+    static constexpr short aid = -1;
+};
+
+template<unsigned cid, typename C0, typename... C>
+struct cache_get_accum_aid<cid,cache<C0,C...>,
+			   std::enable_if_t<cid==C0::cid>> {
+    static constexpr bool valid = true;
+    static constexpr short aid = C0::id;
+};
+
+template<unsigned cid, typename C0, typename... C>
+struct cache_get_accum_aid<cid,cache<C0,C...>,
+			   std::enable_if_t<cid!=C0::cid>>
+    : cache_get_accum_aid<cid,cache<C...>> {
+};
 
 template<unsigned cid, typename C0, typename... C>
 auto cache_select_cid( const cache<C0,C...> & c,

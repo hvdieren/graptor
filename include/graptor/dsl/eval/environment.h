@@ -7,7 +7,7 @@
 namespace expr {
 namespace eval {
 
-template<typename AddressMap>
+template<typename Accum, typename AddressMap>
 class execution_environment {
 public:
     using address_map_t = AddressMap;
@@ -25,7 +25,7 @@ public:
     evaluate( cache_map_type &c, const value_map_type & m, const Expr & e ) const {
 	sb::mask_pack<> mpack;
 	return expr::evaluator<value_map_type, cache_map_type, address_map_t,
-			       false>( c, m, m_aid_to_address )
+			       Accum, false>( c, m, m_aid_to_address )
 	    .evaluate( e, mpack );
     }
 
@@ -36,25 +36,27 @@ public:
     evaluate( cache_map_type &c, const value_map_type & m,
 	      const mask_pack_type & mpack, const Expr & e ) const {
 	return expr::evaluator<value_map_type, cache_map_type, address_map_t,
-			       false>( c, m, m_aid_to_address )
+			       Accum, false>( c, m, m_aid_to_address )
 	    .evaluate( e, mpack );
     }
 
 
-    template<bool Atomic, typename cache_map_type, typename value_map_type, typename Expr>
+    template<bool Atomic, typename cache_map_type,
+	     typename value_map_type, typename Expr>
     __attribute__((always_inline))
     inline auto
     evaluate( cache_map_type &c, const value_map_type & m, const Expr & e ) const {
 	sb::mask_pack<> mpack;
 	return expr::evaluator<value_map_type, cache_map_type, address_map_t,
-			       Atomic>( c, m, m_aid_to_address )
+			       Accum, Atomic>( c, m, m_aid_to_address )
 	    .evaluate( e, mpack );
     }
 
     template<typename cache_map_type, typename value_map_type, typename Expr>
     __attribute__((always_inline))
     inline bool
-    evaluate_bool( cache_map_type & c, const value_map_type & m, const Expr & expr ) const {
+    evaluate_bool( cache_map_type & c, const value_map_type & m,
+		   const Expr & expr ) const {
 	// Check all lanes are active.
 	// Type-check on the expression to see if it is constant true.
 	// If so, omit the check.
@@ -78,7 +80,7 @@ public:
 				      std::decay_t<address_map_t>> )
 	    return *this;
 	else
-	    return execution_environment<replaced_map_t>( aid_replaced );
+	    return execution_environment<Accum,replaced_map_t>( aid_replaced );
     }
 
     address_map_t & get_map() { return m_aid_to_address; }
@@ -92,7 +94,7 @@ GG_INLINE inline
 auto create_execution_environment( Expr &&... expr ) {
     auto aid_to_address = extract_pointer_set( std::forward<Expr>( expr )... );
     using address_map_t = decltype(aid_to_address);
-    return execution_environment<address_map_t>( aid_to_address );
+    return execution_environment<cache<>,address_map_t>( aid_to_address );
 }
     
 template<typename PtrSet, typename... Expr>
@@ -109,7 +111,7 @@ auto create_execution_environment_with(
 */
     using address_map_t
 	= typename expr::ast_ptrset::ptrset_list<PtrSet,Expr...>::map_type;
-    execution_environment<address_map_t> env;
+    execution_environment<cache<>,address_map_t> env;
     expr::map_copy_entries( env.get_map(), ptrset ); // copy supplied pointers
     expr::ast_ptrset::ptrset_list<PtrSet,Expr...>::initialize(
 	env.get_map(), expr... );
@@ -117,7 +119,7 @@ auto create_execution_environment_with(
 	
 }
 
-template<typename Operator, typename Cache, typename WeightTy>
+template<typename Accum, typename Operator, typename Cache, typename WeightTy>
 GG_INLINE inline
 auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
     using ew_pset
@@ -128,7 +130,7 @@ auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
     using address_map_t
 	= typename expr::ast_ptrset::ptrset_list<op_pset,Cache>::map_type;
 
-    execution_environment<address_map_t> env;
+    execution_environment<Accum,address_map_t> env;
 
     Operator::template ptrset<ew_pset>::initialize( env.get_map(), op );
     expr::ast_ptrset::ptrset_list<op_pset,Cache>::initialize(
@@ -138,6 +140,12 @@ auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
 	    env.get_map(), w );
 
     return env;
+}
+
+template<typename Operator, typename Cache, typename WeightTy>
+GG_INLINE inline
+auto create_execution_environment_op( Operator & op, Cache & c, WeightTy * w ) {
+    return create_execution_environment_op<cache<>>( op, c, w );
 }
 
 template<typename Operator, typename Cache>
