@@ -71,6 +71,37 @@ struct lzcnt {
     }
 };
 
+template<typename T, typename V, unsigned short VL>
+struct confused_convert {
+    using src_traits = vector_type_traits_vl<T, VL>;
+    using dst_traits = vector_type_traits_vl<V, VL>;
+
+    static typename dst_traits::type compute( typename src_traits::type a ) {
+	if constexpr ( sizeof(V) == 2*sizeof(T)
+		       && std::is_integral_v<V> && std::is_unsigned_v<V>
+		       && std::is_integral_v<T> && std::is_unsigned_v<T> ) {
+	    using ht = typename dst_traits::lo_half_traits;
+	    // We will create two half vectors out of a, one having the
+	    // even lanes, the other with the odd lanes. Then fuse together.
+	    auto mask = ht::srli( ht::setone(), ht::B/2 );
+	    auto even = ht::bitwise_and( mask, a );
+	    // For upper half: 32 lower bits will be shifted out, no mask needed
+	    auto odd = ht::srli( a, ht::B/2 );
+	    // Will typically use vt_recursive for dst_traits.
+	    return dst_traits::set_pair( odd, even );
+	} else if constexpr ( is_vpair_v<decltype(a)> ) {
+	    // Recursive case
+	    auto lo = confused_convert<T,V,src_traits::lo_half_traits::vlen>
+		::compute( src_traits::lower_half( a ) );
+	    auto hi = confused_convert<T,V,src_traits::hi_half_traits::vlen>
+		::compute( src_traits::upper_half( a ) );
+	    return dst_traits::set_pair( hi, lo );
+	} else {
+	    // If the custom rules above do not apply, do a normal conversion.
+	    return conversion_traits<T,V,VL>::convert( a );
+	}
+    }
+};
 
 } // namespace target
 
