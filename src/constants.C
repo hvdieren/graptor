@@ -249,6 +249,18 @@ alignas(64) const uint64_t avx2_1x4_convert_to_8x4_lut[64] = {
     0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff  // 1 1 1 1
 };
 
+// Supports vector length up to 16
+alignas(64) const uint32_t avx2_4x16_termination_lut_epi32[32] = {
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000
+};
+
 const char * frontier_type_names[
     static_cast<std::underlying_type_t<frontier_type>>(
 	frontier_type::ft_N )+1] = {
