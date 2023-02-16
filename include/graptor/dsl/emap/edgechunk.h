@@ -521,7 +521,7 @@ void partition_vertex_list(
  * @param[in] mm_parts number of partitions of the edge set to construct
  * @return a freshly allocated array of edge partition descriptors
  ************************************************************************/
-template<size_t mm_block=2048, size_t mm_threshold=2048,
+template<size_t mm_threshold=2048,
 	 typename lVID, typename lEID, typename RecordFn>
 lVID partition_edge_list(
     const lVID * s, // sparse frontier
@@ -695,12 +695,14 @@ public:
 	set_to( get_to()+1 );
 	m_current_edges += deg;
 
+/*
 	assert( m_current_edges != 0 || deg == 0 );
 
 	assert( ( idx[m_vertices[get_from()]] <= get_fstart()
 		  && get_fstart() < idx[m_vertices[get_from()]+1] )
 		|| ( get_fstart() == idx[m_vertices[get_from()]]
 		     && get_fstart() == idx[m_vertices[get_from()]+1] ) );
+*/
     }
 
     template<bool need_atomic,
@@ -730,6 +732,7 @@ public:
     }
 
     VID size() const { return get_to() - get_from(); }
+    EID esize() const { return m_current_edges; }
     bool has_space( VID v, EID e, EID target_edges ) const {
 	if( get_to() - get_from() + v > m_bufsize )
 	    return false;
@@ -743,7 +746,7 @@ public:
     void set( const edge_partition<VID,EID> & ep,
 	      const VID * const v = nullptr ) {
 	VID k = ep.get_to() - ep.get_from();
-if( k > m_bufsize && v == nullptr )
+if( k > m_bufsize )
 std::cerr << "ooops: k=" << k << " m_bufsize=" << m_bufsize << "\n";
 	assert( k <= m_bufsize );
 	if( v )

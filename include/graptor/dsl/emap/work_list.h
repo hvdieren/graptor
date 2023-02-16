@@ -15,6 +15,10 @@
 #define FUSION_BLOCK_SIZE 2048
 #endif
 
+#ifndef FUSION_EDGE_FACTOR
+#define FUSION_EDGE_FACTOR 1
+#endif
+
 #ifndef FUSION_EDGE_BALANCE
 #define FUSION_EDGE_BALANCE 1
 #endif
@@ -98,6 +102,8 @@ public:
 
     static constexpr EID mm_block =
 	block_target_ - ( sizeof(intptr_t) + sizeof(buffer_type) ) / sizeof(T);
+    // mm_edge_block only used with FUSION_EDGE_BALANCE == 1
+    static constexpr EID mm_edge_block = mm_block * FUSION_EDGE_FACTOR;
     static constexpr EID mm_threshold = block_threshold_;
     static_assert( mm_block > 0, "Need non-zero space to store information" );
 
@@ -218,7 +224,7 @@ public:
 	}
 
 	bool has_space( VID v, EID e ) const {
-	    return m_buf.has_space( v, e, mm_block );
+	    return m_buf.has_space( v, e, mm_edge_block );
 	} 
 	bool is_empty() const {
 	    return m_buf.is_empty();
@@ -226,6 +232,11 @@ public:
 	VID size() const {
 	    return m_buf.size();
 	}
+#if FUSION_EDGE_BALANCE
+	EID esize() const {
+	    return m_buf.esize();
+	}
+#endif
 	void set( const edge_partition<VID,EID> & ep,
 		  const VID * const v = nullptr ) {
 	    m_buf.set( ep, v );
@@ -485,10 +496,21 @@ private:
 
 	// For every part, push it to the queue. Return one part that
 	// has not been pushed.
+	VID m = buf->size();
+	EID mm = buf->esize();
+	VID mm_parts = std::min( VID( m_threads ) * 4,
+				 VID( ( mm + queue_type::mm_edge_block - 1 )
+				      / queue_type::mm_edge_block ) );
+
+	// If there are no edges, just return the buffer
+	// If there are few parts, don't split
+	if( mm == 0 || mm_parts == 1 )
+	    return buf;
+
+	// std::cerr << "m=" << m << " mm=" << mm << " parts=" << mm_parts << "\n";
 
 	// Calculate info on the degrees of the vertices and total number of
 	// edges
-	VID m = buf->size();
 	EID * degree = new EID[2*m+1];
 	const VID * const s = buf->vertex_begin();
 	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
@@ -496,22 +518,12 @@ private:
 	} );
 
 	EID* voffsets = &degree[m];
-	EID mm = voffsets[m] = sequence::plusScan( degree, voffsets, m );
-
-	VID mm_parts = std::min( VID( m_threads ) * 4,
-				 VID( ( mm + queue_type::mm_block - 1 ) / queue_type::mm_block ) );
-
-	// If there are no edges, just return the buffer
-	// If there are few parts, don't split
-	if( mm == 0 || mm_parts == 1 ) {
-	    delete[] degree;
-	    return buf;
-	}
+	EID mm2 = voffsets[m] = sequence::plusScan( degree, voffsets, m );
+	assert( mm == mm2 );
 
 	// Create buffers with balanced number of edges, cutting high-degree
 	// vertices over multiple buffers.
-	partition_edge_list<queue_type::mm_block,queue_type::mm_threshold,
-			    VID,EID>(
+	partition_edge_list<queue_type::mm_threshold,VID,EID>(
 	    s, m, voffsets, idx, mm, mm_parts,
 	    [&]( VID p, VID from, VID to, EID fstart, EID lend, EID offset ) {
 		edge_partition<VID,EID> ep( from, to, fstart, lend, offset );
@@ -519,8 +531,10 @@ private:
 		    buf->set( ep );
 		else {
 		    // Cast away const-ness, but won't be modified
-		    buffer_type * sbuf = queue_type::create_list_node(
-			const_cast<VID *>( s ), ep );
+		    buffer_type * sbuf = queue_type::create_list_node();
+		    
+		    sbuf->set( ep, s );
+		    // const_cast<VID *>( s ), ep );
 		    m_queues[self_id].push( sbuf );
 		}
 	    } );
