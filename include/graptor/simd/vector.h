@@ -157,7 +157,7 @@ public:
 
     template<typename U>
     auto convert_to() const {
-	return convert_to( wrap_type<U>() );
+	return vec<typename vector_traits::template rebindTy<U>::type,lo_variable>( conversion_traits<member_type,U,VL>::convert( data() ) );
     }
 
     template<typename UTr>
@@ -329,14 +329,6 @@ private:
     type m_data;
     const layout_t m_layout;
 
-private:
-    template<typename Ty> struct wrap_type { };
-    
-    template<typename U>
-    auto convert_to( wrap_type<U> ) const {
-	return vec<typename vector_traits::template rebindTy<U>::type,lo_variable>( conversion_traits<member_type,U,VL>::convert( data() ) );
-    }
-
 public:
     static auto make_vector( type data, layout_t layout = lo_unknown ) {
 	return self_type( data, layout );
@@ -491,7 +483,6 @@ public:
 
     template<typename U>
     auto convert_to() const {
-	// return convert_to( wrap_type<U>() );
 	return vec<typename vector_traits::template rebindTy<U>::type,
 		   layout>( conversion_traits<member_type,U,VL>::convert( data() ) );
     }
@@ -635,9 +626,6 @@ public:
 private:
     type m_data;
 
-private:
-    template<typename Ty> struct wrap_type { };
-    
 public:
     static auto make_vector( type data ) {
 	return self_type( data );
