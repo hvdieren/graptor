@@ -101,6 +101,11 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
 		auto immediate_val = env.template evaluate<true>( c, m, fexpr );
 		int immediate = immediate_val.value().data();
 
+		{
+		    static int x = 0;
+		    ++x;
+		}
+
 		if( immediate > 0 ) {
 		    // Process now. Differentiate idempotent operators
 		    // to avoid the repeated processing book-keeping.
@@ -398,6 +403,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 
     // VID num_threads = m > 1024 ? graptor_num_threads() : 1;
     VID num_threads = graptor_num_threads();
+    assert( num_threads > 1 && "fusion requires multi-threaded execution" );
     work_stealing<VID,need_strong_checking> work_queues( num_threads, GA );
     
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
@@ -413,11 +419,11 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 		csr_sparse_with_f_seq_fusion_stealing<need_strong_checking>(
 		    cfg, GA, part, work_queues, t, zf, op );
 	} );
-    } else {
+    } /* else {
 	work_queues.create_buffer( 0, s, m, GA.getIndex() );
 	F[0] = csr_sparse_with_f_seq_fusion<need_strong_checking>(
 	    cfg, GA, part, work_queues, 0, zf, op );
-    }
+	    } */
 
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
@@ -494,19 +500,35 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	nactv += F[t].size();
     }
 
-    // Merge all the resultant frontiers (copy - could do in parallel)
+    // Merge all the resultant frontiers and count out-edges
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
+    EID * ecnt = new EID[num_threads];
     parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-	std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
+	// std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
+	VID * out = &s[inspt[t]];
+	EID nedg = 0;
+	const EID * const index = GA.getIndex();
+	for( auto I=F[t].begin(), E=F[t].end(); I != E; ++I ) {
+	    VID v = *I;
+	    *out++ = v;
+	    nedg += index[v+1] - index[v];
+	}
+	ecnt[t] = nedg;
     } );
 
+    EID nacte = ecnt[0];
+    for( uint32_t t=1; t < num_threads; ++t )
+	nacte += ecnt[t];
+
     // Cleanup. Deletes contents of vectors also.
+    delete[] ecnt;
     delete[] inspt;
     delete[] F;
 
-    // We likely don't need an accurate count of active edges
-    merged.setActiveCounts( nactv, nactv );
+    // We likely don't need an accurate count of active edges,
+    // except in some circumstances where the next iteration would be dense.
+    merged.setActiveCounts( nactv, nacte );
     return merged;
 }
 

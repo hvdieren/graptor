@@ -57,10 +57,13 @@ struct is_fusion<arg_fusion<Fn>> : public std::true_type { };
 
 template<typename Op>
 struct has_fusion_op {
+private:
+    using ty = decltype(((Op*)nullptr)->fusionop(
+			    expr::value<simd::ty<VID,1>,expr::vk_dst>() ));
+public:
     static constexpr bool value = 
-	!expr::is_constant_false<
-	decltype(((Op*)nullptr)->fusionop(
-		     expr::value<simd::ty<VID,1>,expr::vk_dst>() ))>::value;
+	!expr::is_constant_false<ty>::value
+	&& !expr::is_constant_zero<ty>::value;
 };
 
 template<typename Op>
