@@ -44,8 +44,10 @@ auto get_end_mask( VID dst, VID send ) {
     static_assert( sizeof(VID) == 4, "dependence on the LUT element width" );
     using L = logical<sizeof(VID)>;
     using tr = vector_type_traits_vl<L,VL>;
+    static_assert( VL == 8 || VL == 16 );
+    constexpr unsigned off = VL == 8 ? 8 : 0;
     auto val = tr::loadu(
-	reinterpret_cast<const L *>( &avx2_4x16_termination_lut_epi32[0] ),
+	reinterpret_cast<const L *>( &avx2_4x16_termination_lut_epi32[off] ),
 	VID(VL)-std::min(send-dst,VID(VL)) );
     return simd::mask_logical<sizeof(L),VL>( val );
 }
@@ -233,7 +235,7 @@ static inline void GraptorCSCDataParCached(
     //
     // TODO: as the m_rexpr for a large part exists to construct the frontier,
     //       and a reduction-type frontier will add zero vertices and edges
-    //       for zero-degree vertices, it makes sense to specialise m_vexpr
+    //       for zero-degree vertices, it makes sense to specialise m_rexpr
     //       for that case, i.e., assume all vertices inactive. This
     //       optimisation may not be suitable for a method-based record.
     //       As such, may be necessary to specialise in api::op_def which would
