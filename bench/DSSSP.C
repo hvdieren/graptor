@@ -455,7 +455,7 @@ public:
 		api::filter( filter_strength, api::src, F ),
 #if FUSION
 		api::config( api::always_sparse ),
-		api::fusion( [&]( auto d ) {
+		api::fusion( [&]( auto s, auto d, auto e ) {
 		    // We are not using the feature to avoid inserting vertices 
 		    // multiple times, especially in the overflow bucket (i.e.,
 		    // return -1 from api::fusion). This is because vertices
@@ -465,8 +465,11 @@ public:
 // TODO: GAPBS runs up to 1000 buckets ahead + sorts those buckets locally in the edgemap
 		    auto threshold = expr::constant_val2<FloatTy>(
 			d, delta * (FloatTy)(1+cur_bkt) );
-		    return expr::iif( new_dist[d] <= threshold,
-				      _0, _1 ); // int
+		    return expr::iif(
+			new_dist[d].min( new_dist[s] + edge_weight[e] ),
+			expr::_1s,
+			expr::iif( new_dist[d] <= threshold,
+				   _0, _1 ) ); // int
 		} ),
 #else // no FUSION
 #if SP_THRESHOLD >= 0
@@ -474,20 +477,11 @@ public:
 #endif
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    auto threshold = expr::constant_val2<FloatTy>(
-			d, delta * (FloatTy)(1+cur_bkt) );
-		    return expr::iif(
-			new_dist[d].min( new_dist[s] + edge_weight[e] ),
-			expr::_1s,
-			expr::iif( new_dist[d] <= threshold,
-				   _0, _1 ) ); // int
-/*
 #if LEVEL_ASYNC
 		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
 #else
 		    return new_dist[d].min( cur_dist[s] + edge_weight[e] );
 #endif
-*/
 		} )
 		).materialize();
 			   
