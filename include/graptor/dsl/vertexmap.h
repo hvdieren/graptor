@@ -48,6 +48,7 @@
 #include "graptor/dsl/ast_accum.h"
 #include "graptor/dsl/frontier_wrap.h"
 #include "graptor/dsl/eval/environment.h"
+#include "graptor/api/fusion.h"
 
 // Simplifying assumptions:
 // * postpone calculations until first reason to execute
@@ -287,8 +288,14 @@ struct AppendVOpToEOp
     template<typename VIDDst>
     auto update( VIDDst d ) { return eop.update( d ); }
 
-    template<typename VIDDst>
-    auto fusionop( VIDDst d ) { return eop.fusionop( d ); }
+    template<typename VIDSrc, typename VIDDst, typename EIDEdge>
+    auto fusionop( VIDSrc s, VIDDst d, EIDEdge e ) {
+	return eop.fusionop( s, d, e );
+    }
+
+    constexpr api::fusion_flags get_fusion_flags() const {
+	return eop.get_fusion_flags();
+    }
 
 /*
     template<typename VIDDst>

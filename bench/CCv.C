@@ -13,6 +13,7 @@
 #include "unique.h"
 
 using expr::_0;
+using expr::_1;
 using expr::_1s;
 using expr::_true;
 using expr::_false;
@@ -565,8 +566,8 @@ private:
 			 } ),
 #endif
 #if FUSION
-	    api::fusion( [&]( auto d ) {
-		return expr::constant_val_one( d );
+	    api::fusion( [&]( auto s, auto d, auto e ) {
+		return expr::iif( IDs[d].min( IDs[s] ), _1s, _1 );
 	    } ),
 #endif
 	    api::relax( [&]( auto s, auto d, auto e ) {

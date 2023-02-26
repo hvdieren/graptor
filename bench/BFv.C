@@ -6,6 +6,7 @@
 
 using expr::_0;
 using expr::_1;
+using expr::_1s;
 using expr::_c;
 
 // By default set options for highest performance
@@ -101,6 +102,7 @@ using EdgeTy = typename EncEdge::stored_type;
 enum variable_name {
     var_cur = 0,
     var_new = 1,
+    var_old = 2,
     var_min = 3,
     var_max = 4,
     var_remap = 5,
@@ -135,6 +137,7 @@ public:
 	calculate_active = P.getOption( "-cactive" );
 	est_diam = P.getOptionLongValue( "-sssp:diam", 20 );
 	start = GA.remapID( P.getOptionLongValue( "-start", 0 ) );
+	dfrac = P.getOptionDoubleValue( "-frac", 0.9 );
 	lo_frac = P.getOptionDoubleValue( "-lo:frac", 0.05 );
 	hi_frac = P.getOptionDoubleValue( "-hi:frac", 0.50 );
 	tgt_frac = P.getOptionDoubleValue( "-tgt:frac", 0.025 );
@@ -468,8 +471,19 @@ if waiting until F is empty, we still need 3-4 dense steps
 		// Do not allow unbacked frontiers
 		api::record( output, api::reduction, api::strong ),
 #endif
-		api::fusion( [&]( auto v ) {
-		    return expr::true_val( v );
+#if FUSION
+		// TODO: parameter 0.1 to be tuned similarly to delta in DSSSP
+		api::fusion( [&]( auto s, auto d, auto e ) {
+		    auto inf = _c( std::numeric_limits<FloatTy>::infinity() );
+		    return expr::iif(
+			new_dist[d].min( new_dist[s] + edge_weight[e] ),
+			_1s, // no update made => no further processing to do
+			expr::iif(
+			    ( cur_dist[d] - new_dist[d] )
+			    > ( cur_dist[d] * _c( dfrac ) )
+			    /* && cur_dist[d] != inf */,
+			    _0, // insufficient progress, return in frontier
+			    _1 ) ); // sufficient progress to propagate further
 		} ),
 		api::filter( filter_strength, api::src, F ),
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -671,6 +685,7 @@ private:
     api::vertexprop<FloatTy,VID,var_new,EncNew> new_dist;
     api::edgeprop<FloatTy,EID,expr::aid_eweight,EncEdge> edge_weight;
     float lo_frac, hi_frac, tgt_frac;
+    float dfrac;
     std::vector<info> info_buf;
 };
 

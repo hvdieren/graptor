@@ -248,9 +248,14 @@ first set color[v] = v
 	    api::record( roots, [&]( auto d ) { return priority[d] == _0; },
 			 api::strong )
 	    )
+	    .materialize();
+
+	make_lazy_executor( part )
 	    // Set color of roots (initial color = _1s to indicate undefined)
 	    .vertex_map( roots, [&]( auto v ) { return color[v] = _0; } )
 	    .materialize();
+
+	roots.toSparse( part );
 
 	log( iter, tm_iter, ftrue, ik_prio );
 
@@ -305,25 +310,46 @@ first set color[v] = v
 				} ),
 			    idx += _1 ), // increment
 			// process immediately -- TODO: drop if degree 0
-			expr::make_seq(
-			    color[v] = col,
-			    _1(v) // final value
-			    )
-			)
+			color[v] = col
+			),
+		    _1(v) // final value
 		    );
 	    };
 	    api::edgemap(
 		GA,
-		api::config( api::always_sparse ),
+		api::config( api::always_sparse, api::fusion_select( true ) ),
 		api::filter( api::src, api::strong, roots ),
-		api::fusion( [&]( auto v ) {
-		    return select_col_pull( v );
-		} ),
+		api::fusion( [&]( auto s, auto d, auto e ) {
+/*
+		    return expr::make_seq(
+			expr::set_mask(
+			    priority[d].count_down( _0(priority[d]) ),
+			    select_col_pull( d ) ),
+			expr::iif( priority[d] == _0, _1s, _1 )
+			);
+*/
+		    return expr::let<var_sel>(
+			priority[d].count_down_value( _0(priority[d]) ),
+			[&]( auto old ) {
+			    return expr::iif(
+				old == _1,
+				_1s,
+				expr::make_seq(
+				    expr::set_mask( old == _1,
+						    select_col_pull( d ) ),
+				    _1(d) ) );
+			} );
+		    },
+		    api::no_activation_checking ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    return priority[d].count_down( _0(priority[d]) );
 		} ),
 		api::record( new_roots, api::reduction, api::strong )
 		)
+		// Set color of new roots to 0 (only if no fusion used)
+		.vertex_map( new_roots, [&]( auto v ) {
+		    return color[v] = _0;
+		} )
 		.materialize();
 
 #else // non-fusion case below
@@ -342,6 +368,7 @@ first set color[v] = v
 		    return color[v] = _0;
 		} )
 		.materialize();
+#endif // fusion/no-fusion
 	    // Pull edgemap: gather colours of neighbours of activated vertices
 	    api::edgemap(
 		GA,
@@ -352,7 +379,6 @@ first set color[v] = v
 		} )
 		)
 		.materialize();
-#endif // fusion/no-fusion
 
 	    if( debug && debug_verbose ) {
 		roots.toSparse( part );

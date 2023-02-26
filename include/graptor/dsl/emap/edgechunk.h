@@ -538,15 +538,16 @@ lVID partition_edge_list(
     lVID p = 0;
     for( ; p < mm_parts && v_done < m; ++p ) {
 	lEID avgdeg = ( mm - e_done ) / lEID(mm_parts - p);
-	const lEID * bnd = std::upper_bound( &cdegree[v_done], &cdegree[m],
-					     e_done + avgdeg );
+	const lEID * bnd = std::upper_bound(
+	    &cdegree[v_done], &cdegree[m], e_done + avgdeg );
 	lEID slice = *bnd - e_done;
 	if( slice > avgdeg + mm_threshold ) {
 	    // Peel of a set of the edges of a vertex, and redo the vertex
 	    // in the next iteration, considering its remaining edges
 	    lEID excess = slice - avgdeg;
-	    // assert( bnd == cdegree || excess <= ( *bnd - *(bnd-1) ) );
 	    lVID repeated = bnd - cdegree - 1;
+	    assert( bnd == cdegree || excess <= ( *bnd - *(bnd-1) ) );
+	    assert( idx[s[repeated]+1] - excess >= idx[s[repeated]] );
 	    lEID pos = idx[s[repeated]+1] - excess;
 	    record( p, v_done, repeated+1, next_start, pos, e_done );
 	    next_start = pos;

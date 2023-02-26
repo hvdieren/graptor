@@ -1,3 +1,9 @@
+/*
+ * TODO:
+ * ? after a fusion iteration, bucket should be empty?
+ *   if not empty, then it should contain only duplicate vertices (already done)
+ */
+
 #include <cmath>
 
 #include "graptor/graptor.h"
@@ -397,7 +403,9 @@ public:
 	    // There will be duplicate vertices in the list and also vertices
 	    // whose distance from the source is less than the current bucket.
 	    // Filter out the vertices that already completed.
-	    // As per GAPBS, we tolerate duplicates.
+	    // As per GAPBS, we tolerate duplicates of non-completed vertices.
+	    // As we don't have a filter-source-by-method ability in edgemap,
+	    // adjust the frontier here.
 	    frontier unique;
 	    make_lazy_executor( part )
 		.vertex_filter(
@@ -410,6 +418,16 @@ public:
 		.materialize();
 	    F.del();
 	    F = unique;
+
+#if 0
+	    std::cerr << "threshold: " << delta * (FloatTy)cur_bkt << "\n";
+	    F.toSparse( part );
+	    for( VID i=0, e=F.nActiveVertices(); i < e; ++i ) {
+		VID v = F.getSparse()[i];
+		std::cerr << ' ' << v << '(' << new_dist[v] << ')';
+	    }
+	    std::cerr << "\n";
+#endif
 
 	    // Traverse edges, remove duplicate live destinations.
 	    frontier output;
@@ -456,11 +474,20 @@ public:
 #endif
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
+		    auto threshold = expr::constant_val2<FloatTy>(
+			d, delta * (FloatTy)(1+cur_bkt) );
+		    return expr::iif(
+			new_dist[d].min( new_dist[s] + edge_weight[e] ),
+			expr::_1s,
+			expr::iif( new_dist[d] <= threshold,
+				   _0, _1 ) ); // int
+/*
 #if LEVEL_ASYNC
 		    return new_dist[d].min( new_dist[s] + edge_weight[e] );
 #else
 		    return new_dist[d].min( cur_dist[s] + edge_weight[e] );
 #endif
+*/
 		} )
 		).materialize();
 			   
@@ -527,7 +554,6 @@ public:
 		}
 	    }
 #endif
-
 
 /*
 	    for( VID v=0; v < 128; ++v ) {

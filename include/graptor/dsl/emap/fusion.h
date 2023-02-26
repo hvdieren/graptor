@@ -16,13 +16,14 @@
 
 #include "graptor/dsl/emap/work_list.h"
 
-template<bool need_strong_checking,
+template<bool no_duplicate_reporting,
+	 bool no_duplicate_processing,
+	 bool no_reporting_processed,
 	 typename config, typename WorkQueues, typename Operator>
 std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
     config & cfg,
     const GraphCSx & GA,
     const partitioner & part,
-    // frontier actv,
     WorkQueues & work_queues,
     unsigned self_id,
     bool * zf,
@@ -32,251 +33,22 @@ std::vector<VID> csr_sparse_with_f_seq_fusion_stealing(
     unsigned char * uczf = (unsigned char*)zf;
 
     // CSR requires no check that destination is active.
-    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
-			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
-			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
+    auto vexpr0 = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			       expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			       expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-    auto fexpr0 = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
 
-    // Append. TODO: ensure short-circuit evaluation in scalar execution
+    // Append.
+    // TODO: set_mask provides short-circuit operation; check it.
     // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
     auto vexpr1 = vexpr0 && uexpr0;
-    // auto vexpr1 = vexpr0;
 
     // Rewrite local variables
-    auto l_cache_v = expr::extract_local_vars( vexpr1, expr::cache<>() );
-    auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache_v );
-
-    auto l_cache_f = expr::extract_local_vars( fexpr0, expr::cache<>() );
-    auto fexpr2 = expr::rewrite_caches<expr::vk_zero>( fexpr0, l_cache_f );
-
-    auto l_cache = expr::cache_cat( l_cache_v, l_cache_f );
+    auto l_cache = expr::extract_local_vars( vexpr1, expr::cache<>() );
+    auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache );
 
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
-    auto fexpr = expr::rewrite_mask_main( fexpr2 );
-
-    auto env = expr::eval::create_execution_environment_op(
-	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
-
-    auto mi = expr::create_value_map_new<1>();
-    auto c = cache_create( env, l_cache, mi );
-
-    const VID *edge = GA.getEdges();
-
-    std::vector<VID> unprocessed;
-    
-    while( auto * buffer = work_queues.steal( self_id ) ) {
-#if 1
-	auto I = buffer->edge_begin( idx );
-	auto E = buffer->edge_end( idx );
-	for( ; I != E; ++I ) {
-	    VID v;
-	    EID seid;
-	    std::tie( v, seid ) = *I;
-
-	    // Sequential code, so dump in sequential locations in outEdges[]
-	    auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
-
-	    // EID seid = eid_retriever.get_edge_eid( v, j );
-	    VID sdst = edge[seid];
-	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( sdst );
-	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
-	    auto m = expr::create_value_map_new<1>(
-		expr::create_entry<expr::vk_dst>( dst ),
-		expr::create_entry<expr::vk_edge>( eid ),
-		expr::create_entry<expr::vk_src>( src ) );
-
-	    // Set evaluator to use atomics
-	    // TODO: can drop atomics in case of benign races, but they have
-	    // to be benign races also with the relax operation, which
-	    // may be runing concurrently.
-	    auto ret = env.template evaluate<true>( c, m, vexpr );
-
-	    if( ret.value().data() ) {
-		// Query whether to process immediately. Note: the fusion
-		// operation may have side-effects, and is executed with
-		// atomics. However, it is not executed atomically with the
-		// relax operation!
-		auto immediate_val = env.template evaluate<true>( c, m, fexpr );
-		int immediate = immediate_val.value().data();
-
-		{
-		    static int x = 0;
-		    ++x;
-		}
-
-		if( immediate > 0 ) {
-		    // Process now. Differentiate idempotent operators
-		    // to avoid the repeated processing book-keeping.
-		    if constexpr ( need_strong_checking ) {
-			// A vertex may first be unprocessed,
-			// then on a later edge become immediately ready.
-			// Record differently.
-			unsigned char flg = 2;
-			unsigned char val = uczf[sdst];
-			if( ( val & flg ) == 0 ) {
-			    unsigned char old
-				= __sync_fetch_and_or( &uczf[sdst], flg );
-			    if( ( old & flg ) == 0 ) {
-				// outEdges[nactv++] = sdst;
-				work_queues.push( self_id, sdst );
-			    }
-			}
-		    } else {
-			// A vertex may be processed multiple times, by
-			// multiple threads, possibly concurrently.
-			// Multiple threads may insert the vertex in their
-			// active list, then concurrent processing may occur.
-			// Alternatively, the operator would not enable
-			// a vertex for processing more than once (e.g.,
-			// count_down, setif).
-			work_queues.push( self_id, sdst );
-		    }
-		} else if( immediate == 0 ) {
-		    // Include in unprocessed list, if not already done so
-		    if constexpr ( need_strong_checking ) {
-			unsigned char flg = 1;
-			unsigned char val = uczf[sdst];
-			if( ( val & flg ) == 0 ) {
-			    unsigned char old
-				= __sync_fetch_and_or( &uczf[sdst], flg );
-			    if( ( old & (unsigned char)3 ) == 0 )
-				unprocessed.push_back( sdst );
-			}
-		    } else {
-			unprocessed.push_back( sdst );
-		    }
-		}
-	    }
-	}
-#else
-	auto I = buffer->begin();
-	auto E = buffer->end();
-	for( ; I != E; ++I ) {
-	    VID v = *I;
-	    VID d = idx[v+1] - idx[v];
-	    const VID * out = &edge[idx[v]];
-
-	    // Sequential, so dump in sequential locations in outEdges[]
-	    auto src = simd::template create_scalar<simd::ty<VID,1>>( v );
-
-	    for( VID j=0; j < d; j++ ) {
-		// EID seid = eid_retriever.get_edge_eid( v, j );
-		EID seid = idx[v]+j;
-		VID sdst = out[j];
-		auto dst = simd::template create_scalar<simd::ty<VID,1>>( sdst );
-		auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
-		auto m = expr::create_value_map_new<1>(
-		    expr::create_entry<expr::vk_dst>( dst ),
-		    expr::create_entry<expr::vk_edge>( eid ),
-		    expr::create_entry<expr::vk_src>( src ) );
-
-		// Set evaluator to use atomics
-		// TODO: can drop atomics in case of benign races
-		auto ret = env.template evaluate<true>( c, m, vexpr );
-
-		if( ret.value().data() ) {
-		    // Query whether to process immediately. Note: the fusion
-		    // operation may have side-effects, and is executed with
-		    // atomics. However, it is not executed atomically with the
-		    // relax operation!
-		    auto immediate_val = env.template evaluate<true>( c, m, fexpr );
-		    int immediate = immediate_val.value().data();
-
-		    if( immediate > 0 ) {
-			// Process now. Differentiate idempotent operators
-			// to avoid the repeated processing book-keeping.
-			if constexpr ( need_strong_checking ) {
-			    // A vertex may first be unprocessed,
-			    // then on a later edge become immediately ready.
-			    // Record differently.
-			    unsigned char flg = 2;
-			    unsigned char val = uczf[sdst];
-			    if( ( val & flg ) == 0 ) {
-				unsigned char old
-				    = __sync_fetch_and_or( &uczf[sdst], flg );
-				if( ( old & flg ) == 0 ) {
-				    // outEdges[nactv++] = sdst;
-				    work_queues.push( self_id, sdst );
-				}
-			    }
-			} else {
-			    // A vertex may be processed multiple times, by
-			    // multiple threads, possibly concurrently.
-			    // Multiple threads may insert the vertex in their
-			    // active list, then concurrent processing may occur.
-			    // outEdges[nactv++] = sdst;
-			    work_queues.push( self_id, sdst );
-			}
-		    } else if( immediate == 0 ) {
-			// Include in unprocessed list, if not already done so
-			unsigned char flg = 1;
-			unsigned char val = uczf[sdst];
-			if( ( val & flg ) == 0 ) {
-			    unsigned char old
-				= __sync_fetch_and_or( &uczf[sdst], flg );
-			    if( ( old & (unsigned char)3 ) == 0 )
-				unprocessed.push_back( sdst );
-			}
-		    }
-		}
-	    }
-	}
-#endif
-	// buffer->destroy();
-	work_queues.finished( self_id, buffer );
-    }
-
-    return unprocessed;
-}
-
-template<bool need_strong_checking,
-	 typename config, typename WorkQueues, typename Operator>
-std::vector<VID> csr_sparse_with_f_seq_fusion(
-    config & cfg,
-    const GraphCSx & GA,
-    const partitioner & part,
-    WorkQueues & work_queues,
-    unsigned self_id,
-    bool * zf,
-    Operator op ) {
-    const EID * idx = GA.getIndex();
-
-    unsigned char * uczf = (unsigned char*)zf;
-
-    // CSR requires no check that destination is active.
-    auto vexpr0 = op.relax( expr::value<simd::ty<VID,1>,expr::vk_src>(),
-			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
-			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
-    auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-    auto fexpr0 = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-
-    // Append. TODO: ensure short-circuit evaluation in scalar execution
-    // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
-    auto vexpr1 = vexpr0 && uexpr0;
-    // auto vexpr1 = vexpr0;
-
-    // Rewrite local variables
-    auto l_cache_v = expr::extract_local_vars( vexpr1, expr::cache<>() );
-    auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache_v );
-
-    auto l_cache_f = expr::extract_local_vars( fexpr0, expr::cache<>() );
-    auto fexpr2 = expr::rewrite_caches<expr::vk_zero>( fexpr0, l_cache_f );
-
-    auto l_cache = expr::cache_cat( l_cache_v, l_cache_f );
-
-    // Match vector lengths and move masks
-    auto vexpr = expr::rewrite_mask_main( vexpr2 );
-    auto fexpr = expr::rewrite_mask_main( fexpr2 );
-
-/*
-    auto ew_pset = expr::create_map2<(unsigned)aid_key(array_aid(expr::aid_eweight))>(
-	GA.getWeights() ? GA.getWeights()->get() : nullptr );
-					 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ), l_cache, vexpr, fexpr );
-*/
 
     auto env = expr::eval::create_execution_environment_op(
 	op, l_cache, GA.getWeights() ? GA.getWeights()->get() : nullptr );
@@ -301,7 +73,6 @@ std::vector<VID> csr_sparse_with_f_seq_fusion(
 
 	    // EID seid = eid_retriever.get_edge_eid( v, j );
 	    VID sdst = edge[seid];
-
 	    auto dst = simd::template create_scalar<simd::ty<VID,1>>( sdst );
 	    auto eid = simd::template create_scalar<simd::ty<EID,1>>( seid );
 	    auto m = expr::create_value_map_new<1>(
@@ -310,53 +81,78 @@ std::vector<VID> csr_sparse_with_f_seq_fusion(
 		expr::create_entry<expr::vk_src>( src ) );
 
 	    // Set evaluator to use atomics
-	    // TODO: can drop atomics in case of benign races
-	    auto ret = env.template evaluate<true>( c, m, vexpr );
+	    // TODO: can drop atomics in case of benign races.
 
-	    if( ret.value().data() ) {
-		// Query whether to process immediately. Note: the fusion
-		// operation may have side-effects, and is executed with
-		// atomics. However, it is not executed atomically with the
-		// relax operation!
-		auto immediate_val = env.template evaluate<true>( c, m, fexpr );
-		int immediate = immediate_val.value().data();
+	    // Query whether to process destination vertex immediately.
+	    // _0: report in output frontier
+	    // _1: execute immediately (add to work list)
+	    // _1s: no action taken
+	    auto immediate_val = env.template evaluate<true>( c, m, vexpr );
+	    int immediate = immediate_val.value().data();
 
-		if( immediate > 0 ) {
-		    // Process now. Differentiate idempotent operators
-		    // to avoid the repeated processing book-keeping.
-		    if constexpr ( need_strong_checking ) {
-			// A vertex may first be unprocessed,
-			// then on a later edge become immediately ready.
-			// Record differently.
-			unsigned char flg = 2;
-			unsigned char val = uczf[sdst];
-			if( ( val & flg ) == 0 ) {
-			    uczf[sdst] |= flg;
+	    if( immediate > 0 ) {
+		// Process now. Differentiate idempotent operators
+		// to avoid the repeated processing book-keeping.
+		if constexpr ( no_duplicate_processing
+			       || no_reporting_processed ) {
+		    // A vertex may first be unprocessed,
+		    // then on a later edge become immediately ready.
+		    // Record differently.
+		    // TODO (error): situation may arise where the vertex
+		    // needs to be pushed on the work-queue multiple times
+		    // because it improves (again) its status
+		    // (e.g. distance in DSSSP). In KCore, this would not
+		    // happen because the bucket is discrete and one unit
+		    // wide. Repeated processing would be detrimental.
+		    unsigned char flg = 2;
+		    unsigned char val = uczf[sdst];
+		    // if( ( val & flg ) == 0 ) {
+		    unsigned char old
+			= __sync_fetch_and_or( &uczf[sdst], flg );
+		    if constexpr ( no_duplicate_processing ) {
+			if( ( old & flg ) == 0 )
 			    work_queues.push( self_id, sdst );
-			}
 		    } else {
-			// A vertex may be processed multiple times, by
-			// multiple threads, possibly concurrently.
-			// Multiple threads may insert the vertex in their
-			// active list, then concurrent processing may occur.
-			// Alternatively, the operator would not enable
-			// a vertex for processing more than once (e.g.,
-			// count_down, setif).
 			work_queues.push( self_id, sdst );
 		    }
-		} else if( immediate == 0 ) {
-		    // Include in unprocessed list, if not already done so
+		} else {
+		    // A vertex may be processed multiple times, by
+		    // multiple threads, possibly concurrently.
+		    // Multiple threads may insert the vertex in their
+		    // active list, then concurrent processing may occur.
+		    // Alternatively, the operator would not enable
+		    // a vertex for processing more than once (e.g.,
+		    // count_down, setif).
+		    work_queues.push( self_id, sdst );
+		    assert( v != sdst );
+		}
+	    } else if( immediate == 0 ) {
+		// Include in unprocessed list, if not already done so
+		if constexpr ( no_duplicate_reporting
+			       || no_reporting_processed ) {
 		    unsigned char flg = 1;
 		    unsigned char val = uczf[sdst];
 		    if( ( val & flg ) == 0 ) {
-			uczf[sdst] |= flg;
-			if( ( val & (unsigned char)3 ) == 0 )
-			    unprocessed.push_back( sdst );
+			unsigned char old
+			    = __sync_fetch_and_or( &uczf[sdst], flg );
+			if constexpr ( no_reporting_processed
+				       && no_duplicate_reporting ) {
+			    if( ( old & (unsigned char)3 ) == 0 )
+				unprocessed.push_back( sdst );
+			} else if constexpr ( no_reporting_processed ) {
+			    if( ( old & (unsigned char)2 ) == 0 )
+				unprocessed.push_back( sdst );
+			} else { // no_duplicate_reporting
+			    if( ( old & (unsigned char)1 ) == 0 )
+				unprocessed.push_back( sdst );
+			}
 		    }
+		} else {
+		    unprocessed.push_back( sdst );
+		    assert( v != sdst );
 		}
 	    }
 	}
-	// buffer->destroy();
 	work_queues.finished( self_id, buffer );
     }
 
@@ -379,6 +175,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     // very small, as it will leave many threads idle initially.
     assert( cfg.is_parallel() && "this will execute in parallel" );
 
+#if 0
     // Instantiate relax operation only to check if it requires strict exclusion
     // of replica's of the activated vertices in the immediate or postponed
     // vertex lists.
@@ -386,12 +183,52 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 			   expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 			   expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
-    auto fexpr = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto fexpr = op.fusionop( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+			      expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+			      expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto vexpr = vexpr0 && uexpr0;
+#endif
+    // Avoiding duplicates:
+    //          processed unprocessed fexpr-idempot vexpr-idempot single-trigger
+    // DSSSP    false     true        true          true          false
+    // BF       true(f)   true        true          true          false
+    //   + frontier unique occurences (preferred, not necessary?)
+    //   + can process same vertex multiple times
+    //   + if vertex processed and later not -> include in frontier
+    //     (no infection from processed => unprocessed)
+    // BFSLVL   false(t)  false(t)    true          true          false
+    //   + frontier unique occurences
+    //   + can process same vertex multiple times
+    //   + if vertex previously processed, can still report (won't occur, no
+    //     need to check and stop)
+    // CC       true(f)   true(f)     true; cst     true          false
+    //   + frontier unique occurences
+    //   + can process same vertex multiple times
+    //   + if vertex previously processed, can still report (won't occur)
+    // Should be false/false: (??)
+    // KCore(mod) false   true        false         false         true
+    //   + vertex can be processed multiple times
+    //   + no duplicates reported in frontier
+    //   + if processed, then K has bottomed out and not reported
+    // GC       true      true        false         false         true
+    //   + vertex can be processed multiple times
+    //   + at the end, frontier should be empty
+    //   + if processed, then K has bottomed out and not reported
+    constexpr api::fusion_flags flags = op.get_fusion_flags();
+    constexpr bool no_duplicate_processing
+		  = api::is_set( flags,
+				 api::fusion_flags::no_duplicate_processing );
+    constexpr bool no_duplicate_reporting
+		  = api::is_set( flags,
+				 api::fusion_flags::no_duplicate_reporting );
+    constexpr bool no_reporting_processed
+		  = api::is_set( flags,
+				 api::fusion_flags::no_reporting_processed );
+
     constexpr bool need_strong_checking
-		  = !( expr::is_idempotent<decltype(fexpr)>::value
-		       && expr::is_idempotent<decltype(vexpr)>::value )
-		  && !expr::is_single_trigger<decltype(vexpr)>::value;
+		  = no_duplicate_processing
+		  || no_duplicate_reporting
+		  || no_reporting_processed;
     bool * zf = nullptr;
     if constexpr ( need_strong_checking )
 	zf = GA.get_flags( part );
@@ -404,55 +241,54 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     // VID num_threads = m > 1024 ? graptor_num_threads() : 1;
     VID num_threads = graptor_num_threads();
     assert( num_threads > 1 && "fusion requires multi-threaded execution" );
-    work_stealing<VID,need_strong_checking> work_queues( num_threads, GA );
+    work_stealing<VID,no_duplicate_processing> work_queues( num_threads, GA );
     
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
-    if( num_threads > 1 ) {
-	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-	    VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
-	    VID to = std::min( uint64_t(m),
-			       ( uint64_t(t + 1) * uint64_t(m) )
-			       / uint64_t(num_threads) );
-	    work_queues.create_buffer( t, &s[from], to-from, GA.getIndex() );
-	    F[t] =
-		csr_sparse_with_f_seq_fusion_stealing<need_strong_checking>(
-		    cfg, GA, part, work_queues, t, zf, op );
-	} );
-    } /* else {
-	work_queues.create_buffer( 0, s, m, GA.getIndex() );
-	F[0] = csr_sparse_with_f_seq_fusion<need_strong_checking>(
-	    cfg, GA, part, work_queues, 0, zf, op );
-	    } */
+    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+	VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
+	VID to = std::min( uint64_t(m),
+			   ( uint64_t(t + 1) * uint64_t(m) )
+			   / uint64_t(num_threads) );
+	work_queues.create_buffer( t, &s[from], to-from, GA.getIndex() );
+	F[t] =
+	    csr_sparse_with_f_seq_fusion_stealing<
+		no_duplicate_reporting,
+	    no_duplicate_processing,
+	    no_reporting_processed>(
+		cfg, GA, part, work_queues, t, zf, op );
+    } );
 
     // Restore zero frontier to all zeros; do not access old frontiers copied
     // in as we did not set their flag in the loop above
     if constexpr ( need_strong_checking ) {
-	// Vertices already processed leave info in zf[] that is not
-	// easily cleared. So we need to traverse the whole array.
-	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-	    // Strange stuff with zf check, compiler erroneously
-	    // evading it because it looks like bool(?). Hence the cast.
-	    unsigned char * uczf = (unsigned char*)zf;
-	    VID outEdgeCount = F[t].size();
-	    VID * outEdges = &F[t][0];
-	    // If a vertex has been processed immediately, then any copy
-	    // introduced previously for postponed processing can be
-	    // removed.
-	    VID nv_new = 0;
-	    for( VID k=0; k < outEdgeCount; ++k ) {
-		VID v = outEdges[k];
-		if( !( uczf[v] & (unsigned char)2 ) )
-		    outEdges[nv_new++] = v;
-		uczf[v] = 0;
-	    }
-	    F[t].resize( nv_new );
-	} );
+	if constexpr ( no_duplicate_reporting ) { // flags set when reporting
+	    // Vertices already processed leave info in zf[] that is not
+	    // easily cleared. So we need to traverse the whole array.
+	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+		// Strange stuff with zf check, compiler erroneously
+		// evading it because it looks like bool(?). Hence the cast.
+		unsigned char * uczf = (unsigned char*)zf;
+		VID outEdgeCount = F[t].size();
+		VID * outEdges = &F[t][0];
+		// If a vertex has been processed immediately, then any copy
+		// introduced previously for postponed processing can be
+		// removed.
+		VID nv_new = 0;
+		for( VID k=0; k < outEdgeCount; ++k ) {
+		    VID v = outEdges[k];
+		    if( !( uczf[v] & (unsigned char)2 ) )
+			outEdges[nv_new++] = v;
+		    uczf[v] = 0;
+		}
+		F[t].resize( nv_new );
+	    } );
+	}
 
 	VID n = GA.numVertices();
-/*
 	parallel_for( VID v=0; v < n; ++v )
 	    zf[v] = false;
+/*
 */
 /*
 	uint64_t * zf64 = reinterpret_cast<uint64_t *>( zf );
@@ -462,18 +298,22 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	for( VID v=n64*8; v < n; ++v )
 	    zf[v] = false;
 */
-	work_queues.shift_processed();
-	parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-	    while( auto * buffer = work_queues.steal( t ) ) {
-		auto I = buffer->vertex_begin();
-		auto E = buffer->vertex_end();
-		for( ; I != E; ++I ) {
-		    VID v = *I;
-		    zf[v] = false;
+
+	if constexpr ( no_duplicate_processing ) { // flags set when processing
+// TODO: || no_reporting_processed
+	    work_queues.shift_processed();
+	    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+		while( auto * buffer = work_queues.steal( t ) ) {
+		    auto I = buffer->vertex_begin();
+		    auto E = buffer->vertex_end();
+		    for( ; I != E; ++I ) {
+			VID v = *I;
+			zf[v] = false;
+		    }
+		    buffer->destroy();
 		}
-		buffer->destroy();
-	    }
-	} );
+	    } );
+	}
 /*
 	for( VID v=0; v < n; ++v ) {
 	    if( zf[v] != 0 )
@@ -501,20 +341,24 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     }
 
     // Merge all the resultant frontiers and count out-edges
+    // TODO: only possible if no duplicates in unprocessed list
     frontier merged = frontier::sparse( GA.numVertices(), nactv );
     s = merged.getSparse();
-    EID * ecnt = new EID[num_threads];
+    EID * ecnt = new EID[num_threads]();
     parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
-	// std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
-	VID * out = &s[inspt[t]];
-	EID nedg = 0;
-	const EID * const index = GA.getIndex();
-	for( auto I=F[t].begin(), E=F[t].end(); I != E; ++I ) {
-	    VID v = *I;
-	    *out++ = v;
-	    nedg += index[v+1] - index[v];
-	}
-	ecnt[t] = nedg;
+	// if constexpr ( avoid_unprocessed_duplicates ) {
+	    VID * out = &s[inspt[t]];
+	    EID nedg = 0;
+	    const EID * const index = GA.getIndex();
+	    for( auto I=F[t].begin(), E=F[t].end(); I != E; ++I ) {
+		VID v = *I;
+		*out++ = v;
+		nedg += index[v+1] - index[v];
+	    }
+	    ecnt[t] = nedg;
+	// } else {
+	    // std::copy( F[t].begin(), F[t].end(), &s[inspt[t]] );
+	// }
     } );
 
     EID nacte = ecnt[0];

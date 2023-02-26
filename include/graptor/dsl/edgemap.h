@@ -1435,8 +1435,11 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // it is correct to also execute with a non-fusion traversal, which we will
     // do if a sequential execution is preferred.
     if constexpr ( api::has_fusion_op_v<Operator> ) {
-	if( !expr::is_readonly_fusion_op<Operator>::value
-	       || ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) ) {
+	// std::cerr << "mm_min=" << mm_min << " mm_parts=" << mm_parts << "\n";
+	// if( /* !expr::is_readonly_fusion_op<Operator>::value
+	// || */ ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) || true ) {
+	if( cfg.is_parallel()
+	    && cfg.do_fusion( m, mm, GA.numVertices() ) ) {
 	    delete[] degree;
 	    return csr_sparse_with_f_fusion_stealing(
 		cfg, GA, eid_retriever, part, old_frontier, op );

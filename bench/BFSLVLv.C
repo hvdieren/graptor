@@ -1,7 +1,9 @@
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
+using expr::_0;
 using expr::_1;
+using expr::_1s;
 
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
@@ -110,6 +112,14 @@ public:
 	all.getDenseB()[start] = true;
 #endif
 
+	// Enable fusion immediately if the graph has relatively low
+	// degrees (e.g., road network). Otherwise, wait until a dense
+	// iteration has occured (in which case further dense iterations
+	// will still take precedence over sparse/fusion iterations).
+	VID max_v = GA.getCSR().findHighestDegreeVertex(); // parallel
+	VID max_deg = GA.getCSR().getDegree( max_v );
+	bool enable_fusion = max_deg < n / (128*1024);
+
 	while( !F.isEmpty() ) {  // iterate until all vertices visited
 	    timer tm_iter;
 	    tm_iter.start();
@@ -136,18 +146,19 @@ public:
 #endif
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
-		api::filter( api::weak, api::dst,
-			     [&]( auto d ) {
-				 auto cIt = expr::constant_val( d, iter+1 );
-				 return a_level[d] > cIt;
-			     } ),
+		api::filter( api::weak, api::dst, [&]( auto d ) {
+		    auto cIt = expr::constant_val( d, iter+1 );
+		    return a_level[d] > cIt;
+		} ),
 #endif
 #if FUSION
-		api::fusion( [&]( auto v ) {
-		    // return expr::true_val( v );
-		    // auto cTh = expr::constant_val( v, 3*iter+3 );
-		    auto cTh = expr::constant_val( v, iter+1 );
-		    return a_level[v] <= cTh;
+		api::config( api::fusion_select( enable_fusion ) ),
+		api::fusion( [&]( auto s, auto d, auto e ) {
+		    return expr::cast<int>(
+			expr::iif( a_level[d].min( a_level[s]+_1 ),
+				   _1s, // no change, ignore d
+				   _1 // changed, propagate change
+			    ) );
 		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -226,6 +237,9 @@ public:
 	    F = output;
 
 	    ++iter;
+
+	    if( !api::default_threshold().is_sparse( F, m ) )
+		enable_fusion = true;
 	}
 
 	F.del();

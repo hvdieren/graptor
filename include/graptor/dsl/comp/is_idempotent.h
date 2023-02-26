@@ -219,7 +219,10 @@ struct is_readonly_fusion_op {
     static constexpr bool value = is_readonly<
 	decltype(
 	    ((Operator*)nullptr)
-	    ->fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ))>
+	    ->fusionop(
+	    expr::value<simd::ty<VID,1>,expr::vk_src>(),
+		expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+		expr::value<simd::ty<EID,1>,expr::vk_edge>() ))>
 	::value;
 };
 

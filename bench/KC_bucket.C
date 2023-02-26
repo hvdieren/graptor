@@ -17,11 +17,16 @@ using expr::_c;
 #define FUSION 1
 #endif
 
+#ifndef MD_ORDERING
+#define MD_ORDERING 0
+#endif
+
 enum kc_variable_name {
     var_coreness = 0,
     var_let = 1,
     var_ngh = 2,
-    var_kc_num = 3,
+    var_mdorder = 3,
+    var_kc_num = 4,
     var_degrees_ro = expr::aid_graph_degree
 };
 
@@ -53,10 +58,13 @@ private:
 template <class GraphType>
 class KCv {
 public:
-    KCv( GraphType & _GA, commandLine & P )
+    KCv( const GraphType & _GA, commandLine & P )
 	: GA( _GA ),
 	  num_buckets( P.getOptionLongValue( "-kc:buckets", 127 ) ),
 	  coreness( GA.get_partitioner(), "count-down degrees / coreness" ),
+#if MD_ORDERING
+	  md_order( GA.get_partitioner(), "md-order" ),
+#endif
 	  info_buf( 60 ) {
 	itimes = P.getOption( "-itimes" );
 	debug = P.getOption( "-debug" );
@@ -173,6 +181,7 @@ public:
 #endif
 
 	VID K = 0;
+	VID L = 0;
 
 	// Create bucket structure
 	buckets<VID,bucket_fn>
@@ -188,6 +197,31 @@ public:
 #endif
 	// std::cerr << "todo: " << todo << "\n";
 #endif
+
+#if MD_ORDERING
+	VID md_index = 0;
+
+	frontier zero;
+	make_lazy_executor( part )
+	    .vertex_filter(
+		GA, 	 	 	// graph
+		ftrue,
+		zero,  	// record new frontier
+		[&]( auto v ) {
+		    return a_degrees_ro[v] == _0;
+		} )
+	    .materialize();
+
+	zero.toSparse( part );
+	const VID * s = zero.getSparse();
+	VID l = zero.nActiveVertices();
+	std::copy( &s[0], &s[l], md_order.get_ptr() + md_index );
+	md_index += l;
+	std::cerr << "md_index: " << md_index << "\n";
+	zero.del();
+#endif
+
+	VID n_nonzero = nonzero.nActiveVertices();
 	nonzero.del();
 
 	largestCore = 0;
@@ -275,6 +309,11 @@ public:
 	    if( !unique.isEmpty() )
 		largestCore = K;
 
+#if !FUSION
+	    if( L == 0 && largestCore >= n_nonzero - todo )
+		L = largestCore + 1;
+#endif
+
 	    // std::cerr << "filter completed vertices: " << tm_iter.next() << "\n";
 
 	    // std::cerr << "K: " << K << "\n";
@@ -290,10 +329,10 @@ public:
 		api::config( api::always_sparse ),
 		api::filter( api::src, api::strong, unique ),
 		api::record( output, api::reduction, api::strong ),
-		api::fusion( [&]( auto v ) {
+		api::fusion( [&]( auto s, auto d, auto e ) {
 		    // Requires that RHS of && is evaluated after LHS.
-		    auto cK = expr::constant_val( coreness[v], K );
-		    auto cO = expr::constant_val( coreness[v], overflow_bkt );
+		    auto cK = expr::constant_val( coreness[d], K );
+		    auto cO = expr::constant_val( coreness[d], overflow_bkt );
 		    // return coreness[v].count_down( cK );
 #if OPTIONAL
 		    using SID = std::make_signed_t<VID>;
@@ -313,18 +352,20 @@ public:
 			} );
 #else
 		    return expr::let<var_let>(
-			coreness[v].count_down_value( cK ),
+			coreness[d].count_down_value( cK ),
 			[&]( auto old ) {
-			    return expr::cast<int>(
+			    return
+				expr::cast<int>(
 				expr::iif(
-				    old == cK + _1,
-				    expr::iif( old > cO,
+				    old <= cK || old > cO,
+				    expr::iif( old == cK + _1,
 					       _0, // degree below overflow, move
-					       _1s ), // in overflow bucket, stay
-				    _1 ) ); // degree dropped to K
+					       _1 ), // degree dropped to K
+				    _1s ) ); // in overflow bucket, or done, don't move
 			} );
 #endif
-		} ),
+		},
+		    api::no_reporting_processed | api::no_duplicate_reporting ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    auto cK = expr::constant_val( coreness[s], K );
 #if OPTIONAL
@@ -334,7 +375,14 @@ public:
 					cK )
 			) > cK;
 #else
-		    return coreness[d] > cK;
+		    return coreness[d].count_down_value( cK ) > cK;
+/*
+		    using SID = std::make_signed_t<VID>;
+		    return coreness[d].count_down_value(
+			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
+					cK )
+			) > cK;
+*/
 #endif
 		} )
 		)
@@ -377,6 +425,18 @@ public:
 	    }
 #endif
 
+#if MD_ORDERING
+	    {
+		unique.toSparse( part );
+		const VID * s = unique.getSparse();
+		VID l = unique.nActiveVertices();
+		std::copy( &s[0], &s[l], md_order.get_ptr() + md_index );
+		md_index += l;
+		std::cerr << "md_index: " << md_index << "\n";
+	    }
+#endif
+
+#if !FUSION
 	    todo -= unique.nActiveVertices();
 #endif
 	    unique.del();
@@ -408,6 +468,9 @@ public:
 	    F.del();
 	}
 
+	std::cerr << "Estimated lower bound on maximum clique size: "
+		  << L << "\n";
+
 #if OPTIONAL
 	make_lazy_executor( part )
 	    .vertex_map(
@@ -423,7 +486,45 @@ public:
 
 	predefined.del();
 #endif
+
+#if MD_ORDERING
+	std::cerr << "md_index: " << md_index << "\n";
+	std::cerr << "n: " << n << "\n";
+	std::cerr << "todo: " << todo << "\n";
+	// assert( md_index == n && "all vertices accounted for" );
+#endif
     }
+
+#if MD_ORDERING && 0
+    void check_md_ordering() {
+	for( VID i=0; i < n; ++i ) {
+	    VID v = md_order[i];
+
+	    // Count number of neighbours of all vertices behind v
+	    // that are also behind v.
+	    expr::scalar<VID,var_mindeg> min_deg;
+	    api::edgemap(
+		GA,
+		api::filter( api::dst, api::strong,
+			     [&]( auto v ) {
+				 return md_rev_order[v] > _c( i-1 );
+			     } ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    return rdeg[d] += _p( _1(rdeg[d]),
+					  md_rev_order[s] > _c( i-1 ) );
+		} )
+		)
+		.vertex_map( part,
+			     [&]( auto v ) {
+				 return min_deg.min(
+				     rdeg[v],
+				     md_rev_order[v] > _c( i-1 ) );
+			     } )
+		.materialize();
+	    assert( rdeg[v] <= min_deg );
+	}
+    }
+#endif
 
     void post_process( stat & stat_buf ) {
 	std::cout << "Largest core: " << largestCore << "\n";
@@ -601,7 +702,11 @@ public:
     static void report( const std::vector<stat> & stat_buf ) { }
 
     VID getLargestCore() const { return largestCore; }
-    auto & getCoreness() const { return coreness; }
+    const auto & getCoreness() const { return coreness; }
+
+#if MD_ORDERING
+    const auto & get_md_ordering() const { return md_order; }
+#endif
 
 private:
     const GraphType & GA;
@@ -611,6 +716,9 @@ private:
     int iter;
     VID largestCore;
     api::vertexprop<VID,VID,var_coreness> coreness;
+#if MD_ORDERING
+    api::vertexprop<VID,VID,var_mdorder> md_order;
+#endif
     std::vector<info> info_buf;
 };
 

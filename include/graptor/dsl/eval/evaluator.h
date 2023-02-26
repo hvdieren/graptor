@@ -131,8 +131,20 @@ struct evaluator {
 	    auto mask0 = arg1.mpack().get_mask_for( arg1.value() );
 	    auto mask = mask0 && arg1.value();
 	    auto mpack2 = sb::create_mask_pack( mask );
-	    auto arg2 = evaluate( bop.data2(), mpack2 );
-	    return arg2;
+	    if constexpr ( E1::VL == 1 ) {
+		using Tr = typename binop<E1,E2,BinOp>::data_type;
+		// Short-circuit evaluation for scalar execution
+		if( mask.at(0) ) {
+		    auto ret = evaluate( bop.data2(), mpack2 );
+		    auto val = simd::vec<Tr,simd::lo_constant>(
+			ret.value().data() );
+		    return make_rvalue( val, mpack2 );
+		} else {
+		    return make_rvalue( simd::create_zero<Tr>(), mpack2 );
+		}
+	    } else {
+		return evaluate( bop.data2(), mpack2 );
+	    }
 	} else if constexpr ( std::is_same_v<BinOp,binop_seq> ) {
 	    // In a sequence, do not pass the mask pack from one command to
 	    // the other, because it is possible that some lanes in the first
@@ -733,7 +745,8 @@ struct evaluator {
 	    // edges, as this will be correct.
 	    if constexpr ( expr::cache_get_accum_aid<cid,Accum>::valid
 			   && expr::cache_get_accum_aid<cid,Accum>::aid
-			   == expr::aid_frontier_nacte ) {
+			   == expr::aid_frontier_nacte
+&& false ) {
 		auto cst = E2::unop_type::evaluate_confuse_lanes(
 		    dis.uvalue() );
 

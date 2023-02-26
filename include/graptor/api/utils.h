@@ -74,6 +74,31 @@ struct check_arguments_3<C0,C1,C2,Arg0,Args...> {
 	     && check_arguments_2<C0,C1,Args...>::value );
 };
 
+// Four template conditions
+template<template<typename> class C0, template<typename> class C1,
+	 template<typename> class C2, template<typename> class C3,
+	 typename... Args>
+struct check_arguments_4;
+
+template<template<typename> class C0, template<typename> class C1,
+	 template<typename> class C2, template<typename> class C3>
+struct check_arguments_4<C0,C1,C2,C3> : public std::true_type { };
+
+template<template<typename> class C0, template<typename> class C1,
+	 template<typename> class C2, template<typename> class C3,
+	 typename Arg0, typename... Args>
+struct check_arguments_4<C0,C1,C2,C3,Arg0,Args...> {
+    static constexpr bool value =
+	( C0<std::decay_t<Arg0>>::value
+	  && check_arguments_3<C1,C2,C3,Args...>::value )
+	|| ( C1<std::decay_t<Arg0>>::value
+	     && check_arguments_3<C0,C2,C3,Args...>::value )
+	|| ( C2<std::decay_t<Arg0>>::value
+	     && check_arguments_3<C0,C1,C3,Args...>::value )
+	|| ( C3<std::decay_t<Arg0>>::value
+	     && check_arguments_3<C0,C1,C2,Args...>::value );
+};
+
 /************************************************************************
  * Auxiliary for identifying if an argument type is present
  ************************************************************************/

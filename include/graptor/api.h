@@ -221,6 +221,84 @@ struct is_threshold<always_dense_t>
 template<typename T>
 constexpr bool is_threshold_v = is_threshold<T>::value;
 
+/************************************************************************
+ * Definition of fusion threshold
+ ************************************************************************/
+class fusion_select {
+    friend std::ostream & operator << ( std::ostream & os, fusion_select t );
+
+public:
+    fusion_select( bool enabled ) : m_enabled( enabled ) { }
+
+    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+	return m_enabled;
+    }
+
+    bool do_fusion( frontier F, EID m ) const {
+	VID nactv = F.nActiveVertices();
+	EID nacte = F.nActiveEdges();
+	return do_fusion( nactv, nacte, m );
+    }
+
+private:
+    bool m_enabled;
+};
+
+struct default_fusion_select {
+    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+	return ( EID(nactv) + nacte ) <= ( m / 20 );
+    }
+
+    bool do_fusion( frontier F, EID m ) const {
+	VID nactv = F.nActiveVertices();
+	EID nacte = F.nActiveEdges();
+	return do_fusion( nactv, nacte, m );
+    }
+};
+
+struct always_fusion_t {
+    constexpr bool do_fusion( VID nactv, EID nacte, EID m ) const {
+	return true;
+    }
+
+    constexpr bool do_fusion( frontier F, EID m ) const {
+	return true;
+    }
+};
+
+std::ostream & operator << ( std::ostream & os, fusion_select t ) {
+    return os << "fusion(" << t.m_enabled << ")";
+}
+
+std::ostream & operator << ( std::ostream & os, default_fusion_select t ) {
+    return os << "fusion(default)";
+}
+
+std::ostream & operator << ( std::ostream & os, always_fusion_t t ) {
+    return os << "fusion(always)";
+}
+
+static constexpr auto always_fusion = always_fusion_t();
+
+template<typename T>
+struct is_fusion_select : public std::false_type { };
+
+template<>
+struct is_fusion_select<default_fusion_select>
+    : public std::true_type { };
+
+template<>
+struct is_fusion_select<fusion_select>
+    : public std::true_type { };
+
+template<>
+struct is_fusion_select<always_fusion_t>
+    : public std::true_type { };
+
+template<typename T>
+constexpr bool is_fusion_select_v = is_fusion_select<T>::value;
+
+
 /**=====================================================================*
  * Definition of filters
  *
@@ -1368,14 +1446,15 @@ struct is_record<arg_record_m<S,R,Fn,MF>> : public std::true_type { };
 /************************************************************************
  * Defintion of configuration option
  ************************************************************************/
-template<parallelism_spec P, unsigned short VL, typename threshold_type>
+template<parallelism_spec P, unsigned short VL, typename threshold_type,
+	 typename fusion_type>
 struct arg_config {
     static constexpr parallelism_spec parallelism = P;
     static constexpr vectorization_spec<VL> vectorization =
 	vectorization_spec<VL>();
-
-    arg_config( const threshold_type & t )
-	: m_threshold( t ) { }
+	
+    arg_config( const threshold_type & t, const fusion_type & f )
+	: m_threshold( t ), m_fusion( f ) { }
 
     static constexpr bool is_parallel() {
 	return parallelism == parallelism_spec::parallel;
@@ -1387,9 +1466,17 @@ struct arg_config {
 	return vectorization.value;
     }
     threshold_type get_threshold() const { return m_threshold; }
-
+    constexpr fusion_type get_fusion() const { return m_fusion; }
+    constexpr fusion_flags get_fusion_flags() const {
+	return m_fusion.get_flags();
+    }
+    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+	return m_fusion.do_fusion( nactv, nacte, m );
+    }
+    
 private:
     threshold_type m_threshold;
+    fusion_type m_fusion;
 };
 
 struct missing_config_argument {
@@ -1406,19 +1493,26 @@ struct missing_config_argument {
 	return vectorization.value;
     }
     default_threshold get_threshold() const { return default_threshold(); }
+    constexpr default_fusion_select get_fusion() const {
+	return default_fusion_select();
+    }
 };
 
 template<typename... Args>
 auto config( Args &&... args ) {
-    if constexpr( check_arguments_3<is_parallelism,
-		  is_vectorization,is_threshold,
+    if constexpr( check_arguments_4<is_parallelism,
+		  is_vectorization,is_threshold,is_fusion_select,
 		  Args...>::value ) {
 	auto & t = get_argument_value<is_threshold,default_threshold>(
 	    args... );
+	auto & f = get_argument_value<is_fusion_select,default_fusion_select>(
+	    args... );
+
 	return arg_config<
 	    get_argument_type_t<is_parallelism,decltype(parallel),Args...>::value,
 	    get_argument_type_t<is_vectorization,decltype(vl_max<MAX_VL>()),Args...>::value,
-	    get_argument_type_t<is_threshold,default_threshold,Args...>>( t );
+	    get_argument_type_t<is_threshold,default_threshold,Args...>,
+	    get_argument_type_t<is_fusion_select,default_fusion_select,Args...>>( t, f );
     } else
 	return 0; // static_assert( false, "unexpected argument(s) supplied" );
 }
@@ -1426,8 +1520,10 @@ auto config( Args &&... args ) {
 template<typename T>
 struct is_config : public std::false_type { };
 
-template<parallelism_spec P, unsigned short VL, typename threshold_type>
-struct is_config<arg_config<P,VL,threshold_type>> : public std::true_type { };
+template<parallelism_spec P, unsigned short VL, typename threshold_type,
+	 typename fusion_type>
+struct is_config<arg_config<P,VL,threshold_type,fusion_type>>
+    : public std::true_type { };
 
 /************************************************************************
  * Definition of relax method
@@ -1562,8 +1658,26 @@ struct op_def {
 	auto m = expr::get_mask_cond( s )
 	    && expr::get_mask_cond( d )
 	    && expr::get_mask_cond( e );
-	// set_mask sets mask on lhs before evaluating rhs
+	// set_mask sets lhs mask on rhs before evaluating rhs
 	return expr::set_mask( m, m_relax.m_method( ss, dd, ee ) );
+    }
+
+    template<typename VIDSrc, typename VIDDst, typename EIDEdge>
+    auto fusionop( VIDSrc s, VIDDst d, EIDEdge e ) const {
+	// This is primarily used for determing VL and frontier byte widths.
+	// Frontiers will be added in later.
+	auto ss = expr::remove_mask( s );
+	auto dd = expr::remove_mask( d );
+	auto ee = expr::remove_mask( e );
+	auto m = expr::get_mask_cond( s )
+	    && expr::get_mask_cond( d )
+	    && expr::get_mask_cond( e );
+	// set_mask sets lhs mask on rhs before evaluating rhs
+	return expr::set_mask( m, m_fusion.fusionop( ss, dd, ee ) );
+    }
+
+    constexpr fusion_flags get_fusion_flags() const {
+	return m_fusion.get_flags();
     }
 
     // Should source vertex be traversed?
@@ -1597,14 +1711,6 @@ struct op_def {
 	return expr::set_mask( m, e );
     }
 
-    template<typename VIDDst>
-    auto fusionop( VIDDst d ) const {
-	auto dd = expr::remove_mask( d );
-	auto m = expr::get_mask_cond( d );
-	auto e = m_fusion.fusionop( dd );
-	return expr::set_mask( m, e );
-    }
-
     template<typename PSet>
     auto get_ptrset( const PSet & pset ) const {
 	auto s = expr::value<simd::ty<VID,1>,expr::vk_src>();
@@ -1615,10 +1721,10 @@ struct op_def {
 	    map_merge(
 		expr::extract_pointer_set_with( pset, relax( s, d, e ) ),
 		expr::extract_pointer_set( vertexop( d ) ) ),
-	    expr::extract_pointer_set( fusionop( d ) ) );
+	    expr::extract_pointer_set( fusionop( s, d, e ) ) );
 #else
 	return expr::extract_pointer_set_with(
-	    pset, relax( s, d, e ), vertexop( d ), fusionop( d ) );
+	    pset, relax( s, d, e ), vertexop( d ), fusionop( s, d, e ) );
 #endif
     }
 
@@ -1638,7 +1744,9 @@ struct op_def {
 	    vertexop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
 	using fusionop_expr = decltype(
 	    static_cast<op_def*>( nullptr )->
-	    fusionop( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
+	    fusionop( expr::value<simd::ty<VID,1>,expr::vk_src>(),
+		      expr::value<simd::ty<VID,1>,expr::vk_dst>(),
+		      expr::value<simd::ty<EID,1>,expr::vk_edge>() ) );
 					
 	using map_type = typename expr::ast_ptrset::ptrset_list<
 	    PSet,relax_expr,vertexop_expr,fusionop_expr>::map_type;
@@ -1655,7 +1763,7 @@ struct op_def {
 	    expr::ast_ptrset::ptrset_list<
 		PSet,relax_expr,vertexop_expr,fusionop_expr>
 		::initialize( map, op.relax( s, d, e ), op.vertexop( d ),
-			      op.fusionop( d ) );
+			      op.fusionop( s, d, e ) );
 	}
     };
 
