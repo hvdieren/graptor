@@ -1270,10 +1270,10 @@ public:
     [[deprecated("Replaced nVertices")]]
     VID numRows() const { return nv; } // TODO: migration
     VID nVertices() const { return nv; }
-    VID nActiveVertices() const { return nactv; }
+    constexpr VID nActiveVertices() const { return nactv; }
     [[deprecated("Replaced by nActiveVertices which has better name")]]
     VID numNonzeros() const { return nactv; } // TODO: migration
-    EID nActiveEdges() const { return nacte; }
+    constexpr EID nActiveEdges() const { return nacte; }
 
     VID * nActiveVerticesPtr() { return &nactv; }
     EID * nActiveEdgesPtr() { return &nacte; }

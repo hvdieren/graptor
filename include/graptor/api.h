@@ -230,14 +230,12 @@ class fusion_select {
 public:
     fusion_select( bool enabled ) : m_enabled( enabled ) { }
 
-    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+    constexpr bool do_fusion( VID nactv, EID nacte, EID m ) const {
 	return m_enabled;
     }
 
-    bool do_fusion( frontier F, EID m ) const {
-	VID nactv = F.nActiveVertices();
-	EID nacte = F.nActiveEdges();
-	return do_fusion( nactv, nacte, m );
+    constexpr bool do_fusion( frontier F, EID m ) const {
+	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
 
 private:
@@ -245,14 +243,12 @@ private:
 };
 
 struct default_fusion_select {
-    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+    static constexpr bool do_fusion( VID nactv, EID nacte, EID m ) {
 	return ( EID(nactv) + nacte ) <= ( m / 20 );
     }
 
-    bool do_fusion( frontier F, EID m ) const {
-	VID nactv = F.nActiveVertices();
-	EID nacte = F.nActiveEdges();
-	return do_fusion( nactv, nacte, m );
+    static constexpr bool do_fusion( frontier F, EID m ) {
+	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
 };
 
@@ -1470,8 +1466,11 @@ struct arg_config {
     constexpr fusion_flags get_fusion_flags() const {
 	return m_fusion.get_flags();
     }
-    bool do_fusion( VID nactv, EID nacte, EID m ) const {
+    constexpr bool do_fusion( VID nactv, EID nacte, EID m ) const {
 	return m_fusion.do_fusion( nactv, nacte, m );
+    }
+    constexpr bool do_fusion( frontier F, EID m ) const {
+	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
     
 private:
@@ -1495,6 +1494,12 @@ struct missing_config_argument {
     default_threshold get_threshold() const { return default_threshold(); }
     constexpr default_fusion_select get_fusion() const {
 	return default_fusion_select();
+    }
+    constexpr bool do_fusion( VID nactv, EID nacte, EID m ) const {
+	return default_fusion_select::do_fusion( nactv, nacte, m );
+    }
+    constexpr bool do_fusion( frontier F, EID m ) const {
+	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
 };
 
