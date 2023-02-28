@@ -36,7 +36,17 @@ constexpr unsigned short VLUpperBound = ~(unsigned short)0;
 //       executed that way. Benefits to storage size (index array CSC-like).
 //       Are there benefits to COO?
 
+template<typename GraphType>
+bool isLowDegreeGraph( const GraphType & G ) {
+    return isLowDegreeGraph( G.getCSR() );
+}
 
+template<>
+bool isLowDegreeGraph<GraphCSx>( const GraphCSx & G ) {
+    VID max_v = G.findHighestDegreeVertex(); // parallel
+    VID max_deg = G.getDegree( max_v );
+    return max_deg < G.numVertices() / (128*1024);
+}
 
 class GraphCSxSlice {
     EID m;
