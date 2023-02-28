@@ -244,7 +244,7 @@ private:
 
 struct default_fusion_select {
     static constexpr bool do_fusion( VID nactv, EID nacte, EID m ) {
-	return ( EID(nactv) + nacte ) <= ( m / 20 );
+	return nacte >= 4096;
     }
 
     static constexpr bool do_fusion( frontier F, EID m ) {
