@@ -382,6 +382,9 @@ public:
 	// bool require_dense = false;
 	EID postponed = 0;
 
+	// Enable fusion more aggressively on low-degree graphs
+	bool enable_fusion = isLowDegreeGraph( GA );
+
 	while( !F.isEmpty() /* || require_dense */ ) {  // iterate until all vertices visited
 
 /*
@@ -456,9 +459,11 @@ if waiting until F is empty, we still need 3-4 dense steps
 	    // TODO: config to not calculate nactv, nacte?
 	    api::edgemap(
 		GA, 
+		api::config(
 #if SP_THRESHOLD >= 0
-		api::config( api::frac_threshold( SP_THRESHOLD ) ),
+		    api::frac_threshold( SP_THRESHOLD ),
 #endif
+		    api::fusion_select( enable_fusion ) ),
 #if DEFERRED_UPDATE
 		// Allow for (sparse) push to use reduction update to inform
 		// frontier rather than using the method.
@@ -472,7 +477,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 		api::record( output, api::reduction, api::strong ),
 #endif
 #if FUSION
-		// TODO: parameter 0.1 to be tuned similarly to delta in DSSSP
+		// TODO: parameter dfrac to be tuned similarly to delta in DSSSP
 		api::fusion( [&]( auto s, auto d, auto e ) {
 		    auto inf = _c( std::numeric_limits<FloatTy>::infinity() );
 		    return expr::iif(
@@ -481,6 +486,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 			expr::iif(
 			    ( cur_dist[d] - new_dist[d] )
 			    > ( cur_dist[d] * _c( dfrac ) )
+			    || cur_dist[d] == inf
 			    /* && cur_dist[d] != inf */,
 			    _0, // insufficient progress, return in frontier
 			    _1 ) ); // sufficient progress to propagate further
@@ -534,6 +540,9 @@ if waiting until F is empty, we still need 3-4 dense steps
 	    F  = output;
 
 	    ++iter;
+
+	    if( !api::default_threshold().is_sparse( F, m ) )
+		enable_fusion = true;
 	}
 
 	F.del();
