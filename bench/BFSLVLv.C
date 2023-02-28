@@ -116,9 +116,7 @@ public:
 	// degrees (e.g., road network). Otherwise, wait until a dense
 	// iteration has occured (in which case further dense iterations
 	// will still take precedence over sparse/fusion iterations).
-	VID max_v = GA.getCSR().findHighestDegreeVertex(); // parallel
-	VID max_deg = GA.getCSR().getDegree( max_v );
-	bool enable_fusion = max_deg < n / (128*1024);
+	bool enable_fusion = isLowDegreeGraph( GA );
 
 	while( !F.isEmpty() ) {  // iterate until all vertices visited
 	    timer tm_iter;
