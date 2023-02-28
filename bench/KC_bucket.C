@@ -260,6 +260,9 @@ public:
 		.vertex_filter(
 		    GA, F, unique,
 		    [&]( auto v ) {
+			// TODO: AVX2 >= is more expensive than > and comparison
+			//       on unsigned is more expensive than on signed.
+			//       Replace by == cK which should be sufficient
 			auto cK = expr::constant_val( coreness[v], K );
 			return coreness[v] >= cK;
 		    } )
