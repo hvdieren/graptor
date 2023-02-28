@@ -25,6 +25,10 @@
 #include "graptor/dsl/emap/utils.h"
 #include "graptor/dsl/emap/emap_scan.h"
 
+#ifndef EMAP_BLOCK_SIZE
+#define EMAP_BLOCK_SIZE 2048
+#endif
+
 enum update_method {
     um_none,
     um_list,
@@ -691,13 +695,8 @@ inline VID calculate_edge_balanced_parts(
 	}
     }
 
-#ifndef EMAP_BLOCK_SIZE
-    constexpr EID mm_block = 128;
-    constexpr EID mm_threshold = 128;
-#else
     static constexpr EID mm_block = EMAP_BLOCK_SIZE;
     static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
-#endif
     VID mm_parts = std::min( graptor_num_threads() * 16,
 			     VID( ( mm + mm_block - 1 ) / mm_block ) );
 
@@ -764,13 +763,8 @@ static __attribute__((noinline)) frontier csc_sparse_aset_no_f(
 		vexpr, vcaches, vcaches_dst, env );
 	}
     } else {
-#ifndef EMAP_BLOCK_SIZE
-	static constexpr EID mm_block = 128;
-	static constexpr EID mm_threshold = 128;
-#else
 	static constexpr EID mm_block = EMAP_BLOCK_SIZE;
 	static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
-#endif
 
 	EID * voffsets = &degree[m];
 	EID mm = voffsets[m];
@@ -1412,13 +1406,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 
     EID outEdgeCount = mm;
 
-#ifndef EMAP_BLOCK_SIZE
-    constexpr EID mm_block = 128;
-    constexpr EID mm_threshold = 128;
-#else
     static constexpr EID mm_block = EMAP_BLOCK_SIZE;
     static constexpr EID mm_threshold = EMAP_BLOCK_SIZE;
-#endif
     VID mm_parts = std::min( graptor_num_threads() * 16,
 			     VID( ( mm + mm_block - 1 ) / mm_block ) );
     // Require at least 32 parts before running in parallel. This is based on
