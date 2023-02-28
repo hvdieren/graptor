@@ -191,9 +191,6 @@ public:
 	    std::cerr << "PRESET_ZERO=" << PRESET_ZERO << "\n";
 	    std::cerr << "EMBED_FRONTIER=" << EMBED_FRONTIER << "\n";
 	}
-
-	// VID max_deg = GA.getCSR().findHighestDegreeVertex();
-	// GA.getCSR().setMaxDegreeVertex( max_deg );
     }
     ~CCv() {
 	m_IDs.del();
@@ -252,8 +249,6 @@ public:
 #endif
 
 #if PUSH_ZERO
-	// VID max_v = GA.getCSR().findHighestDegreeVertex();
-	// VID max_deg = GA.getCSR().getDegree( max_v );
 	frontier zeros;
 #endif
 
