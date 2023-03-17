@@ -222,6 +222,9 @@ struct is_mask_logical_traits<mask_logical_traits<W,VL>>
     : public std::true_type { };
 
 template<typename T>
+constexpr bool is_mask_logical_traits_v = is_mask_logical_traits<T>::value;
+
+template<typename T>
 struct is_mask_bit_logical_traits : public std::false_type { };
 
 template<unsigned short B, unsigned short VL>

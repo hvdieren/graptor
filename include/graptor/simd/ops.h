@@ -513,13 +513,25 @@ typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
 vector_ref_impl<Tr,I,Enc,NT_,Layout>::lor_assign(
     vec<Tr,Layout_> r,
     typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type m ) {
+    // For AVX2, a slightly more efficient variation using AND instead of BLEND
+    // is possible. BLEND takes 2 (SKL) - 3 (Sapphire Rapids) cycles whereas
+    // AND is 1 cycle.
+    // This would not work for AVX512 where the mask is likely a bit mask due to
+    // the need to convert. That variation of blend is single-cycle, so there is no
+    // performance to be gained over the blend.
+    // Avoid using the AND in case of gather/scatter (which is unlikely to occur
+    // in this location).
     auto a = load( m ); // load data
     auto mod = ~a & r;
-    store( a | r, m ); // store data
-    auto v = mod;
+    if constexpr ( is_mask_logical_traits_v<typename simd_mask_type::mask_traits>
+		   && Layout != lo_unknown ) {
+	store( a | ( r & m.template convert_data_type<Tr>() ) ); // store data
+    } else {
+	store( a | r, m ); // store data
+    }
     // Ensures that return value is stronger than m
-    // return (v & m).asmask();
-    return v.asmask() & m;
+    // In certain cases, the compiler removes the AND with m.
+    return mod.asmask() & m;
 }
 
 template<class Tr, typename I, typename Enc, bool NT_, layout_t Layout>
