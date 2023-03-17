@@ -1440,7 +1440,9 @@ struct redop_setif {
 	    auto mask = mpack.get_mask_for( rval );
 	    auto lval = l.value().load( mask );
 	    auto sel = ( lval == decltype(lval)::allones_val() ) && mask;
-	    l.value().store( ::iif( sel, lval, rval ), mask );
+	    // Reformulate because conditional store performs a blend itself
+	    // l.value().store( ::iif( sel, lval, rval ), mask );
+	    l.value().store( rval, sel );
 	    return make_rvalue( sel, mpack ); // updated values
 	}
     }
