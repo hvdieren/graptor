@@ -216,6 +216,13 @@ public:
     }
 #endif
 
+    static bool cmpeq( type a, type b, mt_bool ) {
+	return is_zero( bitwise_xor( a, b ) );
+    }
+    static bool cmpne( type a, type b, mt_bool ) {
+	return !cmpeq( a, b, mt_bool() );
+    }
+
     static type srli( type a, unsigned int sh ) {
 	auto b = _mm256_srli_epi32( a, sh );
 	auto m = set1( (member_type)((1<<(W*8-sh))-1) );
