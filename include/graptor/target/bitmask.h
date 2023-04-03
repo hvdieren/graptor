@@ -39,6 +39,11 @@ struct is_mask_type_traits<mask_type_traits<VL>> : std::true_type { };
 #include "graptor/target/bitmask_32.h"
 #endif // __AVX512F__ && __AVX512BW__
 
+#include "graptor/target/bitmask_128.h"
+#if __AVX2__
+#include "graptor/target/bitmask_256.h"
+#endif
+
 using target::mask_type_traits;
 
 #endif // GRAPTOR_TARGET_BITMASK_H
