@@ -71,6 +71,64 @@ struct lzcnt {
     }
 };
 
+// Count across all lanes, returning a single scalar
+template<typename ResultTy, typename T, unsigned short VL>
+struct allpopcnt {
+    using arg_traits = vector_type_traits_vl<T,VL>;
+    using ret_traits = vector_type_traits_vl<ResultTy,1>;
+
+    // The lane width doesn't really matter. So use width 8 always.
+    static typename ret_traits::type compute( typename arg_traits::type a ) {
+	if constexpr ( sizeof(T) == 8 && VL == 4 ) {
+	    // AVX2 8x4 has an algorithm due to Mula for per-lane popcount
+	    auto cnt = arg_traits::popcnt( a );
+	    // Add up the four counts
+	    // Note: there is scope to adjust the summing procedures
+	    //       if a non-default ResultTy is required.
+	    return arg_traits::reduce_add( cnt );
+	} else if constexpr ( sizeof(T) == 8 && VL == 2 ) {
+	    return _popcnt64( arg_traits::lane( a, 0 ) )
+		+ _popcnt64( arg_traits::lane( a, 1 ) );
+	} else if constexpr ( sizeof(T) == 8 && VL == 1 ) {
+	    return _popcnt64( arg_traits::lane( a, 0 ) );
+	} else if constexpr ( sizeof(T) == 8 ) {
+	    assert( 0 && "NYI" );
+	} else {
+	    return allpopcnt<ResultTy, uint64_t, arg_traits::size/8>
+		::compute( a );
+	}
+
+	assert( 0 && "NYI" );
+    }
+};
+
+// Trailing zero across all lanes, returning a single scalar
+template<typename ResultTy, typename T, unsigned short VL>
+struct alltzcnt {
+    using arg_traits = vector_type_traits_vl<T,VL>;
+    using ret_traits = vector_type_traits_vl<ResultTy,1>;
+
+    static typename ret_traits::type compute( typename arg_traits::type a ) {
+	if constexpr ( sizeof(T) == 8 ) {
+	    for( unsigned i=0; i < VL; ++i ) {
+		ResultTy cnt = _tzcnt_u64( arg_traits::lane( a, i ) );
+		if( cnt < 64 )
+		    return cnt + i * 64;
+	    }
+	    return 64 * VL;
+	} else if constexpr ( sizeof(T) == 4 ) {
+	    for( unsigned i=0; i < VL; ++i ) {
+		ResultTy cnt = _tzcnt_u32( arg_traits::lane( a, i ) );
+		if( cnt < 32 )
+		    return cnt + i * 32;
+	    }
+	    return 32 * VL;
+	}
+
+	assert( 0 && "NYI" );
+    }
+};
+
 template<typename T, typename V, unsigned short VL>
 struct confused_convert {
     using src_traits = vector_type_traits_vl<T, VL>;
