@@ -72,6 +72,17 @@ public:
     static member_type lane2( type a ) { return lane( a, 2 ); }
     static member_type lane3( type a ) { return lane( a, 3 ); }
 
+    static type setlane( type a, member_type b, int idx ) {
+    	switch( idx ) {
+	case 0: return _mm256_insert_epi64( a, b, 0 );
+	case 1: return _mm256_insert_epi64( a, b, 1 );
+	case 2: return _mm256_insert_epi64( a, b, 2 );
+	case 3: return _mm256_insert_epi64( a, b, 3 );
+	default:
+	    assert( 0 && "should not get here" );
+	}
+    }
+
     // Logical mask - only test msb
     static bool is_all_false( type a ) { return is_zero( srli( a, B-1 ) ); }
 
@@ -292,6 +303,17 @@ public:
 	return _mm256_blendv_epi8( a, b, asvector( m ) );
 #endif
     }
+
+    static type bitblend( vmask_type m, type l, type r ) {
+	if constexpr ( has_ternary ) {
+	    // return ternary<0xe2>( r, m, l ); // TODO: one instr less
+	    return ternary<0xca>( m, r, l );
+	} else {
+	    return bitwise_or( bitwise_and( m, r ),
+			       bitwise_andnot( m, l ) );
+	}
+    }
+
     static type iforz( vmask_type m, type a ) {
 #if 0
 #if __AVX512F__ && __AVX512VL__
@@ -316,7 +338,8 @@ public:
     static constexpr bool has_ternary = false;
 #endif
 
-    static type ternary( type a, type b, type c, unsigned char imm8 ) {
+    template<unsigned char imm8>
+    static type ternary( type a, type b, type c ) {
 #if __AVX512VL__
 	return _mm256_ternarylogic_epi64( a, b, c, imm8 );
 #else
@@ -342,7 +365,9 @@ public:
     static member_type reduce_add( type val ) {
 	// TODO: extract upper/lower half and add up using sse42_8x2::add and
 	//       sse42_8x2::reduce_add
-	return lane0( val ) + lane1( val ) + lane2( val ) + lane3( val );
+	// return lane0( val ) + lane1( val ) + lane2( val ) + lane3( val );
+	return half_traits::reduce_add(
+	    half_traits::add( lower_half( val ), upper_half( val ) ) );
     }
     static member_type reduce_add( type val, mask_type mask ) {
 	assert( 0 && "NYI" );
@@ -357,7 +382,10 @@ public:
 	return (!m | v) ? ~member_type(0) : member_type(0);
     }
     static member_type reduce_bitwiseor( type val ) {
-	return lane0( val ) | lane1( val ) | lane2( val ) | lane3( val );
+	// return lane0( val ) | lane1( val ) | lane2( val ) | lane3( val );
+	type c = _mm256_permute2x128_si256( val, val, 0x81 );
+	type d = bitwise_or( c, val );
+	return lane0( d ) | lane1( d );
     }
     static member_type reduce_bitwiseand( type val ) {
 	return lane0( val ) & lane1( val ) & lane2( val ) & lane3( val );
@@ -504,6 +532,22 @@ public:
 	    assert( 0 && "NYI" );
 	    return 0;
 	}
+    }
+
+    static auto popcnt( type v ) {
+	// source: https://arxiv.org/pdf/1611.07612.pdf
+	__m256i lookup =
+	    _mm256_setr_epi8( 0, 1, 1, 2, 1, 2, 2, 3,
+			      1, 2, 2, 3, 2, 3, 3, 4,
+			      0, 1, 1, 2, 1, 2, 2, 3,
+			      1, 2, 2, 3, 2, 3, 3, 4 );
+	__m256i low_mask = _mm256_set1_epi8( 0x0f );
+	__m256i lo = _mm256_and_si256( v, low_mask );
+	__m256i hi = _mm256_and_si256( _mm256_srli_epi32( v, 4 ), low_mask );
+	__m256i popcnt1 = _mm256_shuffle_epi8( lookup, lo );
+	__m256i popcnt2 = _mm256_shuffle_epi8( lookup, hi );
+	__m256i total = _mm256_add_epi8( popcnt1, popcnt2 );
+	return _mm256_sad_epu8( total, _mm256_setzero_si256() );
     }
 
     static type loadu( const member_type * a ) {
