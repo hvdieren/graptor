@@ -9,6 +9,7 @@
 #include "graptor/target/decl.h"
 
 #include "graptor/target/mmx_4x2.h"
+#include "graptor/target/sse42_bitwise.h"
 
 namespace target {
 
@@ -17,7 +18,7 @@ namespace target {
  ***********************************************************************/
 #if __SSE4_2__
 template<typename T = uint64_t>
-struct sse42_8x2 {
+struct sse42_8x2 : public sse42_bitwise {
     static_assert( sizeof(T) == 8, 
 		   "version of template class for 8-byte integers" );
 public:
@@ -41,6 +42,8 @@ public:
 	switch( idx ) {
 	case 0: return (member_type) _mm_extract_epi64( a, 0 );
 	case 1: return (member_type) _mm_extract_epi64( a, 1 );
+	default:
+	    assert( 0 && "should not get here" );
 	}
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
@@ -146,6 +149,9 @@ public:
     static type slli( type a, const int_type b ) {
 	return _mm_slli_epi64( a, b );
     }
+    static type sll( type a, const int_type b ) {
+	return _mm_sll_epi64( a, _mm_cvtsi64_si128( b ) );
+    }
 
 /*
     template<typename T2>
@@ -155,8 +161,7 @@ public:
 
     // static type asmask( vmask_type mask ) { return mask; }
     static mask_type asmask( vmask_type mask ) {
-	assert( 0 && "NYI" );
-	return 0;
+	return _mm_movemask_pd( _mm_castsi128_pd( mask ) );
     }
 
     static vmask_type cmpgt( type a, type b, target::mt_vmask ) {
@@ -209,12 +214,23 @@ public:
     static type cmpne( type a, type b, mt_vmask ) {
 	return ~_mm_cmpeq_epi64( a, b );
     }
+    static mask_type cmpne( type a, type b, mt_mask ) {
+#if __AVX512DQ__
+	return _mm_cmpeq_epi64_mask( a, b );
+    }
+#else
+	return asmask( cmpne( a, b, mt_vmask() ) );
+#endif
+    }
     static bool cmpne( type a, type b, mt_bool ) {
 	type vcmp = cmpeq( a, b, mt_vmask() );
 	return 0 != _mm_testz_si128( vcmp, vcmp );
     }
     static type blend( type mask, type a, type b ) {
 	return _mm_blendv_epi8( a, b, mask );
+    }
+    static type blend( mask_type mask, type a, type b ) {
+	return blend( asvector( mask ), a, b );
     }
     static member_type reduce_setif( type val ) {
 	assert( 0 && "NYI" );
@@ -265,6 +281,7 @@ public:
 			 std::min( lane6(val), lane7(val) ) );
 */
     }
+
     static type load( const member_type *a ) {
 	return _mm_load_si128( (const type *)a );
     }
