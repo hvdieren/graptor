@@ -23,12 +23,21 @@ struct sse42_bitwise {
 	return _mm_cmpeq_epi32( x, x );
     }
 
+#if GRAPTOR_USE_MMX
     static __m64 lower_half( type a ) {
 	return (__m64)_mm_extract_epi64( a, 0 );
     }
     static __m64 upper_half( type a ) {
 	return (__m64)_mm_extract_epi64( a, 1 );
     }
+#else
+    static uint64_t lower_half( type a ) {
+	return _mm_extract_epi64( a, 0 );
+    }
+    static uint64_t upper_half( type a ) {
+	return _mm_extract_epi64( a, 1 );
+    }
+#endif
     static type set_pair( __m64 hi, __m64 lo ) {
 	return _mm_insert_epi64(
 	    _mm_cvtsi64_si128( _mm_cvtm64_si64( lo ) ),
