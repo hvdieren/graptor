@@ -274,16 +274,17 @@ struct vt_recursive {
 	    lo_half_traits::cmple( l.a, r.a, mt_mask() ),
 	    hi_half_traits::cmple( l.b, r.b, mt_mask() ) );
     }
-#if 0
-    // Questionable semantics...
-    static bool cmpne( type l, type r, mt_bool ) {
+
+    static bool cmpne( type l, type r, mt_bool ) { // any lane not equal
 	return lo_half_traits::cmpne( l.a, r.a, mt_bool() )
 	    || hi_half_traits::cmpne( l.b, r.b, mt_bool() );
     }
-    static bool cmpeq( type l, type r, mt_bool ) {
+    static bool cmpeq( type l, type r, mt_bool ) { // all lanes equal
 	return lo_half_traits::cmpeq( l.a, r.a, mt_bool() )
 	    && hi_half_traits::cmpeq( l.b, r.b, mt_bool() );
     }
+#if 0
+    // Questionable semantics...
     static bool cmpgt( type l, type r, mt_bool ) {
 	return lo_half_traits::cmpgt( l.a, r.a, mt_bool() )
 	    && hi_half_traits::cmpgt( l.b, r.b, mt_bool() );
