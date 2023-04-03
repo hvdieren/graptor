@@ -1,7 +1,7 @@
 // -*- c++ -*-
 
 // TODO:
-// * Cut out induced neighbourhood before deciding dense
+// * Cut out induced neighbourhood before deciding dense - done
 // * Buss kernel
 // * DenseMatrix at multiple widths (512, 64, 32)
 // * time-out
@@ -43,7 +43,7 @@ public:
     CliqueLister( EID m )
 	: m_list( m/12, m, numa_allocation_interleaved() ),
 	  m_max_elm( m ),
-	  m_next_id( 0 ),
+	  m_next_id( 1 ), // temporary !! m_next_id( 0 ),
 	  m_next_pos( 0 ),
 	  m_edges( 0 ) { }
 
@@ -1796,7 +1796,7 @@ clique_partition( const GraphCSx & G,
 
 	    // Get a unique ID for the clique
 	    VID * members;
-	    std::tie( cliqno, members ) = clist.allocate_clique( in );
+	    std::tie( cliqno, members ) = clist.allocate_clique( in+1 );
 
 	    // std::cerr << "     clique:";
 	    for( VID v=0; v < in; ++v ) {
@@ -1820,7 +1820,7 @@ clique_partition( const GraphCSx & G,
 	    // Get a unique ID for the clique
 	    VID * members;
 	    std::tie( cliqno, members )
-		= clist.allocate_clique( best_size );
+		= clist.allocate_clique( best_size+1 );
 
 	    for( auto && v : c ) {
 		VID vg = ibuilder.get_s2g()[v];
@@ -1851,7 +1851,7 @@ clique_partition( const GraphCSx & G,
 
 	    // Get a unique ID for the clique
 	    VID * members;
-	    std::tie( cliqno, members ) = clist.allocate_clique( best_size );
+	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
 
 	    for( VID v=0; v < in; ++v ) {
 		if( best_state[v] == -1 ) { // determine the MIS/clique, not the cover
@@ -1885,12 +1885,15 @@ clique_partition( const GraphCSx & G,
     return clique_number;
 }
 
+template<unsigned Bits>
 class DenseMatrix {
     using type = uint64_t;
     static constexpr unsigned bits_per_lane = sizeof(type)*8;
-    static constexpr unsigned short VL = 4;
-    using tr = vector_type_traits_vl<type,4>;
+    static constexpr unsigned short VL = Bits / bits_per_lane;
+    using tr = vector_type_traits_vl<type,VL>;
     using row_type = typename tr::type;
+
+    static_assert( VL * bits_per_lane == Bits );
 
 public:
     static constexpr size_t MAX_VERTICES = bits_per_lane * VL;
@@ -1924,9 +1927,9 @@ public:
 	m_words = 4; // VL
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_words = std::min( (unsigned)VL, m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + m_words];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 4];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 0x31 )
+	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
 	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
 	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
 
@@ -1988,9 +1991,9 @@ public:
 	m_words = 4; // VL
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_words = std::min( (unsigned)VL, m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + m_words];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 4];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 0x31 )
+	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
 	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
 	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
 
@@ -2067,6 +2070,7 @@ public:
 	    VID v;
 	    row_type mc_new;
 	    std::tie( v, mc_new ) = remove_element( m_mc );
+	    assert( v < m_n );
 	    m_mc = mc_new;
 	    vset.push( v );
 
@@ -2145,6 +2149,45 @@ private:
 	}
     }
 
+#if 0
+    // 1-byte labels work for up to 256 vertices
+    VID cc_1b( uint8_t * components ) {
+	using trb = vector_type_traits_vl<uint8_t,256>;
+	using lvec = typename trb::type;
+	
+	// Setup initial labels
+	for( VID v=0; v < m_n; ++v )
+	    components[v] = v;
+
+	// Do SpMV iteration using min,* semiring until convergence
+	lvec labels = trb::loadu( components );
+	bool changed;
+	do {
+	    changed = false;
+	    lvec upd = trb::setone(); // max value (unsigned)
+	    for( VID v=0; v < m_n; ++v ) {
+		row_type r = get_row( v );
+		lvec c = trb::set1( trb::lane( labels, v ) );
+		lvec unc = trb::min( labels, c );
+		lvec upd = trb::blend( r, labels, unc );
+		if( !changed && trb::cmpne( upd, labels, target::mt_bool() ) )
+		    changed = true;
+		labels = upd;
+	    }
+	} while( changed );
+	trb::storeu( components, labels );
+
+	// Pick up components
+	VID num_components = 0;
+	for( VID v=0; v < m_n; ++v ) {
+	    if( components[v] == v )
+		++num_components;
+	}
+
+	return num_components;
+    }
+#endif
+
     // cin is a bitmask indicating which vertices are in the cover.
     // It is filled up only up to vertex v. Remaining bits are zero.
     // cout indicates the vertices excluded.
@@ -2209,47 +2252,42 @@ private:
 	// tzcnt == 0, tzcnt == 1, etc
 	auto mask = tr::cmpne( s, tr::setzero(), target::mt_mask() );
 
-	static_assert( VL == 4 );
-	__m128i half;
-	unsigned lane;
-	if( ( mask & 0x3 ) == 0 ) {
-	    half = tr::upper_half( s );
-	    lane = 2;
-	    mask >>= 2;
-	} else {
-	    half = tr::lower_half( s );
-	    lane = 0;
-	}
 	type xtr;
-	if( ( mask & 0x1 ) == 0 ) {
-	    lane += 1;
-	    xtr = _mm_extract_epi64( half, 1 );
-	} else {
-	    xtr = _mm_extract_epi64( half, 0 );
-	}
-
-/*
 	unsigned lane;
-	type xtr;
-	if( mask & 1 ) { // lane 0
+	
+	if constexpr ( VL == 4 ) {
+	    __m128i half;
+	    if( ( mask & 0x3 ) == 0 ) {
+		half = tr::upper_half( s );
+		lane = 2;
+		mask >>= 2;
+	    } else {
+		half = tr::lower_half( s );
+		lane = 0;
+	    }
+	    if( ( mask & 0x1 ) == 0 ) {
+		lane += 1;
+		xtr = _mm_extract_epi64( half, 1 );
+	    } else {
+		xtr = _mm_extract_epi64( half, 0 );
+	    }
+	} else if constexpr ( VL == 2 ) {
+	    if( ( mask & 0x1 ) == 0 ) {
+		xtr = tr::upper_half( s );
+		lane = 1;
+	    } else {
+		xtr = tr::lower_half( s );
+		lane = 0;
+	    }
+	} else if constexpr ( VL == 1 ) {
 	    lane = 0;
-	    xtr = tr::lane( s, 0 );
-	} else if( mask & 2 ) { // lane 1
-	    lane = 1;
-	    xtr = tr::lane( s, 1 );
-	} else if( mask & 4 ) { // lane 2
-	    lane = 2;
-	    xtr = tr::lane( s, 2 );
-	} else if( mask & 8 ) { // lane 3
-	    lane = 3;
-	    xtr = tr::lane( s, 3 );
-	}
-	static_assert( VL == 4 );
-*/
+	    xtr = s;
+	} else
+	    assert( 0 && "Oops" );
 
-	// unsigned lane = tr::find_first( cmp );
-	// type xtr = tr::lane( s, lane );
+	assert( xtr != 0 );
 	unsigned off = _tzcnt_u64( xtr );
+	assert( off != bits_per_lane );
 	row_type s_upd = tr::bitwise_and( s, tr::sub( s, tr::setoneval() ) );
 	row_type new_s = tr::blend( 1 << lane, s, s_upd );
 	return std::make_pair( lane * bits_per_lane + off, new_s );
@@ -2272,12 +2310,13 @@ private:
     }
 
     row_type get_himask( VID v ) {
-#if 0
+#if 1
 	row_type z = tr::setzero();
 	row_type s = tr::setone();
 	row_type o = tr::setoneval();
-	row_type p = tr::bitwise_invert(
-	    tr::sub( tr::sll( o, v % bits_per_lane ), o ) );
+	// row_type p = tr::bitwise_invert(
+	// tr::sub( tr::sll( o, v % bits_per_lane ), o ) );
+	row_type p = tr::sll( s, v % bits_per_lane );
 	VID lane = v / bits_per_lane;
 	VID mask = ( VID(1) << VL ) - ( VID(1) << lane );
 	row_type a = tr::blend( mask, z, s );
@@ -2288,8 +2327,10 @@ private:
 	row_type a = tr::load( &himask_starter[lane * VL] );
 	row_type b = tr::slli( a, v % bits_per_lane );
 	row_type c = tr::sub( b, a );
-	row_type d = tr::bitwise_or( c, a );
-	return d;
+	row_type d = tr::srli( a, 1 );
+	row_type e = tr::bitwise_or( c, d );
+	row_type f = tr::bitwise_invert( e );
+	return f;
 #endif
     }
 
@@ -2327,15 +2368,20 @@ private:
 
     // assumes VL == 4
     alignas(64) static constexpr uint64_t himask_starter[16] = {
-	0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0x1,
-	0xffffffffffffffff, 0xffffffffffffffff, 0x1, 0x0,
+	0x1, 0x0, 0x0, 0x0,
 	0xffffffffffffffff, 0x1, 0x0, 0x0,
-	0x1, 0x0, 0x0, 0x0
+	0xffffffffffffffff, 0xffffffffffffffff, 0x1, 0x0,
+	0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0x1
+	// 0x1, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff,
+	// 0x0, 0x1, 0xffffffffffffffff, 0xffffffffffffffff,
+	// 0x0, 0x0, 0x1, 0xffffffffffffffff,
+	// 0x0, 0x0, 0x0, 0x1,
     };
 };
 
+template<unsigned Bits>
 VID *
-clique_partition( DenseMatrix & G,
+clique_partition( DenseMatrix<Bits> & G,
 		  VID v_reference,
 		  CliqueLister & clist ) {
     VID n = G.numVertices();
@@ -2393,19 +2439,27 @@ clique_partition( DenseMatrix & G,
 	    VID * members;
 	    std::tie( cliqno, members ) = clist.allocate_clique( n+1 );
 
-	    clique_number[v_reference] = cliqno;
 	    *members++ = v_reference; 
 
 	    for( VID i=0; i < n; ++i ) {
-		VID v = G.get_s2g()[i];
-		clique_number[v] = cliqno;
-		*members++ = v;
+		VID vs = G.get_g2s()[i];
+		clique_number[vs] = cliqno;
+		*members++ = vs;
 	    }
+
+	    for( VID i=0; i < n; ++i )
+		assert( clique_number[i] != 0 );
 
 	    break; // we are done
 	} else if( true ) { // density < 0.1 ) {
+	    for( VID i=0; i < n; ++i )
+		assert( clique_number[i] != 0 );
+
 	    contract::vertex_set<VID> c = G.bron_kerbosch();
 	    variant = "BK-dense";
+
+	    for( VID i=0; i < n; ++i )
+		assert( clique_number[i] != 0 );
 
 	    best_size = c.size();
 	    
@@ -2417,12 +2471,12 @@ clique_partition( DenseMatrix & G,
 	    std::tie( cliqno, members )
 		= clist.allocate_clique( best_size+1 );
 
-	    clique_number[v_reference] = cliqno;
 	    *members++ = v_reference; 
 
 	    for( auto && v : c ) {
+		VID vg = G.get_s2g()[v];
 		clique_number[v] = cliqno;
-		*members++ = v;
+		*members++ = vg;
 		// unplaced[v] = false; // no longer consider this vertex
 	    }
 	} else {
@@ -2439,17 +2493,21 @@ clique_partition( DenseMatrix & G,
 	    std::tie( cliqno, members )
 		= clist.allocate_clique( best_size+1 );
 
-	    clique_number[v_reference] = cliqno;
+	    // clique_number[v_reference] = cliqno;
 	    *members++ = v_reference; 
 
 	    std::cerr << "     clique: #" << c.size();
 	    for( auto && v : c ) {
+		VID vg = G.get_s2g()[v];
 		clique_number[v] = cliqno;
-		*members++ = v;
+		*members++ = vg;
 		// unplaced[v] = false; // no longer consider this vertex
 		std::cerr << ' ' << v;
 	    }
 	    std::cerr << "\n";
+
+	    for( VID i=0; i < n; ++i )
+		assert( clique_number[i] != 0 );
 	}
 
 	double t = tm.next();
@@ -2473,6 +2531,7 @@ clique_partition( DenseMatrix & G,
 }
 
 
+template<unsigned Bits>
 void
 clique_partition_neighbours_dense(
     const GraphCSx & G,
@@ -2485,12 +2544,13 @@ clique_partition_neighbours_dense(
 
     // Cut out the vertex and its neighbours, ensure minimum coreness of 4.
     // Remove the vertex v because v will be a member of every clique.
-    DenseMatrix IG( 
-	G, v, assigned_clique, num_neighbours, neighbours );
-    // [=]( VID u ) { return coreness[u] >= 4 && u != v; } );
+    DenseMatrix<Bits> IG( G, v, assigned_clique, num_neighbours, neighbours );
 
     // Partition this small graph in cliques
     VID * clique_number = clique_partition( IG, v, clist );
+
+    for( VID i=0; i < num_neighbours; ++i )
+	assert( clique_number[i] != 0 );
 
     VID n = G.numVertices();
     EID m = G.numEdges();
@@ -2657,7 +2717,6 @@ clique_partition_neighbours(
     //       neighbours that have been assigned to cliques in order to
     //       reduce the set of vertices. Then decide whether this problem
     //       can be treated as dense.
-#if 1
     VID * induced_set;
     VID num;
     VID maxdeg;
@@ -2668,24 +2727,25 @@ clique_partition_neighbours(
     if( maxdeg < 3 )
 	return;
     
-    if( num <= 256 )
-	clique_partition_neighbours_dense(
+    if( num <= 64 ) {
+	clique_partition_neighbours_dense<64>(
 	    G, v, assigned_clique, coreness, clist,
 	    num, induced_set );
-    else
+    } else if( num <= 128 ) {
+	clique_partition_neighbours_dense<128>(
+	    G, v, assigned_clique, coreness, clist,
+	    num, induced_set );
+    } else if( num <= 256 ) {
+	clique_partition_neighbours_dense<256>(
+	    G, v, assigned_clique, coreness, clist,
+	    num, induced_set );
+    } else {
 	clique_partition_neighbours_base(
 	    G, v, assigned_clique, coreness, clist,
 	    num, induced_set );
+    }
 
     delete[] induced_set;
-#else
-    if( G.getDegree( v ) <= 256 )
-	clique_partition_neighbours_dense(
-	    G, v, assigned_clique, coreness, clist );
-    else
-	clique_partition_neighbours_base(
-	    G, v, assigned_clique, coreness, clist );
-#endif
 }
 
 
