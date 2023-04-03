@@ -55,52 +55,6 @@ alignas(64) extern const uint64_t increasing_sequence_epi64[16];
 alignas(64) extern const uint32_t movemask_lut_epi32[16*4];
 
 /***********************************************************************
- * stuff
- ***********************************************************************/
-template<typename U, typename V>
-struct vpair {
-    U a;
-    V b;
-
-    vpair( const U & a_, const V & b_ ) : a( a_ ), b( b_ ) { }
-    vpair( U && a_, V && b_ ) :
-	a( std::forward<U>( a_ ) ), b( std::forward<V>( b_ ) ) { }
-    vpair( const vpair & p ) : a( p.a ), b( p.b ) { }
-    vpair( vpair && p ) : a( std::move( p.a ) ), b( std::move( p.b ) ) { }
-    vpair() { }
-    
-    const vpair & operator = ( const vpair & p ) {
-	a = p.a;
-	b = p.b;
-	return *this;
-    }
-    const vpair & operator = ( vpair && p ) {
-	a = std::move( p.a );
-	b = std::move( p.b );
-	return *this;
-    }
-/*
-    template<typename S, typename T>
-    operator vpair<S,T> () const {
-	vpair<S,T> v;
-	v.a = (S)a;
-	v.b = (T)b;
-	return v;
-    }
-*/
-};
-
-template<typename T>
-struct is_vpair : public std::false_type { }; 
-
-template<typename U, typename V>
-struct is_vpair<vpair<U,V>> : public std::true_type { };
-
-template<typename T>
-static constexpr bool is_vpair_v = is_vpair<T>::value;
-
-
-/***********************************************************************
  * Vector traits selection (int)
  ***********************************************************************/
 #ifndef GRAPTOR_USE_MMX
