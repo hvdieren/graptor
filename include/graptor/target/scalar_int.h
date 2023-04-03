@@ -53,6 +53,8 @@ public:
 	    return setone() >> 1;
     }
     static type setoneval() { return type(1); }
+
+    static bool is_zero( type a ) { return a == 0; }
     
     static type create( member_type a0_ ) { return a0_; }
     static type set1( member_type a ) { return a; }
@@ -116,6 +118,7 @@ public:
     static type bitwise_andnot( type a, type b ) { return ~a & b; }
     static type bitwise_or( type a, type b ) { return a | b; }
     static type bitwise_xor( type a, type b ) { return a ^ b; }
+    static type bitwise_xnor( type a, type b ) { return ~a ^ b; }
     static type bitwise_invert( type a ) { return ~a; }
 
     static auto castfp( type a ) {
@@ -247,6 +250,13 @@ public:
     }
 
     static constexpr bool has_ternary = false;
+
+    static auto popcnt( type v ) {
+	if constexpr ( size == 64 )
+	    return _popcnt64( v );
+	else
+	    return _popcnt32( v );
+    }
 
     static type load( const member_type *a ) { return *a; }
     static type loadu( const member_type *a ) { return *a; }
