@@ -17,6 +17,10 @@
 #include "graptor/graph/contract/vertex_set.h"
 #include "graptor/graph/GraphCSx.h"
 #include "graptor/graph/GraphPDG.h"
+#include "graptor/graph/partitioning.h"
+
+#include "graptor/graph/simple/csx.h"
+#include "graptor/graph/simple/dicsx.h"
 
 #define NOBENCH
 #define MD_ORDERING 0
@@ -43,7 +47,7 @@ public:
     CliqueLister( EID m )
 	: m_list( m/12, m, numa_allocation_interleaved() ),
 	  m_max_elm( m ),
-	  m_next_id( 1 ), // temporary !! m_next_id( 0 ),
+	  m_next_id( 0 ),
 	  m_next_pos( 0 ),
 	  m_edges( 0 ) { }
 
@@ -966,7 +970,7 @@ public:
 	const VID * const gedges = G.getEdges();
 	VID ns = f.nActiveVertices();
 
-	assert( G.isSymmetric() );
+	// assert( G.isSymmetric() );
 
 	// Initialize
 	std::fill( &g2s[0], &g2s[n], (VID)~0 );
@@ -991,7 +995,7 @@ public:
 	idx[ns] = ms;
 
 	// Construct selected graph
-	new ( &S ) GraphCSx( ns, ms, -1, true, false );
+	new ( &S ) graptor::graph::GraphCSx<VID,EID>( ns, ms ); //, -1, true, false );
 	EID * index = S.getIndex();
 	VID * edges = S.getEdges();
 
@@ -999,7 +1003,7 @@ public:
 	std::copy( &idx[0], &idx[ns+1], index );
 
 	if( ms == 0 ) {
-	    S.build_degree();
+	    // S.build_degree();
 	    idx.del();
 	    return;
 	}
@@ -1020,11 +1024,11 @@ public:
 	    assert( se == index[v+1] && "error in neighbour count" );
 	} );
 
-	S.build_degree();
+	// S.build_degree();
 	idx.del();
 	fs.del();
     }
-    GraphBuilder( const GraphCSx & G, const bool * const f, VID ns )
+    GraphBuilder( const graptor::graph::GraphCSx<VID,EID> & G, const bool * const f, VID ns )
 	: g2s( G.numVertices(), numa_allocation_interleaved() ),
 	  s2g( ns, numa_allocation_interleaved() ) {
 	VID n = G.numVertices();
@@ -1032,7 +1036,7 @@ public:
 	const EID * const gindex = G.getIndex();
 	const VID * const gedges = G.getEdges();
 
-	assert( G.isSymmetric() );
+	// assert( G.isSymmetric() );
 
 	// Initialize
 	std::fill( &g2s[0], &g2s[n], (VID)~0 );
@@ -1059,7 +1063,7 @@ public:
 	idx[ns] = ms;
 
 	// Construct selected graph
-	new ( &S ) GraphCSx( ns, ms, -1, true, false );
+	new ( &S ) graptor::graph::GraphCSx<VID,EID>( ns, ms ); // , -1, true, false );
 	EID * index = S.getIndex();
 	VID * edges = S.getEdges();
 
@@ -1067,7 +1071,7 @@ public:
 	std::copy( &idx[0], &idx[ns+1], index );
 
 	if( ms == 0 ) {
-	    S.build_degree();
+	    // S.build_degree();
 	    idx.del();
 	    return;
 	}
@@ -1084,12 +1088,12 @@ public:
 	    assert( se == index[vs+1] && "error in neighbour count" );
 	}
 
-	S.build_degree();
+	// S.build_degree();
 	idx.del();
     }
 
     ~GraphBuilder() {
-	S.del();
+	// S.del();
 	g2s.del();
 	s2g.del();
     }
@@ -1102,10 +1106,10 @@ public:
 
     const VID * get_g2s() const { return g2s.get(); }
     const VID * get_s2g() const { return s2g.get(); }
-    const GraphCSx & get_graph() const { return S; }
+    const graptor::graph::GraphCSx<VID,EID> & get_graph() const { return S; }
 
 private:
-    GraphCSx S;
+    graptor::graph::GraphCSx<VID,EID> S;
     mm::buffer<VID> g2s;
     mm::buffer<VID> s2g;
 };
@@ -1163,7 +1167,7 @@ prune_graph_degree( const GraphType2 & G,
 }
 
 void
-mc_iterate( const GraphCSx & G,
+mc_iterate( const graptor::graph::GraphCSx<VID,EID> & G,
 	    contract::vertex_set<VID> & R,
 	    contract::vertex_set<VID> & P,
 	    int depth,
@@ -1197,6 +1201,44 @@ mc_iterate( const GraphCSx & G,
 	R.pop();
     }
 }
+
+void
+mc_iterate( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+	    contract::vertex_set<VID> & R,
+	    contract::vertex_set<VID> & P,
+	    int depth,
+	    contract::vertex_set<VID> & mc ) {
+    if( P.size() == 0 ) {
+	if( R.size() > mc.size() )
+	    mc = R;
+	return;
+    }
+    if( R.size() + P.size() < mc.size() ) // fail to improve
+	return;
+
+    const EID * const bindex = G.getBeginIndex();
+    const EID * const eindex = G.getEndIndex();
+    const VID * const edges = G.getEdges();
+
+    for( auto I=P.begin(), E=P.end(); I != E; ++I ) {
+	VID u = *I;
+
+	VID deg = eindex[u] - bindex[u];
+	VID sz = std::min( deg, P.size() );
+	contract::vertex_set<VID> Pv( sz );
+	Pv.resize( sz );
+	Pv.resize( contract::detail::intersect(
+		       I, (VID)std::distance( I, E ), // prune visited elm of P
+		       &edges[bindex[u]], deg,
+		       Pv.begin() ) );
+	// contract::vertex_set<VID> Pv
+	// = P.intersect( &edges[index[u]], index[u+1] - index[u] );
+	R.push( u );
+	mc_iterate( G, R, Pv, depth+1, mc );
+	R.pop();
+    }
+}
+
 
 class GraphBuilderInduced {
 public:
@@ -1267,14 +1309,17 @@ public:
 	// std::cerr << "ms=" << ms << "\n";
 
 	// Construct selected graph
-	new ( &S ) GraphCSx( ns, ms, -1, true, false );
-	EID * index = S.getIndex();
+	new ( &S ) graptor::graph::GraphDoubleIndexCSx( ns, ms ); // , -1, true, false );
+	EID * sindex = S.getBeginIndex();
+	EID * eindex = S.getEndIndex();
 	VID * edges = S.getEdges();
 
 	EID mms = sequence::plusScan( tmp, tmp, ns );
 	assert( ms == mms );
-	std::copy( &tmp[0], &tmp[ns], index );
-	index[ns] = ms;
+	std::copy( &tmp[0], &tmp[ns], sindex );
+	std::copy( &tmp[0], &tmp[ns], eindex );
+	sindex[ns] = ms;
+	eindex[ns] = ms;
 
 	assert( ms % 2 == 0 );
 	
@@ -1296,12 +1341,13 @@ public:
 		    }
 		    return true;
 		} );
-	    assert( tmp[su] == index[su+1] );
+	    assert( tmp[su] == sindex[su+1] );
+	    eindex[su] = tmp[su];
 	}
 
 	delete[] tmp;
 
-	S.build_degree();
+	// S.build_degree();
     }
     GraphBuilderInduced( const GraphCSx & G,
 			 VID v, const VID * const assigned_clique,
@@ -1353,14 +1399,16 @@ public:
 	// std::cerr << "ms=" << ms << "\n";
 
 	// Construct selected graph
-	new ( &S ) GraphCSx( ns, ms, -1, true, false );
-	EID * index = S.getIndex();
+	new ( &S ) graptor::graph::GraphDoubleIndexCSx( ns, ms ); // , -1, true, false );
+	EID * sindex = S.getBeginIndex();
+	EID * eindex = S.getEndIndex();
 	VID * edges = S.getEdges();
 
 	EID mms = sequence::plusScan( tmp, tmp, ns );
 	assert( ms == mms );
-	std::copy( &tmp[0], &tmp[ns], index );
-	index[ns] = ms;
+	std::copy( &tmp[0], &tmp[ns], sindex );
+	sindex[ns] = ms;
+	eindex[ns] = ms;
 
 	assert( ms % 2 == 0 );
 	
@@ -1380,34 +1428,35 @@ public:
 		    }
 		    return true;
 		} );
-	    assert( tmp[su] == index[su+1] );
+	    assert( tmp[su] == sindex[su+1] );
+	    eindex[su] = tmp[su];
 	}
 
 	delete[] tmp;
 
-	S.build_degree();
+	// S.build_degree();
     }
 
 
     ~GraphBuilderInduced() {
-	S.del();
+	// S.del();
 	g2s.del();
 	s2g.del();
     }
 
     const VID * get_g2s() const { return g2s.get(); }
     const VID * get_s2g() const { return s2g.get(); }
-    const GraphCSx & get_graph() const { return S; }
+    auto & get_graph() { return S; }
 
 private:
-    GraphCSx S;
+    graptor::graph::GraphDoubleIndexCSx<VID,EID> S;
     mm::buffer<VID> g2s;
     mm::buffer<VID> s2g;
 };
 
 class GraphBuilderComplement {
 public:
-    GraphBuilderComplement( const GraphCSx & G ) {
+    GraphBuilderComplement( const graptor::graph::GraphCSx<VID,EID> & G ) {
 	VID n = G.numVertices();
 	EID m = G.numEdges();
 	const EID * const gindex = G.getIndex();
@@ -1427,7 +1476,7 @@ public:
 	// Construct selected graph
 	// Edges: complement, not including diagonal
 	EID ms = EID(n) * EID(n) - EID(n) - ( m - mself );
-	new ( &S ) GraphCSx( n, ms, -1, true, false );
+	new ( &S ) graptor::graph::GraphCSx( n, ms ); // , -1, true, false );
 	EID * index = S.getIndex();
 	VID * edges = S.getEdges();
 
@@ -1463,21 +1512,137 @@ public:
 	    assert( e == index[v+1] );
 	} );
 	
-	S.build_degree();
+	// S.build_degree();
     }
     ~GraphBuilderComplement() {
-	S.del();
+	// S.del();
     }
 
-    const GraphCSx & get_graph() const { return S; }
+    const graptor::graph::GraphCSx<VID,EID> & get_graph() const { return S; }
 
 private:
-    GraphCSx S;
+    graptor::graph::GraphCSx<VID,EID> S;
+};
+
+class GraphBuilderComplementAndPrune {
+public:
+    GraphBuilderComplementAndPrune(
+	const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G )
+	: m_g2s( G.numVertices(), numa_allocation_interleaved() ),
+	  m_s2g( G.numVertices(), numa_allocation_interleaved() ) { // pessimistic
+	VID n = G.numVertices();
+	EID m = G.numEdges();
+	const EID * const gsindex = G.getBeginIndex();
+	const EID * const geindex = G.getEndIndex();
+	const VID * const gedges = G.getEdges();
+
+	// Count number of self-edges
+	EID mself = 0;
+	VID new_n = 0;
+	for( VID v=0; v < n; ++v ) {
+	    m_g2s[v] = ~(VID)0;
+	    const VID * p = std::lower_bound(
+		&gedges[gsindex[v]],
+		&gedges[geindex[v]],
+		v );
+	    if( p != &gedges[geindex[v]] && *p == v ) {
+		if( geindex[v] - gsindex[v] > 1 ) {
+		    ++mself;
+		    m_g2s[v] = new_n;
+		    m_s2g[new_n] = v;
+		    ++new_n;
+		}
+	    } else {
+		if( geindex[v] - gsindex[v] > 0 ) {
+		    m_g2s[v] = new_n;
+		    m_s2g[new_n] = v;
+		    ++new_n;
+		}
+	    }
+	}
+
+	// Construct selected graph
+	// Edges: complement, not including diagonal
+	EID ms = EID(new_n) * EID(new_n) - EID(new_n) - ( m - mself );
+	new ( &S ) graptor::graph::GraphDoubleIndexCSx( new_n, ms ); // , -1, true, false );
+	EID * sindex = S.getBeginIndex();
+	EID * eindex = S.getEndIndex();
+	VID * edges = S.getEdges();
+
+	// Set up index array
+	for( VID v=0; v < n; ++v ) {
+	    // Degree of vertex
+	    EID deg = geindex[v] - gsindex[v];
+
+	    if( ~m_g2s[v] == 0 )
+		continue;
+
+	    // if( deg == 0 || ( deg == 1 && gedges[gsindex[v]] == v ) )
+	    // continue;
+
+	    // Account for self-edge, if any
+	    const VID * p = std::lower_bound(
+		&gedges[gsindex[v]],
+		&gedges[geindex[v]],
+		v );
+	    // if( p != &gedges[geindex[v]] && *p == v )
+	    // deg--; // deg is one too large
+	    if( p != &gedges[geindex[v]] && *p == v ) {
+		if( geindex[v] - gsindex[v] > 1 ) // should be futile
+		    deg--;
+	    }
+
+	    sindex[m_g2s[v]] = EID(new_n) - 1 - deg;
+	}
+	// seq -> use std::exclusive_scan
+	EID mms = sequence::plusScan( sindex, sindex, new_n );
+	assert( mms == ms && "edge count error" );
+	sindex[new_n] = ms;
+	std::copy( sindex+1, sindex+new_n, eindex );
+	eindex[new_n-1] = ms;
+	eindex[new_n] = ms;
+
+	for( VID vs=0; vs < new_n; ++vs ) {
+	    VID v = m_s2g[vs];
+	    EID ge = gsindex[v], gee = geindex[v];
+	    EID e = sindex[vs];
+
+	    for( VID us=0; us < new_n; ++us ) {
+		VID u = m_s2g[us];
+		while( ge != gee && gedges[ge] < u )
+		    ++ge;
+		assert( ge == gee || gedges[ge] >= u );
+		if( ( ge == gee || u != gedges[ge] )
+		    && us != vs ) // no self-edges
+		    edges[e++] = us;
+	    }
+	    assert( ge == gee || ge == gee-1 );
+	    assert( e == sindex[vs+1] );
+	    assert( e == eindex[vs] );
+	}
+	
+	// S.build_degree();
+    }
+    ~GraphBuilderComplementAndPrune() {
+	// S.del();
+	m_g2s.del();
+	m_s2g.del();
+    }
+
+    const VID * get_g2s() const { return m_g2s.get(); }
+    const VID * get_s2g() const { return m_s2g.get(); }
+    auto & get_graph() { return S; }
+
+private:
+    graptor::graph::GraphDoubleIndexCSx<VID,EID> S;
+    mm::buffer<VID> m_g2s;
+    mm::buffer<VID> m_s2g;
 };
 
 	 
+/*
 contract::vertex_set<VID>
-induced_max_clique_kb( const GraphCSx & G,
+induced_max_clique_kb( const graptor::graph::GraphCSx<VID,EID> & G,
 		       VID v,
 		       const VID * assigned_clique ) {
     VID n = G.numVertices();
@@ -1513,6 +1678,765 @@ induced_max_clique_kb( const GraphCSx & G,
 
     return mc;
 }
+*/
+
+void
+mark( VID & best_size, VID * best_cover, VID v ) {
+    best_cover[best_size++] = v;
+}
+
+// For path or cycle
+void
+trace_path( VID n, 
+	    const EID * const index,
+	    const VID * const edges,
+	    bool * visited,
+	    VID & best_size,
+	    VID * best_cover,
+	    VID cur,
+	    VID nxt,
+	    bool incl ) {
+    if( visited[nxt] )
+	return;
+
+    visited[nxt] = true;
+
+    if( incl )
+	mark( best_size, best_cover, nxt );
+
+    // Done if nxt is degree-1 vertex
+    if( index[nxt+1] - index[nxt] == 2 ) {
+	VID ngh1 = edges[index[nxt]];
+	VID ngh2 = edges[index[nxt]+1];
+
+	VID ngh = ngh1 == cur ? ngh2 : ngh1;
+
+	trace_path( n, index, edges, visited, best_size, best_cover, nxt, ngh,
+		    !incl );
+    }
+}
+
+// For path or cycle
+void
+trace_path( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+	    bool * visited,
+	    VID & best_size,
+	    VID * best_cover,
+	    VID cur,
+	    VID nxt,
+	    bool incl ) {
+    if( visited[nxt] )
+	return;
+
+    visited[nxt] = true;
+
+    if( incl )
+	mark( best_size, best_cover, nxt );
+
+    const EID * const index = G.getBeginIndex();
+    const VID * const edges = G.getEdges();
+
+    // Done if nxt is degree-1 vertex
+    if( G.getDegree( nxt ) == 2 ) {
+	VID ngh1 = edges[index[nxt]];
+	VID ngh2 = edges[index[nxt]+1];
+
+	VID ngh = ngh1 == cur ? ngh2 : ngh1;
+
+	trace_path( G, visited, best_size, best_cover, nxt, ngh, !incl );
+    }
+}
+
+
+bool
+vertex_cover_poly( VID n, 
+		   VID k,
+		   const EID * const index,
+		   const VID * const edges,
+		   VID & best_size,
+		   VID * best_cover ) {
+    bool * visited = new bool[n];
+    std::fill( visited, &visited[n], false );
+
+    VID old_best_size = best_size;
+
+    // Find paths
+    for( VID v=0; v < n; ++v ) {
+	assert( index[v+1] - index[v] <= 2 );
+	if( index[v+1] - index[v] == 1 && !visited[v] ) {
+	    visited[v] = true;
+	    trace_path( n, index, edges, visited, best_size, best_cover,
+			v, edges[index[v]], true );
+	}
+    }
+    
+    // Find cycles (uses same auxiliary as paths)
+    for( VID v=0; v < n; ++v ) {
+	assert( index[v+1] - index[v] <= 2 );
+	if( index[v+1] - index[v] == 2 && !visited[v] ) {
+	    visited[v] = true;
+	    mark( best_size, best_cover, v );
+	    trace_path( n, index, edges, visited, best_size, best_cover,
+			v, edges[index[v]], false );
+	}
+    }
+
+    delete[] visited;
+
+    return best_size - old_best_size <= k;
+}
+
+bool
+vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+		   VID k,
+		   VID & best_size,
+		   VID * best_cover ) {
+    VID n = G.numVertices();
+
+    bool * visited = new bool[n];
+    std::fill( visited, &visited[n], false );
+
+    VID old_best_size = best_size;
+
+    // Find paths
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	assert( deg <= 2 );
+	if( deg == 1 && !visited[v] ) {
+	    visited[v] = true;
+	    trace_path( G, visited, best_size, best_cover,
+			v, *G.nbegin( v ), true );
+	}
+    }
+    
+    // Find cycles (uses same auxiliary as paths)
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	assert( deg <= 2 );
+	if( deg == 2 && !visited[v] ) {
+	    visited[v] = true;
+	    mark( best_size, best_cover, v );
+	    trace_path( G, visited, best_size, best_cover,
+			v, *G.nbegin( v ), false );
+	}
+    }
+
+    delete[] visited;
+
+    return best_size - old_best_size <= k;
+}
+
+
+void
+check_cover( VID n, 
+	     const EID * const index,
+	     const VID * const edges,
+	     VID size,
+	     VID * cover ) {
+    std::sort( cover, cover+size );
+    EID e = index[0];
+    for( VID v=0; v < n; ++v ) {
+	const VID * pos = std::lower_bound( cover, cover+size, v );
+	if( pos != cover+size && *pos == v ) {
+	    e = index[v+1];
+	} else {
+	    for( EID ee = index[v+1]; e != ee; ++e ) {
+		VID u = edges[e];
+		const VID * pos = std::lower_bound( cover, cover+size, u );
+		if( pos != cover+size && *pos == u ) {
+		    ; // ok
+		} else {
+		    assert( 0 && "not a cover" );
+		}
+	    }
+	}
+    }
+}
+
+void
+check_cover( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+	     VID size,
+	     VID * cover ) {
+    std::sort( cover, cover+size );
+    VID n = G.numVertices();
+    const EID * const bindex = G.getBeginIndex();
+    const EID * const eindex = G.getEndIndex();
+    const VID * const edges = G.getEdges();
+    for( VID v=0; v < n; ++v ) {
+	const VID * pos = std::lower_bound( cover, cover+size, v );
+	if( pos != cover+size && *pos == v ) {
+	    continue;
+	} else {
+	    for( EID e=bindex[v], ee=eindex[v]; e != ee; ++e ) {
+		VID u = edges[e];
+		const VID * pos = std::lower_bound( cover, cover+size, u );
+		if( pos != cover+size && *pos == u ) {
+		    ; // ok
+		} else {
+		    assert( 0 && "not a cover" );
+		}
+	    }
+	}
+    }
+}
+
+
+bool
+vertex_cover_vc3( VID n, 
+		  VID k,
+		  VID c,
+		  const EID * const index,
+		  const VID * const edges,
+		  VID & best_size,
+		  VID * best_cover );
+
+bool
+vertex_cover_vc3_buss( VID n, 
+		       VID k,
+		       VID c,
+		       const EID * const index,
+		       const VID * const edges,
+		       VID & best_size,
+		       VID * best_cover ) {
+    // Set U of vertices of degree higher than k
+    VID u_size = 0;
+    for( VID v=0; v < n; ++v )
+	if( index[v+1] - index[v] > k )
+	    ++u_size;
+
+    // If |U| > k, then there exists no cover of size k
+    if( u_size > k )
+	return false;
+
+    assert( u_size > 0 );
+    
+    // Construct G'
+    EID * gp_index = new EID[n - u_size + 1];
+    VID * gp_xlat = new VID[n - u_size];
+    VID * gp_rlat = new VID[n];
+    EID m = 0;
+    VID x = 0;
+    gp_index[0] = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( index[v+1] - index[v] > k ) // v excluded
+	    continue;
+
+	// Map new vertex IDs to old ones
+	gp_xlat[x] = v;
+	gp_rlat[v] = x;
+
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( index[u+1] - index[u] <= k )
+		m++;
+	}
+	gp_index[x+1] = m;
+
+	// Next new vertex ID
+	++x;
+    }
+
+    assert( x == n - u_size );
+
+    VID * gp_edges = new VID[m];
+    EID pos = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( index[v+1] - index[v] > k ) // v excluded
+	    continue;
+
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( index[u+1] - index[u] <= k )
+		gp_edges[pos++] = gp_rlat[u];
+	}
+    }
+
+    assert( pos == m );
+    
+
+    // If G' has more than k(k-|U|) edges, reject
+    if( m > k * ( k - u_size ) ) {
+	delete[] gp_index;
+	delete[] gp_edges;
+	delete[] gp_xlat;
+	delete[] gp_rlat;
+	return false;
+    }
+
+    // Find a cover for the remaining vertices
+    VID gp_best_size = 0;
+    bool rec = vertex_cover_vc3(
+	n - u_size, k - u_size, c, gp_index, gp_edges,
+	gp_best_size, &best_cover[best_size] );
+
+    if( rec ) {
+	// Debug
+	// check_cover( n - u_size, gp_index, gp_edges, gp_best_size, &best_cover[best_size] );
+
+	for( VID i=0; i < gp_best_size; ++i )
+	    best_cover[best_size+i] = gp_xlat[best_cover[best_size+i]];
+	best_size += gp_best_size;
+
+	// All vertices with degree > k must be included in the cover
+	for( VID v=0; v < n; ++v )
+	    if( index[v+1] - index[v] > k )
+		best_cover[best_size++] = v;
+
+	// check_cover( n, index, edges, best_size, best_cover );
+    }
+
+    delete[] gp_edges;
+    delete[] gp_index;
+    delete[] gp_xlat;
+    delete[] gp_rlat;
+
+    return rec;
+}
+
+
+bool
+vertex_cover_vc3( VID n, 
+		  VID k,
+		  VID c,
+		  const EID * const index,
+		  const VID * const edges,
+		  VID & best_size,
+		  VID * best_cover ) {
+    EID m = index[n];
+
+    VID max_deg = 0;
+    VID max_v = 0;
+    for( VID v=0; v < n; ++v ) {
+	VID deg = index[v+1] - index[v];
+	if( deg > max_deg ) {
+	    max_deg = deg;
+	    max_v = v;
+	}
+    }
+    if( max_deg <= 2 )
+	return vertex_cover_poly( n, k, index, edges, best_size, best_cover );
+
+    if( m/2 > c * k * k && max_deg > k ) {
+	// replace by Buss kernel
+	return vertex_cover_vc3_buss(
+	    n, k, c, index, edges, best_size, best_cover );
+    }
+
+    // Any vertex with degree > 3
+    assert( index[max_v+1] - index[max_v] >= 3 );
+
+    // Create two subproblems
+    EID * i_index = new EID[n-1+1];
+    EID * x_index = new EID[n-max_deg-1+1];
+    VID * i_xlat = new VID[n-1];
+    VID * x_xlat = new VID[n-max_deg-1];
+    VID * i_rlat = new VID[n];
+    VID * x_rlat = new VID[n];
+
+    VID i_n = 0, x_n = 0;
+    EID i_m = 0, x_m = 0;
+    i_index[0] = 0;
+    x_index[0] = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( v == max_v ) // removed
+	    continue;
+
+	const VID * vpos = std::lower_bound(
+	    &edges[index[max_v]], &edges[index[max_v+1]], v );
+	// v is a neighbour of max_v, hence removed
+	bool x_rm = vpos != &edges[index[max_v+1]] && *vpos == v;
+	
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( u == max_v ) // u is removed
+		continue;
+
+	    i_m++;
+
+	    if( !x_rm ) {
+		const VID * pos = std::lower_bound(
+		    &edges[index[max_v]], &edges[index[max_v+1]], u );
+		// u is not a neighbour of max_v, hence not removed
+		if( pos == &edges[index[max_v+1]] || *pos != u )
+		    x_m++;
+	    }
+	}
+	i_xlat[i_n] = v;
+	i_rlat[v] = i_n;
+	i_index[++i_n] = i_m;
+	if( !x_rm ) {
+	    x_xlat[x_n] = v;
+	    x_rlat[v] = x_n;
+	    x_index[++x_n] = x_m;
+	}
+    }
+
+    assert( i_n == n - 1 );
+    assert( x_n == n - 1 - max_deg );
+
+    VID * i_edges = new VID[i_m];
+    VID * x_edges = new VID[x_m];
+    EID i_pos = 0, x_pos = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( v == max_v ) // removed
+	    continue;
+
+	const VID * vpos = std::lower_bound(
+	    &edges[index[max_v]], &edges[index[max_v+1]], v );
+	// v is a neighbour of max_v, hence removed
+	bool x_rm = vpos != &edges[index[max_v+1]] && *vpos == v;
+	
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( u == max_v ) // u is removed
+		continue;
+
+	    i_edges[i_pos++] = i_rlat[u];
+
+	    if( !x_rm ) {
+		const VID * pos = std::lower_bound(
+		    &edges[index[max_v]], &edges[index[max_v+1]], u );
+		// u is not a neighbour of max_v, hence not removed
+		if( pos == &edges[index[max_v+1]] || *pos != u )
+		    x_edges[x_pos++] = x_rlat[u];
+	    }
+	}
+    }
+
+    assert( i_pos == i_m );
+    assert( x_pos == x_m );
+
+    
+    // Branch on max_v
+    VID i_best_size = 0;
+    VID * i_best_cover = new VID[n-1];
+    VID x_best_size = 0;
+    VID * x_best_cover = new VID[n-1-max_deg];
+
+    VID x_k = std::min( n-1-max_deg, k-max_deg );
+    bool x_ok = vertex_cover_vc3( n-1-max_deg, x_k, c,
+				  x_index, x_edges,
+				  x_best_size, x_best_cover );
+    VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
+    bool i_ok = vertex_cover_vc3( n-1, i_k, c, i_index, i_edges,
+				  i_best_size, i_best_cover );
+
+    if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
+	best_cover[best_size++] = max_v;
+	for( VID i=0; i < i_best_size; ++i )
+	    best_cover[best_size++] = i_xlat[i_best_cover[i]];
+    } else if( x_ok ) {
+	for( EID e=index[max_v], ee=index[max_v+1]; e != ee; ++e )
+	    best_cover[best_size++] = edges[e];
+	for( VID i=0; i < x_best_size; ++i )
+	    best_cover[best_size++] = x_xlat[x_best_cover[i]];
+    }
+
+    delete[] i_index;
+    delete[] i_edges;
+    delete[] i_xlat;
+    delete[] i_rlat;
+    delete[] i_best_cover;
+    delete[] x_index;
+    delete[] x_edges;
+    delete[] x_xlat;
+    delete[] x_rlat;
+    delete[] x_best_cover;
+
+    return i_ok || x_ok;
+}
+
+bool
+vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+		  VID k,
+		  VID c,
+		  VID & best_size,
+		  VID * best_cover );
+
+bool
+vertex_cover_vc3_buss( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+		       VID k,
+		       VID c,
+		       VID & best_size,
+		       VID * best_cover ) {
+    // Set U of vertices of degree higher than k
+    VID u_size = std::count_if( G.dbegin(), G.dend(),
+				[&]( VID deg ) { return deg > k; } );
+
+    // If |U| > k, then there exists no cover of size k
+    if( u_size > k )
+	return false;
+
+    assert( u_size > 0 );
+    
+    // Construct G'
+    VID n = G.numVertices();
+    auto chkpt = G.checkpoint();
+    G.disable_incident_edges( [&]( VID v ) {
+	return chkpt.get_degree( v ) > k;
+    } );
+    EID m = G.numEdges();
+    
+    // If G' has more than k(k-|U|) edges, reject
+    if( m > k * ( k - u_size ) ) {
+	G.restore_checkpoint( chkpt );
+	return false;
+    }
+
+    // Find a cover for the remaining vertices
+    VID gp_best_size = 0;
+    bool rec = vertex_cover_vc3(
+	G, k - u_size, c,
+	gp_best_size, &best_cover[best_size] );
+
+    if( rec ) {
+	// Debug
+	// check_cover( G, gp_best_size, &best_cover[best_size] );
+
+	// for( VID i=0; i < gp_best_size; ++i )
+	// best_cover[best_size+i] = gp_xlat[best_cover[best_size+i]];
+	best_size += gp_best_size;
+
+	// All vertices with degree > k must be included in the cover
+	for( VID v=0; v < n; ++v )
+	    if( G.getDegree( v ) > k )
+		best_cover[best_size++] = v;
+
+	// check_cover( G, best_size, best_cover );
+    }
+
+    G.restore_checkpoint( chkpt );
+
+    return rec;
+}
+
+
+bool
+vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+		  VID k,
+		  VID c,
+		  VID & best_size,
+		  VID * best_cover ) {
+    VID n = G.numVertices();
+    // VID n = std::count_if(
+    // G.dbegin(), G.dend(), [=]( EID deg ) { return deg > 0; } );
+    EID m = G.numEdges();
+
+    VID max_v, max_deg;
+    std::tie( max_v, max_deg ) = G.max_degree();
+    if( max_deg <= 2 ) {
+	bool ret = vertex_cover_poly( G, k, best_size, best_cover );
+	// if( ret )
+	// check_cover( G, best_size, best_cover );
+	return ret;
+    }
+
+    if( k == 0 )
+	return m == 0;
+
+/*
+    if( m/2 > c * k * k && max_deg > k ) {
+	// replace by Buss kernel
+	return vertex_cover_vc3_buss( G, k, c, best_size, best_cover );
+    }
+*/
+
+    // Any vertex with degree > 3
+    assert( G.getDegree( max_v ) >= 3 );
+
+    // Create two subproblems ; branch on max_v
+    VID i_best_size = 0;
+    VID * i_best_cover = new VID[n-1];
+    VID x_best_size = 0;
+    VID * x_best_cover = new VID[n-1-max_deg];
+
+    // In case v is included, erase only v
+    auto chkpt = G.checkpoint();
+    G.disable_incident_edges( [=]( VID v ) { return v == max_v; } );
+
+    // In case v is excluded, erase v (previous step) and all its neighbours
+    // Make sure our neighbours are sorted. Iterators remain valid after
+    // erasing incident edges.
+    G.sort_neighbours( max_v );
+    auto NI = G.nbegin( max_v );
+    auto NE = G.nend( max_v );
+    auto chkpti = G.checkpoint();
+    G.disable_incident_edges( [=]( VID v ) {
+	auto pos = std::lower_bound( NI, NE, v );
+	return pos != NE && *pos == v;
+    } );
+
+    VID x_k = std::min( n-1-max_deg, k-max_deg );
+    bool x_ok = false;
+    if( k >= max_deg )
+	x_ok = vertex_cover_vc3( G, x_k, c, x_best_size, x_best_cover );
+
+    G.restore_checkpoint( chkpti );
+    VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
+    bool i_ok = vertex_cover_vc3( G, i_k, c, i_best_size, i_best_cover );
+
+    if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
+	best_cover[best_size++] = max_v;
+	for( VID i=0; i < i_best_size; ++i )
+	    best_cover[best_size++] = i_best_cover[i]; // i_xlat[i_best_cover[i]];
+    } else if( x_ok ) {
+	for( auto I=NI; I != NE; ++I )
+	    best_cover[best_size++] = *I;
+	for( VID i=0; i < x_best_size; ++i )
+	    best_cover[best_size++] = x_best_cover[i]; // x_xlat[x_best_cover[i]];
+    }
+
+    G.restore_checkpoint( chkpt );
+
+    // if( i_ok || x_ok )
+    // check_cover( G, best_size, best_cover );
+
+    return i_ok || x_ok;
+}
+
+
+bool
+vertex_cover_buss( VID n, 
+		   VID k,
+		   const EID * const index,
+		   const VID * const edges,
+		   VID & best_size,
+		   VID * best_cover ) {
+    // Set U of vertices of degree higher than k
+    VID u_size = 0;
+    for( VID v=0; v < n; ++v )
+	if( index[v+1] - index[v] > k )
+	    ++u_size;
+
+    // If |U| > k, then there exists no cover of size k
+    if( u_size > k )
+	return false;
+
+    assert( u_size > 0 );
+    
+    // Construct G'
+    EID * gp_index = new EID[n - u_size + 1];
+    VID * gp_xlat = new VID[n - u_size];
+    EID m = 0;
+    VID x = 0;
+    gp_index[0] = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( index[v+1] - index[v] > k ) // v excluded
+	    continue;
+
+	// Map new vertex IDs to old ones
+	gp_xlat[x] = v;
+
+	VID nn = 0;
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( index[u+1] - index[u] <= k )
+		++nn;
+	}
+	m += nn;
+	gp_index[x+1] = nn + gp_index[x];
+
+	// Next new vertex ID
+	++x;
+    }
+
+    assert( x == n - u_size );
+    gp_index[n - u_size] = m;
+
+    // If G' has more than k(k-|U|) edges, reject
+    if( m > k * ( k - u_size ) ) {
+	delete[] gp_index;
+	delete[] gp_xlat;
+	return false;
+    }
+
+    VID * gp_edges = new VID[m];
+
+    x = 0;
+    EID mm = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( index[v+1] - index[v] > k ) // v excluded
+	    continue;
+
+	VID nn = 0;
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    if( index[u+1] - index[u] <= k )
+		gp_edges[mm++] = u;
+	}
+	assert( mm == gp_index[x+1] );
+
+	// Next new vertex ID
+	++x;
+    }
+    
+    // Find a cover for the remaining vertices
+    VID gp_best_size = 0;
+    bool rec = vertex_cover_buss( n - u_size, k - u_size, gp_index, gp_edges,
+				  gp_best_size, &best_cover[best_size] );
+
+    if( rec ) {
+	// Debug
+	// check_cover( n, index, edges, gp_best_size, &best_cover[best_size] );
+
+	for( VID i=0; i < gp_best_size; ++i )
+	    best_cover[best_size+i] = gp_xlat[best_cover[best_size+i]];
+	best_size += gp_best_size;
+    }
+
+    delete[] gp_edges;
+    delete[] gp_index;
+    delete[] gp_xlat;
+
+    return rec;
+}
+
+void
+vertex_cover_buss( VID n, 
+		   const EID * const index,
+		   const VID * const edges,
+		   VID maxdeg,
+		   VID & best_size,
+		   VID * best_cover ) {
+    VID k_min = 0, k_max = maxdeg;
+
+    VID * cover = new VID[n];
+    VID size = 0;
+    bool rec = false;
+
+    do {
+	VID k = ( k_min + k_max ) / 2;
+	std::cerr << "  k=" << k << " min=" << k_min << " max=" << k_max << "\n";
+
+	rec = vertex_cover_buss( n, k, index, edges, size, cover );
+
+	if( rec )
+	    k_max = k;
+	else
+	    k_min = k;
+	
+    } while( !rec && k_min < k_max-1 );
+
+    std::copy( &cover[0], &cover[size], best_cover );
+    best_size = size;
+
+    // Search for a smaller cover
+    k_max -= 1;
+
+    do {
+	VID k = ( k_min + k_max ) / 2;
+
+	rec = vertex_cover_buss( n, k, index, edges, size, cover );
+
+	if( rec ) {
+	    k_max = k - 1;
+	    std::copy( &cover[0], &cover[size], best_cover );
+	    best_size = size;
+	} else
+	    k_min = k;
+	
+    } while( rec && k_min < k_max-1 );
+}
 
 VID
 vertex_cover_iterate( VID n, 
@@ -1541,6 +2465,7 @@ vertex_cover_iterate( VID n,
 	state[v] = 0;
 	return sz;
     }
+// todo: if degree > best_size -> skip vertex
 
     // First check if all neighbours of v are covered
     VID num_covered = 0;
@@ -1596,7 +2521,7 @@ vertex_cover_iterate( VID n,
 }
 
 contract::vertex_set<VID>
-vertex_cover_exact( const GraphCSx & G ) {
+vertex_cover_exact( const graptor::graph::GraphCSx<VID,EID> & G ) {
     VID n = G.numVertices();
     EID m = G.numEdges();
     const EID * const index = G.getIndex();
@@ -1660,15 +2585,16 @@ vertex_cover_approximate( const GraphCSx & G ) {
 }
 
 
+/*
 contract::vertex_set<VID>
-induced_max_clique_vc( const GraphCSx & G,
+induced_max_clique_vc( const graptor::graph::GraphCSx<VID,EID> & G,
 		       VID v,
 		       const VID * assigned_clique ) {
     GraphBuilderInduced ibuilder( G, v, assigned_clique );
-    const GraphCSx & IG = ibuilder.get_graph();
+    const auto & IG = ibuilder.get_graph();
 
     GraphBuilderComplement cbuilder( IG );
-    const GraphCSx & CIG = cbuilder.get_graph();
+    const auto & CIG = cbuilder.get_graph();
 
     auto c = vertex_cover_exact( CIG );
     std::transform( c.begin(), c.end(), c.begin(),
@@ -1678,15 +2604,16 @@ induced_max_clique_vc( const GraphCSx & G,
 
 // Could choose to solve this using MIS or VC if graph sufficiently dense.
 contract::vertex_set<VID>
-induced_max_clique( const GraphCSx & G,
+induced_max_clique( const graptor::graph::GraphCSx<VID,EID> & G,
 		    VID v,
 		    const VID * assigned_clique ) {
     // return induced_max_clique_kb( G, v, assigned_clique );
     return induced_max_clique_vc( G, v, assigned_clique );
 }
+*/
 
 contract::vertex_set<VID>
-bron_kerbosch( const GraphCSx & G ) {
+bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G ) {
     VID n = G.numVertices();
     EID m = G.numEdges();
     const EID * const index = G.getIndex();
@@ -1720,43 +2647,79 @@ bron_kerbosch( const GraphCSx & G ) {
     return mc;
 }
 
+contract::vertex_set<VID>
+bron_kerbosch( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G ) {
+    VID n = G.numVertices();
+    EID m = G.numEdges();
+    const EID * const bindex = G.getBeginIndex();
+    const EID * const eindex = G.getEndIndex();
+    const VID * const edges = G.getEdges();
 
-VID *
-clique_partition( const GraphCSx & G,
+    contract::vertex_set<VID> mc;
+    
+    for( VID v=0; v < n; ++v ) {
+	if( bindex[v] == eindex[v] )
+	    continue;
+	
+	contract::vertex_set<VID> R, P;
+
+	R.push( v );
+
+	// Consider as candidates only those neighbours of u that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	const VID * const start = std::upper_bound(
+	    &edges[bindex[v]], &edges[eindex[v]], v );
+	P.push( start, &edges[eindex[v]] );
+
+	mc_iterate( G, R, P, 1, mc );
+    }
+
+/*
+    best_size = n - mc.size();
+    std::fill( &best_state[0], &best_state[n], 1 );
+    for( auto && v : mc )
+	best_state[v] = -1;
+*/
+    return mc;
+}
+
+
+// VID *
+template<typename Fn>
+void
+clique_partition( const GraphCSx & GG,
+		  graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		  VID v_reference,
+		  Fn && map_i2g,
+		  VID * assigned_clique,
 		  CliqueLister & clist ) {
-    GraphCSRAdaptor GA( G, 1 );
+    // GraphCSRAdaptor GA( G, 1 );
 
     VID n = G.numVertices();
     EID m = G.numEdges();
-    frontier unplaced_f = frontier::template create<frontier_type::ft_bool>(
-	GA.get_partitioner() );
-
-    bool * unplaced = unplaced_f.template getDense<frontier_type::ft_bool>();
-    std::fill( &unplaced[0], &unplaced[n], true );
+    unsigned npart = 1;
 
     VID to_assign = n;
 
     // State: 0: undecided, 1: include, -1: include neighbours
-    short * state = new short[n];
+    // short * state = new short[n];
     short * best_state = new short[n];
 
-    VID * clique_number = new VID[n];
-    std::fill( &clique_number[0], &clique_number[n], ~(VID)0 );
+    // VID * clique_number = new VID[n];
+    // std::fill( &clique_number[0], &clique_number[n], ~(VID)0 );
 
     uint64_t tid = gettid();
 
-    while( to_assign > 4 ) {
+    while( to_assign > 3 ) {
 	// Cut out sub-graph of all vertices not yet placed.
 	// (Each vertex (neighbour/edge) can only be placed once because the main
 	//  vertex v is part of every clique and each edge may be covered once.)
 	timer tm;
 	tm.start();
-	GraphBuilder ibuilder( G, unplaced, to_assign );
-	const GraphCSx & IG = ibuilder.get_graph();
+	auto & IG = G;
 	float density = float(IG.numEdges())
 	    / ( float(IG.numVertices()) * float(IG.numVertices()) );
-	VID max_deg = IG.max_degree();
+	VID max_deg = IG.max_degree().second;
 
 	double tb = tm.stop();
 
@@ -1787,7 +2750,7 @@ clique_partition( const GraphCSx & G,
 	tm.start();
 
 	if( EID(in) * EID( in - 1 ) == im ) {
-	    // A clique. Because to_assign > 4, so is in.
+	    // A clique. Because to_assign > 3, so is in.
 	    // Hence, the clique is sufficiently large.
 	    
 	    std::fill( &best_state[0], &best_state[in], -1 );
@@ -1797,70 +2760,111 @@ clique_partition( const GraphCSx & G,
 	    // Get a unique ID for the clique
 	    VID * members;
 	    std::tie( cliqno, members ) = clist.allocate_clique( in+1 );
+	    *members++ = v_reference;
 
 	    // std::cerr << "     clique:";
 	    for( VID v=0; v < in; ++v ) {
-		VID vg = ibuilder.get_s2g()[v];
-		clique_number[vg] = cliqno;
-		*members++ = vg;
-		unplaced[vg] = false; // no longer consider this vertex
+		VID vg = v; // ibuilder.get_s2g()[v];
+		// assert( ~clique_number[vg] == 0 );
+		// clique_number[vg] = cliqno;
+		*members++ = map_i2g( vg );
 	    }
 
+	    mark_edges( GG, v_reference, map_i2g,
+			graptor::graph::range_iterator( VID(0) ),
+			graptor::graph::range_iterator( in ),
+			assigned_clique, cliqno );
+
 	    break; // we are done
-	} else if( ( im < 8000 && density < 0.1 ) || density < 0.001 ) {
+	} else if( ( im < 8000 && density < 0.1 ) || density < 0.01 ) {
 	    std::fill( &best_state[0], &best_state[in], 1 );
+	    IG.sort_neighbour_lists();
 	    contract::vertex_set<VID> c = bron_kerbosch( IG );
 	    variant = "BK";
 
 	    best_size = c.size();
 	    
-	    if( best_size < 4 )
-		break;
-
-	    // Get a unique ID for the clique
-	    VID * members;
-	    std::tie( cliqno, members )
-		= clist.allocate_clique( best_size+1 );
-
-	    for( auto && v : c ) {
-		VID vg = ibuilder.get_s2g()[v];
-		clique_number[vg] = cliqno;
-		*members++ = vg;
-		unplaced[vg] = false; // no longer consider this vertex
-	    }
-	} else {
-	    GraphBuilderComplement cbuilder( IG );
-	    const GraphCSx & CIG = cbuilder.get_graph();
-	    VID cn = CIG.numVertices();
-	    EID cm = CIG.numEdges();
-	    const EID * const cindex = CIG.getIndex();
-	    const VID * const cedges = CIG.getEdges();
-
-	    std::fill( &state[0], &state[cn], 0 );
-	    std::fill( &best_state[0], &best_state[cn], 1 );
-	    vertex_cover_iterate( cn, cindex, cedges, 0, state, 0,
-				  best_size, best_state );
-	    variant = "VC";
-
-	    assert( best_size > 0 );
-
-	    best_size = in - best_size;
-
-	    if( best_size < 4 )
+	    if( best_size < 3 )
 		break;
 
 	    // Get a unique ID for the clique
 	    VID * members;
 	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
+	    *members++ = v_reference;
 
-	    for( VID v=0; v < in; ++v ) {
+	    for( auto && v : c ) {
+		VID vg = v; // ibuilder.get_s2g()[v];
+		// assert( ~clique_number[vg] == 0 );
+		// clique_number[vg] = cliqno;
+		*members++ = map_i2g( vg );
+	    }
+
+	    mark_edges( GG, v_reference, map_i2g,
+			c.begin(), c.end(),
+			assigned_clique, cliqno );
+
+	    std::sort( c.begin(), c.end() ); // necessary?
+	    G.disable_incident_edges( c.begin(), c.end() );
+	} else {
+	    IG.sort_neighbour_lists();
+	    GraphBuilderComplementAndPrune cbuilder( IG );
+	    auto & CIG = cbuilder.get_graph();
+	    VID cn = CIG.numVertices();
+	    EID cm = CIG.numEdges();
+
+	    best_size = 0;
+	    VID * best_cover = new VID[cn];
+	    bool ok = vertex_cover_vc3( CIG, cn, 1, best_size, best_cover );
+	    assert( ok );
+	    variant = "VC-buss";
+
+	    // check_cover( CIG, best_size, best_cover );
+
+	    assert( best_size > 0 );
+
+	    // Compute complement of set
+	    std::fill( &best_state[0], &best_state[cn], -1 );
+	    std::for_each( best_cover, &best_cover[best_size],
+			   [&]( VID v ) {
+			       assert( best_state[v] == -1 ); // check duplic
+			       best_state[v] = 1;
+			   } );
+
+	    best_size = in - best_size;
+
+	    if( best_size < 3 )
+		break;
+
+	    // Get a unique ID for the clique
+	    VID * members;
+	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
+	    *members++ = v_reference;
+
+
+	    // determine the MIS/clique, not the cover
+	    std::cerr << "          content:";
+	    std::vector<VID> c; c.reserve( best_size );
+	    for( VID v=0; v < cn; ++v ) {
 		if( best_state[v] == -1 ) { // determine the MIS/clique, not the cover
-		    VID vg = ibuilder.get_s2g()[v];
-		    clique_number[vg] = cliqno;
+		    VID vg = cbuilder.get_s2g()[v];
+		    c.push_back( vg );
+		    // assert( ~clique_number[vg] == 0 );
+		    // clique_number[vg] = cliqno;
 		    *members++ = vg;
-		    unplaced[vg] = false; // no longer consider this vertex
+		    std::cerr << ' ' << v;
 		}
 	    }
+	    std::cerr << "\n";
+	    delete[] best_cover;
+
+	    mark_edges( GG, v_reference, map_i2g,
+			c.begin(), c.end(),
+			assigned_clique, cliqno );
+
+	    G.disable_incident_edges( [&]( VID v ) {
+		VID vs = cbuilder.get_g2s()[v];
+		return ~vs != 0 && best_state[vs] == -1;
+	    } );
 	}
 
 	double t = tm.next();
@@ -1878,11 +2882,10 @@ clique_partition( const GraphCSx & G,
 	to_assign -= best_size;
     }
 
-    unplaced_f.del();
-    delete[] state;
+    // delete[] state;
     delete[] best_state;
 
-    return clique_number;
+    // return clique_number;
 }
 
 template<unsigned Bits>
@@ -2129,6 +3132,26 @@ private:
 	    if( depth > m_mc_size ) {
 		m_mc = R;
 		m_mc_size = depth;
+
+		// Correctness check
+		row_type r = m_mc;
+		while( !tr::is_zero( r ) ) {
+		    VID v;
+		    row_type r_new;
+		    std::tie( v, r_new ) = remove_element( r );
+		    r = r_new;
+
+		    if( v >= m_n )
+			break;
+	    
+		    row_type vv = create_row( v );
+		    row_type inc = tr::bitwise_or( get_row( v ), vv );
+		    row_type ins = tr::bitwise_and( m_mc, inc );
+		    row_type eq = tr::cmpeq( m_mc, ins, target::mt_vmask() );
+		    row_type eqi = tr::bitwise_invert( eq );
+		    assert( tr::is_zero( eqi ) );
+		    assert( tr::cmpeq( m_mc, ins, target::mt_bool() ) );
+		}
 	    }
 	    return;
 	}
@@ -2379,10 +3402,14 @@ private:
     };
 };
 
-template<unsigned Bits>
-VID *
-clique_partition( DenseMatrix<Bits> & G,
+template<unsigned Bits, typename Fn>
+// VID *
+void
+clique_partition( const GraphCSx & GG,
+		  DenseMatrix<Bits> & G,
 		  VID v_reference,
+		  Fn && map_i2g,
+		  VID * assigned_clique,
 		  CliqueLister & clist ) {
     VID n = G.numVertices();
     EID m = G.numEdges();
@@ -2392,8 +3419,8 @@ clique_partition( DenseMatrix<Bits> & G,
 
     VID to_assign = n;
 
-    VID * clique_number = new VID[n];
-    std::fill( &clique_number[0], &clique_number[n], ~(VID)0 );
+    // VID * clique_number = new VID[n];
+    // std::fill( &clique_number[0], &clique_number[n], ~(VID)0 );
 
     uint64_t tid = gettid();
 
@@ -2442,24 +3469,30 @@ clique_partition( DenseMatrix<Bits> & G,
 	    *members++ = v_reference; 
 
 	    for( VID i=0; i < n; ++i ) {
-		VID vs = G.get_g2s()[i];
-		clique_number[vs] = cliqno;
-		*members++ = vs;
+		VID vg = i; // G.get_s2g()[i];
+		// assert( ~clique_number[i] == 0 );
+		// clique_number[i] = cliqno;
+		*members++ = map_i2g( vg );
 	    }
 
-	    for( VID i=0; i < n; ++i )
-		assert( clique_number[i] != 0 );
+	    // for( VID i=0; i < n; ++i )
+	    // assert( clique_number[i] != 0 );
+
+	    mark_edges( GG, v_reference, map_i2g,
+			graptor::graph::range_iterator( VID(0) ),
+			graptor::graph::range_iterator( n ),
+			assigned_clique, cliqno );
 
 	    break; // we are done
 	} else if( true ) { // density < 0.1 ) {
-	    for( VID i=0; i < n; ++i )
-		assert( clique_number[i] != 0 );
+	    // for( VID i=0; i < n; ++i )
+	    // assert( clique_number[i] != 0 );
 
 	    contract::vertex_set<VID> c = G.bron_kerbosch();
 	    variant = "BK-dense";
 
-	    for( VID i=0; i < n; ++i )
-		assert( clique_number[i] != 0 );
+	    // for( VID i=0; i < n; ++i )
+	    // assert( clique_number[i] != 0 );
 
 	    best_size = c.size();
 	    
@@ -2473,12 +3506,20 @@ clique_partition( DenseMatrix<Bits> & G,
 
 	    *members++ = v_reference; 
 
+	    std::cerr << "          content:";
 	    for( auto && v : c ) {
-		VID vg = G.get_s2g()[v];
-		clique_number[v] = cliqno;
-		*members++ = vg;
+		VID vg = v; // G.get_s2g()[v];
+		// assert( ~clique_number[v] == 0 );
+		// clique_number[v] = cliqno;
+		*members++ = map_i2g( vg );
 		// unplaced[v] = false; // no longer consider this vertex
+		std::cerr << ' ' << v;
 	    }
+	    std::cerr << "\n";
+
+	    mark_edges( GG, v_reference, map_i2g,
+			c.begin(), c.end(),
+			assigned_clique, cliqno );
 	} else {
 	    contract::vertex_set<VID> c = G.vertex_cover();
 	    variant = "VC-dense";
@@ -2498,16 +3539,21 @@ clique_partition( DenseMatrix<Bits> & G,
 
 	    std::cerr << "     clique: #" << c.size();
 	    for( auto && v : c ) {
-		VID vg = G.get_s2g()[v];
-		clique_number[v] = cliqno;
-		*members++ = vg;
+		VID vg = v; // G.get_s2g()[v];
+		// assert( ~clique_number[v] == 0 );
+		// clique_number[v] = cliqno;
+		*members++ = map_i2g( vg );
 		// unplaced[v] = false; // no longer consider this vertex
 		std::cerr << ' ' << v;
 	    }
 	    std::cerr << "\n";
 
-	    for( VID i=0; i < n; ++i )
-		assert( clique_number[i] != 0 );
+	    mark_edges( GG, v_reference, map_i2g,
+			c.begin(), c.end(),
+			assigned_clique, cliqno );
+
+	    // for( VID i=0; i < n; ++i )
+	    // assert( clique_number[i] != 0 );
 	}
 
 	double t = tm.next();
@@ -2527,9 +3573,66 @@ clique_partition( DenseMatrix<Bits> & G,
 
     // delete[] unplaced;
 
-    return clique_number;
+    // return clique_number;
 }
 
+// For each vertex in iteration range as well as v_ref, mark edges among them
+// The iteration range ibegin...iend need not be sorted
+template<typename I2G, typename Iter>
+void mark_edges( const GraphCSx & G,
+		 VID v_ref,
+		 I2G && map_i2g,
+		 Iter ibegin, Iter iend,
+		 VID * assigned_clique,
+		 VID cliqno ) {
+    if( ibegin == iend )
+	return;
+
+    const EID * const gindex = G.getIndex();
+    const VID * const gedges = G.getEdges();
+
+    EID num_edges = 0;
+
+    auto find_and_mark = [&]( const VID * const nb, const VID * const ne,
+			      VID v ) {
+	const VID * const pos = std::lower_bound( nb, ne, v );
+	assert( pos != ne && *pos == v && "must be neighbour" );
+
+	EID e = pos - gedges;
+	assert( ~assigned_clique[e] == 0 );
+	assigned_clique[e] = cliqno;
+	++num_edges;
+    };
+    
+    // Mark edges v_ref -> map_i2g(i in iteration range)
+    // Do binary search in neighbour list of v_ref, assuming that size of
+    // clique is substantially smaller than degree of v_ref
+    const VID * const nb = &gedges[gindex[v_ref]];
+    const VID * const ne = &gedges[gindex[v_ref+1]];
+    for( Iter i=ibegin; i != iend; ++i ) {
+	VID ig = map_i2g( *i );
+	find_and_mark( nb, ne, ig );
+    }
+
+    for( Iter j=ibegin; j != iend; ++j ) {
+	VID jg = map_i2g( *j );
+
+	const VID * const njb = &gedges[gindex[jg]];
+	const VID * const nje = &gedges[gindex[jg+1]];
+
+	find_and_mark( njb, nje, v_ref );
+
+	for( Iter i=ibegin; i != iend; ++i ) {
+	    if( i != j ) {
+		VID ig = map_i2g( *i );
+		find_and_mark( njb, nje, ig );
+	    }
+	}
+    }
+
+    EID n = std::distance( ibegin, iend );
+    assert( num_edges == n * (n+1) );
+}
 
 template<unsigned Bits>
 void
@@ -2547,10 +3650,12 @@ clique_partition_neighbours_dense(
     DenseMatrix<Bits> IG( G, v, assigned_clique, num_neighbours, neighbours );
 
     // Partition this small graph in cliques
-    VID * clique_number = clique_partition( IG, v, clist );
+    clique_partition( G, IG, v, [&]( VID vi ) { return IG.get_s2g()[vi]; },
+		      assigned_clique, clist );
 
-    for( VID i=0; i < num_neighbours; ++i )
-	assert( clique_number[i] != 0 );
+#if 0
+    // for( VID i=0; i < num_neighbours; ++i )
+    // assert( clique_number[i] != 0 );
 
     VID n = G.numVertices();
     EID m = G.numEdges();
@@ -2589,6 +3694,7 @@ clique_partition_neighbours_dense(
     }
 
     delete[] clique_number;
+#endif
 }
 
 void
@@ -2606,14 +3712,18 @@ clique_partition_neighbours_base(
     GraphBuilderInduced ibuilder(
 	G, v, assigned_clique, num_neighbours, neighbours );
 	// [=]( VID u ) { return coreness[u] >= 4 && u != v; } );
-    const GraphCSx & IG = ibuilder.get_graph();
+    auto & IG = ibuilder.get_graph();
 
     // std::cerr << "neighbourhood of vertex " << v << ": n="
     // << IG.numVertices() << " m=" << IG.numEdges() << "\n";
 
     // Partition this small graph in cliques
-    VID * clique_number = clique_partition( IG, v, clist );
+    // VID * clique_number =
+    clique_partition( G, IG, v,
+		      [&]( VID vi ) { return ibuilder.get_s2g()[vi]; },
+		      assigned_clique, clist );
 
+#if 0
     VID n = G.numVertices();
     EID m = G.numEdges();
     const EID * const index = G.getIndex();
@@ -2651,6 +3761,7 @@ clique_partition_neighbours_base(
     }
 
     delete[] clique_number;
+#endif
 }
 
 std::tuple<VID,VID *,VID>
@@ -2904,7 +4015,9 @@ int main( int argc, char *argv[] ) {
     for( VID i=0; i < n; ++i ) {
 	VID v = order[i];
 
-	std::cerr << "Iteration " << i << " with v=" << v << "\n";
+	std::cerr << "Iteration " << i << " with v=" << v
+		  << " deg=" << G.getDegree( v )
+		  << "\n";
 	
 	clique_partition_neighbours( G, v, assigned_clique.get(),
 				     coreness.get_ptr(), clist );
@@ -2999,10 +4112,14 @@ int main( int argc, char *argv[] ) {
     parallel_loop( VID(0), n, [=]( VID v ) { index[v] = 0; } );
 
     // Count incident edges
-    parallel_loop( EID(0), m, [=]( EID e ) {
-	if( ~assigned_clique[e] == 0 )
-	    __sync_fetch_and_add( &index[gedges[e]], 1 );
-    } );
+    	// parallel_loop( EID(0), m, [=]( EID e ) {
+    for( EID e=0; e < m; ++e ) {
+	if( ~assigned_clique[e] == 0 ) {
+		VID u = gedges[e];
+		++index[u];
+		// __sync_fetch_and_add( &index[u], 1 );
+	}
+    } // );
 
     // Prefix scan
     mms = sequence::plusScan( index, index, n );
