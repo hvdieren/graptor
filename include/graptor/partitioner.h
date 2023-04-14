@@ -62,6 +62,26 @@ public:
 	// && "number of partitions must be multiple of NUMA nodes" );
 	numa_setup();
     }
+    static partitioner_template single( VID n, EID m ) {
+	partitioner_template part( 1, n );
+	part.counts[0] = n;
+	part.counts[1] = n;
+	part.starts[0] = 0;
+	part.starts[1] = n;
+	part.nzcounts[0] = n;
+	part.nzcounts[1] = n;
+	part.inuse[0] = n;
+	part.inuse[1] = n;
+
+	part.pstarts[0] = 0;
+	for( PID p=1; p <= num_numa_node; ++p )
+	    part.pstarts[p] = 1;
+
+	part.estarts[0] = 0;
+	part.estarts[1] = m;
+
+	return part;
+    }
     partitioner_template scale( VID s ) const {
 	partitioner_template p( num_partitions, counts[num_partitions] * s );
 	for( PID i=0; i < num_partitions+1; ++i ) {
