@@ -221,12 +221,13 @@ inline void partitionBalanceEdges( const GraphTy & WG,
     assert( part.start_of(p) == n );
 }
 
-inline void partitionBalanceEdges_bisect( const GraphCSx & WG,
-					  partitioner &part ) {
-    using traits = gtraits<GraphCSx>;
-    using VID = typename traits::VID;
-    using EID = typename traits::EID;
-    using PID = typename traits::PID;
+template<typename VID, typename EID, typename PID>
+void partitionBalanceEdges_bisect(
+    VID n, EID m, const EID * const index, partitioner &part ) {
+    // using traits = gtraits<GraphCSx>;
+    // using VID = typename traits::VID;
+    // using EID = typename traits::EID;
+    // using PID = typename traits::PID;
 
     static_assert( std::is_same<VID,typename partitioner::VID>::value,
 		   "essential types are not matched" );
@@ -234,10 +235,10 @@ inline void partitionBalanceEdges_bisect( const GraphCSx & WG,
     int P = part.get_num_partitions();
     VID * size = part.as_array();
 
-    const EID * index = WG.getIndex();
+    // const EID * index = WG.getIndex();
 
-    VID n = traits::numVertices( WG );
-    EID m = traits::numEdges( WG );
+    // VID n = traits::numVertices( WG );
+    // EID m = traits::numEdges( WG );
 
     // Calculate number of vertices in each partition
     EID m_done = 0;
@@ -261,6 +262,21 @@ inline void partitionBalanceEdges_bisect( const GraphCSx & WG,
     // Safety check - all vertices accounted for
     assert( part.start_of(P) == n );
 }
+
+inline void partitionBalanceEdges_bisect( const GraphCSx & WG,
+					  partitioner &part ) {
+    using traits = gtraits<GraphCSx>;
+    using VID = typename traits::VID;
+    using EID = typename traits::EID;
+    using PID = typename traits::PID;
+
+    return partitionBalanceEdges_bisect<VID,EID,PID>( 
+	traits::numVertices( WG ),
+	traits::numEdges( WG ),
+	WG.getIndex(),
+	part );
+}
+
 
 template<typename lVID, typename lEID>
 inline void partitionBalanceEdges_pow2_rec(
