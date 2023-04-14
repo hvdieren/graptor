@@ -30,7 +30,7 @@ struct mask_type_traits<8> {
 	type k;
 	return k ^ k;
     }
-    static type setone() { return ~type(0); }
+    static type setone() { return 0xff; }
     static type setl0( member_type a ) { return type(!!a); }
     static type set1( bool a ) { return a ? setone() : setzero(); }
     static type setalternating() { return 0x55; }

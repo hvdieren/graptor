@@ -35,7 +35,7 @@ struct mask_type_traits<32> {
     static bool lane15( type m ) { return lane7( m>>8 ); }
 
     static type setzero() { return type(0); }
-    static type setone() { return ~ type(0); }
+    static type setone() { return 0xffffffffU; }
     static type setalternating() { return 0x55555555U; }
     static type set1( bool v ) { return ~(type(v)-1); }
 

@@ -224,7 +224,11 @@ public:
     }
     static bool cmpne( type a, type b, mt_bool ) {
 	type vcmp = cmpeq( a, b, mt_vmask() );
-	return 0 != _mm_testz_si128( vcmp, vcmp );
+	return !is_zero( vcmp );
+    }
+    static bool cmpeq( type a, type b, mt_bool ) {
+	type vcmp = cmpeq( a, b, mt_vmask() );
+	return asmask( vcmp ) == mtraits::setone();
     }
     static type blend( type mask, type a, type b ) {
 	return _mm_blendv_epi8( a, b, mask );
