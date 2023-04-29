@@ -58,6 +58,8 @@ public:
 	m_edges( m, alloc ) { }
     GraphDoubleIndexCSx( VID n, EID m )
 	: GraphDoubleIndexCSx( n, m, numa_allocation_interleaved() ) { }
+    GraphDoubleIndexCSx( GraphDoubleIndexCSx && ) = delete;
+    GraphDoubleIndexCSx( const GraphDoubleIndexCSx & ) = delete;
 
     ~GraphDoubleIndexCSx() {
 	m_begin_index.del();
