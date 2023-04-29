@@ -94,6 +94,15 @@ struct minF
     }
 };
 
+template <class E>
+struct maxF
+{
+    E operator() (const E& a, const E& b) const
+    {
+        return (a > b) ? a : b;
+    }
+};
+
 template <class T>
 
 struct _seq
