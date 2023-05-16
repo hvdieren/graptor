@@ -144,6 +144,7 @@ public:
     }
 
     void sort_neighbour_lists() {
+	// TODO: add boolean flag to check whether already sorted or not
 	for( VID v=0; v < m_n; ++v )
 	    std::sort(
 		&m_edges[m_begin_index[v]], &m_edges[m_end_index[v]] );
