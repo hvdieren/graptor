@@ -46,6 +46,8 @@ enum cvt_pdg_variable_name {
     var_priority = var_kc_num + 3
 };
 
+static bool verbose = false;
+
 class CliqueLister {
 public:
     // Estimate max number of cliques as m/12 as we are accepting only
@@ -57,6 +59,9 @@ public:
 	  m_next_id( 0 ),
 	  m_next_pos( 0 ),
 	  m_edges( 0 ) { }
+    ~CliqueLister() {
+	m_list.del();
+    }
 
     std::pair<VID,VID *> allocate_clique( VID size ) {
 	std::lock_guard<std::mutex> guard( m_lock );
@@ -1234,20 +1239,236 @@ mc_iterate( const graptor::graph::GraphCSx<VID,EID> & G,
     }
 }
 
+VID mc_get_pivot(
+    const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+    VID P_size,
+    VID * P_set ) {
+    assert( P_size != 0 );
+    const EID * const bindex = G.getBeginIndex();
+    const EID * const eindex = G.getEndIndex();
+    const VID * const edges = G.getEdges();
+    VID v_max = ~VID(0);
+    VID tv_max = std::numeric_limits<VID>::min();
+    for( VID i=0; i < P_size; ++i ) {
+	VID v = P_set[i];
+	VID deg = eindex[v] - bindex[v];
+	if( deg <= tv_max )
+	    continue;
+	VID tv = contract::detail::intersection_size(
+	    &edges[bindex[v]], deg, P_set, P_size );
+	if( tv > tv_max ) {
+	    tv_max = tv;
+	    v_max = v;
+	}
+    }
+    return ~v_max == 0 ? P_set[0] : v_max;
+}
+
+#if 0
+class StackLikeAllocator {
+public:
+    StackLikeAllocator( size_t min_chunk_size = 0 ) { }
+
+    template<typename T>
+    T * allocate( size_t n_elements ) {
+	return new T[n_elements];
+    }
+    template<typename T>
+    void deallocate_to( T * p ) {
+	delete[] p;
+    }
+};
+#else
+class StackLikeAllocator {
+    static constexpr size_t PAGE_SIZE = size_t(1) << 20; // 1MiB
+    struct chunk_t {
+	static constexpr size_t MAX_BYTES =
+	    ( size_t(1) << (8*sizeof(uint32_t)) ) - 2 * sizeof( uint32_t );
+
+	chunk_t( size_t sz ) : m_size( sz ), m_end( 0 ) {
+	    assert( sz <= MAX_BYTES );
+	    assert( sz == (size_t)m_size );
+	}
+
+	char * allocate( size_t sz ) {
+	    assert( sz <= MAX_BYTES );
+	    assert( m_end + sz <= m_size );
+	    char * p = get_ptr() + m_end;
+	    m_end += sz;
+	    return p;
+	}
+
+	bool has_available_space( size_t sz ) const {
+	    assert( sz <= MAX_BYTES );
+	    uint32_t new_end = m_end + sz;
+	    return new_end - m_end == sz && new_end <= m_size;
+	    
+	}
+
+	char * get_ptr() const {
+	    char * me = const_cast<char *>(
+		reinterpret_cast<const char *>( this ) );
+	    me += sizeof( m_size );
+	    me += sizeof( m_end );
+	    return me;
+	}
+
+	bool release_to( char * p ) {
+	    char * q = get_ptr();
+	    if( q <= p && p < q+m_end ) {
+		m_end = p - q;
+		return true;
+	    } else {
+		m_end = 0;
+		return false;
+	    }
+	}
+
+    private:
+	uint32_t m_size;
+	uint32_t m_end;
+    };
+
+public:
+    StackLikeAllocator( size_t min_chunk_size = PAGE_SIZE )
+	: m_min_chunk_size( min_chunk_size ), m_current( 0 ) {
+	if( verbose )
+	    std::cerr << "sla " << this << ": constructor\n";
+    }
+    ~StackLikeAllocator() {
+	for( chunk_t * c : m_chunks ) {
+	    if( verbose )
+		std::cerr << "sla " << this << ": delete chunk "
+			  << c << "\n";
+	    delete[] reinterpret_cast<char *>( c );
+	}
+	if( verbose )
+	    std::cerr << "sla " << this << ": destructor done\n";
+    }
+
+    template<typename T>
+    T * allocate( size_t n_elements ) {
+	T * p = reinterpret_cast<T*>(
+	    allocate_private( n_elements * sizeof(T) ) );
+	// if( verbose )
+	// std::cerr << "sla " << this << ": allocate " << n_elements
+	// << ' ' << (void *)p << "\n";
+	return p;
+    }
+    template<typename T>
+    void deallocate_to( T * p ) {
+	// if( verbose )
+	// std::cerr << "sla " << this << ": deallocate-to "
+	// << (void *)p << "\n";
+	release_chunks( reinterpret_cast<char *>( p ) );
+    }
+
+private:
+    char * allocate_private( size_t nbytes ) {
+	// Do we have any available chunks?
+	if( m_chunks.empty() )
+	    return allocate_from_new_chunk( nbytes );
+	
+	// Check if any free chunk has sufficient space
+	// Might be better to insert a larger chunk in the sequence if
+	// the current cannot hold it, as future calls will require smaller
+	// allocations which may be served from the available chunks
+	do {
+	    chunk_t * c = m_chunks[m_current];
+	    if( c->has_available_space( nbytes ) )
+		return c->allocate( nbytes );
+	} while( ++m_current < m_chunks.size() );
+
+	// No chunk can hold this
+	return allocate_from_new_chunk( nbytes );
+    }
+
+    char * allocate_from_new_chunk( size_t nbytes ) {
+	size_t sz = std::max( nbytes, m_min_chunk_size );
+	sz = ( sz + PAGE_SIZE - 1 ) & ~( PAGE_SIZE - 1 );
+	assert( sz >= nbytes );
+	char * cc = new char[sz];
+	chunk_t * c = new ( cc ) chunk_t( sz );
+	m_chunks.push_back( c );
+	m_current = m_chunks.size() - 1;
+	if( verbose )
+	    std::cerr << "sla " << this << ": new chunk " << c << "\n";
+	return c->allocate( nbytes );
+    }
+
+    void release_chunks( char * p ) {
+	for( size_t i=0; i <= m_current; ++i ) {
+	    size_t j = m_current - i;
+	    chunk_t * const c = m_chunks[j];
+	    if( c->release_to( p ) ) {
+		m_current = j;
+		return;
+	    }
+	}
+	assert( false && "deallocation error - should not reach here" );
+    }
+    
+private:
+    std::vector<chunk_t *> m_chunks;
+    size_t m_min_chunk_size;
+    size_t m_current;
+};
+#endif
+
+void
+check_clique( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+	      VID size,
+	      VID * clique ) {
+    std::sort( clique, clique+size );
+    VID n = G.numVertices();
+    const EID * const bindex = G.getBeginIndex();
+    const EID * const eindex = G.getEndIndex();
+    const VID * const edges = G.getEdges();
+
+    for( VID i=0; i < size; ++i ) {
+	VID v = clique[i];
+	for( VID j=0; j < size; ++j ) {
+	    if( j == i )
+		continue;
+	    VID u = clique[j];
+	    const VID * const pos
+		= std::lower_bound( &edges[bindex[v]], &edges[eindex[v]], u );
+	    if( pos == &edges[eindex[v]] || *pos != u )
+		abort();
+	}
+    }
+}
+
+
+
+template<bool Pivot, typename RecFn>
 void
 mc_iterate( volatile bool * terminate,
 	    const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+	    StackLikeAllocator & alloc,
 	    contract::vertex_set<VID> & R,
-	    contract::vertex_set<VID> & P,
+	    // contract::vertex_set<VID> & P,
+	    VID P_size,
+	    VID * P_set,
 	    int depth,
-	    contract::vertex_set<VID> & mc ) {
-    if( P.size() == 0 ) {
-	if( R.size() > mc.size() )
-	    mc = R;
+	    VID cutoff, // minimum clique size required
+	    // contract::vertex_set<VID> & mc ) {
+	    RecFn & recorder ) {
+    if( P_size == 0 ) {
+	// if( R.size() > mc.size() )
+	// mc = R;
+	recorder.record( R );
 	return;
     }
-    if( R.size() + P.size() < mc.size() ) // fail to improve
+    // These comparison could be made <= then return, as we can only find
+    // a clique as good as one we already have. Comparison < would be useful
+    // if we enumerate multiple cliques.
+    // if( R.size() + P_size < mc.size() ) // fail to improve
+    // return;
+    if( !recorder.feasible( R, P_size, P_set, cutoff ) )
 	return;
+    // if( R.size() + P_size < cutoff ) // fail to reach target
+    // return;
 
     if( *terminate )
 	throw timeout_exception();
@@ -1256,24 +1477,246 @@ mc_iterate( volatile bool * terminate,
     const EID * const eindex = G.getEndIndex();
     const VID * const edges = G.getEdges();
 
-    for( auto I=P.begin(), E=P.end(); I != E; ++I ) {
-	VID u = *I;
+    VID pivot = 0;
+    EID p_e, p_ee;
+    if constexpr ( Pivot ) {
+	pivot = mc_get_pivot( G, P_size, P_set );
+	p_e = bindex[pivot];
+	p_ee = eindex[pivot];
+    }
+    
+    for( VID i=0; i < P_size; ++i ) {
+	VID u = P_set[i];
 
+	if constexpr ( Pivot ) {
+	    for( ; edges[p_e] < u && p_e != p_ee; ++p_e ) { }
+	    if( p_e != p_ee && edges[p_e] == u )
+		continue;
+	}
+
+	VID off = Pivot ? 0 : i;
 	VID deg = eindex[u] - bindex[u];
-	VID sz = std::min( deg, P.size() );
-	contract::vertex_set<VID> Pv( sz );
-	Pv.resize( sz );
-	Pv.resize( contract::detail::intersect(
-		       I, (VID)std::distance( I, E ), // prune visited elm of P
-		       &edges[bindex[u]], deg,
-		       Pv.begin() ) );
+	VID sz = std::min( deg, P_size );
+	VID * Pv_set = alloc.template allocate<VID>( sz );
+	VID Pv_size =
+	    contract::detail::intersect(
+		&P_set[off], P_size - off, // prune visited elm of P w/o Pivot
+		&edges[bindex[u]], deg,
+		Pv_set );
+	assert( Pv_size <= sz );
 	// contract::vertex_set<VID> Pv
 	// = P.intersect( &edges[index[u]], index[u+1] - index[u] );
 	R.push( u );
-	mc_iterate( terminate, G, R, Pv, depth+1, mc );
+	// check_clique( G, R.size(), R.begin() );
+	mc_iterate<Pivot>( terminate, G, alloc, R, Pv_size, Pv_set,
+			   depth+1, cutoff, recorder ); // mc );
 	R.pop();
+
+	alloc.deallocate_to( Pv_set );
     }
 }
+
+class RecordMaximumClique {
+public:
+    explicit RecordMaximumClique() { }
+    explicit RecordMaximumClique( VID n ) { }
+
+    void record( const std::vector<VID> & R ) {
+	if( R.size() > m_clique.size() )
+	    m_clique = R;
+    }
+    void record( const contract::vertex_set<VID> & R ) {
+	if( R.size() > m_clique.size() )
+	    m_clique = R.as_vector();
+    }
+
+    bool feasible( const contract::vertex_set<VID> & R,
+		   VID P_size, const VID * P_set, VID cutoff ) const {
+	size_t new_size = R.size() + P_size;
+	return new_size > m_clique.size() && new_size >= cutoff;
+    }
+
+    std::vector<VID> * begin() { return &m_clique; }
+    std::vector<VID> * end() { return (&m_clique)+1; }
+
+    VID best_clique_size() const { return m_clique.size(); }
+
+private:
+    std::vector<VID> m_clique;
+};
+
+// The idea behind this class is that we collect multiple cliques from a
+// single Bron-Kerbosch search, and then obtain multiple non-overlapping
+// cliques from this search.
+// Remembering one per top-level vertex is a safe choice that does not retain
+// all maximal cliques, as all cliques not-overlapping with a previously
+// selecting clique must differ in at least the top-level vertex.
+class RecordMaximumCliquePerVertex {
+public:
+    explicit RecordMaximumCliquePerVertex() { }
+    explicit RecordMaximumCliquePerVertex( VID n ) : m_cliques( n ) {
+	for( VID i=0; i < n; ++i )
+	    m_cliques.emplace_back(); // append empty vector
+    }
+
+    void record( const std::vector<VID> & R ) {
+	assert( R.size() > 0 );
+	std::vector<VID> & c = m_cliques[*R.begin()];
+	if( R.size() > c.size() ) {
+	    if( verbose )
+		std::cerr << "rmcpv " << this << " update for "
+			  << *R.begin() << " from " << c.size()
+			  << " to " << R.size() << "\n";
+	    c.resize( R.size() );
+	    c = R;
+	}
+    }
+    void record( const contract::vertex_set<VID> & R ) {
+	return record( R.as_vector() );
+    }
+
+    bool feasible( const contract::vertex_set<VID> & R,
+		   VID P_size, const VID * P_set, VID cutoff ) const {
+	if( R.size() == 0 ) {
+	    return P_size >= cutoff;
+	} else {
+	    const std::vector<VID> & c = m_cliques[*R.begin()];
+	    size_t new_size = R.size() + P_size;
+	    return new_size > c.size() && new_size >= cutoff;
+	}
+    }
+
+    VID best_clique_size() const {
+	return m_cliques[0].size(); // guess
+    }
+
+    class iterator : public std::iterator<
+	std::input_iterator_tag,	// iterator_category
+	std::vector<VID>,		// value_type
+	size_t,			// difference_type
+	std::vector<VID> *,	// pointer
+	std::vector<VID> &	// reference
+	> {
+	struct clique_entry {
+	    explicit clique_entry() : m_vertex( ~(VID)0 ) { }
+	    explicit clique_entry( VID x ) : m_vertex( x ) { }
+	    operator VID () const { return m_vertex; }
+	    VID m_vertex;
+	};
+	struct clique_compare {
+	    explicit clique_compare( RecordMaximumCliquePerVertex & r )
+		: m_record( r ) { }
+	    bool operator() ( const clique_entry & a,
+			      const clique_entry & b ) const {
+		return m_record.get_clique( a.m_vertex ).size()
+		    < m_record.get_clique( b.m_vertex ).size();
+	    }
+	private:
+	    RecordMaximumCliquePerVertex & m_record;
+	};
+public:
+	explicit iterator(
+	    RecordMaximumCliquePerVertex & recorder, VID current )
+	    : m_recorder( recorder ),
+	      m_heap( recorder.get_num_vertices() ),
+	      m_selected( recorder.get_num_vertices() ),
+	      m_current( current ) {
+	    if( current == 0 ) {
+		for( VID v=0; v < recorder.get_num_vertices(); ++v )
+		    m_heap[v] = clique_entry( v );
+		std::make_heap(
+		    m_heap.begin(), m_heap.end(),
+		    clique_compare( m_recorder ) );
+		std::pop_heap(
+		    m_heap.begin(), m_heap.end(),
+		    clique_compare( m_recorder ) );
+		m_current = m_heap.back();
+		m_heap.pop_back();
+	    }
+	}
+	explicit iterator(
+	    RecordMaximumCliquePerVertex & recorder )
+	    : iterator( recorder, recorder.get_num_vertices() ) { }
+	iterator& operator++() {
+	    find_next();
+	    return *this;
+	}
+	iterator operator++( int ) {
+	    iterator retval = *this;
+	    ++(*this);
+	    return retval;
+	}
+	bool operator == ( iterator other ) const {
+	    return m_current == other.m_current;
+	}
+	bool operator != ( iterator other ) const {
+	    return !( *this == other );
+	}
+	typename iterator::reference operator*() {
+	    return m_recorder.get_clique( m_current );
+	}
+
+    private:
+/*
+	VID find_first() {
+	    for( VID i=0; i != m_recorder.get_num_vertices(); ++i )
+		if( !m_recorder.get_clique( i ).empty() )
+		    return i;
+	    return m_recorder.get_num_vertices();
+	}
+*/
+	void find_next() {
+	    // Rule out current clique
+	    for( auto && v : *(*this) )
+		m_selected[v] = true;
+
+	    // Might search for the next largest one...
+	    while( !m_heap.empty() ) {
+		std::pop_heap( m_heap.begin(), m_heap.end(),
+			       clique_compare( m_recorder ) );
+		m_current = m_heap.back();
+		m_heap.pop_back();
+
+		if( is_eligible( m_recorder.get_clique( m_current ) ) )
+		    return;
+	    }
+	    m_current = m_recorder.get_num_vertices();
+	}
+
+	bool is_eligible( const std::vector<VID> & c ) const {
+	    if( c.empty() )
+		return false;
+		    
+	    for( auto && v : c )
+		if( m_selected[v] )
+		    return false;
+
+	    return true;
+	}
+
+    private:
+	RecordMaximumCliquePerVertex & m_recorder;
+	std::vector<clique_entry> m_heap;
+	std::vector<bool> m_selected;
+	VID m_current;
+    };
+
+    iterator begin() { return iterator( *this, 0 ); }
+    iterator end() { return iterator( *this, m_cliques.size() ); }
+
+private:
+    VID get_num_vertices() const { return m_cliques.size(); }
+    std::vector<VID> & get_clique( VID v ) {
+	// TODO: it is expected that this clique is sorted, makes later
+	// sort operations redundant
+	return m_cliques[v];
+    }
+
+private:
+    std::vector<std::vector<VID>> m_cliques;
+    VID m_current;
+};
+
 
 template<typename lVID, typename lEID>
 class NeighbourCutOut {
@@ -1293,7 +1736,7 @@ public:
 		     VID deg,
 		     const VID * const assigned_clique,
 		     const VID * const coreness )
-	: m_iset( deg ), m_degrees( deg ), // m_component( deg ),
+	: m_iset( deg ), m_degrees( deg ), m_component( deg ),
 	  m_totdeg( 0 ), m_maxdeg( 0 ), m_num_iset( 0 ) {
 	const EID * const index = G.getIndex();
 	const VID * const edges = G.getEdges();
@@ -1304,17 +1747,26 @@ public:
 	    VID u = edges[e];
 	    if( coreness[u] < 4 ) // no interesting cliques
 		continue;
+
+	    // Filter vertices (duplicates)
+	    if( coreness[u] > coreness[v] )
+		continue;
+	    
 	    if( u == v ) // self-edge
 		continue;
 
 	    VID udeg = 0;
-	    // m_component[m_num_iset] = m_num_iset;
+	    m_component[m_num_iset] = m_num_iset;
 	    for( EID f=index[u], ff=index[u+1]; f != ff; ++f ) {
 		if( ~assigned_clique[e] != 0 ) // edge (u,w) already assigned
 		    continue;
 		VID w = edges[f];
 		if( coreness[w] < 4 ) // no interesting cliques
 		    continue;
+		// Filter vertices (duplicates)
+		if( coreness[w] > coreness[v] )
+		    continue;
+	    
 		if( w == v ) // v is not included in cutout
 		    continue;
 		const VID * pos
@@ -1327,7 +1779,7 @@ public:
 		    // may not materialise. Any error would imply some
 		    // components may not be fully connected, but no edges
 		    // exist between the components that were identified.
-#if 0
+#if 1
 		    if( w < u ) {
 			pos = std::lower_bound( &m_iset[0], &m_iset[m_num_iset],
 						w );
@@ -1364,10 +1816,22 @@ public:
 
 	assert( m_num_iset <= deg );
 
-	// std::sort( &m_component[0], &m_component[m_num_iset] );
-	// VID nc = std::unique( &m_component[0], &m_component[m_num_iset] )
-	// - &m_component[0];
-	// std::cerr << "Number of components: " << nc << "\n";
+	std::sort( &m_component[0], &m_component[m_num_iset] );
+	VID nc = std::unique( &m_component[0], &m_component[m_num_iset] )
+	    - &m_component[0];
+	std::cerr << "Number of components: " << nc << "\n";
+
+	VID c = m_component[0];
+	VID pi = 0;
+	for( VID i=1; i < m_num_iset; ++i ) {
+	    if( m_component[i] != m_component[pi] ) {
+		std::cerr << "     " << m_component[pi] << ": "
+			  << ( i - pi ) << "\n";
+		pi = i;
+	    }
+	}
+	std::cerr << "     " << m_component[pi] << ": "
+		  << ( m_num_iset - pi ) << "\n";
     }
 
     VID get_max_degree() const { return m_maxdeg; }
@@ -1379,7 +1843,7 @@ public:
     // const VID * get_degrees() const { return &m_degrees[0]; }
 
 private:
-#if 0
+#if 1
     // Upon seeing an edge from u to v
     void update_components( VID u, VID v ) {
 	VID r = find( u );
@@ -1407,12 +1871,11 @@ private:
 private:
     std::vector<VID> m_iset;
     std::vector<VID> m_degrees;
-    // std::vector<VID> m_component;
+    std::vector<VID> m_component;
     EID m_totdeg;
     VID m_maxdeg;
     VID m_num_iset;
 };
-
 
 class GraphBuilderInduced {
 public:
@@ -1925,37 +2388,6 @@ mark( VID & best_size, VID * best_cover, VID v ) {
 
 // For path or cycle
 void
-trace_path( VID n, 
-	    const EID * const index,
-	    const VID * const edges,
-	    bool * visited,
-	    VID & best_size,
-	    VID * best_cover,
-	    VID cur,
-	    VID nxt,
-	    bool incl ) {
-    if( visited[nxt] )
-	return;
-
-    visited[nxt] = true;
-
-    if( incl )
-	mark( best_size, best_cover, nxt );
-
-    // Done if nxt is degree-1 vertex
-    if( index[nxt+1] - index[nxt] == 2 ) {
-	VID ngh1 = edges[index[nxt]];
-	VID ngh2 = edges[index[nxt]+1];
-
-	VID ngh = ngh1 == cur ? ngh2 : ngh1;
-
-	trace_path( n, index, edges, visited, best_size, best_cover, nxt, ngh,
-		    !incl );
-    }
-}
-
-// For path or cycle
-void
 trace_path( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 	    bool * visited,
 	    VID & best_size,
@@ -1985,45 +2417,6 @@ trace_path( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     }
 }
 
-
-bool
-vertex_cover_poly( VID n, 
-		   VID k,
-		   const EID * const index,
-		   const VID * const edges,
-		   VID & best_size,
-		   VID * best_cover ) {
-    bool * visited = new bool[n];
-    std::fill( visited, &visited[n], false );
-
-    VID old_best_size = best_size;
-
-    // Find paths
-    for( VID v=0; v < n; ++v ) {
-	assert( index[v+1] - index[v] <= 2 );
-	if( index[v+1] - index[v] == 1 && !visited[v] ) {
-	    visited[v] = true;
-	    trace_path( n, index, edges, visited, best_size, best_cover,
-			v, edges[index[v]], true );
-	}
-    }
-    
-    // Find cycles (uses same auxiliary as paths)
-    for( VID v=0; v < n; ++v ) {
-	assert( index[v+1] - index[v] <= 2 );
-	if( index[v+1] - index[v] == 2 && !visited[v] ) {
-	    visited[v] = true;
-	    mark( best_size, best_cover, v );
-	    trace_path( n, index, edges, visited, best_size, best_cover,
-			v, edges[index[v]], false );
-	}
-    }
-
-    delete[] visited;
-
-    return best_size - old_best_size <= k;
-}
-
 bool
 vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		   VID k,
@@ -2031,8 +2424,9 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		   VID * best_cover ) {
     VID n = G.numVertices();
 
-    bool * visited = new bool[n];
-    std::fill( visited, &visited[n], false );
+    std::vector<char> visited( n, false );
+    // bool * visited = new bool[n];
+    // std::fill( visited, &visited[n], false );
 
     VID old_best_size = best_size;
 
@@ -2042,7 +2436,7 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 	assert( deg <= 2 );
 	if( deg == 1 && !visited[v] ) {
 	    visited[v] = true;
-	    trace_path( G, visited, best_size, best_cover,
+	    trace_path( G, (bool*)&visited[0], best_size, best_cover,
 			v, *G.nbegin( v ), true );
 	}
     }
@@ -2054,12 +2448,12 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 	if( deg == 2 && !visited[v] ) {
 	    visited[v] = true;
 	    mark( best_size, best_cover, v );
-	    trace_path( G, visited, best_size, best_cover,
+	    trace_path( G, (bool*)&visited[0], best_size, best_cover,
 			v, *G.nbegin( v ), false );
 	}
     }
 
-    delete[] visited;
+    // delete[] visited;
 
     return best_size - old_best_size <= k;
 }
@@ -2118,31 +2512,6 @@ check_cover( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     }
 }
 
-void
-check_clique( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-	      VID size,
-	      VID * clique ) {
-    std::sort( clique, clique+size );
-    VID n = G.numVertices();
-    const EID * const bindex = G.getBeginIndex();
-    const EID * const eindex = G.getEndIndex();
-    const VID * const edges = G.getEdges();
-
-    for( VID i=0; i < size; ++i ) {
-	VID v = clique[i];
-	for( VID j=0; j < size; ++j ) {
-	    if( j == i )
-		continue;
-	    VID u = clique[j];
-	    const VID * const pos
-		= std::lower_bound( &edges[bindex[v]], &edges[eindex[v]], u );
-	    if( pos == &edges[eindex[v]] || *pos != u )
-		abort();
-	}
-    }
-}
-
-
 
 bool
 vertex_cover_vc3( volatile bool * terminate,
@@ -2152,7 +2521,8 @@ vertex_cover_vc3( volatile bool * terminate,
 		  VID & best_size,
 		  VID * best_cover );
 
-std::vector<VID>
+template<typename RecFn>
+RecFn
 clique_via_vc3( volatile bool * terminate,
 		graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		[[maybe_unused]] VID upper_bound ) {
@@ -2164,8 +2534,12 @@ clique_via_vc3( volatile bool * terminate,
     // If no edges remain after pruning, then clique has size 1.
     // Take any vertex that remains after pruning.
     if( cm == 0 ) {
-	assert( G.numEdges() > 0 );
-	return std::vector<VID>( 1, cbuilder.get_s2g()[0] );
+	RecFn rec( cn );
+	std::vector<VID> c( 1, cbuilder.get_s2g()[0] );
+	rec.record( c );
+	return rec;
+	// assert( G.numEdges() > 0 );
+	// return std::vector<VID>( 1, cbuilder.get_s2g()[0] );
     }
 
     VID best_size = 0;
@@ -2195,7 +2569,9 @@ clique_via_vc3( volatile bool * terminate,
 
     assert( c.size() + best_size == cn );
 
-    return c;
+    RecFn rec( cn );
+    rec.record( c );
+    return rec;
 }
 
 std::vector<VID>
@@ -2389,12 +2765,21 @@ vertex_cover_vc3( volatile bool * terminate,
 
     VID x_k = std::min( n-1-max_deg, k-max_deg );
     bool x_ok = false;
-    if( k >= max_deg )
+    if( k >= max_deg ) {
+	if( verbose )
+	    std::cerr << "vc3: n=" << n << " m=" << m
+		      << " vertex " << max_v << " deg " << max_deg
+		      << " excluded k=" << k << "\n";
 	x_ok = vertex_cover_vc3(
 	    terminate, G, x_k, c, x_best_size, x_best_cover );
+    }
 
     G.restore_checkpoint( chkpti );
     VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
+    if( verbose )
+	std::cerr << "vc3: n=" << n << " m=" << m
+		  << " vertex " << max_v << " deg " << max_deg
+		  << " included k=" << k << "\n";
     bool i_ok = vertex_cover_vc3(
 	terminate, G, i_k, c, i_best_size, i_best_cover );
 
@@ -2416,297 +2801,6 @@ vertex_cover_vc3( volatile bool * terminate,
 
     return i_ok || x_ok;
 }
-
-#if 0
-bool
-vertex_cover_buss( VID n, 
-		   VID k,
-		   const EID * const index,
-		   const VID * const edges,
-		   VID & best_size,
-		   VID * best_cover ) {
-    // Set U of vertices of degree higher than k
-    VID u_size = 0;
-    for( VID v=0; v < n; ++v )
-	if( index[v+1] - index[v] > k )
-	    ++u_size;
-
-    // If |U| > k, then there exists no cover of size k
-    if( u_size > k )
-	return false;
-
-    assert( u_size > 0 );
-    
-    // Construct G'
-    EID * gp_index = new EID[n - u_size + 1];
-    VID * gp_xlat = new VID[n - u_size];
-    EID m = 0;
-    VID x = 0;
-    gp_index[0] = 0;
-    for( VID v=0; v < n; ++v ) {
-	if( index[v+1] - index[v] > k ) // v excluded
-	    continue;
-
-	// Map new vertex IDs to old ones
-	gp_xlat[x] = v;
-
-	VID nn = 0;
-	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
-	    VID u = edges[e];
-	    if( index[u+1] - index[u] <= k )
-		++nn;
-	}
-	m += nn;
-	gp_index[x+1] = nn + gp_index[x];
-
-	// Next new vertex ID
-	++x;
-    }
-
-    assert( x == n - u_size );
-    gp_index[n - u_size] = m;
-
-    // If G' has more than k(k-|U|) edges, reject
-    if( m > k * ( k - u_size ) ) {
-	delete[] gp_index;
-	delete[] gp_xlat;
-	return false;
-    }
-
-    VID * gp_edges = new VID[m];
-
-    x = 0;
-    EID mm = 0;
-    for( VID v=0; v < n; ++v ) {
-	if( index[v+1] - index[v] > k ) // v excluded
-	    continue;
-
-	VID nn = 0;
-	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
-	    VID u = edges[e];
-	    if( index[u+1] - index[u] <= k )
-		gp_edges[mm++] = u;
-	}
-	assert( mm == gp_index[x+1] );
-
-	// Next new vertex ID
-	++x;
-    }
-    
-    // Find a cover for the remaining vertices
-    VID gp_best_size = 0;
-    bool rec = vertex_cover_buss( n - u_size, k - u_size, gp_index, gp_edges,
-				  gp_best_size, &best_cover[best_size] );
-
-    if( rec ) {
-	// Debug
-	// check_cover( n, index, edges, gp_best_size, &best_cover[best_size] );
-
-	for( VID i=0; i < gp_best_size; ++i )
-	    best_cover[best_size+i] = gp_xlat[best_cover[best_size+i]];
-	best_size += gp_best_size;
-    }
-
-    delete[] gp_edges;
-    delete[] gp_index;
-    delete[] gp_xlat;
-
-    return rec;
-}
-
-void
-vertex_cover_buss( VID n, 
-		   const EID * const index,
-		   const VID * const edges,
-		   VID maxdeg,
-		   VID & best_size,
-		   VID * best_cover ) {
-    VID k_min = 0, k_max = maxdeg;
-
-    VID * cover = new VID[n];
-    VID size = 0;
-    bool rec = false;
-
-    do {
-	VID k = ( k_min + k_max ) / 2;
-	std::cerr << "  k=" << k << " min=" << k_min << " max=" << k_max << "\n";
-
-	rec = vertex_cover_buss( n, k, index, edges, size, cover );
-
-	if( rec )
-	    k_max = k;
-	else
-	    k_min = k;
-	
-    } while( !rec && k_min < k_max-1 );
-
-    std::copy( &cover[0], &cover[size], best_cover );
-    best_size = size;
-
-    // Search for a smaller cover
-    k_max -= 1;
-
-    do {
-	VID k = ( k_min + k_max ) / 2;
-
-	rec = vertex_cover_buss( n, k, index, edges, size, cover );
-
-	if( rec ) {
-	    k_max = k - 1;
-	    std::copy( &cover[0], &cover[size], best_cover );
-	    best_size = size;
-	} else
-	    k_min = k;
-	
-    } while( rec && k_min < k_max-1 );
-}
-
-VID
-vertex_cover_iterate( VID n, 
-		      const EID * const index,
-		      const VID * const edges,
-		      VID v,
-		      short * state,
-		      VID vcsize,
-		      VID & best_size,
-		      short * best_state ) {
-    // We have tried all vertices
-    if( v == n ) {
-	if( vcsize < best_size ) {
-	    std::copy( &state[0], &state[n], best_state );
-	    best_size = vcsize;
-	}
-	return vcsize;
-    }
-
-    // If no incident edges, then don't want vertex
-    VID deg = index[v+1] - index[v];
-    if( deg == 0 ) {
-	state[v] = -1;
-	VID sz = vertex_cover_iterate( n, index, edges, v+1, state, vcsize,
-				       best_size, best_state );
-	state[v] = 0;
-	return sz;
-    }
-// todo: if degree > best_size -> skip vertex
-
-    // First check if all neighbours of v are covered
-    VID num_covered = 0;
-    VID num_uncovered = 0;
-    for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
-	VID u = edges[e];
-	if( state[u] == 1 )
-	    num_covered++;
-	else if( state[u] == -1 )
-	    num_uncovered++;
-    }
-
-    // In case we don't have choice: including all neighbours would result in
-    // a vertex cover larger than the one of interest. In that case, include the
-    // vertex and not the (remaining) neighbours
-    if( vcsize + deg - num_covered >= best_size ) {
-	state[v] = 1;
-	VID sz = vertex_cover_iterate( n, index, edges, v+1, state, vcsize+1,
-				       best_size, best_state );
-	state[v] = 0;
-	return sz;
-    }
-
-    // All neighbours included, so this vertex is not needed
-    // If any neighbour is undecided, then try both ways.
-    if( num_covered == deg ) {
-	state[v] = -1;
-	VID sz = vertex_cover_iterate( n, index, edges, v+1, state, vcsize,
-				       best_size, best_state );
-	state[v] = 0;
-	return sz;
-    } else if( num_uncovered > 0 ) {
-	state[v] = 1;
-	VID sz = vertex_cover_iterate( n, index, edges, v+1, state, vcsize+1,
-				       best_size, best_state );
-	state[v] = 0;
-	return sz;
-    }
-
-    state[v] = -1;
-    VID vco = vertex_cover_iterate( n, index, edges, v+1, state, vcsize,
-				    best_size, best_state );
-
-    state[v] = 1;
-    VID vci = vertex_cover_iterate( n, index, edges, v+1, state, vcsize+1,
-				    best_size, best_state );
-    state[v] = 0;
-
-    if( vci < vco )
-	return vci;
-    else
-	return vco;
-}
-
-contract::vertex_set<VID>
-vertex_cover_exact( const graptor::graph::GraphCSx<VID,EID> & G ) {
-    VID n = G.numVertices();
-    EID m = G.numEdges();
-    const EID * const index = G.getIndex();
-    const VID * const edges = G.getEdges();
-
-    // State: 0: undecided, 1: include, -1: include neighbours
-    short * state = new short[n];
-    short * best_state = new short[n];
-    std::fill( &state[0], &state[n], 0 );
-    std::fill( &best_state[0], &best_state[n], 1 );
-    
-    VID best_size = n;
-    vertex_cover_iterate( n, index, edges, 0, state, 0, best_size, best_state );
-
-    contract::vertex_set<VID> vc;
-    for( VID v=0; v < n; ++v )
-	if( best_state[v] == -1 ) // return the MIS/clique, not the cover
-	    vc.push( v );
-
-    delete[] state;
-    delete[] best_state;
-    
-    return vc;
-}
-
-// Gavril and Yannakakis
-contract::vertex_set<VID>
-vertex_cover_approximate( const GraphCSx & G ) {
-    VID n = G.numVertices();
-    EID m = G.numEdges();
-    const EID * const index = G.getIndex();
-    const VID * const edges = G.getEdges();
-
-    mm::buffer<bool> selected( n, numa_allocation_interleaved() );
-    std::fill( &selected[0], &selected[n], false );
-
-    contract::vertex_set<VID> vc;
-
-    EID e = 0;
-    for( VID v=0; v < n; ++v ) {
-	EID ee=index[v+1];
-
-	if( selected[v] ) {
-	    e = ee;
-	    continue;
-	}
-	    
-	for( ; e != ee; ++e ) {
-	    VID u = edges[e];
-	    if( !selected[u] ) {
-		selected[v] = selected[u] = true;
-		vc.add( v );
-		vc.add( u );
-		e = ee;
-		break;
-	    }
-	}
-    }
-
-    return vc;
-}
-#endif
 
 contract::vertex_set<VID>
 bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G ) {
@@ -2743,13 +2837,14 @@ bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G ) {
     return mc;
 }
 
-std::vector<VID>
-bron_kerbosch_dbl( volatile bool * terminate,
-		   graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-		   [[maybe_unused]] VID expected_best ) {
-    // Ensure all neat and tidy for intersections
-    G.sort_neighbour_lists();
-
+template<bool Pivot, typename RecFn>
+void
+bron_kerbosch_dbl_with_cutoff( volatile bool * terminate,
+			       graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+			       VID cutoff,
+			       RecFn & recorder ) {
+    // Requires that neighbour lists of G are sorted!
+    
     VID n = G.numVertices();
     EID m = G.numEdges();
     const EID * const bindex = G.getBeginIndex();
@@ -2757,6 +2852,8 @@ bron_kerbosch_dbl( volatile bool * terminate,
     const VID * const edges = G.getEdges();
 
     contract::vertex_set<VID> mc;
+
+    StackLikeAllocator alloc;
     
     for( VID v=0; v < n; ++v ) {
 	if( bindex[v] == eindex[v] )
@@ -2766,24 +2863,67 @@ bron_kerbosch_dbl( volatile bool * terminate,
 
 	R.push( v );
 
-	// Consider as candidates only those neighbours of u that are larger
-	// than u to avoid revisiting the vertices unnecessarily.
+	// Consider as candidates only those neighbours of v that are larger
+	// than v to avoid revisiting the vertices unnecessarily.
 	const VID * const start = std::upper_bound(
 	    &edges[bindex[v]], &edges[eindex[v]], v );
 	P.push( start, &edges[eindex[v]] );
 
-	mc_iterate( terminate, G, R, P, 1, mc );
+	if( verbose )
+	    std::cerr << "bk: vertex " << v << " of " << n << "\n";
+
+	mc_iterate<Pivot>( terminate, G, alloc, R, P.size(), P.begin(),
+			   1, cutoff, recorder ); // mc );
     }
 
-/*
-    best_size = n - mc.size();
-    std::fill( &best_state[0], &best_state[n], 1 );
-    for( auto && v : mc )
-	best_state[v] = -1;
-*/
-    std::vector<VID> ret( mc.begin(), mc.end() );
-    return ret;
+    // return std::vector<VID>( mc.begin(), mc.end() );
 }
+
+template<bool Pivot, typename RecFn>
+auto
+bron_kerbosch_dbl( volatile bool * terminate,
+		   graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+		   [[maybe_unused]] VID expected_best ) {
+    // Ensure all neat and tidy for intersections
+    G.sort_neighbour_lists();
+
+    RecFn record( G.numVertices() );
+    bron_kerbosch_dbl_with_cutoff<Pivot>( terminate, G, 1, record );
+    return record;
+}
+
+template<bool Pivot, typename RecFn>
+RecFn
+bron_kerbosch_dbl_with_target( volatile bool * terminate,
+			       graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+			       VID cutoff ) {
+    // Ensure all neat and tidy for intersections
+    G.sort_neighbour_lists();
+
+    // First try with cutoff, if failing, try without.
+    // Useful if we believe we will find a clique of size cutoff
+    VID th = cutoff;
+    if( cutoff == G.numVertices() ) // initial guess is bad for us
+	cutoff = 1;
+    else if( cutoff > 1 ) {
+	// set target slightly lower to increase chance of success
+	// for example in those case where we drop from a 5-clique
+	// to a 4-clique
+	--cutoff;
+    }
+    
+    RecFn record( G.numVertices() );
+    bron_kerbosch_dbl_with_cutoff<Pivot>( terminate, G, cutoff, record );
+    VID ret = record.best_clique_size();
+    if( ret < cutoff ) {
+	// We know a clique of size ret.size() exists, so use this
+	// as a cutoff for the second attempt
+	cutoff = ret >= 1 ? ret : 1;
+	bron_kerbosch_dbl_with_cutoff<Pivot>( terminate, G, cutoff, record );
+    }
+    return record;
+}
+
 
 void check_clique_edges( EID m, const VID * assigned_clique, EID ce ) {
     EID cce = 0;
@@ -3022,6 +3162,7 @@ public:
 	std::fill( &m_best[0], &m_best[num_fns], 0 );
 	std::fill( &m_success_time_total[0], &m_success_time_total[num_fns], 0 );
 	std::fill( &m_success_time_max[0], &m_success_time_max[num_fns], 0 );
+	std::fill( &m_best_time_total[0], &m_best_time_total[num_fns], 0 );
     }
     ~AlternativeSelector() {
 	report( std::cerr );
@@ -3029,10 +3170,10 @@ public:
 
     template<typename... Args>
     auto execute( uint64_t base_usec, Args && ... args ) {
+#if 1
 	using return_type = decltype( std::get<0>( m_fn )( 0ull, args... ) );
 	return_type ret;
 
-#if 0
 	for( uint64_t rep=1; rep <= 24; ++rep ) {
 	    uint64_t usec = base_usec << rep;
 	    try {
@@ -3045,7 +3186,8 @@ public:
 	abort();
 #else
 	try {
-	    uint64_t usec = 100000000ull; // 100sec
+	    // uint64_t usec = 800000000ull; // 800sec
+	    uint64_t usec = 50000000ull << 13; // 50sec
 	    return attempt_all_fn( usec, std::forward<Args>( args )... );
 	} catch( timeout_exception & e ) {
 	    std::cerr << "timeout: usec=" << e.usec() << " idx=" << e.idx() << "\n";
@@ -3064,6 +3206,8 @@ public:
 	       << " max-success-tm=" << m_success_time_max[i] 
 	       << " fail=" << m_fail[i]
 	       << " best=" << m_best[i]
+	       << " avg-best-time="
+	       << ( m_best_time_total[i] / double(m_best[i]) )
 	       << "\n";
 	}
 	return os;
@@ -3083,7 +3227,7 @@ private:
 		usec, std::get<idx>( m_fn ), std::forward<Args>( args )... );
 	    auto dly = tm.stop();
 	    std::cerr << "   alt #" << idx << " succeeded after "
-		      <<  dly << "\n";
+		      << dly << "\n";
 	    m_success_time_total[idx] += dly;
 	    m_success_time_max[idx] = std::max( m_success_time_max[idx], dly );
 	    ++m_success[idx];
@@ -3102,23 +3246,36 @@ private:
     template<typename... Args>
     auto attempt_all_fn( uint64_t usec, Args && ... args ) {
 	std::array<double,num_fns> tms = { std::numeric_limits<double>::max() };
+	using return_type = decltype( std::get<0>( m_fn )( 0ull, args... ) );
+	return_type ret;
+	bool repeat = true;
 
-	auto ret
-	    = attempt_all_fn_aux<0>( usec, tms, std::forward<Args>( args )... );
+	while( repeat ) {
+	    try {
+		ret = attempt_all_fn_aux<0>(
+		    usec, tms, std::forward<Args>( args )... );
+		repeat = false;
+	    } catch( timeout_exception & e ) {
+		usec *= 2;
+		std::cerr << "timeout on all variants; doubling time to "
+			  << usec << "\n";
+	    }
+	}
 
 	for( size_t idx=0; idx < num_fns; ++idx ) {
 	    double dly = tms[idx];
-	    m_success_time_total[idx] += dly;
-	    m_success_time_max[idx] = std::max( m_success_time_max[idx], dly );
-	    if( dly != std::numeric_limits<double>::max() )
+	    if( dly != std::numeric_limits<double>::max() ) {
+		m_success_time_total[idx] += dly;
+		m_success_time_max[idx] = std::max( m_success_time_max[idx], dly );
 		++m_success[idx];
-	    else
+	    } else
 		++m_fail[idx];
 	}
 
 	size_t best = std::distance(
 	    tms.begin(), std::min_element( tms.begin(), tms.end() ) );
 	++m_best[best];
+	m_best_time_total[best] += tms[best];
 
 	return ret;
     }
@@ -3138,16 +3295,21 @@ private:
 	tm.start();
 
 	try {
+	    // TODO: pass in ret as argument and use any contents filled in
+	    //       even in case of timeout.
+	    if( verbose )
+		std::cerr << "as: alternative " << idx
+			  << " timeout " << usec << "\n";
 	    ret = execute_time_limited(
 		usec, std::get<idx>( m_fn ), std::forward<Args>( args )... );
 	    tms[idx] = tm.stop();
-	    check_clique( ret.size(), &ret[0], std::forward<Args>( args )... );
+	    // check_clique( ret.size(), &ret[0], std::forward<Args>( args )... );
 
 	    if constexpr ( idx+1 < num_fns ) {
 		try {
-		    size_t sz = attempt_all_fn_aux<idx+1>(
-			usec, tms, std::forward<Args>( args )... ).size();
-		    assert( ret.size() == sz );
+		    auto r = attempt_all_fn_aux<idx+1>(
+			usec, tms, std::forward<Args>( args )... );
+		    assert( is_equal( ret, r ) );
 		} catch( timeout_exception & e ) {
 		    return ret;
 		}
@@ -3155,13 +3317,25 @@ private:
 
 	    return ret;
 	} catch( timeout_exception & e ) {
-	    tms[idx] = tm.stop();
+	    tms[idx] = std::numeric_limits<double>::max();
 	    if constexpr ( idx+1 < num_fns )
 		return attempt_all_fn_aux<idx+1>(
 		    usec, tms, std::forward<Args>( args )... );
 	    else
 		throw timeout_exception( usec, idx );
 	}
+    }
+
+    template<typename T>
+    static bool is_equal( const T & a, const T & b ) {
+	return true;
+    }
+    static bool is_equal( bool a, bool b ) {
+	return a == b;
+    }
+    static bool
+    is_equal( const std::vector<VID> & a, const std::vector<VID> & b ) {
+	return a.size() == b.size();
     }
 
 private:
@@ -3171,7 +3345,13 @@ private:
     size_t m_best[num_fns];
     double m_success_time_total[num_fns];
     double m_success_time_max[num_fns];
+    double m_best_time_total[num_fns];
 };
+
+template<typename... Fn>
+auto make_alternative_selector( Fn && ... fn ) {
+    return AlternativeSelector<Fn...>( std::forward<Fn>( fn )... );
+}
 
 template<typename Fn>
 void
@@ -3185,12 +3365,22 @@ clique_partition( const GraphCSx & GG,
     EID m = G.numEdges();
     unsigned npart = 1;
 
+/*
     static AlternativeSelector<
 	decltype(&bron_kerbosch_dbl),
 	decltype(&clique_via_vc3),
 	decltype(&clique_via_vc3_searching)
 	>
 	alt( bron_kerbosch_dbl, clique_via_vc3, clique_via_vc3_searching );
+*/
+
+    auto alt = make_alternative_selector(
+	// bron_kerbosch_dbl,
+	// bron_kerbosch_dbl_with_target<false,RecordMaximumClique>
+	// bron_kerbosch_dbl_with_target<true> 
+	bron_kerbosch_dbl_with_target<false,RecordMaximumCliquePerVertex>,
+	clique_via_vc3<RecordMaximumCliquePerVertex> );
+	// clique_via_vc3_searching );
 
     VID to_assign = n;
     VID expected_best = n;
@@ -3232,10 +3422,14 @@ clique_partition( const GraphCSx & GG,
 		  << " maxdeg=" << max_deg
 		  << " build time=" << tb
 		  << " launched\n";
+/*
+*/
 
 	std::string variant;
 
 	tm.start();
+
+	VID num_cliques = 0;
 
 	if( EID(in) * EID( in - 1 ) == im ) {
 	    // A clique. Because to_assign > 3, so is in.
@@ -3243,6 +3437,7 @@ clique_partition( const GraphCSx & GG,
 	    
 	    variant = "clique";
 	    best_size = in;
+	    num_cliques = 1;
 
 	    // Get a unique ID for the clique
 	    VID * members;
@@ -3260,84 +3455,54 @@ clique_partition( const GraphCSx & GG,
 
 	    break; // we are done
 	} else {
-	    std::vector<VID> c = alt.execute( 10ull, G, expected_best );
+	    // std::vector<VID> c = alt.execute( 60ull, G, expected_best );
+	    auto set = alt.execute( 60ull, G, expected_best );
+/*
+	    bool terminate = false;
+	    std::vector<VID> c
+		= bron_kerbosch_dbl_with_target( &terminate, G, expected_best );
+*/
 
-	    best_size = c.size();
+	    best_size = 0;
+	    VID max_size = 0;
+	    // for( auto && c : set ) {
+	    for( auto I=set.begin(), E=set.end(); I != E; ++I ) {
+		auto & c = *I;
+		if( c.size() < 3 )
+		    break;
+
+		++num_cliques;
+
+		best_size += c.size();
+		if( c.size() > max_size )
+		    max_size = c.size();
 	    
-	    if( best_size < 3 )
+		// Get a unique ID for the clique
+		VID * members;
+		std::tie( cliqno, members ) = clist.allocate_clique( c.size()+1 );
+		*members++ = v_reference;
+		std::transform( c.begin(), c.end(), members, map_i2g );
+
+		mark_edges( GG, v_reference, map_i2g,
+			    c.begin(), c.end(),
+			    assigned_clique, cliqno );
+
+		// check_clique_edges( GG.numEdges(), assigned_clique, clist.get_num_clique_edges() );
+
+		// std::sort( c.begin(), c.end() ); // necessary?
+		assert( std::is_sorted( c.begin(), c.end() ) );
+		G.erase_incident_edges( c.begin(), c.end() );
+	    }
+
+	    if( max_size < 3 )
 		break;
-
-	    // Get a unique ID for the clique
-	    VID * members;
-	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
-	    *members++ = v_reference;
-	    std::transform( c.begin(), c.end(), members, map_i2g );
-
-	    mark_edges( GG, v_reference, map_i2g,
-			c.begin(), c.end(),
-			assigned_clique, cliqno );
-
-	    // check_clique_edges( GG.numEdges(), assigned_clique, clist.get_num_clique_edges() );
-
-	    std::sort( c.begin(), c.end() ); // necessary?
-	    G.erase_incident_edges( c.begin(), c.end() );
 
 	    // Prime next search with information that a clique larger
-	    // than this should not exist (otherwise we should have found it)
-	    expected_best = best_size + 1;
+	    // than this should not exist (otherwise we should have found
+	    // it)
+	    expected_best = max_size + 1; // TODO: should not be +1
+
 	}
-
-#if 0
-	if( ( im < 8000 && density < 0.1 ) || density < 0.01 ) {
-	    contract::vertex_set<VID> c
-		= execute_time_limited( 1000000u, bron_kerbosch_dbl, G );
-	    variant = "BK";
-
-	    best_size = c.size();
-	    
-	    if( best_size < 3 )
-		break;
-
-	    // Get a unique ID for the clique
-	    VID * members;
-	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
-	    *members++ = v_reference;
-	    std::transform( c.begin(), c.end(), members, map_i2g );
-
-	    mark_edges( GG, v_reference, map_i2g,
-			c.begin(), c.end(),
-			assigned_clique, cliqno );
-
-	    // check_clique_edges( GG.numEdges(), assigned_clique, clist.get_num_clique_edges() );
-
-	    std::sort( c.begin(), c.end() ); // necessary?
-	    G.erase_incident_edges( c.begin(), c.end() );
-	} else {
-	    std::vector<VID> c
-		= execute_time_limited( 1000000u, clique_via_vc3, G );
-	    variant = "VC";
-
-	    best_size = c.size();
-	    
-	    if( best_size < 3 )
-		break;
-
-	    // Get a unique ID for the clique
-	    VID * members;
-	    std::tie( cliqno, members ) = clist.allocate_clique( best_size+1 );
-	    *members++ = v_reference;
-	    std::transform( c.begin(), c.end(), members, map_i2g );
-
-	    mark_edges( GG, v_reference, map_i2g,
-			c.begin(), c.end(),
-			assigned_clique, cliqno );
-
-	    // check_clique_edges( GG.numEdges(), assigned_clique, clist.get_num_clique_edges() );
-
-	    std::sort( c.begin(), c.end() ); // necessary?
-	    G.erase_incident_edges( c.begin(), c.end() );
-	}
-#endif
 
 	double t = tm.next();
 	std::cerr << tid
@@ -3347,9 +3512,12 @@ clique_partition( const GraphCSx & GG,
 		  << " m=" << G.numEdges()
 		  << " density=" << density
 		  << " size=" << best_size
+		  << " cliques=" << num_cliques
 		  << " cliqno=" << cliqno
 		  << " time(" << variant << "): " << t
 		  << "\n";
+/*
+*/
 
 	to_assign -= best_size;
     }
@@ -3620,7 +3788,33 @@ public:
     // expensive. If a non-maximal clique is considered, we haven't lost time
     // and we are not inaccurate.
     bitset<Bits>
-    bron_kerbosch() {
+    bron_kerbosch( VID cutoff ) {
+	// First try with cutoff, if failing, try without.
+	// Useful if we believe we will find a clique of size cutoff
+	VID th = cutoff;
+	if( cutoff == m_n ) // initial guess is bad for us
+	    cutoff = 1;
+	else if( cutoff > 1 ) {
+	    // set target slightly lower to increase chance of success
+	    // for example in those case where we drop from a 5-clique
+	    // to a 4-clique
+	    --cutoff;
+	}
+    
+	auto ret = bron_kerbosch_with_cutoff( cutoff );
+	if( ret.size() >= cutoff )
+	    return ret;
+	else {
+	    // We know a clique of size ret.size() exists, so use this
+	    // as a cutoff for the second attempt
+	    cutoff = ret.size() >= 1 ? ret.size() : 1;
+	    return bron_kerbosch_with_cutoff( cutoff );
+	}
+    }
+    
+private:
+    bitset<Bits>
+    bron_kerbosch_with_cutoff( VID cutoff ) {
 	m_mc = tr::setzero();
 	m_mc_size = 0;
 
@@ -3635,12 +3829,13 @@ public:
 	    // than u to avoid revisiting the vertices unnecessarily.
 	    row_type P = tr::bitwise_and( get_row( v ), get_himask( v ) );
 
-	    bk_iterate( R, P, 1 );
+	    bk_iterate( R, P, 1, cutoff );
 	}
 
 	return bitset<Bits>( m_mc );
     }
 
+public:
     void erase_incident_edges( bitset<Bits> vset ) {
 	// Erase columns
 	row_type vs = vset;
@@ -3677,7 +3872,7 @@ public:
     const VID * get_s2g() const { return m_s2g; }
 
 private:
-    void bk_iterate( row_type R, row_type P, int depth ) {
+    void bk_iterate( row_type R, row_type P, int depth, VID cutoff ) {
 	// depth == get_size( R )
 	if( tr::is_zero( P ) ) {
 	    if( depth > m_mc_size ) {
@@ -3686,7 +3881,10 @@ private:
 	    }
 	    return;
 	}
-	if( depth + get_size( P ) < m_mc_size )
+	VID p_size = get_size( P );
+	if( depth + p_size < m_mc_size )
+	    return;
+	if( depth + p_size < cutoff )
 	    return;
 
 	row_type x = P;
@@ -3699,7 +3897,7 @@ private:
 	    // assert( tr::is_zero( tr::bitwise_and( get_row( u ), create_row( u ) ) ) );
 	    row_type Pv = tr::bitwise_and( x, get_row( u ) ); // x vs P?
 	    row_type Rv = tr::bitwise_or( R, u_row );
-	    bk_iterate( Rv, Pv, depth+1 );
+	    bk_iterate( Rv, Pv, depth+1, cutoff );
 	}
     }
 
@@ -3944,6 +4142,9 @@ clique_partition( const GraphCSx & GG,
     VID n = G.numVertices();
     EID m = G.numEdges();
 
+    if( n > Bits )
+	throw timeout_exception();
+
     VID to_assign = n;
 
     uint64_t tid = gettid();
@@ -3964,6 +4165,7 @@ clique_partition( const GraphCSx & GG,
 	//   operations. Speed of popcount? Store graph in dense format?
 
 	VID best_size = n;
+	VID expected_size = n;
 	VID cliqno;
 
 	std::cerr << tid << "  subset of unassigned neighbours: "
@@ -3971,6 +4173,8 @@ clique_partition( const GraphCSx & GG,
 		  << " m=" << m
 		  << " density=" << density
 		  << " launched (dense)\n";
+/*
+*/
 
 	std::string variant;
 
@@ -4000,7 +4204,7 @@ clique_partition( const GraphCSx & GG,
 
 	    break; // we are done
 	} else if( true ) { // density < 0.1 ) {
-	    auto c = G.bron_kerbosch();
+	    auto c = G.bron_kerbosch( expected_size );
 	    variant = "BK-dense";
 
 	    best_size = c.size();
@@ -4056,8 +4260,11 @@ clique_partition( const GraphCSx & GG,
 		  << " cliqno=" << cliqno
 		  << " time(" << variant << "): " << t
 		  << "\n";
+/*
+*/
 
 	to_assign -= best_size;
+	expected_size = best_size;
     }
 }
 
@@ -4120,25 +4327,34 @@ void mark_edges( const GraphCSx & G,
 }
 
 template<unsigned Bits>
-void
+bool
 clique_partition_neighbours_dense(
     const GraphCSx & G,
     VID v,
     VID * assigned_clique,
     CliqueLister & clist,
-    VID num_neighbours,
-    const VID * neighbours ) {
+    const NeighbourCutOut<VID,EID> & cut
+    // VID num_neighbours,
+    // const VID * neighbours
+    ) {
+
+    if( cut.get_num_vertices() > Bits )
+	return false;
 
     // Cut out the selected neighbours of the reference vertex v.
     // Do not include the vertex v because v will be a member of every clique.
-    DenseMatrix<Bits> IG( G, v, assigned_clique, num_neighbours, neighbours );
+    DenseMatrix<Bits> IG( G, v, assigned_clique,
+			  cut.get_num_vertices(), cut.get_vertices() );
 
     // Partition this small graph in cliques
-    clique_partition( G, IG, v, [&]( VID vi ) { return IG.get_s2g()[vi]; },
+    clique_partition( G, IG, v,
+		      [&]( VID vi ) { return IG.get_s2g()[vi]; },
 		      assigned_clique, clist );
+
+    return true;
 }
 
-void
+bool
 clique_partition_neighbours_base(
     const GraphCSx & G,
     VID v,
@@ -4158,6 +4374,8 @@ clique_partition_neighbours_base(
     clique_partition( G, IG, v,
 		      [&]( VID vi ) { return ibuilder.get_s2g()[vi]; },
 		      assigned_clique, clist );
+
+    return true;
 }
 
 std::tuple<VID,VID *,VID>
@@ -4233,7 +4451,19 @@ clique_partition_neighbours(
     if( cut.get_max_degree() < 3 )
 	return;
 
-    clique_partition_neighbours_base( G, v, assigned_clique, clist, cut );
+    VID num = cut.get_num_vertices();
+    if( num <= 64 ) {
+	clique_partition_neighbours_dense<64>(
+	    G, v, assigned_clique, clist, cut );
+    } else if( num <= 128 ) {
+	clique_partition_neighbours_dense<128>(
+	    G, v, assigned_clique, clist, cut );
+    } else if( num <= 256 ) {
+	clique_partition_neighbours_dense<256>(
+	    G, v, assigned_clique, clist, cut );
+    } else {
+	clique_partition_neighbours_base( G, v, assigned_clique, clist, cut );
+    }
     
 #else
     VID * induced_set;
@@ -4285,6 +4515,32 @@ void checkIS( const GraphCSx & G, frontier & f ) {
 	}
     }
 }
+
+#if 0
+class ConcurrencyControl {
+public:
+    using ctr_t = uint8_t; // at most 255 threads
+
+    ConcurrencyControl( const GraphCSx & G )
+	: m_G( G ), m_counter( G.numVertices() ) {
+	std::fill( &m_counter[0], &m_counter[G.numVertices()], ctr_t(0) )
+    }
+    ConcurrencyControl( const ConcurrencyControl & ) = delete;
+    ConcurrencyControl( ConcurrencyControl && ) = delete;
+    ~ConcurrencyControl() {
+	m_counter.del();
+    }
+
+    VID select_vertex() {
+	std::lock_guard<std::mutex> guard( m_lock );
+    }
+    
+private:
+    const GraphCSx & m_G;
+    mm::buffer<ctr_t> m_counter;
+    std::mutex m_lock;
+};
+#endif
 
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
@@ -4420,15 +4676,35 @@ int main( int argc, char *argv[] ) {
 	roots = new_roots;
     }
 #else
+
+    if( false && n > 42642 ) {
+	std::cerr << "wonky iteration ...\n";
+	verbose = true;
+	VID v = 42642;
+
+	if( coreness[v] >= 4 )
+	    clique_partition_neighbours( G, v, assigned_clique.get(),
+					 coreness.get_ptr(), clist );
+
+	std::cerr << "wonky iteration done\n";
+	verbose = false;
+    }
+
+
     for( VID i=0; i < n; ++i ) {
 	VID v = order[i];
 
+	// if( v == 42642 )
+	// verbose = true;
+	
 	if( coreness[v] < 4 )
 	    break;
 
 	std::cerr << "Iteration " << i << " with v=" << v
 		  << " deg=" << G.getDegree( v )
 		  << "\n";
+/*
+*/
 	
 	clique_partition_neighbours( G, v, assigned_clique.get(),
 				     coreness.get_ptr(), clist );
@@ -4564,6 +4840,13 @@ int main( int argc, char *argv[] ) {
     // Write to files
     std::cerr << "Writing to directory " << odir << "\n";
     PDG.write_file( odir );
+
+    // Cleanup
+    PDG.del();
+    G.del();
+    order.del();
+    rev_order.del();
+    assigned_clique.del();
 
     return 0;
 }
