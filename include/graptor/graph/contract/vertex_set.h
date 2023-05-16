@@ -265,6 +265,7 @@ class vertex_set {
 public:
     vertex_set() { }
     vertex_set( VID upper_bound ) { reserve( upper_bound ); }
+    std::vector<VID> as_vector() const { return m_vertices; }
     void reserve( VID size ) { m_vertices.reserve( size ); }
     void resize( VID size ) { m_vertices.resize( size ); }
     VID size() const {
@@ -395,6 +396,10 @@ public:
     }
     VID intersection_size( const vertex_set<VID> & s ) const {
 	return intersection_size( s.begin(), s.size() );
+    }
+    template<typename Iter>
+    VID intersection_size( Iter && begin, Iter && end ) const {
+	return intersection_size( begin, std::distance( begin, end ) );
     }
     bool intersection_empty( const VID * p, VID n) const {
 	return detail::intersection_empty( begin(), size(), p, n );
