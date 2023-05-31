@@ -1586,9 +1586,10 @@ vertex_cover_vc3( volatile bool * terminate,
 
 template<typename Enumerate>
 void
-mce_bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G,
-		   VID start_pos,
-		   Enumerate && E ) {
+mce_bron_kerbosch_seq(
+    const graptor::graph::GraphCSx<VID,EID> & G,
+    VID start_pos,
+    Enumerate && E ) {
     VID n = G.numVertices();
     EID m = G.numEdges();
     const EID * const index = G.getIndex();
@@ -1625,6 +1626,55 @@ mce_bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G,
 	    alloc.deallocate_to( P_set );
     }
 }
+
+template<typename Enumerate>
+void
+mce_bron_kerbosch_par(
+    const graptor::graph::GraphCSx<VID,EID> & G,
+    VID start_pos,
+    Enumerate && E ) {
+    VID n = G.numVertices();
+    EID m = G.numEdges();
+    const EID * const index = G.getIndex();
+    const VID * const edges = G.getEdges();
+
+    // start_pos calculate to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    parallel_loop( start_pos, n, 1, [&]( VID v ) {
+	StackLikeAllocator alloc;
+    
+	contract::vertex_set<VID> R;
+	R.push( v );
+
+	// Consider as candidates only those neighbours of u that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	const VID * const start = std::upper_bound(
+	    &edges[index[v]], &edges[index[v+1]], v );
+	VID P_size = &edges[index[v+1]] - start;
+	VID * P_set = alloc.template allocate<VID>( P_size );
+	std::copy( start, &edges[index[v+1]], P_set );
+	VID X_size = start - &edges[index[v]];
+	VID * X_set = alloc.template allocate<VID>( X_size + P_size );
+	std::copy( &edges[index[v]], start, X_set );
+
+	mce_iterate( G, E, alloc, R, P_size, P_set, X_size, X_set, 1 );
+
+	// auto deallocation as alloc goes out of scope
+    } );
+}
+
+template<typename Enumerate>
+void
+mce_bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G,
+		   VID start_pos,
+		   Enumerate && E ) {
+    VID n = G.numVertices();
+    if( n > 1024 )
+	mce_bron_kerbosch_par( G, start_pos, E );
+    else
+	mce_bron_kerbosch_seq( G, start_pos, E );
+}
+
 
 
 contract::vertex_set<VID>
