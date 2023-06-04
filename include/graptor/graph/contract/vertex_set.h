@@ -21,14 +21,17 @@ void intersect_merge( It ls, It le, It rs, It re, Inserter & insert ) {
 		return;
 	    ++r;
 	} else if( *l < *r ) {
-	    // if( !insert.ignore_left( *l ) ) return;
+	    if constexpr( complete )
+		if( !insert.ignore_left( *l ) )
+		    return;
 	    ++l;
 	} else {
-	    // if( !insert.ignore_right( *r ) ) return;
+	    if constexpr( complete )
+		if( !insert.ignore_right( *r ) )
+		    return;
 	    ++r;
 	}
     }
-/*
     if constexpr ( complete ) {
 	while( l != le ) {
 	    if( !insert.ignore_left( *l ) )
@@ -41,6 +44,7 @@ void intersect_merge( It ls, It le, It rs, It re, Inserter & insert ) {
 	    ++r;
 	}
     }
+/*
 */
 }
 
@@ -122,6 +126,24 @@ private:
     VID * m_ptr, * m_left, * m_right;
 };
 
+template<typename VID>
+struct check_subset {
+    check_subset() : m_subset( true ) { }
+
+    constexpr bool operator() ( VID v ) const { return true; }
+
+    bool ignore_left( VID ) {
+	m_subset = false;
+	return false;
+    }
+    constexpr bool ignore_right( VID ) const { return true; }
+
+    bool is_subset() const { return m_subset; }
+    
+private:
+    bool m_subset;
+};
+    
 template<typename VID>
 struct count_size {
     count_size() : m_size( 0 ) { }
@@ -231,6 +253,19 @@ bool intersection_empty(
     return fn.is_empty();
 }
 
+template<typename VID>
+bool is_subset(
+    const VID * candidates, VID num_candidates,
+    const VID * const vertices, VID num_vertices ) {
+    check_subset<VID> fn;
+    if( num_vertices < num_candidates )
+	return false;
+    
+    intersect_merge<true>( candidates, &candidates[num_candidates],
+			   vertices, &vertices[num_vertices], fn );
+    return fn.is_subset();
+}
+
 size_t set_union(
     const VID * const candidates, VID num_candidates,
     const VID * const vertices, VID num_vertices,
@@ -276,6 +311,8 @@ public:
     VID * begin() { return &*m_vertices.begin(); }
     const VID * end() const { return &*m_vertices.end(); }
     VID * end() { return &*m_vertices.end(); }
+
+    VID operator [] ( size_t i ) const { return m_vertices[i]; }
 
     void swap( vertex_set<VID> & s ) {
 	std::swap( m_vertices, s.m_vertices );
