@@ -93,6 +93,8 @@ struct allpopcnt {
 	    return _popcnt64( arg_traits::lane( a, 0 ) );
 	} else if constexpr ( sizeof(T) == 8 ) {
 	    assert( 0 && "NYI" );
+	} else if constexpr ( sizeof(T) == 4 && VL == 1 ) {
+	    return _popcnt32( arg_traits::lane( a, 0 ) );
 	} else {
 	    return allpopcnt<ResultTy, uint64_t, arg_traits::size/8>
 		::compute( a );

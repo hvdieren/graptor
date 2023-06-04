@@ -95,6 +95,14 @@ public:
 	type x;
 	return _mm256_srli_epi32( _mm256_cmpeq_epi32( x, x ), 31 );
     }
+    static type setglobaloneval( size_t pos ) {
+	// https://stackoverflow.com/questions/72424660/best-way-to-mask-a-single-bit-in-avx2
+	type ii = _mm256_set1_epi32(pos);
+	const type off = _mm256_setr_epi32(0,32,64,96,128,160,192,224);
+	type jj = _mm256_sub_epi32( ii, off );
+	type mask = _mm256_sllv_epi32( setoneval(), jj );
+	return mask;
+    }
     
     static type set1( member_type a ) { return _mm256_set1_epi32( a ); }
     static type set1inc( member_type a ) {

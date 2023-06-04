@@ -53,6 +53,7 @@ public:
 	    return setone() >> 1;
     }
     static type setoneval() { return type(1); }
+    static type setglobaloneval( size_t pos ) { return type(1) << pos; }
 
     static bool is_zero( type a ) { return a == 0; }
     
