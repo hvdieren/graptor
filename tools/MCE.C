@@ -27,6 +27,7 @@
 #include "graptor/graph/simple/csx.h"
 #include "graptor/graph/simple/dicsx.h"
 #include "graptor/graph/simple/hadj.h"
+#include "graptor/graph/simple/hadjt.h"
 
 #define NOBENCH
 #define MD_ORDERING 0
@@ -46,6 +47,38 @@ enum cvt_pdg_variable_name {
 };
 
 static bool verbose = false;
+
+template<typename T>
+struct murmur_hash;
+
+template<>
+struct murmur_hash<uint64_t> {
+    using type = uint64_t;
+    
+    type operator()( type h ) const {
+	h ^= h >> 33;
+	h *= 0xff51afd7ed558ccdL;
+	h ^= h >> 33;
+	h *= 0xc4ceb9fe1a85ec53L;
+	h ^= h >> 33;
+	return h;
+    }
+};
+
+template<>
+struct murmur_hash<uint32_t> {
+    using type = uint32_t;
+    
+    type operator()( type h ) const {
+	h ^= h >> 16;
+	h *= 0x85ebca6b;
+	h ^= h >> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >> 16;
+
+	return h;
+    }
+};
 
 void
 sort_order( VID * order, VID * rev_order,
@@ -490,8 +523,9 @@ VID mc_get_pivot_C(
 	bindex, eindex, edges, P_size, P_set, X_size, X_set, C_size, C_set );
 }
 
+template<typename VID, typename EID, typename Hash>
 VID mc_get_pivot(
-    const graptor::graph::GraphHAdj<VID,EID> & G,
+    const graptor::graph::GraphHAdj<VID,EID,Hash> & G,
     VID P_size,
     const VID * P_set,
     VID X_size,
@@ -501,6 +535,40 @@ VID mc_get_pivot(
     const VID * const edges = G.getEdges();
     // TODO: accelerate with hash
     return mc_get_pivot( bindex, eindex, edges, P_size, P_set, X_size, X_set );
+}
+
+template<typename VID, typename EID, typename Hash>
+VID mc_get_pivot_xp(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const VID * XP,
+    VID ne,
+    VID ce ) {
+
+    assert( ce - ne != 0 );
+
+    if( ce - ne <= 3 )
+	return XP[ne];
+
+    VID v_max = ~VID(0);
+    VID tv_max = std::numeric_limits<VID>::min();
+
+    for( VID i=0; i < ce; ++i ) {
+	VID v = XP[i];
+	auto & hadj = G.get_adjacency( v );
+	VID deg = hadj.size();
+	if( deg <= tv_max )
+	    continue;
+
+	// Abort during intersection_size if size will be less than tv_max
+	size_t tv = hadj.intersect_size( XP+ne, XP+ce, tv_max );
+	if( tv > tv_max ) {
+	    tv_max = tv;
+	    v_max = v;
+	}
+    }
+
+    // return first element of P if nothing good found
+    return ~v_max == 0 ? XP[ne] : v_max;
 }
 
 #if 0
@@ -1038,10 +1106,10 @@ mce_iterate_exclude(
     }
 }
 
-template<typename Enumerate>
+template<typename Enumerate, typename VID, typename EID, typename Hash>
 void
 mce_iterate_xp(
-    const graptor::graph::GraphCSx<VID,EID> & G,
+    const graptor::graph::GraphHAdj<VID,EID,Hash> & G,
     Enumerate && Ee,
     StackLikeAllocator & alloc,
     contract::vertex_set<VID> & R,
@@ -1059,7 +1127,7 @@ mce_iterate_xp(
     const VID * const edges = G.getEdges();
 
     // pivot...
-    VID pivot = mc_get_pivot( G, ce-ne, &XP[ne], ne, XP );
+    VID pivot = mc_get_pivot_xp( G, XP, ne, ce );
     const VID * const p_ngh = &edges[index[pivot]];
     VID p_nxt = 0;
     VID p_last = index[pivot+1] - index[pivot];
@@ -1111,6 +1179,69 @@ mce_iterate_xp(
 
     alloc.deallocate_to( XP_new );
 }
+
+template<typename Enumerate, typename VID, typename EID, typename Hash>
+void
+mce_iterate_xp(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    Enumerate && Ee,
+    StackLikeAllocator & alloc,
+    contract::vertex_set<VID> & R,
+    VID * XP,
+    VID ne, // not edges
+    VID ce, // candidate edges
+    int depth ) {
+    if( ce == ne ) {
+	if( ne == 0 )
+	    Ee( R );
+	return;
+    }
+
+    // pivot...
+    VID pivot = mc_get_pivot_xp( G, XP, ne, ce );
+    auto & p_ngh = G.get_adjacency( pivot );
+
+    // If space is an issue, could put alloc/dealloc inside loop and tune
+    // space depending on neighbour list length (each of X and P can not
+    // be longer than number of neighbours of u, nor longer than their
+    // current size, so allocate std::min( ce, degree(u) ).
+    VID * XP_new = alloc.template allocate<VID>( ce );
+    VID * prev_tgt = XP;
+
+    for( VID i=ne; i < ce; ++i ) {
+	VID u = XP[i];
+
+	// Is u in the neighbour list of the pivot? If so, skip
+	if( p_ngh.contains( u ) )
+	    continue;
+
+	auto & adj = G.get_adjacency( u );
+	VID deg = adj.size();
+	VID ne_new = adj.intersect( XP, XP+ne, XP_new ) - XP_new;
+	VID ce_new = adj.intersect( XP+ne, XP+ce, XP_new+ne_new ) - XP_new;
+	assert( ce_new <= ce );
+	R.push( u );
+
+	mce_iterate_xp( G, Ee, alloc, R, XP_new, ne_new, ce_new, depth+1 );
+
+	R.pop();
+
+	// Move candidate (u) from original position to appropriate
+	// place in X part (maintaining sort order).
+	// TODO: Could cache tgt for next iteration as next iteration's u
+	// will be strictly larger.
+	VID * tgt = std::upper_bound( prev_tgt, XP+ne, u );
+	if( tgt != &XP[i] ) { // equality when u moves to tgt == XP+ne
+	    std::copy_backward( tgt, &XP[i], &XP[i+1] );
+	    *tgt = u;
+	}
+	prev_tgt = tgt+1;
+	++ne;
+    }
+
+    alloc.deallocate_to( XP_new );
+}
+
 
 
 
@@ -1479,6 +1610,106 @@ private:
     std::vector<VID> s2g;
     VID start_pos;
 };
+
+// For maximal clique enumeration - all vertices regardless of coreness
+// Sort/relabel vertices by decreasing coreness
+template<typename VID, typename EID, typename Hash>
+class GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>> {
+public:
+    GraphBuilderInduced( const GraphCSx & G,
+			 VID v,
+			 const NeighbourCutOut<VID,EID> & cut,
+			 const VID * const core_order )
+	: GraphBuilderInduced( G, v, cut.get_num_vertices(), cut.get_vertices(),
+			       core_order ) { }
+    GraphBuilderInduced( const GraphCSx & G,
+			 VID v,
+			 const NeighbourCutOutAll<VID,EID> & cut,
+			 const VID * const core_order )
+	: GraphBuilderInduced( G, v, cut.get_num_vertices(), cut.get_vertices(),
+			       core_order ) { }
+    GraphBuilderInduced( const GraphCSx & G,
+			 VID v,
+			 VID num_neighbours,
+			 const VID * neighbours,
+			 const VID * const core_order )
+	: s2g( &neighbours[0], &neighbours[num_neighbours] ),
+	  S( num_neighbours ) {
+	VID n = G.numVertices();
+	EID m = G.numEdges();
+	const EID * const gindex = G.getIndex();
+	const VID * const gedges = G.getEdges();
+
+	// Indices:
+	// global (g): original graph's vertex IDs
+	// short (s): relabeled vertex IDs in induced graph S
+	// neighbours (n): position of vertex in neighbour list, which is
+	//                 sorted by global IDs, facilitating lookup
+	VID ns = num_neighbours;
+
+	// Sort eligible neighbours by increasing core_order
+	std::sort( s2g.begin(), s2g.end(),
+		   [&]( VID u, VID v ) {
+		       return core_order[u] < core_order[v];
+		   } );
+
+	// Should be able to track permutation whilst sorting...
+	VID * n2s = new VID[ns];
+	for( VID u=0; u < ns; ++u ) {
+	    VID v = s2g[u];
+	    const VID * const pos = std::lower_bound(
+		&neighbours[0], &neighbours[ns], v );
+	    assert( pos != &neighbours[ns] && *pos == v );
+	    n2s[pos - neighbours] = u;
+	}
+	
+	// Find first vertex ordered after the reference vertex v.
+	// All preceeding vertices have already been tried and can be skipped.
+	// We include them in the cutout however in order to construct the
+	// excluded set (X) in Bron-Kerbosch. Remains a question if we need
+	// to build the neighbour list for the excluded vertices (probably
+	// only for the purpose of finding a pivot vertex).
+	VID * sp2_pos = std::upper_bound(
+	    &s2g[0], &s2g[ns], v,
+	    [&]( VID a, VID b ) {
+		return core_order[a] < core_order[b];
+	    } );
+	start_pos = sp2_pos - &s2g[0];
+
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = s2g[su];
+	    VID k = 0;
+	    auto & adj = S.get_adjacency( su );
+	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
+		VID w = gedges[e];
+		while( k != ns && neighbours[k] < w )
+		    ++k;
+		if( k == ns )
+		    break;
+		// If neighbour is selected in cut-out, add to induced graph.
+		// Skip self-edges.
+		// Skip edges between vertices in X.
+		if( neighbours[k] == w && w != u
+		    && ( su >= start_pos || n2s[k] >= start_pos ) )
+		    adj.insert( n2s[k] );
+	    }
+
+	    S.sum_up_edges();
+	}
+
+	delete[] n2s;
+    }
+
+    const VID * get_s2g() const { return &s2g[0]; }
+    const auto & get_graph() const { return S; }
+    VID get_start_pos() const { return start_pos; }
+
+private:
+    graptor::graph::GraphHAdjTable<VID,EID,Hash> S;
+    std::vector<VID> s2g;
+    VID start_pos;
+};
+
 
 
 class GraphBuilderComplement {
@@ -2231,10 +2462,10 @@ mce_bron_kerbosch_seq_exclude(
     }
 }
 
-template<typename Enumerate>
+template<typename Enumerate, typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_seq_xp(
-    const graptor::graph::GraphCSx<VID,EID> & G,
+    const graptor::graph::GraphHAdj<VID,EID,Hash> & G,
     VID start_pos,
     VID degeneracy,
     Enumerate && E ) {
@@ -2267,6 +2498,47 @@ mce_bron_kerbosch_seq_xp(
 	    alloc.deallocate_to( XP );
     }
 }
+
+template<typename Enumerate, typename VID, typename EID, typename Hash>
+void
+mce_bron_kerbosch_seq_xp(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    VID start_pos,
+    VID degeneracy,
+    Enumerate && E ) {
+    VID n = G.numVertices();
+
+    StackLikeAllocator alloc;
+
+    // start_pos calculate to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    for( VID v=start_pos; v < n; ++v ) {
+	contract::vertex_set<VID> R;
+
+	R.push( v );
+
+	// Consider as candidates only those neighbours of v that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	auto & adj = G.get_adjacency( v ); 
+
+	VID deg = adj.size();
+	VID * XP = alloc.template allocate<VID>( deg );
+	auto end = std::copy_if(
+	    adj.begin(), adj.end(), XP,
+	    [&]( VID v ) { return v != adj.invalid_element; } );
+	assert( end - XP == deg );
+	std::sort( XP, XP+deg );
+	const VID * const start = std::upper_bound( XP, XP+deg, v );
+	VID ne = start - XP;
+	VID ce = deg;
+
+	mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
+
+	if( ce > 0 )
+	    alloc.deallocate_to( XP );
+    }
+}
+
 
 
 
@@ -2340,15 +2612,15 @@ mce_bron_kerbosch_par(
     } );
 }
 
-template<typename Enumerate>
+template<typename Enumerate, typename VID, typename EID, typename Hash>
 void
-mce_bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G,
+mce_bron_kerbosch( const graptor::graph::GraphHAdj<VID,EID,Hash> & G,
 		   VID start_pos,
 		   VID degeneracy,
 		   Enumerate && E ) {
     VID n = G.numVertices();
     if( n > 1024 )
-	mce_bron_kerbosch_par( G, start_pos, E );
+	mce_bron_kerbosch_par( G.get_graph(), start_pos, E );
     else {
 	// mce_bron_kerbosch_seq( G, start_pos, E );
 	// mce_bron_kerbosch_seq_nox( G, start_pos, E );
@@ -3785,21 +4057,20 @@ void mce_top_level(
     } );
 }
 
-template<typename Enumerator>
+template<typename Enumerator, typename VID, typename EID, typename Hash>
 void mce_top_level(
-    const GraphCSx & G,
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & HG,
     Enumerator & E,
     VID v,
-    const NeighbourCutOutAll<VID,EID> & cut,
-    const VID * const core_order,
-    VID degeneracy ) {
-    GraphBuilderInduced<graptor::graph::GraphCSx<VID,EID>>
-	ibuilder( G, v, cut, core_order );
-    const graptor::graph::GraphCSx<VID,EID> & IG = ibuilder.get_graph();
-
-    mce_bron_kerbosch(
-	IG,
-	ibuilder.get_start_pos(),
+    VID start_pos,
+    // const NeighbourCutOutAll<VID,EID> & cut,
+    // const VID * const core_order,
+    VID degeneracy
+    ) {
+    // TODO: parallel version
+    mce_bron_kerbosch_seq_xp(
+	HG,
+	start_pos, // ibuilder.get_start_pos(),
 	degeneracy,
 	[&]( const contract::vertex_set<VID> & c ) {
 	    E.record( 1+c.size() );
@@ -3847,12 +4118,14 @@ struct all_variant_statistics {
 	variant_statistics && v64,
 	variant_statistics && v128,
 	variant_statistics && v256,
-	variant_statistics && vgen ) :
+	variant_statistics && vgen,
+	variant_statistics && vgenbuild ) :
 	m_32( std::forward<variant_statistics>( v32 ) ),
 	m_64( std::forward<variant_statistics>( v64 ) ),
 	m_128( std::forward<variant_statistics>( v128 ) ),
 	m_256( std::forward<variant_statistics>( v256 ) ),
-	m_gen( std::forward<variant_statistics>( vgen ) ) { }
+	m_gen( std::forward<variant_statistics>( vgen ) ),
+	m_genbuild( std::forward<variant_statistics>( vgenbuild ) ) { }
 
     all_variant_statistics
     operator + ( const all_variant_statistics & s ) const {
@@ -3861,7 +4134,8 @@ struct all_variant_statistics {
 	    m_64 + s.m_64,
 	    m_128 + s.m_128,
 	    m_256 + s.m_256,
-	    m_gen + s.m_gen );
+	    m_gen + s.m_gen,
+	    m_genbuild + s.m_genbuild );
     }
 
     void record_32( double atm ) { m_32.record( atm ); }
@@ -3869,8 +4143,9 @@ struct all_variant_statistics {
     void record_128( double atm ) { m_128.record( atm ); }
     void record_256( double atm ) { m_256.record( atm ); }
     void record_gen( double atm ) { m_gen.record( atm ); }
+    void record_genbuild( double atm ) { m_genbuild.record( atm ); }
     
-    variant_statistics m_32, m_64, m_128, m_256, m_gen;
+    variant_statistics m_32, m_64, m_128, m_256, m_gen, m_genbuild;
 };
 
 // thread_local static all_variant_statistics * mce_pt_stats = nullptr;
@@ -3946,7 +4221,20 @@ void mce_top_level(
     } else {
 	timer tm;
 	tm.start();
-	mce_top_level( G, E, v, cut, core_order, degeneracy );
+/*
+	GraphBuilderInduced<graptor::graph::GraphCSx<VID,EID>>
+	    ibuilder( G, v, cut, core_order );
+	const graptor::graph::GraphCSx<VID,EID> & IG = ibuilder.get_graph();
+	graptor::graph::GraphHAdj<VID,EID,murmur_hash<VID>> HG( IG );
+*/
+	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,murmur_hash<VID>>>
+	    ibuilder( G, v, cut, core_order );
+	const auto & HG = ibuilder.get_graph();
+
+	stats.record_genbuild( tm.stop() );
+
+	tm.start();
+	mce_top_level( HG, E, v, ibuilder.get_start_pos(), degeneracy );
 	stats.record_gen( tm.stop() );
     }
 }
@@ -4060,6 +4348,11 @@ int main( int argc, char *argv[] ) {
     std::cerr << " generic version: " << stats.m_gen.m_tm << " seconds in "
 	      << stats.m_gen.m_calls << " calls @ "
 	      << ( stats.m_gen.m_tm / double(stats.m_gen.m_calls) )
+	      << " s/call\n";
+    std::cerr << " generic version building: "
+	      << stats.m_genbuild.m_tm << " seconds in "
+	      << stats.m_genbuild.m_calls << " calls @ "
+	      << ( stats.m_genbuild.m_tm / double(stats.m_genbuild.m_calls) )
 	      << " s/call\n";
 
     std::cerr << " pruning: " << pruning << "\n";
