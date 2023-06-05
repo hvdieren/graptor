@@ -18,6 +18,8 @@
 #include <exception>
 #include <numeric>
 
+#include <pthread.h>
+
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
@@ -1239,6 +1241,53 @@ mc_iterate( const graptor::graph::GraphCSx<VID,EID> & G,
     }
 }
 
+template<typename Enumerate>
+void
+mce_iterate( const graptor::graph::GraphCSx<VID,EID> & G,
+	     Enumerate && Ee,
+	     contract::vertex_set<VID> & R,
+	     contract::vertex_set<VID> & P,
+	     contract::vertex_set<VID> & X,
+	     int depth ) {
+    if( P.size() == 0 ) {
+	if( X.size() == 0 )
+	    Ee( R );
+	return;
+    }
+
+    const EID * const index = G.getIndex();
+    const VID * const edges = G.getEdges();
+
+    // pivot...
+
+    for( auto I=P.begin(), E=P.end(); I != E; ++I ) {
+	VID u = *I;
+
+	VID deg = index[u+1] - index[u];
+	VID sz = std::min( deg, P.size() );
+	contract::vertex_set<VID> Pv( sz );
+	Pv.resize( sz );
+	Pv.resize( contract::detail::intersect(
+		       I, (VID)std::distance( I, E ), // prune visited elm of P
+		       &edges[index[u]], deg,
+		       Pv.begin() ) );
+	VID xsz = std::min( deg, X.size() );
+	contract::vertex_set<VID> Xv( xsz );
+	Xv.resize( xsz );
+	Xv.resize( contract::detail::intersect(
+		       X.begin(), X.size(),
+		       &edges[index[u]], deg,
+		       Xv.begin() ) );
+	R.push( u );
+	mce_iterate( G, Ee, R, Pv, Xv, depth+1 );
+	R.pop();
+
+	// P.remove( u ); -- due to using only tail bit of P to compute Pv
+	X.add( u );
+	// assert( std::is_sorted( X.begin(), X.end() ) );
+    }
+}
+
 VID mc_get_pivot(
     const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     VID P_size,
@@ -1439,6 +1488,34 @@ check_clique( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     }
 }
 
+void
+check_clique( const GraphCSx & G,
+	      VID size,
+	      VID * clique ) {
+    std::sort( clique, clique+size );
+    VID n = G.numVertices();
+    const EID * const index = G.getIndex();
+    const VID * const edges = G.getEdges();
+
+    VID v0 = clique[0];
+    contract::vertex_set<VID> ins;
+    ins.push( &edges[index[v0]], &edges[index[v0+1]] );
+
+    for( VID i=0; i < size; ++i ) {
+	VID v = clique[i];
+	for( VID j=0; j < size; ++j ) {
+	    if( j == i )
+		continue;
+	    VID u = clique[j];
+	    const VID * const pos
+		= std::lower_bound( &edges[index[v]], &edges[index[v+1]], u );
+	    if( pos == &edges[index[v+1]] || *pos != u )
+		abort();
+	}
+	ins = ins.intersect( &edges[index[v]], index[v+1] - index[v] );
+    }
+    assert( ins.size() == 0 ); // check if maximal
+}
 
 
 template<bool Pivot, typename RecFn>
@@ -1817,21 +1894,125 @@ public:
 	assert( m_num_iset <= deg );
 
 	std::sort( &m_component[0], &m_component[m_num_iset] );
-	VID nc = std::unique( &m_component[0], &m_component[m_num_iset] )
-	    - &m_component[0];
-	std::cerr << "Number of components: " << nc << "\n";
+	// VID nc = std::unique( &m_component[0], &m_component[m_num_iset] )
+	// - &m_component[0];
+	// std::cerr << "Number of components: " << nc << "\n";
 
-	VID c = m_component[0];
 	VID pi = 0;
+	VID nc = 0;
 	for( VID i=1; i < m_num_iset; ++i ) {
 	    if( m_component[i] != m_component[pi] ) {
-		std::cerr << "     " << m_component[pi] << ": "
+		std::cerr << "     " << i << ' ' << m_component[pi] << ": "
 			  << ( i - pi ) << "\n";
 		pi = i;
+		++nc;
 	    }
 	}
-	std::cerr << "     " << m_component[pi] << ": "
+	std::cerr << "     " << m_num_iset << ' ' << m_component[pi] << ": "
 		  << ( m_num_iset - pi ) << "\n";
+	++nc;
+	std::cerr << "Number of components: " << nc << "\n";
+    }
+
+    // For maximal clique enumeration: all vertices regardless of coreness
+    // Sort neighbour list in increasing order
+    NeighbourCutOut( const GraphCSx & G,
+		     VID v )
+	: NeighbourCutOut( G, v, G.getIndex()[v+1] - G.getIndex()[v] ) { }
+    NeighbourCutOut( const GraphCSx & G,
+		     VID v,
+		     VID deg )
+	: m_iset( deg ), m_degrees( deg ), m_component( deg ),
+	  m_totdeg( 0 ), m_maxdeg( 0 ), m_num_iset( 0 ) {
+	const EID * const index = G.getIndex();
+	const VID * const edges = G.getEdges();
+
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	    VID u = edges[e];
+
+	    // Filter vertices (duplicates)
+	    // if( coreness[u] > coreness[v] )
+	    // continue;
+	    
+	    if( u == v ) // self-edge
+		continue;
+
+	    VID udeg = 0;
+	    m_component[m_num_iset] = m_num_iset;
+// TODO: redundant loop??? (prunes #vertices - successful?)
+	    for( EID f=index[u], ff=index[u+1]; f != ff; ++f ) {
+		VID w = edges[f];
+		// Filter vertices (duplicates)
+		// if( coreness[w] > coreness[v] )
+		// continue;
+	    
+		if( w == v ) // v is not included in cutout
+		    continue;
+		const VID * pos
+		    = std::lower_bound( &edges[index[v]], &edges[index[v+1]],
+					w );
+		if( pos != &edges[index[v+1]] && *pos == w ) {
+		    ++udeg;
+		    // Do an early detection of components. This is
+		    // approximate (see comment below), as some of the edges
+		    // may not materialise. Any error would imply some
+		    // components may not be fully connected, but no edges
+		    // exist between the components that were identified.
+#if 0
+		    if( w < u ) {
+			pos = std::lower_bound( &m_iset[0], &m_iset[m_num_iset],
+						w );
+			if( pos != &m_iset[m_num_iset] && *pos == w )
+			    update_components( m_num_iset, pos - &m_iset[0] );
+		    }
+#endif
+		}
+
+	    }
+
+	    // The calculated degrees are not precise as we may consider
+	    // edges to neighbours that are later discarded because
+	    // those neighbours later turn out to have insufficient
+	    // degree themselves. As such, udeg is an upper bound to the
+	    // actual degree of the vertex.
+	    // m_maxdeg, m_totdeg and m_degrees are therefore also upper
+	    // bounds.
+	    m_iset[m_num_iset] = u;
+	    m_degrees[m_num_iset] = udeg;
+	    m_totdeg += udeg;
+	    ++m_num_iset;
+	    if( udeg > m_maxdeg )
+		m_maxdeg = udeg;
+	}
+
+	assert( m_num_iset <= deg );
+
+#if 0
+	// TODO: every singleton component corresponds to a 2-clique
+	// but need to be careful of double-counting, specifically if
+	// both vertices have same coreness. Should build a priority order
+	// array to determine duplicates.
+	
+	std::sort( &m_component[0], &m_component[m_num_iset] );
+	// VID nc = std::unique( &m_component[0], &m_component[m_num_iset] )
+	// - &m_component[0];
+	// std::cerr << "Number of components: " << nc << "\n";
+
+	VID pi = 0;
+	VID nc = 0;
+	for( VID i=1; i < m_num_iset; ++i ) {
+	    if( m_component[i] != m_component[pi] ) {
+		std::cerr << "     " << i << ' ' << m_component[pi] << ": "
+			  << ( i - pi ) << "\n";
+		pi = i;
+		++nc;
+	    }
+	}
+	std::cerr << "     " << m_num_iset << ' ' << m_component[pi] << ": "
+		  << ( m_num_iset - pi ) << "\n";
+	++nc;
+	std::cerr << "Number of components: " << nc << "\n";
+#endif
     }
 
     VID get_max_degree() const { return m_maxdeg; }
@@ -1877,7 +2058,11 @@ private:
     VID m_num_iset;
 };
 
-class GraphBuilderInduced {
+template<typename GraphType>
+class GraphBuilderInduced;
+
+template<>
+class GraphBuilderInduced<graptor::graph::GraphDoubleIndexCSx<VID,EID>> {
 public:
     GraphBuilderInduced( const GraphCSx & G,
 			 VID v, const VID * const assigned_clique )
@@ -2174,7 +2359,6 @@ public:
 	// S.build_degree();
     }
 
-
     ~GraphBuilderInduced() {
 	// S.del();
 	g2s.del();
@@ -2190,6 +2374,137 @@ private:
     mm::buffer<VID> g2s;
     mm::buffer<VID> s2g;
 };
+
+// For maximal clique enumeration - all vertices regardless of coreness
+// Sort/relabel vertices by decreasing coreness
+template<>
+class GraphBuilderInduced<graptor::graph::GraphCSx<VID,EID>> {
+public:
+    GraphBuilderInduced( const GraphCSx & G,
+			 VID v,
+			 const NeighbourCutOut<VID,EID> & cut,
+			 const VID * const core_order )
+	: g2s( G.numVertices(), numa_allocation_interleaved() ),
+	  s2g( cut.get_num_vertices(), numa_allocation_interleaved() ) {
+	VID n = G.numVertices();
+	EID m = G.numEdges();
+	const EID * const gindex = G.getIndex();
+	const VID * const gedges = G.getEdges();
+	const VID * const neighbours = cut.get_vertices();
+	const VID num_neighbours = cut.get_num_vertices();
+
+	// Set of eligible neighbours
+	VID ns = cut.get_num_vertices();
+	std::copy( &neighbours[0], &neighbours[ns], &s2g.get()[0] );
+
+	// Sort by increasing core_order
+	std::sort( &s2g.get()[0], &s2g.get()[ns],
+		   [&]( VID u, VID v ) {
+		       return core_order[u] < core_order[v];
+		   } );
+
+	std::fill( &g2s.get()[0], &g2s.get()[n], ~(VID)0 );
+	start_pos = ns > 0 && core_order[s2g.get()[ns-1]] < core_order[v]
+	    ? ns : 0;
+	// std::cerr << "v=" << v << " o[v]=" << core_order[v] << "\n";
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = s2g[i];
+	    g2s[u] = i;
+	    // std::cerr << ' ' << u << " o=" << core_order[u];
+	}
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = s2g[i];
+	    if( core_order[u] > core_order[v] ) {
+		start_pos = i;
+		break;
+	    }
+	}
+	// std::cerr << "\n";
+
+
+	EID * tmp = new EID[ns+1];
+	std::fill( &tmp[0], &tmp[ns], 0 );
+
+	// Count vertices and edges. Assums neighbours is sorted in increasing
+	// order
+	EID ms = 0;
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = neighbours[i];
+	    VID su = g2s[u];
+	    VID k = 0;
+	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
+		VID w = gedges[e];
+		while( k != ns && neighbours[k] < w )
+		    ++k;
+		if( k == ns || neighbours[k] != w )
+		    continue;
+		if( w != u ) {
+		    ++ms;
+		    ++tmp[su];
+		}
+	    }
+	}
+
+	// Construct selected graph
+	new ( &S ) graptor::graph::GraphCSx<VID,EID>( ns, ms );
+	EID * index = S.getIndex();
+	VID * edges = S.getEdges();
+
+#if 1
+	// EID mms = sequence::plusScan( tmp, tmp, ns );
+	// assert( ms == mms );
+	std::exclusive_scan( &tmp[0], &tmp[ns], tmp, 0 );
+#else
+	std::exclusive_scan( &cut.get_degrees()[0],
+			     &cut.get_degrees()[ns],
+			     tmp, 0 );
+#endif
+	std::copy( &tmp[0], &tmp[ns], index );
+	index[ns] = ms;
+
+	assert( ms % 2 == 0 );
+	
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = neighbours[i];
+	    VID su = g2s[u];
+	    VID k = 0;
+	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
+		VID w = gedges[e];
+		while( k != ns && neighbours[k] < w )
+		    ++k;
+		if( k == ns || neighbours[k] != w )
+		    continue;
+		if( w != u ) {
+		    edges[tmp[su]++] = g2s[w];
+		    // assert( g2s[w] == k );
+		}
+	    }
+	    assert( tmp[su] == index[su+1] );
+
+	    std::sort( &edges[index[su]], &edges[tmp[su]] );
+	}
+
+	delete[] tmp;
+    }
+
+
+    ~GraphBuilderInduced() {
+	g2s.del();
+	s2g.del();
+    }
+
+    const VID * get_g2s() const { return g2s.get(); }
+    const VID * get_s2g() const { return s2g.get(); }
+    const auto & get_graph() const { return S; }
+    VID get_start_pos() const { return start_pos; }
+
+private:
+    graptor::graph::GraphCSx<VID,EID> S;
+    mm::buffer<VID> g2s;
+    mm::buffer<VID> s2g;
+    VID start_pos;
+};
+
 
 class GraphBuilderComplement {
 public:
@@ -2801,6 +3116,37 @@ vertex_cover_vc3( volatile bool * terminate,
 
     return i_ok || x_ok;
 }
+
+template<typename Enumerate>
+void
+mce_bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G,
+		   VID start_pos,
+		   Enumerate && E ) {
+    VID n = G.numVertices();
+    EID m = G.numEdges();
+    const EID * const index = G.getIndex();
+    const VID * const edges = G.getEdges();
+
+    // std::cerr << "mce: start_pos=" << start_pos << "\n";
+
+    // start_pos calculate to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    for( VID v=start_pos; v < n; ++v ) {
+	contract::vertex_set<VID> R, P, X;
+
+	R.push( v );
+
+	// Consider as candidates only those neighbours of u that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	const VID * const start = std::upper_bound(
+	    &edges[index[v]], &edges[index[v+1]], v );
+	P.push( start, &edges[index[v+1]] );
+	X.push( &edges[index[v]], start );
+
+	mce_iterate( G, E, R, P, X, 1 );
+    }
+}
+
 
 contract::vertex_set<VID>
 bron_kerbosch( const graptor::graph::GraphCSx<VID,EID> & G ) {
@@ -3532,7 +3878,7 @@ class bitset_iterator : public std::iterator<
     unsigned 	 	 	// reference
     > {
 public:
-    using type = uint64_t;
+    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
     static constexpr unsigned bits_per_lane = sizeof(type)*8;
     static constexpr unsigned short VL = Bits / bits_per_lane;
     using tr = vector_type_traits_vl<type,VL>;
@@ -3551,7 +3897,7 @@ public:
 	++*this;
     }
     bitset_iterator& operator++() {
-	unsigned off = _tzcnt_u64( m_subset );
+	unsigned off = tzcnt( m_subset );
 	while( off == bits_per_lane ) {
 	    // pop next lane and recalculate off
 	    ++m_lane;
@@ -3560,7 +3906,7 @@ public:
 		return *this;
 	    }
 	    m_subset = tr::lane( m_bitset, m_lane );
-	    off = _tzcnt_u64( m_subset );
+	    off = tzcnt( m_subset );
 	}
 	assert( off != bits_per_lane );
 
@@ -3585,6 +3931,14 @@ public:
     }
     typename bitset_iterator::value_type operator*() const {
 	return m_lane * bits_per_lane + m_off;
+    }
+
+private:
+    static unsigned tzcnt( type s ) {
+	if constexpr ( bits_per_lane == 64 )
+	    return _tzcnt_u64( s );
+	else
+	    return _tzcnt_u32( s );
     }
     
 private:
@@ -3625,7 +3979,7 @@ private:
 
 template<unsigned Bits>
 class DenseMatrix {
-    using type = uint64_t;
+    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
     static constexpr unsigned bits_per_lane = sizeof(type)*8;
     static constexpr unsigned short VL = Bits / bits_per_lane;
     using tr = vector_type_traits_vl<type,VL>;
@@ -3639,7 +3993,8 @@ public:
 public:
     template<typename Fn>
     DenseMatrix( const GraphCSx & G, VID v, const VID * assigned_clique,
-		 Fn && is_enabled ) {
+		 Fn && is_enabled ) 
+	: m_start_pos( 0 ) {
 	VID n = G.numVertices();
 	EID m = G.numEdges();
 	const EID * const gindex = G.getIndex();
@@ -3707,7 +4062,8 @@ public:
 	m_n = ns;
     }
     DenseMatrix( const GraphCSx & G, VID v, const VID * assigned_clique,
-		 VID num_neighbours, const VID * neighbours ) {
+		 VID num_neighbours, const VID * neighbours ) 
+	: m_start_pos( 0 ) {
 	VID n = G.numVertices();
 	EID m = G.numEdges();
 	const EID * const gindex = G.getIndex();
@@ -3769,7 +4125,106 @@ public:
 
 	m_n = ns;
     }
+    DenseMatrix( const GraphCSx & G, VID v,
+		 VID num_neighbours, const VID * neighbours,
+		 const VID * const core_order )
+	: m_start_pos( 0 ) {
+	VID n = G.numVertices();
+	EID m = G.numEdges();
+	const EID * const gindex = G.getIndex();
+	const VID * const gedges = G.getEdges();
 
+	// Set of eligible neighbours
+	VID ns = num_neighbours;
+	assert( ns <= MAX_VERTICES );
+	m_s2g = new VID[ns];
+	std::copy( &neighbours[0], &neighbours[ns], m_s2g );
+
+	VID * n2s = new VID[ns];
+
+/*
+	for( VID i=0; i < ns; ++i ) {
+	    assert( neighbours[i] == m_s2g[i] );
+	    assert( m_s2g[i] < n );
+	}
+*/
+	
+	// Sort by increasing core_order
+	std::sort( &m_s2g[0], &m_s2g[ns],
+		   [&]( VID u, VID v ) {
+		       return core_order[u] < core_order[v];
+		   } );
+
+	for( VID u=0; u < ns; ++u ) {
+	    VID v = m_s2g[u];
+	    const VID * const pos = std::lower_bound(
+		&neighbours[0], &neighbours[ns], v );
+	    assert( pos != &neighbours[ns] && *pos == v );
+	    n2s[pos - neighbours] = u;
+	}
+
+/*
+	m_g2s = new VID[n];
+	std::fill( &m_g2s[0], &m_g2s[n], ~(VID)0 );
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = m_s2g[i];
+	    m_g2s[u] = i;
+	}
+*/
+	m_g2s = nullptr;
+
+	// Determine start position, i.e., vertices less than start_pos
+	// are in X by default
+	m_start_pos = ns > 0 && core_order[m_s2g[ns-1]] < core_order[v]
+	    ? ns : 0;
+	for( VID i=0; i < ns; ++i ) {
+	    VID u = m_s2g[i];
+	    if( core_order[u] > core_order[v] ) {
+		m_start_pos = i;
+		break;
+	    }
+	}
+
+	// m_words = ( ns + bits_per_lane - 1 ) / bits_per_lane;
+	m_words = 4; // VL
+	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
+	m_words = std::min( (unsigned)VL, m_words );
+	m_matrix = m_matrix_alc = new type[m_words * ns + 4];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
+	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+
+	// Place edges
+	VID ni = 0;
+	m_m = 0;
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = m_s2g[su];
+
+	    row_type row_u = tr::setzero();
+
+	    contract::detail::intersect_tmpl(
+		&neighbours[0], &neighbours[num_neighbours],
+		&gedges[gindex[u]], &gedges[gindex[u+1]],
+		[&]( VID w ) {
+		    const VID * const pos = std::lower_bound(
+			&neighbours[0], &neighbours[ns], w );
+		    if( pos != &neighbours[ns] && *pos == w && u != w ) {
+			// VID sw = m_g2s[w];
+			VID sw = n2s[pos - neighbours];
+			row_u = tr::bitwise_or( row_u, create_row( sw ) );
+			++m_m;
+		    }
+		    return true;
+		} );
+
+	    tr::store( &m_matrix[VL * su], row_u );
+	}
+
+	m_n = ns;
+
+	delete[] n2s;
+    }
 
     ~DenseMatrix() {
 	delete[] m_g2s;
@@ -3809,6 +4264,31 @@ public:
 	    // as a cutoff for the second attempt
 	    cutoff = ret.size() >= 1 ? ret.size() : 1;
 	    return bron_kerbosch_with_cutoff( cutoff );
+	}
+    }
+
+    template<typename Enumerate>
+    void
+    mce_bron_kerbosch( Enumerate && E ) {
+	for( VID v=m_start_pos; v < m_n; ++v ) { // implicit X vertices
+	    row_type vrow = create_row( v );
+	    row_type R = vrow;
+
+	    // if no neighbours in cut-out, then trivial 2-clique
+	    if( tr::is_zero( get_row( v ) ) ) {
+		E( bitset<Bits>( R ) );
+		continue;
+	    }
+
+	    // Consider as candidates only those neighbours of u that are
+	    // ordered after v to avoid revisiting the vertices
+	    // unnecessarily.
+	    row_type h = get_himask( v );
+	    row_type r = get_row( v );
+	    row_type P = tr::bitwise_and( h, r );
+	    row_type X = tr::bitwise_andnot( h, r );
+	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
+	    mce_bk_iterate( E, R, P, X, 1 );
 	}
     }
     
@@ -3899,6 +4379,63 @@ private:
 	    row_type Rv = tr::bitwise_or( R, u_row );
 	    bk_iterate( Rv, Pv, depth+1, cutoff );
 	}
+    }
+
+    template<typename Enumerate>
+    void mce_bk_iterate(
+	Enumerate && E,
+	row_type R, row_type P, row_type X, int depth ) {
+	// depth == get_size( R )
+	if( tr::is_zero( P ) ) {
+	    if( tr::is_zero( X ) )
+		E( bitset<Bits>( R ) );
+	    return;
+	}
+
+	VID pivot = mce_get_pivot( P, X );
+	row_type pivot_ngh = get_row( pivot );
+	row_type x = tr::bitwise_andnot( pivot_ngh, P );
+	// row_type x = P;
+	while( !tr::is_zero( x ) ) {
+	    VID u;
+	    row_type x_new;
+	    std::tie( u, x_new ) = remove_element( x );
+	    row_type u_only = tr::bitwise_andnot( x_new, x );
+	    x = x_new;
+	    // assert( tr::is_zero( tr::bitwise_and( get_row( u ), create_row( u ) ) ) );
+	    row_type u_ngh = get_row( u );
+	    // row_type Pv = tr::bitwise_and( x, u_ngh ); // use x removes u from P
+	    row_type Pv = tr::bitwise_and( P, u_ngh ); // -- when pivoting
+	    row_type Xv = tr::bitwise_and( X, u_ngh );
+	    row_type Rv = tr::bitwise_or( R, u_only );
+	    P = tr::bitwise_andnot( u_only, P ); // P == x w/o pivoting
+	    X = tr::bitwise_or( u_only, X );
+	    // std::cerr << "depth " << depth << " u=" << u << "\n";
+	    mce_bk_iterate( E, Rv, Pv, Xv, depth+1 );
+	}
+    }
+
+    // Could potentially vectorise small matrices by placing
+    // one 32/64-bit row in a vector lane and performing a vectorised
+    // popcount per lane. Could evaluate doing popcounts on all lanes,
+    // or gathering only active lanes. The latter probably most promising
+    // in AVX512
+    VID mce_get_pivot( row_type P, row_type X ) {
+	VID p_best = ~(VID)0;
+	VID p_ins = 0;
+	row_type r = tr::bitwise_or( P, X );
+	bitset<Bits> b( r );
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type v_ngh = get_row( v );
+	    VID ins = get_size( tr::bitwise_and( P, v_ngh ) );
+	    if( ins > p_ins || p_best == ~(VID)0 ) {
+		p_best = v;
+		p_ins = ins;
+	    }
+	}
+	assert( ~p_best != 0 );
+	return p_best;
     }
 
 #if 0
@@ -4105,6 +4642,8 @@ private:
 	VID word = u * VL + col;
 	return std::make_pair( word, v % bits_per_lane );
     }
+
+    VID get_start_pos() const { return m_start_pos; }
 		    
 private:
     VID m_n;
@@ -4117,6 +4656,7 @@ private:
 
     VID m_mc_size;
     row_type m_mc;
+    VID m_start_pos;
 
     // assumes VL == 4
     alignas(64) static constexpr uint64_t himask_starter[16] = {
@@ -4367,7 +4907,8 @@ clique_partition_neighbours_base(
 
     // Cut out the selected neighbours of the reference vertex v.
     // Do not include the vertex v because v will be a member of every clique.
-    GraphBuilderInduced ibuilder( G, v, assigned_clique, cut );
+    GraphBuilderInduced<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
+	ibuilder( G, v, assigned_clique, cut );
     auto & IG = ibuilder.get_graph();
 
     // Partition this small graph in cliques
@@ -4542,6 +5083,313 @@ private:
 };
 #endif
 
+
+template<unsigned Bits, typename Enumerator>
+void mce_top_level(
+    const GraphCSx & G,
+    Enumerator & E,
+    VID v,
+    const NeighbourCutOut<VID,EID> & cut,
+    const VID * const core_order ) {
+    DenseMatrix<Bits> IG( G, v, cut.get_num_vertices(), cut.get_vertices(),
+	core_order);
+
+    // Needs to include X? Pivoting?
+    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) {
+	E.record( 1 + c.size() );
+/*
+	std::cerr << "MC: " << v;
+	for( auto v : c )
+	    std::cerr << ' ' << IG.get_s2g()[v];
+	std::cerr << " | cutout: ";
+	for( auto v : c )
+	    std::cerr << ' ' << v;
+	std::cerr << "\n";
+
+	std::vector<VID> cc( c.begin(), c.end() );
+	std::transform( cc.begin(), cc.end(), cc.begin(),
+			[&]( auto v ) { return IG.get_s2g()[v]; } );
+	cc.push_back( v );
+	std::sort( cc.begin(), cc.end() );
+	check_clique( G, cc.size(), &cc[0] );
+*/
+    } );
+}
+
+template<typename Enumerator>
+void mce_top_level(
+    const GraphCSx & G,
+    Enumerator & E,
+    VID v,
+    const NeighbourCutOut<VID,EID> & cut,
+    const VID * const core_order ) {
+    GraphBuilderInduced<graptor::graph::GraphCSx<VID,EID>>
+	ibuilder( G, v, cut, core_order );
+    const graptor::graph::GraphCSx<VID,EID> & IG = ibuilder.get_graph();
+
+    mce_bron_kerbosch(
+	IG,
+	ibuilder.get_start_pos(),
+	[&]( const contract::vertex_set<VID> & c ) {
+	    E.record( 1+c.size() );
+/*
+	    std::cerr << "MC: " << v;
+	    for( auto v : c )
+		std::cerr << ' ' << ibuilder.get_s2g()[v];
+	    std::cerr << " | cutout: ";
+	    for( auto v : c )
+		std::cerr << ' ' << v;
+	    std::cerr << "\n";
+
+	    std::vector<VID> cc( c.begin(), c.end() );
+	    std::transform( cc.begin(), cc.end(), cc.begin(),
+			    [&]( auto v ) { return ibuilder.get_s2g()[v]; } );
+	    cc.push_back( v );
+	    std::sort( cc.begin(), cc.end() );
+	    check_clique( G, cc.size(), &cc[0] );
+*/
+	} );
+}
+
+struct variant_statistics {
+    variant_statistics() : m_tm( 0 ), m_calls( 0 ) { }
+    variant_statistics( double tm, size_t calls )
+	: m_tm( tm ), m_calls( calls ) { }
+
+    variant_statistics operator + ( const variant_statistics & s ) const {
+	return variant_statistics( m_tm + s.m_tm, m_calls + s.m_calls );
+    }
+
+    void record( double atm ) {
+	m_tm += atm;
+	++m_calls;
+    }
+    
+    double m_tm;
+    size_t m_calls;
+};
+
+struct all_variant_statistics {
+    all_variant_statistics() { }
+    all_variant_statistics(
+	variant_statistics && v32,
+	variant_statistics && v64,
+	variant_statistics && v128,
+	variant_statistics && v256,
+	variant_statistics && vgen ) :
+	m_32( std::forward<variant_statistics>( v32 ) ),
+	m_64( std::forward<variant_statistics>( v64 ) ),
+	m_128( std::forward<variant_statistics>( v128 ) ),
+	m_256( std::forward<variant_statistics>( v256 ) ),
+	m_gen( std::forward<variant_statistics>( vgen ) ) { }
+
+    all_variant_statistics
+    operator + ( const all_variant_statistics & s ) const {
+	return all_variant_statistics(
+	    m_32 + s.m_32,
+	    m_64 + s.m_64,
+	    m_128 + s.m_128,
+	    m_256 + s.m_256,
+	    m_gen + s.m_gen );
+    }
+
+    void record_32( double atm ) { m_32.record( atm ); }
+    void record_64( double atm ) { m_64.record( atm ); }
+    void record_128( double atm ) { m_128.record( atm ); }
+    void record_256( double atm ) { m_256.record( atm ); }
+    void record_gen( double atm ) { m_gen.record( atm ); }
+    
+    variant_statistics m_32, m_64, m_128, m_256, m_gen;
+};
+
+// thread_local static all_variant_statistics * mce_pt_stats = nullptr;
+
+struct per_thread_statistics {
+    all_variant_statistics & get_statistics() {
+	const pthread_t tid = pthread_self();
+	std::lock_guard<std::mutex> guard( m_mutex );
+	auto it = m_stats.find( tid );
+	if( it == m_stats.end() ) {
+	    auto it2 = m_stats.emplace(
+		std::make_pair( tid, all_variant_statistics() ) );
+	    return it2.first->second;
+	}
+	return it->second;
+    }
+    
+/*
+    all_variant_statistics * create_statistics() {
+	std::lock_guard<std::mutex> guard( m_mutex );
+	return &m_stats.emplace_back( all_variant_statistics() );
+    }
+*/
+
+    all_variant_statistics sum() const {
+	return std::accumulate(
+	    m_stats.begin(), m_stats.end(), all_variant_statistics(),
+	    []( const all_variant_statistics & s,
+		const std::pair<pthread_t,all_variant_statistics> & p ) {
+		return s + p.second;
+	    } );
+    }
+    
+    std::mutex m_mutex;
+    std::map<pthread_t,all_variant_statistics> m_stats;
+};
+
+per_thread_statistics mce_stats;
+
+
+template<typename Enumerator>
+void mce_top_level(
+    const GraphCSx & G,
+    Enumerator & E,
+    VID v,
+    const VID * const core_order ) {
+    NeighbourCutOut<VID,EID> cut( G, v );
+
+    all_variant_statistics & stats = mce_stats.get_statistics();
+
+    VID num = cut.get_num_vertices();
+    if( num <= 32 ) {
+	timer tm;
+	tm.start();
+	mce_top_level<32>( G, E, v, cut, core_order );
+	stats.record_32( tm.stop() );
+    } else if( num <= 64 ) {
+	timer tm;
+	tm.start();
+	mce_top_level<64>( G, E, v, cut, core_order );
+	stats.record_64( tm.stop() );
+    } else if( num <= 128 ) {
+	timer tm;
+	tm.start();
+	mce_top_level<128>( G, E, v, cut, core_order );
+	stats.record_128( tm.stop() );
+    } else if( num <= 256 ) {
+	timer tm;
+	tm.start();
+	mce_top_level<256>( G, E, v, cut, core_order );
+	stats.record_256( tm.stop() );
+    } else {
+	timer tm;
+	tm.start();
+	mce_top_level( G, E, v, cut, core_order );
+	stats.record_gen( tm.stop() );
+    }
+}
+
+class MCE_Enumerator {
+public:
+    MCE_Enumerator( size_t degen )
+	: m_degeneracy( degen ),
+	  m_histogram( degen+1, 0 ) { }
+
+    // Recod clique of size s
+    void record( size_t s ) {
+	assert( s <= m_degeneracy );
+	__sync_fetch_and_add( &m_histogram[s], 1 );
+	// __sync_fetch_and_add( &m_num_maximal_cliques, 1 );
+	// m_histogram[s]++;
+	// ++m_num_maximal_cliques;
+    }
+
+    std::ostream & report( std::ostream & os ) const {
+	size_t num_maximal_cliques
+	    = std::accumulate( m_histogram.begin(), m_histogram.end(), 0 );
+	
+	os << "Number of maximal cliques: " << num_maximal_cliques
+	   << "\n";
+	os << "Clique histogram: clique_size, num_of_cliques\n";
+	for( size_t i=0; i <= m_degeneracy; ++i ) {
+	    if( m_histogram[i] > 0 ) {
+		os << i << ", " << m_histogram[i] << "\n";
+	    }
+	}
+	return os;
+    }
+
+private:
+    size_t m_degeneracy;
+    std::vector<VID> m_histogram;
+};
+
+#if 1
+int main( int argc, char *argv[] ) {
+    commandLine P( argc, argv, " help" );
+    bool symmetric = P.getOptionValue("-s");
+    const char * ifile = P.getOptionValue( "-i" );
+
+    GraphCSx G( ifile, -1, symmetric );
+
+    VID n = G.numVertices();
+    EID m = G.numEdges();
+
+    assert( G.isSymmetric() );
+    std::cerr << "Undirected graph: n=" << n << " m=" << m << std::endl;
+
+    std::cerr << "Calculating coreness...\n";
+    GraphCSRAdaptor GA( G, 256 );
+    KCv<GraphCSRAdaptor> kcore( GA, P );
+    kcore.run();
+    auto & coreness = kcore.getCoreness();
+
+    std::cerr << "Calculating sort order...\n";
+    mm::buffer<VID> order( n, numa_allocation_interleaved() );
+    mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
+
+    sort_order( order.get(), rev_order.get(),
+		coreness.get_ptr(), n, kcore.getLargestCore() );
+
+    timer tm;
+    tm.start();
+    MCE_Enumerator E( kcore.getLargestCore() );
+
+    parallel_loop( VID(0), n, 1, [&]( VID i ) {
+	VID v = order[i];
+
+/*
+	std::cerr << "Iteration " << i << " with v=" << v
+		  << " deg=" << G.getDegree( v )
+		  << " c=" << coreness[v]
+		  << "\n";
+*/
+	
+	mce_top_level( G, E, v, rev_order.get() );
+
+	// std::cerr << "  vertex " << v << " complete\n";
+    } );
+
+    all_variant_statistics stats = mce_stats.sum();
+
+    double duration = tm.stop();
+    std::cerr << "Completed MCE in " << duration << " seconds\n";
+    std::cerr << " 32-bit version: " << stats.m_32.m_tm << " seconds in "
+	      << stats.m_32.m_calls << " calls @ "
+	      << ( stats.m_32.m_tm / double(stats.m_32.m_calls) )
+	      << " s/call\n";
+    std::cerr << " 64-bit version: " << stats.m_64.m_tm << " seconds in "
+	      << stats.m_64.m_calls << " calls @ "
+	      << ( stats.m_64.m_tm / double(stats.m_64.m_calls) )
+	      << " s/call\n";
+    std::cerr << " 128-bit version: " << stats.m_128.m_tm << " seconds in "
+	      << stats.m_128.m_calls << " calls @ "
+	      << ( stats.m_128.m_tm / double(stats.m_128.m_calls) )
+	      << " s/call\n";
+    std::cerr << " 256-bit version: " << stats.m_256.m_tm << " seconds in "
+	      << stats.m_256.m_calls << " calls @ "
+	      << ( stats.m_256.m_tm / double(stats.m_256.m_calls) )
+	      << " s/call\n";
+    std::cerr << " generic version: " << stats.m_gen.m_tm << " seconds in "
+	      << stats.m_gen.m_calls << " calls @ "
+	      << ( stats.m_gen.m_tm / double(stats.m_gen.m_calls) )
+	      << " s/call\n";
+
+    E.report( std::cerr );
+
+    return 0;
+}
+#else
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
@@ -4850,3 +5698,4 @@ int main( int argc, char *argv[] ) {
 
     return 0;
 }
+#endif
