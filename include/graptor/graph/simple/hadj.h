@@ -16,11 +16,12 @@ namespace graptor {
 
 namespace graph {
 
-template<typename lVID, typename lEID>
+template<typename lVID, typename lEID, typename lHash = std::hash<lVID>>
 class GraphHAdj {
 public:
     using VID = lVID;
     using EID = lEID;
+    using Hash = lHash;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
@@ -42,7 +43,7 @@ public:
 	for( VID v=0; v < n; ++v ) {
 	    VID deg = gindex[v+1] - gindex[v];
 	    VID s = get_hash_slots( deg );
-	    auto a = hashed_set<VID>( &hashes[h], deg, s );
+	    auto a = hashed_set<VID,Hash>( &hashes[h], deg, s );
 	    a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	    index[v] = h;
@@ -56,6 +57,8 @@ public:
 	m_index.del();
 	m_hashes.del();
     }
+
+    const auto & get_graph() const { return m_G; }
 
     VID numVertices() const { return m_G.numVertices(); }
     EID numEdges() const { return m_G.numEdges(); }
@@ -74,10 +77,10 @@ public:
     vertex_iterator vend() { return vertex_iterator( numVertices() ); }
     vertex_iterator vend() const { return vertex_iterator( numVertices() ); }
 
-    hashed_set<VID> get_adjacency( VID v ) const {
+    hashed_set<VID,Hash> get_adjacency( VID v ) const {
 	VID deg = getIndex()[v+1] - getIndex()[v];
 	VID h = getHashIndex()[v+1] - getHashIndex()[v];
-	return hashed_set<VID>( &getHashes()[getHashIndex()[v]], deg, h );
+	return hashed_set<VID,Hash>( &getHashes()[getHashIndex()[v]], deg, h );
     }
 
 

@@ -1,6 +1,6 @@
 // -*- c++ -*-
-#ifndef GRAPTOR_GRAPH_SIMPLE_HASHED_SET_H
-#define GRAPTOR_GRAPH_SIMPLE_HASHED_SET_H
+#ifndef GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
+#define GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
 
 #include <vector>
 #include <algorithm>
@@ -13,7 +13,7 @@ namespace graptor {
 namespace graph {
     
 template<typename T, typename Hash = std::hash<T>>
-class hashed_set {
+class hash_table {
 public:
     typedef T type;
     typedef Hash hash_type;
@@ -24,21 +24,33 @@ public:
     static constexpr type invalid_element = ~type(0);
 
 public:
-    explicit hashed_set( type * space, size_type num_elements,
-			 size_type maximum_elements )
-	: m_elements( num_elements ),
-	  m_size( maximum_elements ),
-	  m_table( space ) {
+    explicit hash_table()
+	: m_elements( 0 ),
+	  m_size( 16 ),
+	  m_table( new type[16] ) {
 	assert( ( m_size & ( m_size - 1 ) ) == 0 && "size must be power of 2" );
+	clear();
+    }
+    hash_table( hash_table && ) = delete;
+    hash_table( const hash_table & ) = delete;
+    hash_table & operator = ( const hash_table & ) = delete;
+
+    ~hash_table() {
+	delete[] m_table;
     }
 
     void clear() {
+	m_elements = 0;
 	std::fill( m_table, m_table+m_size, invalid_element );
     }
 
     size_type size() const { return m_elements; }
     bool empty() const { return size() == 0; }
 
+    auto begin() const { return m_table; }
+    auto end() const { return m_table+m_size; }
+
+/*
     auto begin() const {
 	return graptor::graph::make_conditional_iterator(
 	    m_table, [&]( const type * && it ) {
@@ -51,6 +63,7 @@ public:
 		return it != m_table+m_size && *it != invalid_element;
 	    } );
     }
+*/
 
     bool insert( type value ) {
 	size_type index = m_hash( value ) & ( m_size - 1 );
@@ -59,10 +72,24 @@ public:
 	if( m_table[index] == value ) {
 	    return false;
 	} else {
-	    ++m_elements;
-	    assert( m_elements < m_size && "hash table should never get full" );
-	    m_table[index] = value;
-	    return true;
+	    if( (m_elements+1) >= ( m_size >> 1 ) ) {
+		// Rehash
+		size_type old_size = m_size << 1;
+		type * old_table = new type[old_size];
+		using std::swap;
+		swap( old_size, m_size );
+		swap( old_table, m_table );
+		clear(); // sets m_elements=0; will be reset when rehashing
+		for( size_type i=0; i < old_size; ++i )
+		    if( old_table[i] != invalid_element )
+			insert( old_table[i] );
+		delete[] old_table;
+		return insert( value );
+	    } else {
+		++m_elements;
+		m_table[index] = value;
+		return true;
+	    }
 	}
     }
 
@@ -124,17 +151,19 @@ private:
 };
 
 
+/*
 template<typename VID>
-ostream & operator << ( ostream & os, const hashed_set<VID> & s ) {
+ostream & operator << ( ostream & os, const hash_table<VID> & s ) {
     os << "{ #" << s.size() << ": ";
     for( auto I=s.begin(), E=s.end(); I != E; ++I )
 	os << ' ' << *I;
     os << " }";
     return os;
 }
+*/
 
 } // namespace graph
 
 } // namespace graptor
 
-#endif // GRAPTOR_GRAPH_SIMPLE_HASHED_SET_H
+#endif // GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
