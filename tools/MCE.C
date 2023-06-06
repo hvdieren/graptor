@@ -29,6 +29,8 @@
 #include "graptor/graph/simple/hadj.h"
 #include "graptor/graph/simple/hadjt.h"
 
+#include "graptor/container/bitset.h"
+
 #define NOBENCH
 #define MD_ORDERING 0
 #define VARIANT 11
@@ -76,6 +78,49 @@ struct murmur_hash<uint32_t> {
 	h *= 0xc2b2ae35;
 	h ^= h >> 16;
 
+	return h;
+    }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+	const vtype c1 = tr::set1( 0x85ebca6b );
+	const vtype c2 = tr::set1( 0xc2b2ae35 );
+	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
+	h = tr::mul( h, c1 );
+	h = tr::bitwise_xor( h, tr::srli( h, 13 ) );
+	h = tr::mul( h, c2 );
+	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
+	return h;
+    }
+};
+
+template<typename T>
+struct java_hash;
+
+template<>
+struct java_hash<uint32_t> {
+    using type = uint32_t;
+
+    type operator() ( uint32_t h ) const {
+	h ^= (h >> 20) ^ (h >> 12);
+	return h ^ (h >> 7) ^ (h >> 4);
+    }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+
+	vtype h20 = tr::srli( h, 20 );
+	vtype h12 = tr::srli( h, 12 );
+	h = tr::bitwise_xor( h20, tr::bitwise_xor( h, h12 ) );
+	vtype h7 = tr::srli( h, 7 );
+	vtype h4 = tr::srli( h, 4 );
+	h = tr::bitwise_xor( h4, tr::bitwise_xor( h, h4 ) );
 	return h;
     }
 };
@@ -1693,9 +1738,9 @@ public:
 		    && ( su >= start_pos || n2s[k] >= start_pos ) )
 		    adj.insert( n2s[k] );
 	    }
-
-	    S.sum_up_edges();
 	}
+
+	S.sum_up_edges();
 
 	delete[] n2s;
     }
@@ -3181,184 +3226,6 @@ auto make_alternative_selector( Fn && ... fn ) {
     return AlternativeSelector<Fn...>( std::forward<Fn>( fn )... );
 }
 
-template<unsigned Bits, typename Enable = void>
-class bitset_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    unsigned,	  		// value_type
-    unsigned,			// difference_type
-    const unsigned*, 	 	// pointer
-    unsigned 	 	 	// reference
-    > {
-public:
-    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
-    static constexpr unsigned bits_per_lane = sizeof(type)*8;
-    static constexpr unsigned short VL = Bits / bits_per_lane;
-    using tr = vector_type_traits_vl<type,VL>;
-    using bitset_type = typename tr::type;
-
-public:
-    // The end iterator has an empty bitset - that's when we're done!
-    explicit bitset_iterator()
-	: m_subset( 0 ), m_lane( VL ), m_off( 0 ) { }
-    explicit bitset_iterator( bitset_type bitset )
-	: m_bitset( bitset ), m_subset( tr::lane0( bitset ) ),
-	  m_lane( 0 ), m_off( 0 ) {
-	// The invariant is that the bit at (m_lane,m_off) was originally set
-	// but has now been erased in the subset. Note that we never modify
-	// the bitset itself.
-	++*this;
-    }
-    bitset_iterator& operator++() {
-	unsigned off = tzcnt( m_subset );
-	while( off == bits_per_lane ) {
-	    // pop next lane and recalculate off
-	    ++m_lane;
-	    if( m_lane == VL ) { // reached end iterator
-		m_off = 0;
-		return *this;
-	    }
-	    m_subset = tr::lane( m_bitset, m_lane );
-	    off = tzcnt( m_subset );
-	}
-	assert( off != bits_per_lane );
-
-	// Erase bit from subset
-	m_subset &= m_subset - 1;
-
-	// Record position of erased bit.
-	m_off = off;
-
-	return *this;
-    }
-    bitset_iterator operator++( int ) {
-	bitset_iterator retval = *this; ++(*this); return retval;
-    }
-    // (In-)equality of iterators is determined by the position of the
-    // iterators, not by the content of the set.
-    bool operator == ( bitset_iterator other ) const {
-	return m_lane == other.m_lane && m_off == other.m_off;
-    }
-    bool operator != ( bitset_iterator other ) const {
-	return !( *this == other );
-    }
-    typename bitset_iterator::value_type operator*() const {
-	return m_lane * bits_per_lane + m_off;
-    }
-
-private:
-    static unsigned tzcnt( type s ) {
-	if constexpr ( bits_per_lane == 64 )
-	    return _tzcnt_u64( s );
-	else
-	    return _tzcnt_u32( s );
-    }
-    
-private:
-    bitset_type m_bitset;
-    type m_subset;
-    // Might be useful to recode (m_lane,m_off) in an unsigned m_pos
-    // and use shift and mask to recover m_lane and m_off when necessary.
-    unsigned m_lane;
-    unsigned m_off;
-};
-
-// Variant with single tzcnt-able lane
-template<unsigned Bits>
-class bitset_iterator<Bits,std::enable_if_t<Bits <= 64>>
-    : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    unsigned,	  		// value_type
-    unsigned,			// difference_type
-    const unsigned*, 	 	// pointer
-    unsigned 	 	 	// reference
-    > {
-public:
-    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
-    static constexpr unsigned bits_per_lane = sizeof(type)*8;
-    static constexpr unsigned short VL = Bits / bits_per_lane;
-    static_assert( VL == 1 );
-    using tr = vector_type_traits_vl<type,VL>;
-    using bitset_type = typename tr::type;
-
-public:
-    // The end iterator has an empty bitset - that's when we're done!
-    explicit bitset_iterator()
-	: m_bitset( 0 ), m_off( 0 ) { }
-    explicit bitset_iterator( bitset_type bitset )
-	: m_bitset( bitset ), m_off( 0 ) {
-	// The invariant is that the bit at m_off was originally set
-	// but has now been erased in the bitset.
-	++*this;
-    }
-    bitset_iterator& operator++() {
-	unsigned off = tzcnt( m_bitset );
-	if( off == bits_per_lane ) { // reached end iterator
-	    m_off = 0;
-	    return *this;
-	}
-
-	// Erase bit from bitset
-	m_bitset &= m_bitset - 1;
-
-	// Record position of erased bit.
-	m_off = off;
-
-	return *this;
-    }
-    bitset_iterator operator++( int ) {
-	bitset_iterator retval = *this; ++(*this); return retval;
-    }
-    // (In-)equality of iterators is determined by the position of the
-    // iterators, not by the content of the set.
-    bool operator == ( bitset_iterator other ) const {
-	return m_off == other.m_off;
-    }
-    bool operator != ( bitset_iterator other ) const {
-	return !( *this == other );
-    }
-    typename bitset_iterator::value_type operator*() const {
-	return m_off;
-    }
-
-private:
-    static unsigned tzcnt( type s ) {
-	if constexpr ( bits_per_lane == 64 )
-	    return _tzcnt_u64( s );
-	else
-	    return _tzcnt_u32( s );
-    }
-    
-private:
-    bitset_type m_bitset;
-    value_type m_off;
-};
-
-template<unsigned Bits>
-class bitset {
-public:
-    using iterator = bitset_iterator<Bits>;
-    using bitset_type = typename iterator::bitset_type;
-
-public:
-    explicit bitset( bitset_type bitset ) : m_bitset( bitset ) { }
-
-    operator bitset_type () const { return m_bitset; }
-
-    // Iterators are read-only, they cannot modify the bitset
-    iterator begin() { return iterator( m_bitset ); }
-    iterator begin() const { return iterator( m_bitset ); }
-    iterator end() { return iterator(); }
-    iterator end() const { return iterator(); }
-
-    size_t size() const {
-	return target::allpopcnt<
-	    size_t,typename iterator::type,iterator::VL>::compute( m_bitset );
-    }
-
-private:
-    bitset_type m_bitset;
-};
-
 
 template<unsigned Bits>
 class DenseMatrix {
@@ -4227,7 +4094,8 @@ void mce_top_level(
 	const graptor::graph::GraphCSx<VID,EID> & IG = ibuilder.get_graph();
 	graptor::graph::GraphHAdj<VID,EID,murmur_hash<VID>> HG( IG );
 */
-	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,murmur_hash<VID>>>
+	// GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,murmur_hash<VID>>>
+	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,java_hash<VID>>>
 	    ibuilder( G, v, cut, core_order );
 	const auto & HG = ibuilder.get_graph();
 
