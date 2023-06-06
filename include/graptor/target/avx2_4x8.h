@@ -406,12 +406,7 @@ public:
 
     static type add( type a, type b ) { return _mm256_add_epi32( a, b ); }
     static type sub( type a, type b ) { return _mm256_sub_epi32( a, b ); }
-    static type mul( type a, type b ) {
-	if constexpr ( std::is_signed_v<member_type> )
-	    return _mm256_mul_epi32( a, b );
-	else
-	    return _mm256_mul_epu32( a, b );
-    }
+    static type mul( type a, type b ) { return _mm256_mullo_epi32( a, b ); }
     static vpair<type,type> divmod3( type a ) {
 	// Based on
 	// https://github.com/vectorclass/version2/blob/master/vectori128.h

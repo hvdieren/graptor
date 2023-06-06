@@ -52,6 +52,11 @@ struct vt_recursive {
     // using hitraits = vector_type_traits<hint_type, sizeof(hint_type)*vlen>;
     // using hitype = typename hitraits::type;
 
+    static bool is_zero( type v ) {
+	return lo_half_traits::is_zero( lower_half( v ) )
+	    && hi_half_traits::is_zero( upper_half( v ) );
+    }
+    
     static type setzero() {
 	auto l = lo_half_traits::setzero();
 	if constexpr ( std::is_same_v<lo_half_traits,hi_half_traits> )
