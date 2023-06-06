@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <ostream>
 
+#include "graptor/container/bitset.h"
 #include "graptor/graph/simple/conditional_iterator.h"
 
 namespace graptor {
@@ -125,6 +126,7 @@ public:
 	return O;
     }
 
+#if 0
     template<typename It>
     size_t intersect_size( It I, It E, size_t exceed ) const {
 	size_t sz = 0;
@@ -139,6 +141,135 @@ public:
 
 	    ++I;
 	    --todo;
+	}
+	return sz;
+    }
+#endif
+
+    template<typename It>
+    size_t intersect_size( It I, It E, size_t exceed ) const {
+	size_t d = std::distance( I, E );
+#if 0
+#if __AVX512F__
+	if( d*sizeof(type) >= 512 )
+	    return intersect_size_vector<16>( I, E, exceed );
+#endif
+#if __AVX2__
+	if( d*sizeof(type) >= 256 )
+	    return intersect_size_vector<8>( I, E, exceed );
+#endif
+#endif
+	return intersect_size_scalar( I, E, exceed );
+    }
+
+private:
+    // Identify the table cell where we can decide on presence of value
+    size_type locate( type value ) const {
+	return locate_scalar( value );
+    }
+    size_type locate_scalar( type value ) const {
+	size_type index = m_hash( value ) & ( m_size - 1 );
+	while( m_table[index] != invalid_element && m_table[index] != value )
+	    index = ( index + 1 ) & ( m_size - 1 );
+	return index;
+    }
+    template<unsigned short VL>
+    size_type locate_vector( type value ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+	size_type index = m_hash( value ) & ( m_size - 1 );
+	size_type vindex = index & ~size_type( VL - 1 ); // multiple of VL
+
+	vtype vinv = tr::setone(); // invalid_element == -1
+	vtype val = tr::set1( value );
+	size_type VLmsk = size_type( VL - 1 );
+	vtype msk = tr::asvector( ( index & VLmsk ) ^ VLmsk );
+
+	do {
+	    vtype v = tr::loadu( m_table, vindex );
+	    vtype mi = tr::cmpeq( v, vinv, target::mt_vmask() );
+	    vtype mv = tr::cmpeq( v, val, target::mt_vmask() );
+	    vtype mo = tr::bitwise_or( mi, mv );
+	    vtype ma = tr::bitwise_andnot( mo, msk );
+	    if( tr::is_zero( ma ) ) {
+		msk = tr::setone();
+		vindex = ( vindex + VL ) & ( m_size - 1 );
+	    } else {
+		// Now there is a lane in v that is suitable. Identify it.
+		unsigned lane = _tzcnt_u32( tr::asmask( ma ) );
+		return vindex + lane;
+	    }
+	} while( true );
+    }
+    template<unsigned short VL>
+    size_type
+    intersect_size_vector( const type * I, const type * E, size_t exceed )
+	const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+
+	const vtype vinv = tr::setone(); // invalid_element == -1
+	const vtype hmask = tr::srli( tr::setone(), tr::B - ilog2( m_size ) );
+	vtype v_ins = tr::setzero();
+
+	size_type s_ins = 0;
+
+	for( ; I+VL <= E; I += VL ) {
+	    vtype v = tr::loadu( I ); // Assuming &*(I+1) == (&*I)+1
+	    vtype h = m_hash.template vectorized<VL>( v );
+	    vtype vidx = tr::bitwise_and( h, hmask );
+	    vtype e = tr::gather( m_table, vidx );
+	    vtype mi = tr::cmpeq( e, vinv, target::mt_vmask() );
+	    vtype mv = tr::cmpeq( e, v, target::mt_vmask() );
+	    vtype miv = tr::bitwise_or( mi, mv );
+	    vtype imiv = tr::bitwise_invert( miv );
+	    v_ins = tr::add( v_ins, tr::srli( mv, tr::B-1 ) ); // +1 if found
+	    auto m = tr::asmask( imiv );
+	    if( m != 0 ) {
+		// TODO: hash table load is targeted below 50%. Due to the
+		// birthday paradox, there will be frequent collisions still
+		// and it may be useful to make multiple vectorized probes
+		// before resorting to scalar execution. We could even count
+		// active lanes to decide.
+		// Some lanes are neither empty nor the requested value and
+		// need further probes.
+		bitset<VL> probes( m );
+		for( auto PI=probes.begin(), PE=probes.end(); PI != PE; ++PI )
+		    s_ins += contains_2nd( *(I + *PI) ) ? 1 : 0;
+	    }
+	    if( s_ins + std::distance( I, E ) < exceed + VL )
+		return 0;
+	}
+	s_ins += tr::reduce_add( v_ins );
+	if( I != E )
+	    s_ins += intersect_size_scalar( I, E, exceed - s_ins );
+	return s_ins;
+    }
+    bool contains_2nd( type value ) const {
+	// Skip first element, already probed
+	size_type index = m_hash( value ) & ( m_size - 1 );
+	index = ( index + 1 ) & ( m_size - 1 ); // skip
+	while( m_table[index] != invalid_element && m_table[index] != value )
+	    index = ( index + 1 ) & ( m_size - 1 );
+	return m_table[index] == value;
+    }
+    template<typename It>
+    size_t intersect_size_scalar( It I, It E, size_t exceed ) const {
+	size_t sz = 0;
+	std::make_signed_t<size_t> options = std::distance( I, E );
+	options = (std::make_signed_t<size_t>)( exceed ) - options;
+	if( options >= 0 )
+	    return 0;
+
+	while( I != E ) {
+
+	    VID v = *I;
+	    if( contains( v ) )
+		++sz;
+	    else if( ++options >= 0 )
+		return 0;
+
+	    ++I;
 	}
 	return sz;
     }
