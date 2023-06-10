@@ -3,6 +3,11 @@
 
 // TODO:
 // * online machine learning
+// * MCE_Enumerator thread-local (no sync-fetch-and-add)
+
+// Novelties:
+// + find pivot -> abort intersection if seen to be too small
+// + small sub-problems -> dense matrix; O(1) operations
 
 // A Pattern Decomposed Graph
 #include <signal.h>
@@ -15,6 +20,9 @@
 #include <numeric>
 
 #include <pthread.h>
+
+#include <cilk/cilk.h>
+#include <cilk/reducer.h>
 
 #include "graptor/graptor.h"
 #include "graptor/api.h"
@@ -49,6 +57,9 @@ enum cvt_pdg_variable_name {
 };
 
 static bool verbose = false;
+
+template<unsigned Bits, typename sVID, typename sEID>
+class DenseMatrix;
 
 template<typename T>
 struct murmur_hash;
@@ -591,6 +602,7 @@ VID mc_get_pivot_xp(
 
     assert( ce - ne != 0 );
 
+    // Tunable (|P| and selecting vertex from X or P)
     if( ce - ne <= 3 )
 	return XP[ne];
 
@@ -1267,13 +1279,38 @@ mce_iterate_xp(
 	assert( ce_new <= ce );
 	R.push( u );
 
-	mce_iterate_xp( G, Ee, alloc, R, XP_new, ne_new, ce_new, depth+1 );
+	// Tunable
+	if( ce_new - ne_new < 16 || ce_new > 256 ) {
+	    mce_iterate_xp( G, Ee, alloc, R, XP_new, ne_new, ce_new, depth+1 );
+	} else if( ce_new <= 32 ) {
+	    DenseMatrix<32,VID,EID> D( G, XP_new, ne_new, ce_new );
+	    D.mce_bron_kerbosch( [&]( const bitset<32> & c ) {
+		Ee( R, c.size() );
+	    } );
+	} else if( ce_new <= 64 ) {
+	    DenseMatrix<64,VID,EID> D( G, XP_new, ne_new, ce_new );
+	    D.mce_bron_kerbosch( [&]( const bitset<64> & c ) {
+		Ee( R, c.size() );
+	    } );
+	} else if( ce_new <= 128 ) {
+	    DenseMatrix<128,VID,EID> D( G, XP_new, ne_new, ce_new );
+	    D.mce_bron_kerbosch( [&]( const bitset<128> & c ) {
+		Ee( R, c.size() );
+	    } );
+	} else if( ce_new <= 256 ) {
+	    DenseMatrix<256,VID,EID> D( G, XP_new, ne_new, ce_new );
+	    D.mce_bron_kerbosch( [&]( const bitset<256> & c ) {
+		Ee( R, c.size() );
+	    } );
+	} else {
+	    assert( 0 && "Should not get here" );
+	}
 
 	R.pop();
 
 	// Move candidate (u) from original position to appropriate
 	// place in X part (maintaining sort order).
-	// TODO: Could cache tgt for next iteration as next iteration's u
+	// Cache tgt for next iteration as next iteration's u
 	// will be strictly larger.
 	VID * tgt = std::upper_bound( prev_tgt, XP+ne, u );
 	if( tgt != &XP[i] ) { // equality when u moves to tgt == XP+ne
@@ -1578,16 +1615,12 @@ public:
 	// excluded set (X) in Bron-Kerbosch. Remains a question if we need
 	// to build the neighbour list for the excluded vertices (probably
 	// only for the purpose of finding a pivot vertex).
-// TODO: use upper_bound;
-	start_pos = ns > 0 && core_order[s2g[ns-1]] < core_order[v]
-	    ? ns : 0;
-	for( VID i=0; i < ns; ++i ) {
-	    VID u = s2g[i];
-	    if( core_order[u] > core_order[v] ) {
-		start_pos = i;
-		break;
-	    }
-	}
+	VID * sp2_pos = std::upper_bound(
+	    &s2g[0], &s2g[ns], v,
+	    [&]( VID a, VID b ) {
+		return core_order[a] < core_order[b];
+	    } );
+	start_pos = sp2_pos - &s2g[0];
 
 	// Count edges. Assumes neighbours is sorted in increasing order
 	// Could trade time for space by simply adding up degrees of selected
@@ -1658,6 +1691,7 @@ private:
 
 // For maximal clique enumeration - all vertices regardless of coreness
 // Sort/relabel vertices by decreasing coreness
+// TODO: make hybrid between hash table / adj list for lowest degrees?
 template<typename VID, typename EID, typename Hash>
 class GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>> {
 public:
@@ -1691,23 +1725,22 @@ public:
 	// neighbours (n): position of vertex in neighbour list, which is
 	//                 sorted by global IDs, facilitating lookup
 	VID ns = num_neighbours;
-
-	// Sort eligible neighbours by increasing core_order
-	std::sort( s2g.begin(), s2g.end(),
-		   [&]( VID u, VID v ) {
-		       return core_order[u] < core_order[v];
-		   } );
-
-	// Should be able to track permutation whilst sorting...
 	VID * n2s = new VID[ns];
-	for( VID u=0; u < ns; ++u ) {
-	    VID v = s2g[u];
-	    const VID * const pos = std::lower_bound(
-		&neighbours[0], &neighbours[ns], v );
-	    assert( pos != &neighbours[ns] && *pos == v );
-	    n2s[pos - neighbours] = u;
+	std::iota( &s2g[0], &s2g[ns], 0 );
+
+	// Sort by increasing core_order
+	std::sort( &s2g[0], &s2g[ns],
+		   [&]( VID u, VID v ) {
+		       return core_order[neighbours[u]]
+			   < core_order[neighbours[v]];
+		   } );
+	// Invert permutation into n2s and create mapping for m_s2g
+	for( VID su=0; su < ns; ++su ) {
+	    VID x = s2g[su];
+	    s2g[su] = neighbours[x]; // create mapping
+	    n2s[x] = su; // invert permutation
 	}
-	
+
 	// Find first vertex ordered after the reference vertex v.
 	// All preceeding vertices have already been tried and can be skipped.
 	// We include them in the cutout however in order to construct the
@@ -2584,6 +2617,43 @@ mce_bron_kerbosch_seq_xp(
     }
 }
 
+template<typename Enumerate, typename VID, typename EID, typename Hash>
+void
+mce_bron_kerbosch_par_xp(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    VID start_pos,
+    VID degeneracy,
+    Enumerate && E ) {
+    VID n = G.numVertices();
+
+    // start_pos calculate to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    parallel_loop( start_pos, n, 1, [&]( VID v ) {
+	StackLikeAllocator alloc;
+	contract::vertex_set<VID> R;
+
+	R.push( v );
+
+	// Consider as candidates only those neighbours of v that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	auto & adj = G.get_adjacency( v ); 
+
+	VID deg = adj.size();
+	VID * XP = alloc.template allocate<VID>( deg );
+	auto end = std::copy_if(
+	    adj.begin(), adj.end(), XP,
+	    [&]( VID v ) { return v != adj.invalid_element; } );
+	assert( end - XP == deg );
+	std::sort( XP, XP+deg );
+	const VID * const start = std::upper_bound( XP, XP+deg, v );
+	VID ne = start - XP;
+	VID ce = deg;
+
+	mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
+    } );
+}
+
+
 
 
 
@@ -3227,8 +3297,11 @@ auto make_alternative_selector( Fn && ... fn ) {
 }
 
 
-template<unsigned Bits>
+template<unsigned Bits, typename sVID, typename sEID>
 class DenseMatrix {
+    using VID = sVID;
+    using EID = sEID;
+    using DID = std::conditional_t<Bits<=256,uint8_t,uint16_t>;
     using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
     static constexpr unsigned bits_per_lane = sizeof(type)*8;
     static constexpr unsigned short VL = Bits / bits_per_lane;
@@ -3253,52 +3326,47 @@ public:
 	// Set of eligible neighbours
 	VID ns = num_neighbours;
 	assert( ns <= MAX_VERTICES );
-	m_s2g = new VID[ns];
 	std::copy( &neighbours[0], &neighbours[ns], m_s2g );
 
-	VID * n2s = new VID[ns];
+	sVID * n2s = new sVID[ns];
+	std::iota( &m_s2g[0], &m_s2g[ns], 0 );
 
 	// Sort by increasing core_order
 	std::sort( &m_s2g[0], &m_s2g[ns],
 		   [&]( VID u, VID v ) {
-		       return core_order[u] < core_order[v];
+		       return core_order[neighbours[u]]
+			   < core_order[neighbours[v]];
 		   } );
-
-	for( VID u=0; u < ns; ++u ) {
-	    VID v = m_s2g[u];
-	    const VID * const pos = std::lower_bound(
-		&neighbours[0], &neighbours[ns], v );
-	    assert( pos != &neighbours[ns] && *pos == v );
-	    n2s[pos - neighbours] = u;
+	// Invert permutation into n2s and create mapping for m_s2g
+	for( VID su=0; su < ns; ++su ) {
+	    VID x = m_s2g[su];
+	    m_s2g[su] = neighbours[x]; // create mapping
+	    n2s[x] = su; // invert permutation
 	}
 
 	// Determine start position, i.e., vertices less than start_pos
 	// are in X by default
-	m_start_pos = ns > 0 && core_order[m_s2g[ns-1]] < core_order[v]
-	    ? ns : 0;
-	for( VID i=0; i < ns; ++i ) {
-	    VID u = m_s2g[i];
-	    if( core_order[u] > core_order[v] ) {
-		m_start_pos = i;
-		break;
-	    }
-	}
+	VID * sp2_pos = std::upper_bound(
+	    &m_s2g[0], &m_s2g[ns], v,
+	    [&]( VID a, VID b ) {
+		return core_order[a] < core_order[b];
+	    } );
+	m_start_pos = sp2_pos - &m_s2g[0];
 
-	// m_words = ( ns + bits_per_lane - 1 ) / bits_per_lane;
-	// m_words = 4; // VL
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	// m_words = std::min( (unsigned)VL, m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 4];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 32];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
 	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
+	// std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
 
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
 	    VID u = m_s2g[su];
+	    VID deg = 0;
 
 	    row_type row_u = tr::setzero();
 
@@ -3311,21 +3379,73 @@ public:
 		    if( pos != &neighbours[ns] && *pos == w && u != w ) {
 			VID sw = n2s[pos - neighbours];
 			row_u = tr::bitwise_or( row_u, create_row( sw ) );
-			++m_m;
+			++deg;
 		    }
 		    return true;
 		} );
 
 	    tr::store( &m_matrix[VL * su], row_u );
+	    m_degree[su] = deg;
+	    m_m += deg;
 	}
 
 	m_n = ns;
 
 	delete[] n2s;
     }
+    // In this variation, hVIDs are already sorted by core_order
+    // and we know the separation between X and P sets.
+    template<typename hVID, typename hEID, typename Hash>
+    DenseMatrix( const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
+		 const hVID * XP,
+		 hVID ne, hVID ce )
+	: m_start_pos( ne ) {
+	static_assert( sizeof(hVID) >= sizeof(sVID) );
+	static_assert( sizeof(hEID) >= sizeof(sEID) );
+
+	// Vertices in X and P are independently already sorted by core order.
+	// We do not reorder, primarily because only the order in P matters
+	// for efficiency of enumeration.
+	// Do we need to copy, or can we just keep a pointer to XP?
+	VID ns = ce;
+	std::copy( XP, XP+ce, m_s2g );
+
+	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
+	m_matrix = m_matrix_alc = new type[m_words * ns + 32];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
+	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
+	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+
+	// Place edges
+	VID ni = 0;
+	m_m = 0;
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = m_s2g[su]; // or XP[su]
+	    VID deg = 0;
+
+	    row_type row_u = tr::setzero();
+	    auto & adj = G.get_adjacency( u );
+
+	    // Intersect XP with adjacency list
+	    for( VID l=(su >= m_start_pos ? 0 : ne); l < ce; ++l ) {
+		VID xp = XP[l];
+		if( adj.contains( xp ) ) {
+		    row_u = tr::bitwise_or( row_u, create_row( l ) );
+		    ++deg;
+		}
+	    }
+
+	    tr::store( &m_matrix[VL * su], row_u );
+	    m_degree[su] = deg;
+	    m_m += deg;
+	}
+
+	m_n = ns;
+    }
 
     ~DenseMatrix() {
-	delete[] m_s2g;
 	delete[] m_matrix_alc;
     }
 
@@ -3445,7 +3565,7 @@ public:
     VID numVertices() const { return m_n; }
     EID numEdges() const { return m_m; }
 
-    const VID * get_s2g() const { return m_s2g; }
+    const VID * get_s2g() const { return &m_s2g[0]; }
 
 private:
     void bk_iterate( row_type R, row_type P, int depth, VID cutoff ) {
@@ -3520,14 +3640,17 @@ private:
 	row_type r = tr::bitwise_or( P, X );
 	bitset<Bits> b( r );
 
-	// Avoid complexities if there is not much choice
-	if( get_size( P ) <= 3 )
-	    return *b.begin();
-	
 	VID p_best = *b.begin();
 	VID p_ins = 0; // will be overridden
+
+	// Avoid complexities if there is not much choice
+	if( get_size( P ) <= 3 )
+	    return p_best;
+	
 	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
 	    VID v = *I;
+	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
+		continue;
 	    row_type v_ngh = get_row( v );
 	    row_type pv_ins = tr::bitwise_and( P, v_ngh );
 	    VID ins = get_size( pv_ins );
@@ -3650,18 +3773,26 @@ private:
     }
 
     row_type create_row( VID v ) { // TODO: lookup table with 0x1 in precisely one lane
+#if 0
 	row_type z = tr::setzero();
 	row_type o = tr::setoneval();
 	row_type p = tr::sll( o, v % bits_per_lane );
 	VID lane = v / bits_per_lane;
 	row_type r = tr::blend( 1 << lane, z, p );
 	return r;
+#else
+	return tr::setglobaloneval( v );
+#endif
 	
 	// return tr::setlane(
 	// tr::setzero(), type(1) << ( v % bits_per_lane ), v / bits_per_lane );
     }
 
     row_type get_himask( VID v ) {
+#if 1
+	row_type r = tr::himask( v+1 );
+	return r;
+#else
 #if 1
 	row_type z = tr::setzero();
 	row_type s = tr::setone();
@@ -3679,10 +3810,11 @@ private:
 	row_type a = tr::load( &himask_starter[lane * VL] );
 	row_type b = tr::slli( a, v % bits_per_lane );
 	row_type c = tr::sub( b, a );
-	row_type d = tr::srli( a, 1 );
+row_type d = tr::srli( a, 1 );
 	row_type e = tr::bitwise_or( c, d );
 	row_type f = tr::bitwise_invert( e );
 	return f;
+#endif
 #endif
     }
 
@@ -3712,13 +3844,15 @@ private:
     VID m_n;
     static constexpr unsigned m_words = VL;
     EID m_m;
-    VID * m_s2g;
     type * m_matrix;
     type * m_matrix_alc;
 
     VID m_mc_size;
     row_type m_mc;
     VID m_start_pos;
+
+    VID m_s2g[Bits];
+    DID m_degree[Bits];
 
     // assumes VL == 4
     alignas(64) static constexpr uint64_t himask_starter[16] = {
@@ -3899,12 +4033,13 @@ void mce_top_level(
     VID v,
     const NeighbourCutOutAll<VID,EID> & cut,
     const VID * const core_order ) {
-    DenseMatrix<Bits> IG( G, v, cut.get_num_vertices(), cut.get_vertices(),
-	core_order);
+    DenseMatrix<Bits,VID,EID>
+	IG( G, v, cut.get_num_vertices(), cut.get_vertices(),
+	    core_order );
 
     // Needs to include X? Pivoting?
     IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) {
-	E.record( 1 + c.size() );
+	E->record( 1 + c.size() );
 /*
 	std::cerr << "MC: " << v;
 	for( auto v : c )
@@ -3934,13 +4069,9 @@ void mce_top_level(
     // const VID * const core_order,
     VID degeneracy
     ) {
-    // TODO: parallel version
-    mce_bron_kerbosch_seq_xp(
-	HG,
-	start_pos, // ibuilder.get_start_pos(),
-	degeneracy,
-	[&]( const contract::vertex_set<VID> & c ) {
-	    E.record( 1+c.size() );
+    auto Ee = [&]( const contract::vertex_set<VID> & c,
+		   size_t surplus = 0 ) {
+	E->record( 1+c.size()+surplus );
 /*
 	    std::cerr << "MC: " << v;
 	    for( auto v : c )
@@ -3957,7 +4088,14 @@ void mce_top_level(
 	    std::sort( cc.begin(), cc.end() );
 	    check_clique( G, cc.size(), &cc[0] );
 */
-	} );
+	};
+
+    
+    VID n = HG.numVertices();
+    if( n > 1024 )
+	mce_bron_kerbosch_par_xp( HG, start_pos, degeneracy, Ee );
+    else
+	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
 }
 
 struct variant_statistics {
@@ -4030,13 +4168,6 @@ struct per_thread_statistics {
 	return it->second;
     }
     
-/*
-    all_variant_statistics * create_statistics() {
-	std::lock_guard<std::mutex> guard( m_mutex );
-	return &m_stats.emplace_back( all_variant_statistics() );
-    }
-*/
-
     all_variant_statistics sum() const {
 	return std::accumulate(
 	    m_stats.begin(), m_stats.end(), all_variant_statistics(),
@@ -4088,14 +4219,8 @@ void mce_top_level(
     } else {
 	timer tm;
 	tm.start();
-/*
-	GraphBuilderInduced<graptor::graph::GraphCSx<VID,EID>>
-	    ibuilder( G, v, cut, core_order );
-	const graptor::graph::GraphCSx<VID,EID> & IG = ibuilder.get_graph();
-	graptor::graph::GraphHAdj<VID,EID,murmur_hash<VID>> HG( IG );
-*/
-	// GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,murmur_hash<VID>>>
-	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,java_hash<VID>>>
+	GraphBuilderInduced<
+	    graptor::graph::GraphHAdjTable<VID,EID,java_hash<VID>>>
 	    ibuilder( G, v, cut, core_order );
 	const auto & HG = ibuilder.get_graph();
 
@@ -4109,17 +4234,29 @@ void mce_top_level(
 
 class MCE_Enumerator {
 public:
-    MCE_Enumerator( size_t degen )
+    MCE_Enumerator( size_t degen = 0 )
 	: m_degeneracy( degen ),
 	  m_histogram( degen+1, 0 ) { }
 
     // Recod clique of size s
     void record( size_t s ) {
-	assert( s <= m_degeneracy );
-	__sync_fetch_and_add( &m_histogram[s], 1 );
-	// __sync_fetch_and_add( &m_num_maximal_cliques, 1 );
-	// m_histogram[s]++;
-	// ++m_num_maximal_cliques;
+	if( m_degeneracy == 0 ) {
+	    if( m_histogram.size() < s )
+		m_histogram.resize( s );
+	    m_histogram[s-1] += 1;
+	} else {
+	    assert( s <= m_degeneracy+1 );
+	    // __sync_fetch_and_add( &m_histogram[s-1], 1 );
+	    m_histogram[s-1] += 1;
+	}
+    }
+
+    MCE_Enumerator & operator += ( const MCE_Enumerator & e ) {
+	if( m_histogram.size() < e.m_histogram.size() )
+	    m_histogram.resize( e.m_histogram.size() );
+	for( size_t i=0; i < m_histogram.size(); ++i )
+	    m_histogram[i] += e.m_histogram[i];
+	return *this;
     }
 
     std::ostream & report( std::ostream & os ) const {
@@ -4134,7 +4271,7 @@ public:
 	os << "Clique histogram: clique_size, num_of_cliques\n";
 	for( size_t i=0; i <= m_degeneracy; ++i ) {
 	    if( m_histogram[i] != 0 ) {
-		os << i << ", " << m_histogram[i] << "\n";
+		os << (i+1) << ", " << m_histogram[i] << "\n";
 	    }
 	}
 	return os;
@@ -4145,12 +4282,27 @@ private:
     std::vector<VID> m_histogram;
 };
 
+class sum_monoid_MCE_Enumerator : public cilk::monoid_base<MCE_Enumerator> {
+public:
+    static void reduce( MCE_Enumerator * left, MCE_Enumerator * right ) {
+	*left += *right;
+    }
+    static void identity( MCE_Enumerator * p ) {
+	new (p) MCE_Enumerator();
+    }
+};
+
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
     const char * ifile = P.getOptionValue( "-i" );
 
+    timer tm;
+    tm.start();
+
     GraphCSx G( ifile, -1, symmetric );
+
+    std::cerr << "Reading graph: " << tm.next() << "\n";
 
     VID n = G.numVertices();
     EID m = G.numEdges();
@@ -4165,6 +4317,8 @@ int main( int argc, char *argv[] ) {
     auto & coreness = kcore.getCoreness();
     std::cerr << "coreness=" << kcore.getLargestCore() << "\n";
 
+    std::cerr << "Calculating coreness: " << tm.next() << "\n";
+
     std::cerr << "Calculating sort order...\n";
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
@@ -4172,9 +4326,10 @@ int main( int argc, char *argv[] ) {
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
 
-    timer tm;
-    tm.start();
-    MCE_Enumerator E( kcore.getLargestCore() );
+    std::cerr << "Determining sort order: " << tm.next() << "\n";
+
+    cilk::reducer< sum_monoid_MCE_Enumerator > E( kcore.getLargestCore() );
+    // MCE_Enumerator E( kcore.getLargestCore() );
 
     system( "date" );
 
@@ -4193,9 +4348,11 @@ int main( int argc, char *argv[] ) {
 	// std::cerr << "  vertex " << v << " complete\n";
     } );
 
+    std::cerr << "Enumeration: " << tm.next() << "\n";
+
     all_variant_statistics stats = mce_stats.sum();
 
-    double duration = tm.stop();
+    double duration = tm.total();
     std::cerr << "Completed MCE in " << duration << " seconds\n";
     std::cerr << " 32-bit version: " << stats.m_32.m_tm << " seconds in "
 	      << stats.m_32.m_calls << " calls @ "
@@ -4225,7 +4382,7 @@ int main( int argc, char *argv[] ) {
 
     std::cerr << " pruning: " << pruning << "\n";
 
-    E.report( std::cerr );
+    E->report( std::cerr );
 
     return 0;
 }
