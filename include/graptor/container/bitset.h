@@ -8,6 +8,16 @@
 
 #include "graptor/target/vector.h"
 
+/*======================================================================*
+ * TODO:
+ * + use compress instruction to turn bitmask into a vector or array
+ *   in memory from which the indices can be fetched efficiently. Obviates
+ *   the need of one tzcnt per set bit into a fixed number of compress/st
+ *   operations. For a 256-bit vector, this would be 16 compress operations.
+ *   This would be more efficient than tzcnt only if ~16 bits or more are
+ *   set. (AVX512F+VL only)
+ *======================================================================*/
+
 template<unsigned Bits, typename Enable = void>
 class bitset_iterator : public std::iterator<
     std::input_iterator_tag,	// iterator_category
