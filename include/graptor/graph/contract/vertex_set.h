@@ -72,6 +72,7 @@ template<typename It, typename Inserter>
 void intersect_tmpl( It ls, It le, It rs, It re, Inserter && insert ) {
     auto nl = std::distance( ls, le );
     auto nr = std::distance( rs, re );
+    // Tunable
     if( nr * nr < nl )
 	detail::intersect_search( ls, le, rs, re, insert );
     else if( nl * nl < nr )
