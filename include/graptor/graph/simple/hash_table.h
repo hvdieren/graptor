@@ -162,6 +162,46 @@ public:
 	return intersect_size_scalar( I, E, exceed );
     }
 
+    template<typename atype, unsigned short VL>
+    auto multi_contains( typename vector_type_traits_vl<atype,VL>::type
+			 index ) const {
+	using tr = vector_type_traits_vl<atype,VL>;
+	using vtype = typename tr::type;
+
+	const vtype vinv = tr::setone(); // invalid_element == -1
+	const vtype hmask = tr::srli( tr::setone(), tr::B - ilog2( m_size ) );
+	vtype v_ins = tr::setzero();
+
+	size_type s_ins = 0;
+
+	vtype v = index; // Assuming &*(I+1) == (&*I)+1
+	vtype h = m_hash.template vectorized<VL>( v );
+	vtype vidx = tr::bitwise_and( h, hmask );
+	vtype e = tr::gather( m_table, vidx );
+	vtype mi = tr::cmpeq( e, vinv, target::mt_vmask() );
+	vtype mv = tr::cmpeq( e, v, target::mt_vmask() );
+	vtype miv = tr::bitwise_or( mi, mv );
+	vtype imiv = tr::bitwise_invert( miv );
+	// Some lanes are neither empty nor the requested value and
+	// need further probes.
+	while( !tr::is_zero( imiv ) ) {
+	    // TODO: hash table load is targeted below 50%. Due to the
+	    // birthday paradox, there will be frequent collisions still
+	    // and it may be useful to make multiple vectorized probes
+	    // before resorting to scalar execution. We could even count
+	    // active lanes to decide.
+	    vidx = tr::add( vidx, tr::setoneval() );
+	    vidx = tr::bitwise_and( vidx, hmask );
+	    e = tr::gather( m_table, vidx, imiv );
+	    mi = tr::cmpeq( e, vinv, target::mt_vmask() );
+	    vtype mv2 = tr::cmpeq( e, v, target::mt_vmask() );
+	    mv = tr::blend( imiv, mv, mv2 );
+	    miv = tr::bitwise_or( mi, mv2 );
+	    imiv = tr::bitwise_andnot( miv, imiv );
+	}
+	return imiv;
+    }
+
 private:
     // Identify the table cell where we can decide on presence of value
     size_type locate( type value ) const {
@@ -223,9 +263,8 @@ private:
 	    vtype mv = tr::cmpeq( e, v, target::mt_vmask() );
 	    vtype miv = tr::bitwise_or( mi, mv );
 	    vtype imiv = tr::bitwise_invert( miv );
-	    v_ins = tr::add( v_ins, tr::srli( mv, tr::B-1 ) ); // +1 if found
 	    auto m = tr::asmask( imiv );
-	    if( m != 0 ) {
+	    while( m != 0 ) {
 		// TODO: hash table load is targeted below 50%. Due to the
 		// birthday paradox, there will be frequent collisions still
 		// and it may be useful to make multiple vectorized probes
@@ -233,10 +272,22 @@ private:
 		// active lanes to decide.
 		// Some lanes are neither empty nor the requested value and
 		// need further probes.
+/*
 		bitset<VL> probes( m );
 		for( auto PI=probes.begin(), PE=probes.end(); PI != PE; ++PI )
 		    s_ins += contains_2nd( *(I + *PI) ) ? 1 : 0;
+*/
+		vidx = tr::add( vidx, tr::setoneval() );
+		vidx = tr::bitwise_and( vidx, hmask );
+		e = tr::gather( m_table, vidx, imiv );
+		mi = tr::cmpeq( e, vinv, target::mt_vmask() );
+		vtype mv2 = tr::cmpeq( e, v, target::mt_vmask() );
+		mv = tr::blend( imiv, mv, mv2 );
+		miv = tr::bitwise_or( mi, mv2 );
+		imiv = tr::bitwise_andnot( miv, imiv );
+		m = tr::asmask( imiv );
 	    }
+	    v_ins = tr::add( v_ins, tr::srli( mv, tr::B-1 ) ); // +1 if found
 	    if( s_ins + std::distance( I, E ) < exceed + VL )
 		return 0;
 	}
@@ -255,23 +306,23 @@ private:
     }
     template<typename It>
     size_t intersect_size_scalar( It I, It E, size_t exceed ) const {
-	size_t sz = 0;
-	std::make_signed_t<size_t> options = std::distance( I, E );
-	options = (std::make_signed_t<size_t>)( exceed ) - options;
+	using ty = std::make_signed_t<size_t>;
+	ty d = std::distance( I, E );
+	ty x = exceed;
+	ty options = x - d;
 	if( options >= 0 )
 	    return 0;
 
 	while( I != E ) {
-
 	    VID v = *I;
-	    if( contains( v ) )
-		++sz;
-	    else if( ++options >= 0 )
-		return 0;
+	    if( !contains( v ) ) [[likely]] {
+		if( ++options >= 0 ) [[unlikely]]
+		    return 0;
+	    }
 
 	    ++I;
 	}
-	return sz;
+	return x - options;
     }
 	    
 private:
