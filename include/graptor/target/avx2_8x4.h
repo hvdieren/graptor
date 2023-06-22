@@ -107,15 +107,6 @@ public:
 	type x;
 	return _mm256_srli_epi64( _mm256_cmpeq_epi64( x, x ), 63 );
     }
-    static type setglobaloneval( size_t pos ) {
-	// Based on:
-	// https://stackoverflow.com/questions/72424660/best-way-to-mask-a-single-bit-in-avx2
-	type ii = _mm256_set1_epi64x( pos );
-	const type off = _mm256_setr_epi64x( 0, 64, 128, 192 );
-	type jj = _mm256_sub_epi64( ii, off );
-	type mask = _mm256_sllv_epi64( setoneval(), jj );
-	return mask;
-    }
 
     template<typename VecT2>
     static auto convert( VecT2 a ) {
@@ -544,6 +535,9 @@ public:
     }
 
     static auto popcnt( type v ) {
+#if __AVX512VPOPCNTDQ__ && __AVX512VL__
+	return _mm256_popcnt_epi64( v );
+#else
 	// source: https://arxiv.org/pdf/1611.07612.pdf
 	__m256i lookup =
 	    _mm256_setr_epi8( 0, 1, 1, 2, 1, 2, 2, 3,
@@ -557,6 +551,7 @@ public:
 	__m256i popcnt2 = _mm256_shuffle_epi8( lookup, hi );
 	__m256i total = _mm256_add_epi8( popcnt1, popcnt2 );
 	return _mm256_sad_epu8( total, _mm256_setzero_si256() );
+#endif
     }
 
     static type loadu( const member_type * a ) {

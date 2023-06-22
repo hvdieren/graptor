@@ -60,6 +60,31 @@ struct sse42_bitwise {
     }
     static type bitwise_invert( type a ) { return bitwise_xor( a, setone() ); }
 
+    static type setglobaloneval( size_t pos ) {
+	size_t off = pos & 63;
+	uint64_t m = uint64_t(1) << off;
+	type mm = _mm_cvtsi64_si128( m );
+	if( pos != off )
+	    mm = _mm_bslli_si128( mm, 8 );
+	return mm;
+    }
+
+    // Generate a mask where all bits l and above are set, and below l are 0
+    static type himask( unsigned l ) {
+	type k = _mm_broadcastd_epi32( _mm_cvtsi32_si128( l ) );
+	type c = _mm_set_epi32( 128, 96, 64, 32 );
+	type h = _mm_slli_epi32( setone(), 31 );
+	type d = _mm_sub_epi32( c, k );
+#if __AVX2__
+	type s = _mm_srav_epi32( h, d );
+	type m = _mm_cmpgt_epi32( c, k );
+	type r = _mm_and_si128( s, m );
+	return r;
+#else
+	// _mm_srav_epi32 is in AVX2
+	assert( 0 && "NYI" );
+#endif
+    }
 };
 #endif // __SSE4_2__
 

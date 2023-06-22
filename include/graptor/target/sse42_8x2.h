@@ -58,14 +58,6 @@ public:
 	// http://agner.org/optimize/optimizing_assembly.pdf
 	return _mm_srli_epi64( setone(), 63 );
     }
-    static type setglobaloneval( size_t pos ) {
-	size_t off = pos & 63;
-	member_type m = member_type(1) << off;
-	type mm = _mm_cvtsi64_si128( m );
-	if( pos != off )
-	    mm = _mm_bslli_si128( mm, 8 );
-	return mm;
-    }
     
     static type set1( member_type a ) { return _mm_set1_epi64x( a ); }
     static type setl0( member_type a ) { return _mm_cvtsi64_si128( a ); }

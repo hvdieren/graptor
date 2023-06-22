@@ -85,8 +85,23 @@ struct allpopcnt {
 	    // Add up the four counts
 	    // Note: there is scope to adjust the summing procedures
 	    //       if a non-default ResultTy is required.
-	    return arg_traits::reduce_add( cnt );
+	    // Note: by nature, the four counts are between 0 and 64
+	    //      (boundaries inclusive). Hence, we can use a specialised
+	    //      approach to adding up 4 counts, knowing that only
+	    //      4 of the 32 bytes in the vector are non-zero.
+	    // Interpret the vector as a vector of 16 2-byte ints (the ones
+	    // in lanes not multiples of 4 are zero).
+	    // Marginally faster than the simple
+	    // return arg_traits::reduce_add( cnt );
+	    using tr = vector_type_traits_vl<uint16_t,16>;
+	    auto lo = tr::lower_half( cnt );
+	    auto hi = tr::upper_half( cnt );
+	    auto lh = _mm_add_epi16( lo, hi );  // or _mm_add_epi32
+	    auto sh = _mm_shuffle_epi32( lh, 0b11011000 );
+	    auto rd = _mm_hadd_epi32( sh, sh );
+	    return tr::half_traits::lane0( rd );
 	} else if constexpr ( sizeof(T) == 8 && VL == 2 ) {
+	    // TODO: similar implementation to Mula's?
 	    return _popcnt64( arg_traits::lane( a, 0 ) )
 		+ _popcnt64( arg_traits::lane( a, 1 ) );
 	} else if constexpr ( sizeof(T) == 8 && VL == 1 ) {

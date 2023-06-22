@@ -261,6 +261,32 @@ alignas(64) const uint32_t avx2_4x16_termination_lut_epi32[32] = {
     0x00000000, 0x00000000, 0x00000000, 0x00000000
 };
 
+// Supports vector length up to 16 epi32 on either side
+// Contains single 1 word
+alignas(64) const uint32_t avx512_singleton_basis_epi32[32] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000
+};
+
+// Supports vector length up to 16 epi32 on either side
+// Contains single word with 1 in top position followed by full ones
+alignas(64) const uint32_t avx512_himask_basis_epi32[32] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x80000000,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
+};
+
 const char * frontier_type_names[
     static_cast<std::underlying_type_t<frontier_type>>(
 	frontier_type::ft_N )+1] = {

@@ -205,8 +205,8 @@ public:
 	__m512i zero = _mm512_setzero_si512();
 	return (mask_type)_mm512_cmpneq_epi32_mask( wmask, zero );
 #else
-	assert( 0 && "NYI" );
-	return 0;
+	// 2 cycle latency, 1 CPI on SKL, delivers in GPR
+	return _mm_movemask_ps( _mm_castsi128_ps( mask ) );
 #endif
     }
 
@@ -424,8 +424,10 @@ public:
 	return (!m | v) ? ~member_type(0) : member_type(0);
     }
     static member_type reduce_bitwiseor( type val ) {
-	return half_traits::reduce_bitwiseor(
-	    half_traits::bitwiseor( lower_half( val ), upper_half( val ) ) );
+	uint64_t a = lower_half( val ) | upper_half( val );
+	uint32_t b = a;
+	uint32_t c = a >> 32;
+	return b | c;
     }
     static member_type reduce_bitwiseor( type val, vmask_type m ) {
 	member_type r = 0;

@@ -320,7 +320,8 @@ public:
 	return ~member_type(0);
     }
     static member_type reduce_add( type val ) {
-	assert( 0 && "NYI" );
+	return half_traits::reduce_add(
+	    half_traits::add( lower_half( val ), upper_half( val ) ) );
 	return member_type();
     }
     static member_type reduce_add( type val, mask_type mask ) {

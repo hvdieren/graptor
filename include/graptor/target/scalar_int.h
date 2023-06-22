@@ -55,6 +55,14 @@ public:
     static type setoneval() { return type(1); }
     static type setglobaloneval( size_t pos ) { return type(1) << pos; }
 
+    // Generate a mask where all bits l and above are set, and below l are 0
+    static type himask( unsigned l ) {
+	if( l < B )
+	    return ~( ( type(1) << l ) - 1 );
+	else
+	    return 0;
+    }
+
     static bool is_zero( type a ) { return a == 0; }
     
     static type create( member_type a0_ ) { return a0_; }
