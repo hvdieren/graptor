@@ -79,6 +79,9 @@ public:
     }
     ~KCv() {
 	coreness.del();
+#if MD_ORDERING
+	md_order.del();
+#endif
     }
 
     struct info {
@@ -493,7 +496,7 @@ public:
 #if MD_ORDERING
 	std::cerr << "md_index: " << md_index << "\n";
 	std::cerr << "n: " << n << "\n";
-	std::cerr << "todo: " << todo << "\n";
+	// std::cerr << "todo: " << todo << "\n";
 	// assert( md_index == n && "all vertices accounted for" );
 #endif
     }
