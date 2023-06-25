@@ -190,6 +190,7 @@ struct all_variant_statistics {
 	variant_statistics && v64,
 	variant_statistics && v128,
 	variant_statistics && v256,
+	variant_statistics && v512,
 	variant_statistics && v32_256,
 	variant_statistics && v64_256,
 	variant_statistics && v128_256,
@@ -200,6 +201,7 @@ struct all_variant_statistics {
 	m_64( std::forward<variant_statistics>( v64 ) ),
 	m_128( std::forward<variant_statistics>( v128 ) ),
 	m_256( std::forward<variant_statistics>( v256 ) ),
+	m_512( std::forward<variant_statistics>( v512 ) ),
 	m_32_256( std::forward<variant_statistics>( v32_256 ) ),
 	m_64_256( std::forward<variant_statistics>( v64_256 ) ),
 	m_128_256( std::forward<variant_statistics>( v128_256 ) ),
@@ -214,6 +216,7 @@ struct all_variant_statistics {
 	    m_64 + s.m_64,
 	    m_128 + s.m_128,
 	    m_256 + s.m_256,
+	    m_512 + s.m_512,
 	    m_32_256 + s.m_32_256,
 	    m_64_256 + s.m_64_256,
 	    m_128_256 + s.m_128_256,
@@ -233,12 +236,13 @@ struct all_variant_statistics {
     variant_statistics & get_64() { return m_64; }
     variant_statistics & get_128() { return m_128; }
     variant_statistics & get_256() { return m_256; }
+    variant_statistics & get_512() { return m_512; }
     variant_statistics & get_32_256() { return m_32_256; }
     variant_statistics & get_64_256() { return m_64_256; }
     variant_statistics & get_128_256() { return m_128_256; }
     variant_statistics & get_256_256() { return m_256_256; }
     
-    variant_statistics m_32, m_64, m_128, m_256;
+    variant_statistics m_32, m_64, m_128, m_256, m_512;
     variant_statistics m_32_256, m_64_256, m_128_256, m_256_256;
     variant_statistics m_gen, m_genbuild;
 };
@@ -318,11 +322,11 @@ public:
 	const gEID * const gindex = G.getIndex();
 	const gVID * const gedges = G.getEdges();
 
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 32];
+	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
 	VID ni = 0;
@@ -394,11 +398,11 @@ public:
 		|| ( ce-ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
 	assert( AddDegree::value != true
 		|| ( ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 32];
+	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place edges
@@ -1736,7 +1740,11 @@ mce_iterate_xp_iterative(
 		// done
 	    // Tunable
 	    } else if( ce_new - ne_new < 16
-		       || ne_new > 256 || ce_new-ne_new > 256 ) {
+		       || ne_new > 256 || ce_new-ne_new > 256
+#if __AVX512F__
+		       || ce_new > 512
+#endif
+		) {
 		// mce_iterate_xp( G, Ee, alloc, R, XP_new, ne_new, ce_new, depth+1 );
 		// Recursion - push new frame
 		assert( depth+1 < degeneracy+1 );
@@ -1750,7 +1758,13 @@ mce_iterate_xp_iterative(
 		assert( R.size() == depth );
 		// Go to handle top frame
 		continue;
-	    } else if( ce_new <= 256 ) {
+	    } else
+#if __AVX512F__
+		if( ce_new <= 256 )
+#else
+		if( ce_new <= 512 )
+#endif
+		{
 		if( ce_new <= 32 ) {
 		    DenseMatrix<32,VID,EID> D( G, XP_new, ne_new, ce_new );
 		    D.mce_bron_kerbosch( [&]( const bitset<32> & c ) {
@@ -1769,13 +1783,26 @@ mce_iterate_xp_iterative(
 			Ee( R, c.size() );
 		    } );
 		    // done
+#if __AVX512F__
+		} else if( ce_new <= 256 ) {
+#else
 		} else {
+#endif
 		    DenseMatrix<256,VID,EID> D( G, XP_new, ne_new, ce_new );
 		    D.mce_bron_kerbosch( [&]( const bitset<256> & c ) {
 			Ee( R, c.size() );
 		    } );
 		    // done
 		}
+#if __AVX512F__
+		else {
+		    DenseMatrix<512,VID,EID> D( G, XP_new, ne_new, ce_new );
+		    D.mce_bron_kerbosch( [&]( const bitset<512> & c ) {
+			Ee( R, c.size() );
+		    } );
+		    // done
+		}
+#endif
 	    } else if( ne_new <= 256 && ce_new - ne_new <= 256 ) {
 		if( ce_new-ne_new <= 32 ) {
 		    BlockedBinaryMatrix<256,32,VID,EID>
@@ -2689,12 +2716,11 @@ public:
 #endif
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 32];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
-	// std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
 	VID ni = 0;
@@ -2790,12 +2816,11 @@ public:
 #endif
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 32];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
-	// std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
 	VID ni = 0;
@@ -2857,12 +2882,11 @@ public:
 	std::copy( XP, XP+ce, m_s2g );
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 32];
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 31 ) // 31 = 256 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&31)/sizeof(type)];
-	static_assert( Bits <= 256, "AVX512 requires 64-byte alignment" );
-	std::fill( &m_matrix[0], &m_matrix[m_words * ns], 0 );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
 	VID ni = 0;
@@ -3434,6 +3458,11 @@ void mce_top_level(
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
+#if __AVX512F__
+    if( num <= 512 ) {
+	mce_top_level<512>( G, E, v, cut, core_order, stats.get_512() );
+    } else
+#endif
     if( num <= 256 ) {
 	if( num <= 32 )
 	    mce_top_level<32>( G, E, v, cut, core_order, stats.get_32() );
