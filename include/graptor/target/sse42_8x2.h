@@ -217,7 +217,6 @@ public:
     static mask_type cmpne( type a, type b, mt_mask ) {
 #if __AVX512DQ__
 	return _mm_cmpeq_epi64_mask( a, b );
-    }
 #else
 	return asmask( cmpne( a, b, mt_vmask() ) );
 #endif

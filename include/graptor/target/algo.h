@@ -79,7 +79,9 @@ struct allpopcnt {
 
     // The lane width doesn't really matter. So use width 8 always.
     static typename ret_traits::type compute( typename arg_traits::type a ) {
-	if constexpr ( sizeof(T) == 8 && VL == 4 ) {
+	if constexpr ( sizeof(T) == 8 && VL == 8 ) {
+	    return arg_traits::reduce_add( arg_traits::popcnt( a ) );
+	} else if constexpr ( sizeof(T) == 8 && VL == 4 ) {
 	    // AVX2 8x4 has an algorithm due to Mula for per-lane popcount
 	    auto cnt = arg_traits::popcnt( a );
 	    // Add up the four counts
@@ -133,13 +135,11 @@ struct alltzcnt {
 		    return cnt + i * 64;
 	    }
 	    return 64 * VL;
-	} else if constexpr ( sizeof(T) == 4 ) {
-	    for( unsigned i=0; i < VL; ++i ) {
-		ResultTy cnt = _tzcnt_u32( arg_traits::lane( a, i ) );
-		if( cnt < 32 )
-		    return cnt + i * 32;
-	    }
-	    return 32 * VL;
+	} else if constexpr ( sizeof(T) <= 4 && VL == 1 ) {
+	    return _tzcnt_u32( arg_traits::lane( a, 0 ) );
+	} else if constexpr ( sizeof(T) == 4 && VL > 1 ) {
+	    return vector_type_traits<int_type_of_size_t<sizeof(T)*2>,VL/2>
+		::compute( a );
 	}
 
 	assert( 0 && "NYI" );

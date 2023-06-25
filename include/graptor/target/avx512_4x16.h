@@ -9,6 +9,7 @@
 #include "graptor/target/decl.h"
 
 #include "graptor/target/sse42_4x4.h"
+#include "graptor/target/avx512_bitwise.h"
 
 alignas(64) extern const uint32_t avx512_4x16_evenodd_intlv_epi32_vl8[16];
 alignas(64) extern const uint32_t avx512_4x16_evenodd_intlv_epi32_vl16[16];
@@ -20,7 +21,7 @@ namespace target {
  ***********************************************************************/
 #if __AVX512F__
 template<typename T = uint32_t>
-struct avx512_4x16 {
+struct avx512_4x16 : public avx512_bitwise {
     static_assert( sizeof(T) == 4, 
 		   "version of template class for 4-byte integers" );
 public:
@@ -126,20 +127,6 @@ public:
 	}
     }
 
-
-    static __m256i lower_half( type a ) {
-	return _mm512_castsi512_si256( a );
-    }
-    static __m256i upper_half( type a ) {
-	return _mm512_extracti64x4_epi64( a, 1 );
-    }
-
-    static type setone() {
-	// Recommended here:
-	// https://stackoverflow.com/questions/45105164/set-all-bits-in-cpu-register-to-1-efficiently/45113467#45113467
-	__m512i x;
-	return _mm512_ternarylogic_epi32( x, x, x, 0xff );
-    }
     static type setone_shr1() {
 	return _mm512_srli_epi32( setone(), 1 );
     }
@@ -167,7 +154,6 @@ public:
 	return _mm512_set_epi64x( a7, a6, a5, a4, a3, a2, a1, a0 );
     }
 */
-    static type setzero() { return _mm512_setzero_epi32(); }
     static type setl0( member_type a ) {
 	// return (type)a;
 	return _mm512_zextsi128_si512( _mm_cvtsi64_si128( (uint64_t)a ) );
@@ -181,6 +167,7 @@ public:
 	typedef vector_type_traits<
 	    typename int_type_of_size<sizeof(VecT2)/vlen>::type,
 	    sizeof(VecT2)> traits2;
+	assert( 0 && "Should be replaced with conversion_traits" );
 	return set( traits2::lane7(a), traits2::lane6(a),
 		    traits2::lane5(a), traits2::lane4(a),
 		    traits2::lane3(a), traits2::lane2(a),
@@ -193,6 +180,7 @@ public:
     static auto convert_to( type a ) {
 	typedef vector_type_traits<T2,sizeof(T2)*vlen> traits2;
 	using Ty = typename std::make_signed<typename int_type_of_size<W>::type>::type;
+	assert( 0 && "Should be replaced with conversion_traits" );
 	return traits2::set( (Ty)lane15(a), (Ty)lane14(a),
 			     (Ty)lane13(a), (Ty)lane12(a),
 			     (Ty)lane11(a), (Ty)lane10(a),
@@ -305,39 +293,15 @@ public:
 	else
 	    return _mm512_max_epu32( a, b );
     }
-    static type logical_andnot( type a, type b ) {
-	return _mm512_andnot_si512( a, b );
-    }
-    static type logical_and( type a, type b ) {
-	return _mm512_and_si512( a, b );
-    }
-    static type logical_or( type a, type b ) {
-	return _mm512_or_si512( a, b );
-    }
-    static type bitwise_and( type a, type b ) {
-	return _mm512_and_si512( a, b );
-    }
-    static type bitwise_andnot( type a, type b ) {
-	return _mm512_andnot_si512( a, b );
-    }
-    static type bitwise_or( type a, type b ) {
-	return _mm512_or_si512( a, b );
-    }
-    static type bitwise_xor( type a, type b ) {
-	return _mm512_xor_si512( a, b );
-    }
-    static type bitwise_xnor( type a, type b ) {
-	return bitwise_xor( bitwise_invert( a ), b );
-    }
-    static type bitwise_invert( type a ) {
-	return _mm512_andnot_si512( a, setone() );
-    }
 
     static mask_type cmpeq( type a, type b, mt_mask ) {
 	return _mm512_cmpeq_epi32_mask( a, b );
     }
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return _mm512_cmpneq_epi32_mask( a, b );
+    }
+    static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
+	return _mm512_mask_cmpneq_epi32_mask( m, a, b );
     }
     static mask_type cmpgt( type a, type b, mt_mask ) {
 	if constexpr ( std::is_signed_v<member_type> )
@@ -535,6 +499,32 @@ public:
     static type ternary( type a, type b, type c ) {
 	return _mm512_ternarylogic_epi32( a, b, c, imm8 );
     }
+
+    static mask_type intersect( type a, const member_type * b ) {
+	// This code is claimed to be faster than the vp2intersect instruction
+	// https://arxiv.org/pdf/2112.06342.pdf
+	mask_type m00 = cmpne( a, set1( b[0] ), mt_mask() );
+	mask_type m01 = cmpne( a, set1( b[1] ), mt_mask() );
+	mask_type m02 = cmpne( a, set1( b[2] ), mt_mask() );
+
+	mask_type m03 = cmpne( m00, a, set1( b[3] ), mt_mask() );
+	mask_type m04 = cmpne( m01, a, set1( b[4] ), mt_mask() );
+	mask_type m05 = cmpne( m02, a, set1( b[5] ), mt_mask() );
+	mask_type m06 = cmpne( m03, a, set1( b[6] ), mt_mask() );
+	mask_type m07 = cmpne( m04, a, set1( b[7] ), mt_mask() );
+	mask_type m08 = cmpne( m05, a, set1( b[8] ), mt_mask() );
+	mask_type m09 = cmpne( m06, a, set1( b[9] ), mt_mask() );
+	mask_type m10 = cmpne( m07, a, set1( b[10] ), mt_mask() );
+	mask_type m11 = cmpne( m08, a, set1( b[11] ), mt_mask() );
+	mask_type m12 = cmpne( m09, a, set1( b[12] ), mt_mask() );
+	mask_type m13 = cmpne( m10, a, set1( b[13] ), mt_mask() );
+	mask_type m14 = cmpne( m11, a, set1( b[14] ), mt_mask() );
+	mask_type m15 = cmpne( m12, a, set1( b[15] ), mt_mask() );
+
+	return mask_traits::logical_invert(
+	    mask_traits::logical_and(
+		m13, mask_traits::logical_and( m14, m15 ) ) );
+    }
  
     static type load( const member_type * a ) {
 	return _mm512_load_epi32( a );
@@ -547,6 +537,13 @@ public:
     }
     static void storeu( member_type * a, type val ) {
 	_mm512_storeu_si512( a, val );
+    }
+
+    static void cstoreu( member_type * a, mask_type m, type val ) {
+	_mm512_mask_compressstoreu_epi32( a, m, val );
+    }
+    static void cstoreu( member_type * a, vmask_type m, type val ) {
+	_mm512_mask_compressstoreu_epi32( a, asmask( m ), val );
     }
 
     static type ntload( const member_type * a ) {

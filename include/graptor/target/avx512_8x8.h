@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "graptor/target/decl.h"
+#include "graptor/target/avx512_bitwise.h"
 
 #if __AVX512F__ // AVX2 implies SSE4.2
 // #include "graptor/target/sse42_4x4.h" // for half-sized indices
@@ -19,7 +20,7 @@ namespace target {
  ***********************************************************************/
 #if __AVX512F__
 template<typename T = uint64_t>
-struct avx512_8x8 {
+struct avx512_8x8 : public avx512_bitwise {
     static_assert( sizeof(T) == 8, 
 		   "version of template class for 8-byte integers" );
 public:
@@ -73,20 +74,6 @@ public:
     static member_type lane6( type a ) { return lane( a, 6 ); }
     static member_type lane7( type a ) { return lane( a, 7 ); }
 
-    static __m256i lower_half( type a ) {
-	return _mm512_castsi512_si256( a );
-    }
-    static __m256i upper_half( type a ) {
-	return _mm512_extracti64x4_epi64( a, 1 );
-    }
-
-
-    static type setone() {
-	// Recommended here:
-	// https://stackoverflow.com/questions/45105164/set-all-bits-in-cpu-register-to-1-efficiently/45113467#45113467
-	__m512i x;
-	return _mm512_ternarylogic_epi32( x, x, x, 0xff );
-    }
     static type setoneval() { // 0x0000000000000001 repeated
 	// http://agner.org/optimize/optimizing_assembly.pdf
 	return _mm512_srli_epi64( setone(), 63 );
@@ -106,7 +93,6 @@ public:
 		     member_type a1, member_type a0 ) {
 	return _mm512_set_epi64x( a7, a6, a5, a4, a3, a2, a1, a0 );
     }
-    static type setzero() { return _mm512_setzero_epi32(); }
     static type setl0( member_type a ) {
 	return _mm512_zextsi128_si512( _mm_cvtsi64_si128( a ) );
     }
@@ -225,33 +211,6 @@ public:
 	    return _mm512_min_epu64( a, b );
     }
 
-    static type logical_andnot( type a, type b ) {
-	return _mm512_andnot_si512( a, b );
-    }
-    static type logical_and( type a, type b ) {
-	return _mm512_and_si512( a, b );
-    }
-    static type logical_or( type a, type b ) {
-	return _mm512_or_si512( a, b );
-    }
-    static type logical_invert( type a ) {
-	return _mm512_andnot_si512( a, setone() );
-    }
-    static type bitwise_and( type a, type b ) {
-	return _mm512_and_si512( a, b );
-    }
-    static type bitwise_andnot( type a, type b ) {
-	return _mm512_andnot_si512( a, b );
-    }
-    static type bitwise_or( type a, type b ) {
-	return _mm512_or_si512( a, b );
-    }
-    static type bitwise_xor( type a, type b ) {
-	return _mm512_xor_si512( a, b );
-    }
-    static type bitwise_invert( type a ) {
-	return _mm512_andnot_si512( a, setone() );
-    }
     static type max( type a, type b ) {
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm512_max_epi64( a, b );
@@ -411,6 +370,30 @@ public:
 	    assert( 0 && "NYI" );
 	    return 0;
 	}
+    }
+
+    static auto popcnt( type v ) {
+#if __AVX512VPOPCNTDQ__ && __AVX512VL__
+	return _mm512_popcnt_epi64( v );
+#else
+	// source: https://arxiv.org/pdf/1611.07612.pdf
+	type lookup =
+	    _mm512_set_epi8( 4, 3, 3, 2, 3, 2, 2, 1,
+			     3, 2, 2, 1, 2, 1, 1, 0,
+			     4, 3, 3, 2, 3, 2, 2, 1,
+			     3, 2, 2, 1, 2, 1, 1, 0,
+			     4, 3, 3, 2, 3, 2, 2, 1,
+			     3, 2, 2, 1, 2, 1, 1, 0,
+			     4, 3, 3, 2, 3, 2, 2, 1,
+			     3, 2, 2, 1, 2, 1, 1, 0 );
+	type low_mask = _mm512_set1_epi8( 0x0f );
+	type lo = _mm512_and_si512( v, low_mask );
+	type hi = _mm512_and_si512( _mm512_srli_epi32( v, 4 ), low_mask );
+	type popcnt1 = _mm512_shuffle_epi8( lookup, lo );
+	type popcnt2 = _mm512_shuffle_epi8( lookup, hi );
+	type total = _mm512_add_epi8( popcnt1, popcnt2 );
+	return _mm512_sad_epu8( total, setzero() );
+#endif
     }
     
     static type load( const member_type *a ) {

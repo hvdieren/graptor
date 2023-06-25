@@ -307,6 +307,9 @@ public:
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return _mm256_cmpneq_epi32_mask( a, b );
     }
+    static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
+	return _mm256_mask_cmpneq_epi32_mask( m, a, b );
+    }
 #else
     static mask_type cmpgt( type a, type b, mt_mask ) {
 	return asmask( cmpgt( a, b, mt_vmask() ) );
@@ -325,6 +328,9 @@ public:
     }
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return asmask( cmpne( a, b, mt_vmask() ) );
+    }
+    static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
+	return mask_traits::logical_and( m, cmpne( a, b, mt_mask() ) );
     }
 #endif
     static mask_type cmpneg( type a, mt_mask ) {
@@ -625,6 +631,24 @@ public:
 #endif
     }
     
+    static mask_type intersect( type a, const member_type * b ) {
+	// This code is inspired from:
+	// https://arxiv.org/pdf/2112.06342.pdf
+	// Usage of mask favours AVX512 for performance reasons
+	mask_type m00 = cmpne( a, set1( b[0] ), mt_mask() );
+	mask_type m01 = cmpne( a, set1( b[1] ), mt_mask() );
+	mask_type m02 = cmpne( a, set1( b[2] ), mt_mask() );
+
+	mask_type m03 = cmpne( m00, a, set1( b[3] ), mt_mask() );
+	mask_type m04 = cmpne( m01, a, set1( b[4] ), mt_mask() );
+	mask_type m05 = cmpne( m02, a, set1( b[5] ), mt_mask() );
+	mask_type m06 = cmpne( m03, a, set1( b[6] ), mt_mask() );
+	mask_type m07 = cmpne( m04, a, set1( b[7] ), mt_mask() );
+
+	return mask_traits::logical_invert(
+	    mask_traits::logical_and(
+		m05, mask_traits::logical_and( m06, m07 ) ) );
+    }
 
     static member_type loads( const member_type * a, unsigned int off ) {
 	return *(a+off);
@@ -646,6 +670,21 @@ public:
     }
     static void storeu( member_type *addr, type val ) {
 	_mm256_storeu_si256( (type *)addr, val );
+    }
+    static void cstoreu( member_type *addr, mask_type m, type val ) {
+#if __AVX512VL__
+	_mm256_mask_compressstoreu_epi32( (type *)addr, m, val );
+#else
+	size_t b = m;
+	while( b != 0 ) {
+	    size_t pos = _tzcnt_u64( b );
+	    b = b & ( b - 1 );
+	    *addr++ = lane( val, pos );
+	}
+#endif
+    }
+    static void cstoreu( member_type *addr, vmask_type m, type val ) {
+	cstoreu( addr, asmask( m ), val );
     }
 
     static type ntload( const member_type * a ) {
@@ -878,7 +917,7 @@ public:
 #if __AVX512F__
     template<unsigned degree_bits, unsigned degree_shift>
     static avx2_epi32_extract_degree8
-    create_extractor( unsigned degree_bits, unsigned degree_shift ) {
+    create_extractor() { // unsigned degree_bits, unsigned degree_shift ) {
 	return avx2_epi32_extract_degree8( degree_bits, degree_shift );
     }
 #elif __AVX2__
