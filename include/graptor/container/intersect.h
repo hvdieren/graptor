@@ -372,7 +372,7 @@ intersect( const T *& lb, const T * le, const T *& rb, const T * re,
 template<unsigned VL, typename T>
 bool
 intersect_size_exceed(
-    const T *& lb, const T * le, const T *& rb, const T * re,
+    const T *& lb, const T *& le, const T *& rb, const T *& re,
     size_t exceed, size_t & sz ) {
     using tr = vector_type_traits_vl<T,VL>;
     using type = typename tr::type;
@@ -380,6 +380,12 @@ intersect_size_exceed(
 
     size_t ld = std::distance( lb, le );
     size_t rd = std::distance( rb, re );
+    if( ld > rd ) {
+	std::swap( lb, rb );
+	std::swap( le, re );
+	std::swap( ld, rd );
+    }
+
     size_t d = std::min( ld, rd );
 
     if( d < exceed )
@@ -402,11 +408,13 @@ intersect_size_exceed(
 	mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
 	mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
 
-	lb += ilog2( ((uint64_t)ladv) + 1 );
+	size_t la = ilog2( ((uint64_t)ladv) + 1 );
+	options += VL - la; // whichever elements not matched, put back options
+	lb += la;
 	rb += ilog2( ((uint64_t)radv) + 1 );
     }
 
-    sz = options + exceed;
+    sz = options + exceed - ( le - lb );
     return true;
 }
 
