@@ -400,8 +400,10 @@ void
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
        graptor::graph::hash_table<VID,hash_fn> & ht,
-       VID * out,
        int repeat ) {
+    size_t len = std::min( le - lb, re - rb );
+    VID * out = new VID[len];
+    
     size_t sz_ref = bench<var_merge_scalar,op_intersect_size>(
 	lb, le, rb, re, ht, out );
 
@@ -424,6 +426,8 @@ bench( const VID * lb, const VID * le,
     tm = bench<var_hash_vector,op>(
 	lb, le, rb, re, ht, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_hash_vector, op );
+
+    delete[] out;
 }
 
 int main( int argc, char *argv[] ) {
@@ -443,8 +447,6 @@ int main( int argc, char *argv[] ) {
     EID m = G.numEdges();
     const EID * const index = G.getIndex();
     const VID * const edges = G.getEdges();
-
-    mmap_ptr<VID> out( n, numa_allocation_interleaved() );
 
     assert( G.isSymmetric() );
     std::cerr << "Undirected graph: n=" << n << " m=" << m << std::endl;
@@ -474,10 +476,8 @@ int main( int argc, char *argv[] ) {
 	      << " repetitions and operation "
 	      << (operation)OPERATION << "\n";
 
-    EID e = 0;
-    for( VID v=0; v < n; ++v ) {
-	EID ee = index[v+1];
-	for( ; e != ee; ++e ) {
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
 	    VID u = edges[e];
 	    // Benchmark intersection operations between neighbour lists of
 	    // u and v
@@ -485,22 +485,22 @@ int main( int argc, char *argv[] ) {
 	    bench<op_intersect>(
 		&edges[index[v]], &edges[index[v+1]],
 		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), &out[0], repetitions );
+		H.get_adjacency( u ), repetitions );
 #elif OPERATION == 1
 	    bench<op_intersect_size>(
 		&edges[index[v]], &edges[index[v+1]],
 		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), &out[0], repetitions );
+		H.get_adjacency( u ), repetitions );
 #elif OPERATION == 2
 	    bench<op_intersect_size_exceed>(
 		&edges[index[v]], &edges[index[v+1]],
 		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), &out[0], repetitions );
+		H.get_adjacency( u ), repetitions );
 #else
 #error "invalid value for OPERATION (0,1,2)"
 #endif
 	}
-    }
+    } );
 
     std::cerr << "Results:\n";
 
