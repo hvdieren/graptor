@@ -18,6 +18,12 @@
  * The algorithms are tested on sets drawn from the adjacency lists of
  * a graph dataset.
  *======================================================================*/
+
+/*!=====================================================================*
+ * TODO:
+ * Further variations and tweaks to consider
+ * + all variants: trim lists at the start and end similar to jumping
+ *======================================================================*/
 #include <mutex>
 #include <numeric>
 #include <random>
@@ -434,7 +440,13 @@ int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
     int repetitions = P.getOptionLongValue("-r", 3);
+    VID u_min_length = P.getOptionLongValue("--u-min-length", 0);
+    VID v_min_length = P.getOptionLongValue("--v-min-length", 0);
+    VID min_length = P.getOptionLongValue("--min-length", 0);
     const char * ifile = P.getOptionValue( "-i" );
+
+    if( min_length > 0 )
+	u_min_length = v_min_length = min_length;
 
     timer tm;
     tm.start();
@@ -472,33 +484,45 @@ int main( int argc, char *argv[] ) {
 	    }
     }
 
-    std::cerr << "Measuring for " << repetitions
-	      << " repetitions and operation "
-	      << (operation)OPERATION << "\n";
+    std::cerr << "Configuration:"
+	      << "\n  repetitions: " << repetitions
+	      << "\n  operation: " << (operation)OPERATION
+	      << "\n  v_min_length: " << v_min_length
+	      << "\n  u_min_length: " << u_min_length
+	      << "\n  min_length: " << min_length
+	      << "\n";
 
     parallel_loop( VID(0), n, [&]( VID v ) {
-	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
-	    VID u = edges[e];
-	    // Benchmark intersection operations between neighbour lists of
-	    // u and v
+	// Filter length of adjacency lists
+	if( index[v+1] - index[v] >= v_min_length ) {
+	    for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+		VID u = edges[e];
+
+		// Filter length of adjacency lists
+		if( index[u+1] - index[u] < u_min_length )
+		    continue;
+
+		// Benchmark intersection operations between neighbour lists of
+		// u and v
 #if OPERATION == 0
-	    bench<op_intersect>(
-		&edges[index[v]], &edges[index[v+1]],
-		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), repetitions );
+		bench<op_intersect>(
+		    &edges[index[v]], &edges[index[v+1]],
+		    &edges[index[u]], &edges[index[u+1]],
+		    H.get_adjacency( u ), repetitions );
 #elif OPERATION == 1
-	    bench<op_intersect_size>(
-		&edges[index[v]], &edges[index[v+1]],
-		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), repetitions );
+		bench<op_intersect_size>(
+		    &edges[index[v]], &edges[index[v+1]],
+		    &edges[index[u]], &edges[index[u+1]],
+		    H.get_adjacency( u ), repetitions );
 #elif OPERATION == 2
-	    bench<op_intersect_size_exceed>(
-		&edges[index[v]], &edges[index[v+1]],
-		&edges[index[u]], &edges[index[u+1]],
-		H.get_adjacency( u ), repetitions );
+		bench<op_intersect_size_exceed>(
+		    &edges[index[v]], &edges[index[v+1]],
+		    &edges[index[u]], &edges[index[u+1]],
+		    H.get_adjacency( u ), repetitions );
 #else
 #error "invalid value for OPERATION (0,1,2)"
 #endif
+	    }
 	}
     } );
 
