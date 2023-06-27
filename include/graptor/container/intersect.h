@@ -95,6 +95,21 @@ size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
 
 namespace merge_jump {
 
+template<typename It, typename T>
+It jump( It b, It e, T ref ) {
+    if( ref <= *b )
+	return b;
+
+    // Search for the furthest position in bounds and below ref
+    It i = b;
+    size_t off = 1;
+    while( i+off < e && *(i+off) < ref ) {
+	i += off;
+	off <<= 1;
+    }
+    return i;
+}
+
 template<typename It, typename Ot>
 Ot intersect( It lb, It le, It rb, It re, Ot o ) {
     It l = lb;
@@ -107,10 +122,10 @@ Ot intersect( It lb, It le, It rb, It re, Ot o ) {
 	    ++r;
 	} else if( *l < *r ) {
 	    ++l;
-	    l = std::lower_bound( l, le, *r );
+	    l = jump( l, le, *r );
 	} else {
 	    ++r;
-	    r = std::lower_bound( r, re, *l );
+	    r = jump( r, re, *l );
 	}
     }
     return o;
@@ -129,10 +144,10 @@ size_t intersect_size( It lb, It le, It rb, It re ) {
 	    ++r;
 	} else if( *l < *r ) {
 	    ++l;
-	    l = std::lower_bound( l, le, *r );
+	    l = jump( l, le, *r );
 	} else {
 	    ++r;
-	    r = std::lower_bound( r, re, *l );
+	    r = jump( r, re, *l );
 	}
     }
 
@@ -143,7 +158,7 @@ template<typename It>
 size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
     size_t ld = std::distance( lb, le );
     size_t rd = std::distance( rb, re );
-    if( ld > rd ) {
+    if( ld < rd ) {
 	std::swap( lb, rb );
 	std::swap( le, re );
 	std::swap( ld, rd );
@@ -164,14 +179,14 @@ size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
 	    ++r;
 	} else if( *l < *r ) {
 	    ++l;
-	    It lf = std::lower_bound( l, le, *r );
+	    It lf = jump( l, le, *r );
 	    options -= std::distance( l, lf ) + 1;
 	    l = lf;
 	    if( options <= 0 )
 		return 0;
 	} else {
 	    ++r;
-	    r = std::lower_bound( r, re, *l );
+	    r = jump( r, re, *l );
 	}
     }
 
