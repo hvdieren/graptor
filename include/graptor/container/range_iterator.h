@@ -1,10 +1,8 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_SIMPLE_RANGE_ITERATOR_H
-#define GRAPHGRIND_GRAPH_SIMPLE_RANGE_ITERATOR_H
+#ifndef GRAPTOR_CONTAINER_RANGE_ITERATOR_H
+#define GRAPTOR_CONTAINER_RANGE_ITERATOR_H
 
 namespace graptor {
-
-namespace graph {
 
 template<typename T>
 class range_iterator : public std::iterator<
@@ -39,7 +37,5 @@ private:
 
 } // namespace graph
 
-} // namespace graptor
-
-#endif // GRAPHGRIND_GRAPH_SIMPLE_RANGE_ITERATOR_H
+#endif // GRAPTOR_CONTAINER_RANGE_ITERATOR_H
 

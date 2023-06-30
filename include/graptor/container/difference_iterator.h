@@ -1,10 +1,8 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_SIMPLE_UTILS_H
-#define GRAPHGRIND_GRAPH_SIMPLE_UTILS_H
+#ifndef GRAPTOR_CONTAINER_UTILS_H
+#define GRAPTOR_CONTAINER_UTILS_H
 
 namespace graptor {
-
-namespace graph {
 
 template<typename Iter>
 class difference_iterator : public std::iterator<
@@ -77,9 +75,7 @@ auto find_maximum( Iter start, Iter end ) {
     return std::max_element( start, end );
 }
 
-} // namespace graph
-
 } // namespace graptor
 
-#endif // GRAPHGRIND_GRAPH_SIMPLE_UTILS_H
+#endif // GRAPTOR_CONTAINER_UTILS_H
 

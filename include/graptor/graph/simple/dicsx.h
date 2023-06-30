@@ -8,9 +8,9 @@
 #include "graptor/mm.h"
 #include "graptor/mm/mm.h"
 
-#include "graptor/graph/simple/range_iterator.h"
-#include "graptor/graph/simple/double_index_edge_iterator.h"
-#include "graptor/graph/simple/utils.h"
+#include "graptor/container/range_iterator.h"
+#include "graptor/container/double_index_edge_iterator.h"
+#include "graptor/container/difference_iterator.h"
 
 namespace graptor {
 

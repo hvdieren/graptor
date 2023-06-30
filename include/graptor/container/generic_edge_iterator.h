@@ -1,10 +1,8 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_SIMPLE_GENERIC_EDGE_ITERATOR_H
-#define GRAPHGRIND_GRAPH_SIMPLE_GENERIC_EDGE_ITERATOR_H
+#ifndef GRAPTOR_CONTAINER_GENERIC_EDGE_ITERATOR_H
+#define GRAPTOR_CONTAINER_GENERIC_EDGE_ITERATOR_H
 
 namespace graptor {
-
-namespace graph {
 
 template<typename lVID, typename lEID>
 class generic_edge_iterator : public std::iterator<
@@ -50,9 +48,7 @@ private:
     const VID * const m_edges;
 };
 
-} // namespace graph
-
 } // namespace graptor
 
-#endif // GRAPHGRIND_GRAPH_SIMPLE_GENERIC_EDGE_ITERATOR_H
+#endif // GRAPTOR_CONTAINER_GENERIC_EDGE_ITERATOR_H
 

@@ -1,19 +1,18 @@
 // -*- c++ -*-
-#ifndef GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
-#define GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
+#ifndef GRAPTOR_CONTAINER_HASH_TABLE_H
+#define GRAPTOR_CONTAINER_HASH_TABLE_H
 
-#include <vector>
+#include <type_traits>
 #include <algorithm>
 #include <ostream>
 
 #include "graptor/container/bitset.h"
-#include "graptor/graph/simple/conditional_iterator.h"
+#include "graptor/container/hash_fn.h"
+#include "graptor/container/conditional_iterator.h"
 
 namespace graptor {
 
-namespace graph {
-    
-template<typename T, typename Hash = std::hash<T>>
+template<typename T, typename Hash = rand_hash<T>>
 class hash_table {
 public:
     typedef T type;
@@ -349,20 +348,15 @@ private:
     hash_type m_hash;
 };
 
-
-/*
-template<typename VID>
-ostream & operator << ( ostream & os, const hash_table<VID> & s ) {
+template<typename T, typename Hash>
+ostream & operator << ( ostream & os, const hash_table<T,Hash> & s ) {
     os << "{ #" << s.size() << ": ";
     for( auto I=s.begin(), E=s.end(); I != E; ++I )
 	os << ' ' << *I;
     os << " }";
     return os;
 }
-*/
-
-} // namespace graph
 
 } // namespace graptor
 
-#endif // GRAPTOR_GRAPH_SIMPLE_HASH_TABLE_H
+#endif // GRAPTOR_CONTAINER_HASH_TABLE_H

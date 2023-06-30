@@ -26,7 +26,6 @@
  *======================================================================*/
 #include <mutex>
 #include <numeric>
-#include <random>
 #include <thread>
 
 #include <time.h>
@@ -34,106 +33,22 @@
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
-#include "graptor/graph/simple/hash_table.h"
+#include "graptor/container/hash_table.h"
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/container/intersect.h"
+#include "graptor/container/hash_fn.h"
 
-template<typename T>
-struct java_hash;
-
-template<>
-struct java_hash<uint32_t> {
-    using type = uint32_t;
-
-    explicit java_hash( uint32_t log_size ) { }
-
-    void resize( uint32_t ) { }
-
-    type operator() ( uint32_t h ) const {
-	h ^= (h >> 20) ^ (h >> 12);
-	return h ^ (h >> 7) ^ (h >> 4);
-    }
-
-    template<unsigned short VL>
-    typename vector_type_traits_vl<uint32_t,VL>::type
-    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	vtype h20 = tr::srli( h, 20 );
-	vtype h12 = tr::srli( h, 12 );
-	h = tr::bitwise_xor( h20, tr::bitwise_xor( h, h12 ) );
-	vtype h7 = tr::srli( h, 7 );
-	vtype h4 = tr::srli( h, 4 );
-	h = tr::bitwise_xor( h7, tr::bitwise_xor( h, h4 ) );
-	return h;
-    }
-};
-
-template<typename T>
-struct rand_hash;
-
-template<>
-struct rand_hash<uint32_t> {
-    // Same RNG as Blanusa's code.
-    using type = uint32_t;
-
-    explicit rand_hash( uint32_t log_size ) {
-	resize( log_size );
-    }
-
-    void resize( uint32_t log_size ) {
-	m_shift = 32 - log_size - 1;
-	m_a = rand() | 1;
-	m_b = rand() & ((uint32_t(1) << m_shift) - 1);
-    }
-
-    type operator() ( uint32_t h ) const {
-	h = h * m_a + m_b;
-	return h >> m_shift;
-    }
-
-    template<unsigned short VL>
-    typename vector_type_traits_vl<uint32_t,VL>::type
-    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	vtype a_vec = tr::set1( m_a );
-	vtype b_vec = tr::set1( m_b );
-	vtype c = tr::mul( a_vec, h );
-	vtype d = tr::add( c, b_vec );
-	vtype e = tr::srli( d, m_shift );
-	return e;
-    }
-    
-private:
-    uint32_t rand() {
-	static thread_local mt19937* generator = nullptr;
-	if( !generator ) {
-	    pthread_t self = pthread_self();
-	    generator = new mt19937( clock() + self );
-	}
-	uniform_int_distribution<int> distribution;
-	return distribution( *generator );
-    }
-
-private:
-    uint32_t m_a, m_b;
-    uint32_t m_shift;
-};
-
-using hash_fn = rand_hash<uint32_t>;
+using hash_fn = graptor::rand_hash<uint32_t>;
 
 /*! Enumeration of algorithmic variants
  */
 enum variant {
     var_merge_scalar = 0,	/**< merge-based, scalar */
     var_merge_vector = 1,	/**< merge-based, vector */
-    var_merge_jump = 2,	/**< merge-based, scalar and jumping ahead */
+    var_merge_jump = 2,		/**< merge-based, scalar and jumping ahead */
     var_hash_scalar = 3,	/**< hash-based, scalar */
     var_hash_vector = 4,	/**< hash-based, vector */
-    var_N = 5 	 	/**< number of options */
+    var_N = 5 	 		/**< number of options */
 };
 
 /*! Enumeration of operation types
@@ -197,7 +112,7 @@ template<variant, operation>
 size_t
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       const graptor::graph::hash_table<VID,hash_fn> & ht,
+       const graptor::hash_table<VID,hash_fn> & ht,
        VID * out );
 
 template<>
@@ -205,7 +120,7 @@ size_t
 bench<var_merge_scalar,op_intersect>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_scalar::intersect( lb, le, rb, re, out ) - out;
 }
@@ -215,7 +130,7 @@ size_t
 bench<var_merge_scalar,op_intersect_size>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_scalar::intersect_size( lb, le, rb, re );
 }
@@ -225,7 +140,7 @@ size_t
 bench<var_merge_scalar,op_intersect_size_exceed>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     size_t x = exceed_threshold( lb, le, rb, re );
     return graptor::merge_scalar::intersect_size_exceed( lb, le, rb, re, x );
@@ -236,7 +151,7 @@ size_t
 bench<var_merge_vector,op_intersect>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_vector::intersect( lb, le, rb, re, out ) - out;
 }
@@ -246,7 +161,7 @@ size_t
 bench<var_merge_vector,op_intersect_size>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_vector::intersect_size( lb, le, rb, re );
 }
@@ -256,7 +171,7 @@ size_t
 bench<var_merge_vector,op_intersect_size_exceed>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     size_t x = exceed_threshold( lb, le, rb, re );
     return graptor::merge_vector::intersect_size_exceed( lb, le, rb, re, x );
@@ -267,7 +182,7 @@ size_t
 bench<var_merge_jump,op_intersect>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_jump::intersect( lb, le, rb, re, out ) - out;
 }
@@ -277,7 +192,7 @@ size_t
 bench<var_merge_jump,op_intersect_size>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::merge_jump::intersect_size( lb, le, rb, re );
 }
@@ -287,7 +202,7 @@ size_t
 bench<var_merge_jump,op_intersect_size_exceed>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     size_t x = exceed_threshold( lb, le, rb, re );
     return graptor::merge_jump::intersect_size_exceed( lb, le, rb, re, x );
@@ -298,7 +213,7 @@ size_t
 bench<var_hash_scalar,op_intersect>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::hash_scalar::intersect( lb, le, ht, out ) - out;
 }
@@ -308,7 +223,7 @@ size_t
 bench<var_hash_scalar,op_intersect_size>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::hash_scalar::intersect_size( lb, le, ht );
 }
@@ -318,7 +233,7 @@ size_t
 bench<var_hash_scalar,op_intersect_size_exceed>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     size_t x = exceed_threshold( lb, le, rb, re );
     return graptor::hash_scalar::intersect_size_exceed( lb, le, ht, x );
@@ -329,7 +244,7 @@ size_t
 bench<var_hash_vector,op_intersect>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::hash_vector::intersect( lb, le, ht, out ) - out;
 }
@@ -339,7 +254,7 @@ size_t
 bench<var_hash_vector,op_intersect_size>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     return graptor::hash_vector::intersect_size( lb, le, ht );
 }
@@ -349,7 +264,7 @@ size_t
 bench<var_hash_vector,op_intersect_size_exceed>(
     const VID * lb, const VID * le,
     const VID * rb, const VID * re,
-    const graptor::graph::hash_table<VID,hash_fn> & ht,
+    const graptor::hash_table<VID,hash_fn> & ht,
     VID * out ) {
     size_t x = exceed_threshold( lb, le, rb, re );
     return graptor::hash_vector::intersect_size_exceed( lb, le, ht, x );
@@ -359,7 +274,7 @@ template<variant var, operation op>
 double
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       const graptor::graph::hash_table<VID,hash_fn> & ht,
+       const graptor::hash_table<VID,hash_fn> & ht,
        VID * out,
        int repeat,
        size_t ref ) {
@@ -405,7 +320,7 @@ template<operation op>
 void
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       graptor::graph::hash_table<VID,hash_fn> & ht,
+       graptor::hash_table<VID,hash_fn> & ht,
        int repeat ) {
     size_t len = std::min( le - lb, re - rb );
     VID * out = new VID[len];

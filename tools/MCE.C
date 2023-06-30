@@ -48,6 +48,7 @@
 #include "graptor/graph/simple/hadjt.h"
 
 #include "graptor/container/bitset.h"
+#include "graptor/container/hash_fn.h"
 
 #define NOBENCH
 #define MD_ORDERING 0
@@ -58,6 +59,9 @@
 #undef VARIANT
 #undef MD_ORDERING
 #undef NOBENCH
+
+//! Choice of hash function for compilation unit
+using hash_fn = graptor::rand_hash<uint32_t>;
 
 enum cvt_pdg_variable_name {
     var_dcount = var_kc_num + 0,
@@ -117,35 +121,6 @@ struct murmur_hash<uint32_t> {
 	return h;
     }
 };
-
-template<typename T>
-struct java_hash;
-
-template<>
-struct java_hash<uint32_t> {
-    using type = uint32_t;
-
-    type operator() ( uint32_t h ) const {
-	h ^= (h >> 20) ^ (h >> 12);
-	return h ^ (h >> 7) ^ (h >> 4);
-    }
-
-    template<unsigned short VL>
-    typename vector_type_traits_vl<uint32_t,VL>::type
-    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	vtype h20 = tr::srli( h, 20 );
-	vtype h12 = tr::srli( h, 12 );
-	h = tr::bitwise_xor( h20, tr::bitwise_xor( h, h12 ) );
-	vtype h7 = tr::srli( h, 7 );
-	vtype h4 = tr::srli( h, 4 );
-	h = tr::bitwise_xor( h4, tr::bitwise_xor( h, h4 ) );
-	return h;
-    }
-};
-
 
 struct variant_statistics {
     variant_statistics()
@@ -445,11 +420,11 @@ public:
 			rtype c = rtr::sllv( one, off );
 #if __AVX512F__
 			// using bitmask
-			auto b = adj.template multi_contains<hVID,RVL>( v );
+			auto b = adj.template multi_contains<hVID,RVL>( v, target::mt_mask() );
 			rtype d = rtr::blend( b, rtr::setzero(), c );
 			mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
 #elif __AVX2__
-			itype b = adj.template multi_contains<hVID,RVL>( v );
+			itype b = adj.template multi_contains<hVID,RVL>( v, target::mt_vmask() );
 			rtype br = conversion_traits<logical<sizeof(hVID)>,logical<sizeof(type)>,RVL>::convert( b );
 			rtype d = rtr::bitwise_and( br, c );
 			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) );
@@ -1760,9 +1735,9 @@ mce_iterate_xp_iterative(
 		continue;
 	    } else
 #if __AVX512F__
-		if( ce_new <= 256 )
-#else
 		if( ce_new <= 512 )
+#else
+		if( ce_new <= 256 )
 #endif
 		{
 		if( ce_new <= 32 ) {
@@ -3507,7 +3482,7 @@ void mce_top_level(
 	timer tm;
 	tm.start();
 	GraphBuilderInduced<
-	    graptor::graph::GraphHAdjTable<VID,EID,java_hash<VID>>>
+	    graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
 	    ibuilder( G, v, cut, core_order );
 	const auto & HG = ibuilder.get_graph();
 

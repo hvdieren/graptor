@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <ostream>
 
-#include "graptor/graph/simple/conditional_iterator.h"
+#include "graptor/container/conditional_iterator.h"
 
 namespace graptor {
 
@@ -40,13 +40,13 @@ public:
     bool empty() const { return size() == 0; }
 
     auto begin() const {
-	return graptor::graph::make_conditional_iterator(
+	return graptor::make_conditional_iterator(
 	    m_table, [&]( const type * && it ) {
 		return it != m_table+m_size && *it != invalid_element;
 	    } );
     }
     auto end() const {
-	return graptor::graph::make_conditional_iterator(
+	return graptor::make_conditional_iterator(
 	    m_table+m_size, [&]( const type * && it ) {
 		return it != m_table+m_size && *it != invalid_element;
 	    } );

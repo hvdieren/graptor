@@ -131,6 +131,7 @@ struct evaluator {
 	    auto mask0 = arg1.mpack().get_mask_for( arg1.value() );
 	    auto mask = mask0 && arg1.value();
 	    auto mpack2 = sb::create_mask_pack( mask );
+/*
 	    if constexpr ( E1::VL == 1 ) {
 		using Tr = typename binop<E1,E2,BinOp>::data_type;
 		// Short-circuit evaluation for scalar execution
@@ -142,7 +143,7 @@ struct evaluator {
 		} else {
 		    return make_rvalue( simd::create_zero<Tr>(), mpack2 );
 		}
-	    } else {
+		} else */ {
 		return evaluate( bop.data2(), mpack2 );
 	    }
 	} else if constexpr ( std::is_same_v<BinOp,binop_seq> ) {

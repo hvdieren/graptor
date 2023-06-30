@@ -1,10 +1,8 @@
 // -*- C++ -*-
-#ifndef GRAPHGRIND_GRAPH_SIMPLE_CONDITIONAL_ITERATOR_H
-#define GRAPHGRIND_GRAPH_SIMPLE_CONDITIONAL_ITERATOR_H
+#ifndef GRAPTOR_CONTAINER_CONDITIONAL_ITERATOR_H
+#define GRAPTOR_CONTAINER_CONDITIONAL_ITERATOR_H
 
 namespace graptor {
-
-namespace graph {
 
 template<typename Iterator, typename Cond>
 class conditional_iterator : public std::iterator<
@@ -51,9 +49,7 @@ auto make_conditional_iterator( Iterator && it, Cond && cond ) {
 	std::forward<Cond>( cond ) );
 }
 
-} // namespace graph
-
 } // namespace graptor
 
-#endif // GRAPHGRIND_GRAPH_SIMPLE_CONDITIONAL_ITERATOR_H
+#endif // GRAPTOR_CONTAINER_CONDITIONAL_ITERATOR_H
 
