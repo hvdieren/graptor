@@ -236,7 +236,7 @@ public:
 
     static type add( type a, type b ) { return _mm512_add_epi32( a, b ); }
     static type sub( type a, type b ) { return _mm512_sub_epi32( a, b ); }
-    // static type mul( type a, type b ) { return _mm512_mul_epi32( a, b ); }
+    static type mul( type a, type b ) { return _mm512_mullo_epi32( a, b ); }
     // static type div( type a, type b ) { return _mm512_div_epi32( a, b ); }
 
     static type mulhi( type a, type b ) {
