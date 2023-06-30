@@ -165,14 +165,26 @@ public:
 	return intersect_size_scalar( I, E, exceed );
     }
 
-    template<typename atype, unsigned short VL>
-    auto multi_contains( typename vector_type_traits_vl<atype,VL>::type
-			 index ) const {
+    template<typename atype, unsigned short VL, typename MT>
+    std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+	typename vector_type_traits_vl<atype,VL>::mask_type,
+	typename vector_type_traits_vl<atype,VL>::vmask_type>
+    multi_contains( typename vector_type_traits_vl<atype,VL>::type
+			 index, MT ) const {
 	using tr = vector_type_traits_vl<atype,VL>;
 	using vtype = typename tr::type;
+#if __AVX512F__
+	using mtr = typename tr::mask_traits;
+	using mkind = target::mt_mask;
+#else
+	using mtr = typename tr::vmask_traits;
+	using mkind = target::mt_vmask;
+#endif
+	using mtype = typename mtr::type;
 
-	const vtype vinv = tr::setone(); // invalid_element == -1
-	const vtype hmask = tr::srli( tr::setone(), tr::B - m_log_size );
+	const vtype ones = tr::setone();
+	const vtype vinv = ones; // invalid_element == -1
+	const vtype hmask = tr::srli( ones, tr::B - m_log_size );
 	vtype v_ins = tr::setzero();
 
 	size_type s_ins = 0;
@@ -181,13 +193,12 @@ public:
 	vtype h = m_hash.template vectorized<VL>( v );
 	vtype vidx = tr::bitwise_and( h, hmask );
 	vtype e = tr::gather( m_table, vidx );
-	vtype mi = tr::cmpeq( e, vinv, target::mt_vmask() );
-	vtype mv = tr::cmpeq( e, v, target::mt_vmask() );
-	vtype miv = tr::bitwise_or( mi, mv );
-	vtype imiv = tr::bitwise_invert( miv );
+	mtype imi = tr::cmpne( e, vinv, mkind() );
+	mtype imv = tr::cmpne( e, v, mkind() );
+	mtype imiv = mtr::logical_and( imi, imv );
 	// Some lanes are neither empty nor the requested value and
 	// need further probes.
-	while( !tr::is_zero( imiv ) ) {
+	while( !mtr::is_zero( imiv ) ) {
 	    // TODO: hash table load is targeted below 50%. Due to the
 	    // birthday paradox, there will be frequent collisions still
 	    // and it may be useful to make multiple vectorized probes
@@ -195,14 +206,17 @@ public:
 	    // active lanes to decide.
 	    vidx = tr::add( vidx, tr::setoneval() );
 	    vidx = tr::bitwise_and( vidx, hmask );
-	    e = tr::gather( m_table, vidx, imiv );
-	    mi = tr::cmpeq( e, vinv, target::mt_vmask() );
-	    vtype mv2 = tr::cmpeq( e, v, target::mt_vmask() );
-	    mv = tr::blend( imiv, mv, mv2 );
-	    miv = tr::bitwise_or( mi, mv2 );
-	    imiv = tr::bitwise_andnot( miv, imiv );
+	    // set default value for gather to prior e such that it acts
+	    // as a blend.
+	    e = tr::gather( e, m_table, vidx, imiv );
+	    mtype imi = tr::cmpne( e, vinv, mkind() );
+	    mtype imv = tr::cmpne( e, v, mkind() );
+	    imiv = mtr::logical_and( imi, imv );
 	}
-	return mv;
+	// Return success if found, which equals imv inverted
+	// It just takes one cycle to recompute, same as invert. The code
+	// below is most compact to achieve the correct return type.
+	return tr::cmpeq( e, v, MT() );
     }
 
 private:

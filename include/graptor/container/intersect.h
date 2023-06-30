@@ -254,7 +254,8 @@ intersect( const T * lb, const T * le, const HT & htable, Ot & out ) {
 
     while( lb+VL <= le ) {
 	type v = tr::loadu( lb );
-	auto m = tr::asmask( htable.template multi_contains<T,VL>( v ) );
+	typename target::mask_type_traits<VL>::type m
+	    = htable.template multi_contains<T,VL>( v, target::mt_mask() );
 	if constexpr ( store )
 	    tr::cstoreu( out, m, v );
 	out += _popcnt32( m );
@@ -282,7 +283,7 @@ intersect_size_exceed(
 
     while( l+VL <= le ) {
 	type v = tr::loadu( l );
-	auto m = tr::asmask( htable.template multi_contains<T,VL>( v ) );
+	auto m = htable.template multi_contains<T,VL>( v, target::mt_mask() );
 	options -= VL - _popcnt32( m );
 	if( options <= 0 ) {
 	    lb = l;
