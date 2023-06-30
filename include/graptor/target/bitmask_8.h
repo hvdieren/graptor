@@ -62,6 +62,9 @@ struct mask_type_traits<8> {
 	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
     }
 
+    static type blend( type c, type no, type yes ) {
+	return ( ~c & no ) | ( c & yes );
+    }
     static type logical_and( type l, type r ) {
 	return l & r;
     }

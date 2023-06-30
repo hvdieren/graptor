@@ -46,6 +46,8 @@ struct mask_type_traits<8> {
 	return m >> 4;
     }
 
+    static bool is_zero( type a ) { return _kortestz_mask8_u8( a, a ); }
+
     static uint32_t find_first( type a ) {
     	return _tzcnt_u32( ~(uint32_t)a );
     }
@@ -53,6 +55,9 @@ struct mask_type_traits<8> {
 	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
     }
 
+    static auto blend( type c, type no, type yes ) {
+	return logical_or( logical_andnot( c, no ), logical_and( c, yes ) );
+    }
     static auto logical_invert( type k ) {
 	return _knot_mask8( k );
     }

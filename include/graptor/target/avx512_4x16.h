@@ -35,6 +35,7 @@ public:
     using vmask_type = __m512i;
     using mask_traits = mask_type_traits<vlen>;
     using mask_type = typename mask_traits::type;
+    using vmask_traits = avx512_4x16<uint32_t>;
     using itype = __m512i;
     using int_type = uint32_t;
 
@@ -565,6 +566,11 @@ public:
     static type gather_w( const member_type *a, type b, vmask_type vmask ) {
 	return gather_w<Scale>( a, b, asmask( vmask ) );
     }
+    template<unsigned short Scale>
+    static type gather_w( type d, const member_type *a, type b,
+			  mask_type mask ) {
+	return _mm512_mask_i32gather_epi32( d, mask, b, a, Scale );
+    }
     static type gather( const member_type *a, type b ) {
 	return _mm512_i32gather_epi32( b, (const long long *)a, W );
     }
@@ -573,6 +579,9 @@ public:
     }
     static type gather( const member_type *a, type b, vmask_type vmask ) {
 	return gather( a, b, asmask( vmask ) );
+    }
+    static type gather( type d, const member_type *a, type b, mask_type mask ) {
+	return gather_w<W>( d, a, b, mask );
     }
     static void scatter( member_type *a, itype b, type c ) {
 	_mm512_i32scatter_epi32( (void *)a, b, c, W );

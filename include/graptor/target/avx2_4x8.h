@@ -34,6 +34,7 @@ public:
 
     using mask_traits = mask_type_traits<8>;
     using mask_type = typename mask_traits::type;
+    using vmask_traits = avx2_4x8<uint32_t>;
 
     using mt_preferred = target::mt_vmask;
 
@@ -713,6 +714,23 @@ public:
     static type gather_w( const member_type *a, itype b, vmask_type vmask ) {
 	return _mm256_mask_i32gather_epi32( setzero(), (const int *)a, b, vmask, Scale );
     }
+    template<unsigned short Scale>
+    static type gather_w( type d, const member_type *a, itype b,
+			  mask_type mask ) {
+#if __AVX512F__ && __AVX512VL__
+	return _mm256_mmask_i32gather_epi32(
+	    d, mask, b, reinterpret_cast<const int *>( a ), Scale );
+#else
+	return _mm256_mask_i32gather_epi32(
+	    d, reinterpret_cast<const int *>( a ),
+	    b, asvector(mask), Scale );
+#endif
+    }
+    template<unsigned short Scale>
+    static type gather_w( type d, const member_type *a, itype b,
+			  vmask_type vmask ) {
+	return _mm256_mask_i32gather_epi32( d, (const int *)a, b, vmask, Scale );
+    }
 
     static type gather( const member_type *a, itype b ) {
 	return gather_w<W>( a, b );
@@ -722,6 +740,14 @@ public:
     }
     static type gather( const member_type *a, itype b, vmask_type vmask ) {
 	return gather_w<W>( a, b, vmask );
+    }
+    static type gather( type d, const member_type *a, itype b,
+			vmask_type vmask ) {
+	return gather_w<W>( d, a, b, vmask );
+    }
+    static type gather( type d, const member_type *a, itype b,
+			mask_type mask ) {
+	return gather_w<W>( d, a, b, mask );
     }
     static type gather( const member_type *a, vpair<itype,itype> b,
 			vpair<vmask_type,vmask_type> vmask );

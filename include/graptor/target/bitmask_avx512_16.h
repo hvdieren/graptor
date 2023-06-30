@@ -50,6 +50,8 @@ struct mask_type_traits<16> {
     static type set1( bool v ) { return _mm512_int2mask( ~(int(v)-1) ); }
     static type setalternating() { return 0x5555U; }
 
+    static bool is_zero( type a ) { return _kortestz_mask16_u8( a, a ); }
+
     static type cmpne( type l, type r, target::mt_mask ) {
 	return _kxor_mask16( l, r );
     }
