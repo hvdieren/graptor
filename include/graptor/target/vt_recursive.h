@@ -114,6 +114,26 @@ struct vt_recursive {
 	return type { lo_half_traits::setl0( a ), hi_half_traits::setzero() };
     }
 
+    static type setglobaloneval( size_t pos ) {
+	if( pos < lo_half_traits::size*8 )
+	    return type { lo_half_traits::setglobaloneval( pos ),
+			  hi_half_traits::setzero() };
+	else
+	    return type { lo_half_traits::setzero(),
+			  hi_half_traits::setglobaloneval(
+			      pos - lo_half_traits::size*8 ) };
+    }
+    // Generate a mask where all bits l and above are set, and below l are 0
+    static type himask( unsigned pos ) {
+	if( pos < lo_half_traits::size*8 )
+	    return type { lo_half_traits::himask( pos ),
+			  hi_half_traits::setone() };
+	else
+	    return type { lo_half_traits::setzero(),
+			  hi_half_traits::himask(
+			      pos - lo_half_traits::size*8 ) };
+    }
+
     static member_type lane( type a, unsigned int l ) {
 	if( l >= lo_half_traits::vlen )
 	    return hi_half_traits::lane( a.b, l-lo_half_traits::vlen );
@@ -509,6 +529,11 @@ struct vt_recursive {
 	return traits::set_pair(
 	    hi_half_traits::template lzcnt<ReturnTy>( upper_half( a ) ),
 	    lo_half_traits::template lzcnt<ReturnTy>( lower_half( a ) ) );
+    }
+    static type popcnt( type a ) {
+	return set_pair(
+	    hi_half_traits::popcnt( upper_half( a ) ),
+	    lo_half_traits::popcnt( lower_half( a ) ) );
     }
     
     static type loadu( const member_type * addr ) {
