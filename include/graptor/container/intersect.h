@@ -492,7 +492,6 @@ intersect_size_exceed( const T* lb, const T* le, const T* rb, const T* re,
 
 } // namespace merge_vector
 
-
 } // namespace graptor
 
 #endif // GRAPTOR_CONTAINER_INTERSECT_H

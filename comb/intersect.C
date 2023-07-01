@@ -301,6 +301,9 @@ struct timing {
     double tm;
 };
 
+//! Mutually exclusive access to timings
+static std::mutex timings_mux;
+
 timing timings[var_N][MAX_CLASS][MAX_CLASS];
 
 void
@@ -312,6 +315,7 @@ record( size_t l, size_t r, double tm, variant var, operation op ) {
     if( cr >= MAX_CLASS )
 	cr = MAX_CLASS-1;
 
+    std::lock_guard<std::mutex> g( timings_mux );
     timings[(int)var][cl][cr].tm += tm;
     timings[(int)var][cl][cr].cnt++;
 }

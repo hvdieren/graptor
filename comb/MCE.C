@@ -20,7 +20,6 @@
 // + Check that 32-bit is faster than 64-bit for same-sized problems;
 //   same for SSE vs AVX
 
-// A Pattern Decomposed Graph
 #include <signal.h>
 #include <sys/time.h>
 
@@ -46,9 +45,13 @@
 #include "graptor/graph/simple/dicsx.h"
 #include "graptor/graph/simple/hadj.h"
 #include "graptor/graph/simple/hadjt.h"
+#include "graptor/graph/simple/cutout.h"
+#include "graptor/graph/simple/dense.h"
+#include "graptor/graph/simple/blocked.h"
 
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
+#include "graptor/container/intersect.h"
 
 #define NOBENCH
 #define MD_ORDERING 0
@@ -63,6 +66,10 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
+using graptor::graph::DenseMatrix;
+using graptor::graph::BinaryMatrix;
+using graptor::graph::BlockedBinaryMatrix;
+
 enum cvt_pdg_variable_name {
     var_dcount = var_kc_num + 0,
     var_max = var_kc_num + 1,
@@ -71,9 +78,6 @@ enum cvt_pdg_variable_name {
 };
 
 static bool verbose = false;
-
-template<unsigned Bits, typename sVID, typename sEID>
-class DenseMatrix;
 
 template<typename T>
 struct murmur_hash;
@@ -252,549 +256,6 @@ struct per_thread_statistics {
 
 per_thread_statistics mce_stats;
 
-
-// TODO: matrix construction often takes longer than solving the sub-problem
-// Rectangular binary matrix
-template<unsigned Bits, typename sVID, typename sEID>
-class BinaryMatrix {
-    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
-    static constexpr unsigned bits_per_lane = sizeof(type)*8;
-    static constexpr unsigned short VL = Bits / bits_per_lane;
-public:
-    using tr = vector_type_traits_vl<type,VL>;
-    using row_type = typename tr::type;
-
-    static_assert( VL * bits_per_lane == Bits );
-
-public:
-    static constexpr size_t MAX_COL_VERTICES = bits_per_lane * VL;
-
-public:
-    BinaryMatrix() : m_matrix_alc( nullptr ) { }
-    // The neighbours are split up in ineligible neighbours (initial X set)
-    // and eligible neighbours (initial P set). They are already sorted
-    // by decreasing coreness in the gID array. Their position in this array
-    // reflects their relative index in this matrix. Columns are vertices in
-    // gID from cs to ce; rows are gID elements rs to re.
-    template<typename DID, typename AddDegree,
-	     typename gVID = VID, typename gEID = EID>
-    BinaryMatrix( const GraphCSx & G,
-		  gVID rs, gVID re,
-		  gVID cs, gVID ce,
-		  const sVID * const neighbours, // sorted order of gVID
-		  const gVID * const gID, // neighbours in degeneracy order
-		  const sVID * const n2s, // map idx in neighbours to idx in gID
-		  DID * m_degree,
-		  AddDegree && )
-	: m_row_start( rs ), m_rows( re-rs ),
-	  m_col_start( cs ), m_cols( ce-cs ),
-	  m_s2g( gID ) {
-	assert( m_cols <= MAX_COL_VERTICES
-		&& "Cap on number of vertices that fit in bitmask" );
-	assert( ( m_cols + bits_per_lane - 1 ) / bits_per_lane <= VL );
-	gVID n = G.numVertices();
-	gEID m = G.numEdges();
-	const gEID * const gindex = G.getIndex();
-	const gVID * const gedges = G.getEdges();
-
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-
-	// Place edges
-	VID ni = 0;
-	m_m = 0;
-	for( VID r=rs; r < re; ++r ) {
-	    VID u = gID[r];
-	    VID deg = 0;
-
-	    row_type row_u = tr::setzero();
-
-	    const gVID * p = &neighbours[0];
-	    const gVID * pe = &neighbours[re];
-	    const gVID * q = &gedges[gindex[u]];
-	    const gVID * qe = &gedges[gindex[u+1]];
-
-	    while( p != pe && q != qe ) {
-		if( *p == *q ) {
-		    // Common neighbour
-		    VID c = n2s[p-&neighbours[0]];
-		    if( cs <= c && c < ce ) {
-			row_u = tr::bitwise_or( row_u, create_singleton( c ) );
-			++deg;
-		    }
-		    ++p;
-		    ++q;
-		} else if( *p < *q )
-		    ++p;
-		else
-		    ++q;
-	    }
-
-	    // assert( deg <= m_cols );
-	    // assert( get_size( row_u ) == deg );
-	    // assert( VL * (r-rs) <= VL * m_rows );
-	    tr::store( &m_matrix[VL * (r-rs)], row_u );
-	    if constexpr ( AddDegree::value )
-		m_degree[r] += deg;
-	    else
-		m_degree[r] = deg;
-	    m_m += deg;
-	}
-    }
-    // In this variation, hVIDs are already sorted by core_order
-    // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash, typename DID,
-	     typename AddDegree>
-    BinaryMatrix( const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-		  const hVID * XP,
-		  hVID ne, hVID ce,
-		  DID * m_degree,
-		  AddDegree && ) // correlates with xp vs px matrix
-	: m_row_start( AddDegree::value == false ? 0 : ne ),
-	  m_rows( AddDegree::value == false ? ce : ce-ne ), // X
-	  m_col_start( AddDegree::value == false ? ne : 0 ),
-	  m_cols( AddDegree::value == false ? ce-ne : ne ), // P
-	  m_s2g( XP ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
-	assert( AddDegree::value != false || ce-ne <= Bits ); // xp - side col
-	assert( AddDegree::value != true || ne <= Bits ); // px - bottom rows
-
-	// Vertices in X and P are independently already sorted by core order.
-	// We do not reorder, primarily because only the order in P matters
-	// for efficiency of enumeration.
-	// Do we need to copy, or can we just keep a pointer to XP?
-	// std::copy( XP, XP+ce, m_s2g );
-
-	assert( AddDegree::value != false
-		|| ( ce-ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
-	assert( AddDegree::value != true
-		|| ( ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
-
-	// Place edges
-	hVID ni = 0;
-	m_m = 0;
-	for( hVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
-	    hVID u = m_s2g[r]; // or XP[r]
-	    hVID deg = 0;
-
-	    row_type row_u = tr::setzero();
-	    auto & adj = G.get_adjacency( u );
-
-	    // Intersect XP with adjacency list
-#if __AVX512F__
-	    static constexpr unsigned RVL = 512/Bits;
-#elif __AVX2__
-	    static constexpr unsigned RVL = 256/Bits;
-#elif __SSE42__
-	    static constexpr unsigned RVL = 128/Bits;
-#else
-	    static constexpr unsigned RVL = 1;
-#endif
-	    if constexpr ( sizeof(hVID)*8 == Bits && RVL >= 4 ) {
-		hVID l = ne;
-		if( ce-ne >= RVL ) {
-		    // A vertex identifier is not wider than a row of the matrix.
-		    // We can fit multiple row_type into a vector
-		    using itr = vector_type_traits_vl<hVID,RVL>;
-		    using rtr = vector_type_traits_vl<type,RVL>;
-		    using itype = typename itr::type;
-		    using rtype = typename rtr::type;
-		    rtype one = rtr::setoneval();
-		    itype ione = itr::setoneval();
-		    rtype step = rtr::slli( one, ilog2( RVL ) );
-		    rtype off = rtr::set1inc0();
-		    rtype mrow = rtr::setzero();
-		    itype mdeg = itr::setzero();
-		    while( l+VL <= ce ) {
-			itype v = itr::loadu( &XP[l] );
-			rtype c = rtr::sllv( one, off );
-#if __AVX512F__
-			// using bitmask
-			auto b = adj.template multi_contains<hVID,RVL>( v, target::mt_mask() );
-			rtype d = rtr::blend( b, rtr::setzero(), c );
-			mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
-#elif __AVX2__
-			itype b = adj.template multi_contains<hVID,RVL>( v, target::mt_vmask() );
-			rtype br = conversion_traits<logical<sizeof(hVID)>,logical<sizeof(type)>,RVL>::convert( b );
-			rtype d = rtr::bitwise_and( br, c );
-			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) );
-#else
-			assert( 0 && "NYI" );
-#endif
-			mrow = rtr::bitwise_or( mrow, d );
-			off = rtr::add( off, step );
-			l += VL;
-		    }
-		    row_u = rtr::reduce_bitwiseor( mrow );
-		    deg = itr::reduce_add( mdeg );
-		}
-		while( l < ce ) {
-		    hVID xp = XP[l];
-		    if( adj.contains( xp ) ) {
-			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
-			++deg;
-		    }
-		    ++l;
-		}
-	    } else {
-		for( hVID l=ne; l < ce; ++l ) {
-		    hVID xp = XP[l];
-		    // TODO: vectorized lookup (VL values at once) + customise
-		    //       the construction of the row_u by inserting blocks
-		    //       of VL bits at a time.
-		    if( adj.contains( xp ) ) {
-			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
-			++deg;
-		    }
-		}
-	    }
-
-	    tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
-	    if constexpr ( AddDegree::value )
-		m_degree[r] += deg;
-	    else
-		m_degree[r] = deg;
-	    m_m += deg;
-	}
-    }
-
-    ~BinaryMatrix() {
-	if( m_matrix_alc != nullptr ) {
-	    delete[] m_matrix_alc;
-	    m_matrix_alc = nullptr;
-	}
-    }
-
-    sVID numRows() const { return m_rows; }
-    sVID numCols() const { return m_cols; }
-    sEID numEdges() const { return m_m; }
-
-    row_type get_row( sVID v ) const {
-	// assert( m_row_start <= v && v < m_row_start+m_rows );
-	return tr::load( &m_matrix[VL * (v - m_row_start)] );
-    }
-
-    row_type create_singleton( sVID v ) const {
-	// assert( m_col_start <= v && v < m_col_start + m_cols );
-	return tr::setglobaloneval( v - m_col_start );
-    }
-
-    row_type get_himask( sVID v ) const {
-	// assert( m_col_start <= v && v <= m_col_start + m_cols );
-	return tr::himask( v+1 - m_col_start );
-    }
-
-    row_type create_singleton_rel( sVID v ) const {
-	// assert( 0 <= v && v < m_cols );
-	return tr::setglobaloneval( v );
-    }
-
-    row_type get_himask_rel( sVID v ) const {
-	// assert( 0 <= v && v <= m_cols );
-	return tr::himask( v+1 );
-    }
-
-    sVID get_size( row_type r ) const {
-	return target::allpopcnt<sVID,type,VL>::compute( r );
-    }
-
-    sVID get_col_start() const { return m_col_start; }
-
-#if 0
-    void complement() {
-	row_type mask = tr::bitwise_invert( tr::himask( m_cols ) );
-	for( VID i=0; i < m_rows; ++i ) {
-	    VID r = i + m_row_start;
-	    row_type b = tr::load( &m_matrix[i * VL] );
-	    row_type c = tr::bitwise_xor( mask, b );
-	    if( r >= m_col_start && r < m_col_start + m_cols ) { // TODO: can be faster
-		row_type s = create_singleton_rel( i );
-		c = tr::bitwise_andnot( s, c );
-	    }
-	    // Leave disconnected vertices as disconnected
-	    if( !tr::is_zero( b ) )
-		tr::store( &m_matrix[i * VL], c );
-	}
-	m_m = m_rows * m_cols - m_m; // flip count
-    }
-#endif
-
-private:
-    sVID m_rows;
-    sVID m_cols;
-    sVID m_row_start;
-    sVID m_col_start;
-    sEID m_m;
-    type * m_matrix;
-    type * m_matrix_alc;
-    const sVID * m_s2g;
-};
-
-template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>
-class BlockedBinaryMatrix {
-    static constexpr unsigned MAX_COL_VERTICES = PBits;
-    using DID = std::conditional_t<XBits+PBits<=256,uint8_t,uint16_t>;
-
-public:
-    // The neighbours are split up in ineligible neighbours (initial X set)
-    // and eligible neighbours (initial P set). They are already sorted
-    // by decreasing coreness in the gID array. Their position in this array
-    // reflects their relative index in this matrix. Columns are vertices in
-    // gID from cs to ce; rows are gID elements rs to re.
-    template<typename gVID = VID, typename gEID = EID>
-    BlockedBinaryMatrix(
-	const GraphCSx & G, gVID v,
-	gVID num_neighbours, const gVID * const neighbours,
-	const gVID * const s2g,
-	const gVID * const n2s,
-	gVID start_pos,
-	const gVID * const core_order )
-	: m_s2g( s2g ) {
-	gVID n = G.numVertices();
-	gEID m = G.numEdges();
-	const gEID * const gindex = G.getIndex();
-	const gVID * const gedges = G.getEdges();
-
-	// Set of eligible neighbours
-	VID ns = num_neighbours;
-	assert( ns - start_pos <= MAX_COL_VERTICES );
-
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    return;
-	}
-#endif
-
-	// Construct two matrices
-	// Rows: X union P; columns: P
-	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, VID(0), ns, start_pos, ns, neighbours, m_s2g, n2s,
-	    m_degree, std::false_type() );
-	// Rows: P; columns: X
-	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, start_pos, ns, VID(0), start_pos, neighbours, m_s2g, n2s,
-	    m_degree, std::true_type() );
-    }
-    // In this variation, hVIDs are already sorted by core_order
-    // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash>
-    BlockedBinaryMatrix(
-	const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-	const hVID * XP,
-	hVID ne, hVID ce )
-	: m_s2g( XP ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
-
-	// Vertices in X and P are independently already sorted by core order.
-	// We do not reorder, primarily because only the order in P matters
-	// for efficiency of enumeration.
-
-	// Construct two matrices
-	// Rows: X union P; columns: P
-	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, XP, ne, ce, m_degree, std::false_type() );
-	// Rows: P; columns: X
-	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, XP, ne, ce, m_degree, std::true_type() );
-    }
-
-#if 0
-    void complement() {
-	m_xp.complement();
-	m_px.complement();
-
-	VID n = numVertices();
-	for( VID i=0; i < n; ++i )
-	    m_degree[i] = n - 1 - m_degree[i]; // -1 for self-edge
-    }
-#endif
-
-    const BinaryMatrix<PBits,sVID,sEID> & get_xp() const { return m_xp; }
-    const BinaryMatrix<XBits,sVID,sEID> & get_px() const { return m_px; }
-    const DID * get_degree() const { return &m_degree[0]; }
-
-    sVID numVertices() const { return m_xp.numRows(); }
-    sVID numXVertices() const { return m_px.numCols(); }
-    sEID numEdges() const { return m_xp.numEdges() + m_px.numEdges(); }
-
-private:
-    BinaryMatrix<PBits,sVID,sEID> m_xp;
-    BinaryMatrix<XBits,sVID,sEID> m_px;
-    const sVID * m_s2g; // on loan
-    DID m_degree[XBits+PBits];
-};
-
-template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>
-sVID get_pivot(
-    const BlockedBinaryMatrix<XBits,PBits,sVID,sEID> & mtx,
-    typename BinaryMatrix<PBits,sVID,sEID>::row_type Pp,
-    typename BinaryMatrix<PBits,sVID,sEID>::row_type Xp,
-    typename BinaryMatrix<XBits,sVID,sEID>::row_type Xx ) {
-
-    using ptr = typename BinaryMatrix<PBits,sVID,sEID>::tr;
-    using xtr = typename BinaryMatrix<XBits,sVID,sEID>::tr;
-
-    const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
-    const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
-    const auto * degree = mtx.get_degree();
-
-    auto r = ptr::bitwise_or( Pp, Xp );
-    
-    bitset<PBits> b( r );
-
-    VID cs = xp.get_col_start();
-    VID p_best = *b.begin() + cs;
-    VID p_ins = 0; // will be overridden
-
-    // Avoid complexities if there is not much choice
-    if( xp.get_size( Pp ) <= 3 ) // Tunable: 3
-	return p_best;
-
-    for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
-	VID v = *I + cs;
-	if( (VID)degree[v] < p_ins ) // skip if cannot be best
-	    continue;
-	auto v_ngh = xp.get_row( v );
-	auto pv_ins = ptr::bitwise_and( Pp, v_ngh );
-	VID ins = xp.get_size( pv_ins );
-	if( ins > p_ins ) {
-	    p_best = v;
-	    p_ins = ins;
-	}
-    }
-
-    bitset<XBits> c( Xx );
-    assert( px.get_col_start() == 0 && "should always be zero" );
-    for( auto I=c.begin(), E=c.end(); I != E; ++I ) {
-	VID v = *I;
-	if( (VID)degree[v] < p_ins ) // skip if cannot be best
-	    continue;
-	auto v_ngh = xp.get_row( v );
-	auto pv_ins = ptr::bitwise_and( Pp, v_ngh );
-	VID ins = xp.get_size( pv_ins );
-	if( ins > p_ins ) {
-	    p_best = v;
-	    p_ins = ins;
-	}
-    }
-
-    assert( ~p_best != 0 );
-    return p_best;
-}
-
-template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
-	 typename Enumerate>
-void mce_bk_iterate(
-    const BlockedBinaryMatrix<XBits,PBits,sVID,sEID> & mtx,
-    Enumerate && EE,
-    typename BinaryMatrix<PBits,sVID,sEID>::row_type R,
-    typename BinaryMatrix<PBits,sVID,sEID>::row_type Pp,
-    typename BinaryMatrix<PBits,sVID,sEID>::row_type Xp,
-    typename BinaryMatrix<XBits,sVID,sEID>::row_type Xx,
-    int depth ) {
-	
-    using ptr = typename BinaryMatrix<PBits,sVID,sEID>::tr;
-    using prow_type = typename BinaryMatrix<PBits,sVID,sEID>::row_type;
-    using xtr = typename BinaryMatrix<XBits,sVID,sEID>::tr;
-    using xrow_type = typename BinaryMatrix<XBits,sVID,sEID>::row_type;
-
-    const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
-    const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
-
-    sVID n = mtx.numVertices();
-    sVID x = px.numCols();
-
-    // depth == get_size( R )
-    if( ptr::is_zero( Pp ) ) {
-	if( ptr::is_zero( Xp ) && xtr::is_zero( Xx ) )
-	    EE( bitset<PBits>( R ) ); // note: offset elements by n-x
-	return;
-    }
-
-    VID pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
-    prow_type pivot_ngh = xp.get_row( pivot );
-    prow_type ins = ptr::bitwise_andnot( pivot_ngh, Pp );
-    bitset<PBits> bx( ins );
-    VID cs = xp.get_col_start();
-    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
-	sVID u = *I + cs;
-	prow_type u_only = xp.create_singleton_rel( *I );
-	// prow_type xp_new = ptr::bitwise_andnot( u_only, ins );
-	// xrow_type xx_new = xx; // u in P; u not in X
-	// ins = xp_new;
-	prow_type pu_ngh = xp.get_row( u );
-	prow_type Ppv = ptr::bitwise_and( Pp, pu_ngh );
-	prow_type Xpv = ptr::bitwise_and( Xp, pu_ngh );
-	xrow_type xu_ngh = px.get_row( u );
-	xrow_type Xxv = xtr::bitwise_and( Xx, xu_ngh );
-	prow_type Rv = ptr::bitwise_or( R, u_only );
-	Pp = ptr::bitwise_andnot( u_only, Pp ); // Pp == ins w/o pivoting
-	Xp = ptr::bitwise_or( u_only, Xp );
-	// Xx unmodified as u in P
-	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, depth+1 );
-    }
-}
-
-
-template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
-	 typename Enumerate>
-void
-mce_bron_kerbosch(
-    const BlockedBinaryMatrix<XBits,PBits,sVID,sEID> & mtx,
-    Enumerate && EE ) {
-    using ptr = typename BinaryMatrix<PBits,sVID,sEID>::tr;
-    using prow_type = typename BinaryMatrix<PBits,sVID,sEID>::row_type;
-    using xtr = typename BinaryMatrix<XBits,sVID,sEID>::tr;
-    using xrow_type = typename BinaryMatrix<XBits,sVID,sEID>::row_type;
-
-    const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
-    const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
-    assert( px.numRows() + px.numCols() == xp.numRows() );
-    assert( px.numRows() == xp.numCols() );
-
-    sVID n = mtx.numVertices();
-    sVID cs = xp.get_col_start();
-
-    // implicitly skips X vertices; iterate over P vertices
-    for( sVID v=cs; v < n; ++v ) {
-	prow_type R = xp.create_singleton( v );
-	prow_type r = xp.get_row( v );
-	xrow_type Xx = px.get_row( v );
-
-	// if no neighbours in cut-out, then trivial 2-clique
-	if( ptr::is_zero( r ) && xtr::is_zero( Xx ) ) {
-	    EE( bitset<PBits>( R ) );
-	    continue;
-	}
-
-	// Consider as candidates only those neighbours of u that are
-	// ordered after v to avoid revisiting the vertices
-	// unnecessarily.
-	prow_type h = xp.get_himask( v );
-	prow_type Pp = ptr::bitwise_and( h, r );
-	prow_type Xp = ptr::bitwise_andnot( h, r );
-	// std::cerr << "depth " << 0 << " v=" << v << "\n";
-	mce_bk_iterate( mtx, EE, R, Pp, Xp, Xx, 1 );
-    }
-}
 
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
 	 typename Enumerate>
@@ -1244,35 +705,6 @@ mce_vertex_cover(
 }
 
 
-void
-sort_order( VID * order, VID * rev_order,
-	    const VID * const coreness,
-	    VID n,
-	    VID K ) {
-    VID * histo = new VID[K+1];
-    std::fill( &histo[0], &histo[K+1], 0 );
-
-    // Histogram
-    for( VID v=0; v < n; ++v ) {
-	VID c = coreness[v];
-	assert( c <= K );
-	histo[K-c]++;
-    }
-
-    // Prefix sum
-    VID sum = sequence::plusScan( histo, histo, K+1 );
-
-    // Place in order
-    for( VID v=0; v < n; ++v ) {
-	VID c = coreness[v];
-	VID pos = histo[K-c]++;
-	order[pos] = v;
-	rev_order[v] = pos;
-    }
-
-    delete[] histo;
-}
-
 class timeout_exception : public std::exception {
 public:
     explicit timeout_exception( uint64_t usec = 0, int idx = -1 )
@@ -1331,6 +763,9 @@ VID mc_get_pivot_xp(
 
 	// Abort during intersection_size if size will be less than tv_max
 	size_t tv = hadj.intersect_size( XP+ne, XP+ce, tv_max );
+	// size_t tv = graptor::hash_vector::intersect_size_exceed(
+	// XP+ne, XP+ce, hadj, tv_max ); -- really slow !?
+	    
 	if( tv > tv_max ) {
 	    tv_max = tv;
 	    v_max = v;
@@ -1702,8 +1137,12 @@ mce_iterate_xp_iterative(
 	    VID ne = fr.ne;
 	    VID ce = fr.ce;
 	    VID * XP_new = fr.XP_new;
-	    VID ne_new = adj.intersect( XP, XP+ne, XP_new ) - XP_new;
-	    VID ce_new = adj.intersect( XP+ne, XP+ce, XP_new+ne_new ) - XP_new;
+	    // VID ne_new = adj.intersect( XP, XP+ne, XP_new ) - XP_new;
+	    // VID ce_new = adj.intersect( XP+ne, XP+ce, XP_new+ne_new ) - XP_new;
+	    VID ne_new = graptor::hash_vector::intersect(
+		XP, XP+ne, adj, XP_new ) - XP_new;
+	    VID ce_new = graptor::hash_vector::intersect(
+		XP+ne, XP+ce, adj, XP_new+ne_new ) - XP_new;
 	    assert( ce_new <= ce );
 	    R.push( u );
 	    assert( R.size() == depth+1 );
@@ -1715,7 +1154,8 @@ mce_iterate_xp_iterative(
 		// done
 	    // Tunable
 	    } else if( ce_new - ne_new < 16
-		       || ne_new > 256 || ce_new-ne_new > 256
+		       // || ne_new > 256 || ce_new-ne_new > 256
+		       || ce_new > 256
 #if __AVX512F__
 		       || ce_new > 512
 #endif
@@ -1778,6 +1218,7 @@ mce_iterate_xp_iterative(
 		    // done
 		}
 #endif
+#if 0
 	    } else if( ne_new <= 256 && ce_new - ne_new <= 256 ) {
 		if( ce_new-ne_new <= 32 ) {
 		    BlockedBinaryMatrix<256,32,VID,EID>
@@ -1822,6 +1263,7 @@ mce_iterate_xp_iterative(
 			Ee( R, c.size() );
 		    } );
 		}
+#endif
 	    } else {
 		assert( 0 && "Should not get here" );
 	    }
@@ -1943,83 +1385,6 @@ private:
     VID m_num_iset;
 };
 
-template<typename lVID, typename lEID>
-class NeighbourCutOutXP {
-public:
-    using VID = lVID;
-    using EID = lEID;
-
-public:
-    // For maximal clique enumeration: all vertices regardless of coreness
-    // Sort neighbour list in increasing order
-    NeighbourCutOutXP( const GraphCSx & G, VID v,
-		       const lVID * const core_order )
-	: NeighbourCutOutXP( G, v, G.getIndex()[v+1] - G.getIndex()[v],
-			     core_order ) { }
-    NeighbourCutOutXP( const GraphCSx & G, VID v, VID deg,
-		       const lVID * const core_order )
-	: m_iset( &G.getEdges()[G.getIndex()[v]] ),
-	  m_s2g( new lVID[deg] ),
-	  m_n2s( new lVID[deg] ),
-	  m_num_iset( deg ) {
-	lVID n = G.numVertices();
-	lEID m = G.numEdges();
-	const lEID * const gindex = G.getIndex();
-	const lVID * const gedges = G.getEdges();
-
-	// Set of eligible neighbours
-	lVID ns = deg;
-	const lVID * const neighbours = &gedges[gindex[v]];
-	// std::copy( &neighbours[0], &neighbours[ns], m_s2g );
-
-	std::iota( &m_s2g[0], &m_s2g[ns], 0 );
-
-	// Sort by increasing core_order
-	std::sort( &m_s2g[0], &m_s2g[ns],
-		   [&]( lVID u, lVID v ) {
-		       return core_order[neighbours[u]]
-			   < core_order[neighbours[v]];
-		   } );
-	// Invert permutation into n2s and create mapping for m_s2g
-	for( lVID su=0; su < ns; ++su ) {
-	    lVID x = m_s2g[su];
-	    m_s2g[su] = neighbours[x]; // create mapping
-	    m_n2s[x] = su; // invert permutation
-	}
-
-	// Determine start position, i.e., vertices less than start_pos
-	// are in X by default
-	lVID * sp2_pos = std::upper_bound(
-	    &m_s2g[0], &m_s2g[ns], v,
-	    [&]( lVID a, lVID b ) {
-		return core_order[a] < core_order[b];
-	    } );
-	m_start_pos = sp2_pos - &m_s2g[0];
-    }
-
-    ~NeighbourCutOutXP() {
-	if( m_s2g )
-	    delete[] m_s2g;
-	if( m_n2s )
-	    delete[] m_n2s;
-    }
-
-    lVID get_num_vertices() const { return m_num_iset; }
-    const lVID * get_vertices() const { return m_iset; }
-
-    lVID get_start_pos() const { return m_start_pos; }
-    const lVID * get_s2g() const { return m_s2g; }
-    const lVID * get_n2s() const { return m_n2s; }
-
-private:
-    const VID * m_iset;
-    VID * m_s2g;
-    VID * m_n2s;
-    VID m_num_iset;
-    VID m_start_pos;
-};
-
-
 
 template<typename GraphType>
 class GraphBuilderInduced;
@@ -2044,7 +1409,7 @@ public:
 			       core_order ) { }
     GraphBuilderInduced( const GraphCSx & G,
 			 VID v,
-			 const NeighbourCutOutXP<VID,EID> & cut,
+			 const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
 			 const VID * const core_order )
 	: GraphBuilderInduced( G, v,
 			       cut.get_num_vertices(), cut.get_vertices(),
@@ -2638,631 +2003,6 @@ auto make_alternative_selector( Fn && ... fn ) {
 }
 
 
-template<unsigned Bits, typename sVID, typename sEID>
-class DenseMatrix {
-    using VID = sVID;
-    using EID = sEID;
-    using DID = std::conditional_t<Bits<=256,uint8_t,uint16_t>;
-    using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
-    static constexpr unsigned bits_per_lane = sizeof(type)*8;
-    static constexpr unsigned short VL = Bits / bits_per_lane;
-    using tr = vector_type_traits_vl<type,VL>;
-    using row_type = typename tr::type;
-
-    static_assert( VL * bits_per_lane == Bits );
-
-public:
-    static constexpr size_t MAX_VERTICES = bits_per_lane * VL;
-
-public:
-    DenseMatrix( const GraphCSx & G, VID v,
-		 const NeighbourCutOutXP<VID,EID> & cut,
-		 const VID * const core_order )
-	: DenseMatrix( G, v, cut.get_num_vertices(), cut.get_vertices(),
-		       cut.get_s2g(), cut.get_n2s(), cut.get_start_pos(),
-		       core_order ) { }
-    DenseMatrix( const GraphCSx & G, VID v,
-		 VID num_neighbours, const VID * neighbours,
-		 const VID * const s2g,
-		 const VID * const n2s,
-		 VID start_pos,
-		 const VID * const core_order )
-	: m_start_pos( start_pos ) {
-	VID n = G.numVertices();
-	EID m = G.numEdges();
-	const EID * const gindex = G.getIndex();
-	const VID * const gedges = G.getEdges();
-
-	// Set of eligible neighbours
-	VID ns = num_neighbours;
-
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    delete[] n2s;
-	    return;
-	}
-#endif
-
-	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-
-	// Place edges
-	VID ni = 0;
-	m_m = 0;
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
-	    VID deg = 0;
-
-	    row_type row_u = tr::setzero();
-
-	    const VID * p = &neighbours[0];
-	    const VID * const pe = &neighbours[num_neighbours];
-	    const VID * q = &gedges[gindex[u]];
-	    const VID * const qe = &gedges[gindex[u+1]];
-
-	    while( p != pe && q != qe ) {
-		if( *p == *q ) {
-		    // Common neighbour
-		    if( *p != u ) {
-			VID sw = n2s[p - neighbours];
-			// no X-X edges
-			if( sw >= m_start_pos || su >= m_start_pos ) {
-			    row_u = tr::bitwise_or( row_u, create_row( sw ) );
-			    ++deg;
-			}
-		    }
-		    ++p;
-		    ++q;
-		} else if( *p < *q )
-		    ++p;
-		else
-		    ++q;
-	    }
-
-	    tr::store( &m_matrix[VL * su], row_u );
-	    m_degree[su] = deg;
-	    m_m += deg;
-	}
-
-	m_n = ns;
-    }
-    DenseMatrix( const GraphCSx & G, VID v,
-		 VID num_neighbours, const VID * neighbours,
-		 const VID * const core_order )
-	: m_start_pos( 0 ) {
-	VID n = G.numVertices();
-	EID m = G.numEdges();
-	const EID * const gindex = G.getIndex();
-	const VID * const gedges = G.getEdges();
-
-	// Set of eligible neighbours
-	VID ns = num_neighbours;
-	assert( ns <= MAX_VERTICES );
-	std::copy( &neighbours[0], &neighbours[ns], m_s2g );
-
-	sVID * n2s = new sVID[ns];
-	std::iota( &m_s2g[0], &m_s2g[ns], 0 );
-
-	// Sort by increasing core_order
-	std::sort( &m_s2g[0], &m_s2g[ns],
-		   [&]( VID u, VID v ) {
-		       return core_order[neighbours[u]]
-			   < core_order[neighbours[v]];
-		   } );
-	// Invert permutation into n2s and create mapping for m_s2g
-	for( VID su=0; su < ns; ++su ) {
-	    VID x = m_s2g[su];
-	    m_s2g[su] = neighbours[x]; // create mapping
-	    n2s[x] = su; // invert permutation
-	}
-
-	// Determine start position, i.e., vertices less than start_pos
-	// are in X by default
-	VID * sp2_pos = std::upper_bound(
-	    &m_s2g[0], &m_s2g[ns], v,
-	    [&]( VID a, VID b ) {
-		return core_order[a] < core_order[b];
-	    } );
-	m_start_pos = sp2_pos - &m_s2g[0];
-
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    delete[] n2s;
-	    return;
-	}
-#endif
-
-	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-
-	// Place edges
-	VID ni = 0;
-	m_m = 0;
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = m_s2g[su];
-	    VID deg = 0;
-
-	    row_type row_u = tr::setzero();
-
-	    const VID * p = &neighbours[0];
-	    const VID * const pe = &neighbours[num_neighbours];
-	    const VID * q = &gedges[gindex[u]];
-	    const VID * const qe = &gedges[gindex[u+1]];
-
-	    while( p != pe && q != qe ) {
-		if( *p == *q ) {
-		    // Common neighbour
-		    if( *p != u ) {
-			VID sw = n2s[p - neighbours];
-			// no X-X edges
-			if( sw >= m_start_pos || su >= m_start_pos ) {
-			    row_u = tr::bitwise_or( row_u, create_row( sw ) );
-			    ++deg;
-			}
-		    }
-		    ++p;
-		    ++q;
-		} else if( *p < *q )
-		    ++p;
-		else
-		    ++q;
-	    }
-
-	    tr::store( &m_matrix[VL * su], row_u );
-	    m_degree[su] = deg;
-	    m_m += deg;
-	}
-
-	m_n = ns;
-
-	delete[] n2s;
-    }
-    // In this variation, hVIDs are already sorted by core_order
-    // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash>
-    DenseMatrix( const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-		 const hVID * XP,
-		 hVID ne, hVID ce )
-	: m_start_pos( ne ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
-
-	// Vertices in X and P are independently already sorted by core order.
-	// We do not reorder, primarily because only the order in P matters
-	// for efficiency of enumeration.
-	// Do we need to copy, or can we just keep a pointer to XP?
-	VID ns = ce;
-	std::copy( XP, XP+ce, m_s2g );
-
-	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-
-	// Place edges
-	VID ni = 0;
-	m_m = 0;
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = m_s2g[su]; // or XP[su]
-	    VID deg = 0;
-
-	    row_type row_u = tr::setzero();
-	    auto & adj = G.get_adjacency( u );
-
-	    // Intersect XP with adjacency list
-	    for( VID l=(su >= m_start_pos ? 0 : ne); l < ce; ++l ) {
-		VID xp = XP[l];
-		if( adj.contains( xp ) ) {
-		    row_u = tr::bitwise_or( row_u, create_row( l ) );
-		    ++deg;
-		}
-	    }
-
-	    tr::store( &m_matrix[VL * su], row_u );
-	    m_degree[su] = deg;
-	    m_m += deg;
-	}
-
-	m_n = ns;
-    }
-
-    ~DenseMatrix() {
-	if( m_matrix_alc != nullptr )
-	    delete[] m_matrix_alc;
-    }
-
-    
-    // Variations to consider:
-    // - bron_kerbosh_nox (excluding X set)
-    // - bron_kerbosh_pivot (no X set, pivoting)
-    // - bron_kerbosh_pivot_degeneracy (no X set, degeneracy ordering, pivoting)
-    // Note that the X set is used only to identify maximal cliques. For
-    // maximum clique search, it does not matter as we can only avoid
-    // a scalar int comparison, while checking X is zero is slightly more
-    // expensive. If a non-maximal clique is considered, we haven't lost time
-    // and we are not inaccurate.
-    bitset<Bits>
-    bron_kerbosch( VID cutoff ) {
-	// First try with cutoff, if failing, try without.
-	// Useful if we believe we will find a clique of size cutoff
-	VID th = cutoff;
-	if( cutoff == m_n ) // initial guess is bad for us
-	    cutoff = 1;
-	else if( cutoff > 1 ) {
-	    // set target slightly lower to increase chance of success
-	    // for example in those case where we drop from a 5-clique
-	    // to a 4-clique
-	    --cutoff;
-	}
-    
-	auto ret = bron_kerbosch_with_cutoff( cutoff );
-	if( ret.size() >= cutoff )
-	    return ret;
-	else {
-	    // We know a clique of size ret.size() exists, so use this
-	    // as a cutoff for the second attempt
-	    cutoff = ret.size() >= 1 ? ret.size() : 1;
-	    return bron_kerbosch_with_cutoff( cutoff );
-	}
-    }
-
-    template<typename Enumerate>
-    void
-    mce_bron_kerbosch( Enumerate && E ) {
-	for( VID v=m_start_pos; v < m_n; ++v ) { // implicit X vertices
-	    row_type vrow = create_row( v );
-	    row_type R = vrow;
-
-	    // if no neighbours in cut-out, then trivial 2-clique
-	    if( tr::is_zero( get_row( v ) ) ) {
-		E( bitset<Bits>( R ) );
-		continue;
-	    }
-
-	    // Consider as candidates only those neighbours of u that are
-	    // ordered after v to avoid revisiting the vertices
-	    // unnecessarily.
-	    row_type h = get_himask( v );
-	    row_type r = get_row( v );
-	    row_type P = tr::bitwise_and( h, r );
-	    row_type X = tr::bitwise_andnot( h, r );
-	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
-	    mce_bk_iterate( E, R, P, X, 1 );
-	}
-    }
-    
-private:
-    bitset<Bits>
-    bron_kerbosch_with_cutoff( VID cutoff ) {
-	m_mc = tr::setzero();
-	m_mc_size = 0;
-
-	for( VID v=0; v < m_n; ++v ) {
-	    if( tr::is_zero( get_row( v ) ) )
-		continue;
-
-	    row_type vrow = create_row( v );
-	    row_type R = vrow;
-
-	    // Consider as candidates only those neighbours of u that are larger
-	    // than u to avoid revisiting the vertices unnecessarily.
-	    row_type P = tr::bitwise_and( get_row( v ), get_himask( v ) );
-
-	    bk_iterate( R, P, 1, cutoff );
-	}
-
-	return bitset<Bits>( m_mc );
-    }
-
-public:
-    void erase_incident_edges( bitset<Bits> vset ) {
-	// Erase columns
-	row_type vs = vset;
-	for( VID v=0; v < m_n; ++v )
-	    tr::store( &m_matrix[m_words * v],
-		       tr::bitwise_andnot(
-			   vs, tr::load( &m_matrix[m_words * v] ) ) );
-	
-	// Erase rows
-	for( auto && v : vset ) {
-	    assert( v < m_n );
-	    tr::store( &m_matrix[m_words * v], tr::setzero() );
-	}
-    }
-
-    bitset<Bits>
-    vertex_cover() {
-	m_mc = tr::setone();
-	m_mc_size = m_n;
-
-	row_type z = tr::setzero();
-	vc_iterate( 0, z, z, 0 );
-
-	// cover vs clique on complement. Invert bitset, mask with valid bits
-	m_mc = tr::bitwise_andnot( m_mc, get_himask( m_n ) );
-	m_mc_size = m_n - m_mc_size; // for completeness; unused hereafter
-	return bitset<Bits>( m_mc );
-    }
-
-    VID numVertices() const { return m_n; }
-    EID numEdges() const { return m_m; }
-
-    const VID * get_s2g() const { return &m_s2g[0]; }
-
-private:
-    void bk_iterate( row_type R, row_type P, int depth, VID cutoff ) {
-	// depth == get_size( R )
-	if( tr::is_zero( P ) ) {
-	    if( depth > m_mc_size ) {
-		m_mc = R;
-		m_mc_size = depth;
-	    }
-	    return;
-	}
-	VID p_size = get_size( P );
-	if( depth + p_size < m_mc_size )
-	    return;
-	if( depth + p_size < cutoff )
-	    return;
-
-	row_type x = P;
-	while( !tr::is_zero( x ) ) {
-	    VID u;
-	    row_type x_new;
-	    std::tie( u, x_new ) = remove_element( x );
-	    row_type u_row = tr::bitwise_andnot( x_new, x );
-	    x = x_new;
-	    // assert( tr::is_zero( tr::bitwise_and( get_row( u ), create_row( u ) ) ) );
-	    row_type Pv = tr::bitwise_and( x, get_row( u ) ); // x vs P?
-	    row_type Rv = tr::bitwise_or( R, u_row );
-	    bk_iterate( Rv, Pv, depth+1, cutoff );
-	}
-    }
-
-    template<typename Enumerate>
-    void mce_bk_iterate(
-	Enumerate && EE,
-	row_type R, row_type P, row_type X, int depth ) {
-	// depth == get_size( R )
-	if( tr::is_zero( P ) ) {
-	    if( tr::is_zero( X ) )
-		EE( bitset<Bits>( R ) );
-	    return;
-	}
-
-	VID pivot = mce_get_pivot( P, X );
-	row_type pivot_ngh = get_row( pivot );
-	row_type x = tr::bitwise_andnot( pivot_ngh, P );
-	bitset<Bits> bx( x );
-	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
-	    VID u = *I;
-	    // row_type x_new;
-	    // std::tie( u, x_new ) = remove_element( x );
-	    // row_type u_only = tr::bitwise_andnot( x_new, x );
-	    row_type u_only = tr::setglobaloneval( u );
-	    // row_type x_new = tr::bitwise_andnot( u_only, x );
-	    // x = x_new;
-	    row_type u_ngh = get_row( u );
-	    row_type Pv = tr::bitwise_and( P, u_ngh );
-	    row_type Xv = tr::bitwise_and( X, u_ngh );
-	    row_type Rv = tr::bitwise_or( R, u_only );
-	    P = tr::bitwise_andnot( u_only, P ); // P == x w/o pivoting
-	    X = tr::bitwise_or( u_only, X );
-	    // std::cerr << "depth " << depth << " u=" << u << "\n";
-	    mce_bk_iterate( EE, Rv, Pv, Xv, depth+1 );
-	}
-    }
-
-    // Could potentially vectorise small matrices by placing
-    // one 32/64-bit row in a vector lane and performing a vectorised
-    // popcount per lane. Could evaluate doing popcounts on all lanes,
-    // or gathering only active lanes. The latter probably most promising
-    // in AVX512
-    VID mce_get_pivot( row_type P, row_type X ) {
-	row_type r = tr::bitwise_or( P, X );
-	bitset<Bits> b( r );
-
-	VID p_best = *b.begin();
-	VID p_ins = 0; // will be overridden
-
-	// Avoid complexities if there is not much choice
-	if( get_size( P ) <= 3 )
-	    return p_best;
-	
-	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
-	    VID v = *I;
-	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
-		continue;
-	    row_type v_ngh = get_row( v );
-	    row_type pv_ins = tr::bitwise_and( P, v_ngh );
-	    VID ins = get_size( pv_ins );
-	    if( ins > p_ins ) {
-		p_best = v;
-		p_ins = ins;
-	    }
-	}
-	assert( ~p_best != 0 );
-	return p_best;
-    }
-
-    // cin is a bitmask indicating which vertices are in the cover.
-    // It is filled up only up to vertex v. Remaining bits are zero.
-    // cout indicates the vertices excluded.
-    void vc_iterate( VID v, row_type cin, row_type cout, VID cin_sz ) {
-	// Leaf node
-	if( v == m_n ) {
-	    if( cin_sz < m_mc_size ) {
-		m_mc = cin;
-		m_mc_size = cin_sz;
-	    }
-	    return;
-	}
-
-	// isolated vertex
-	row_type v_set = create_row( v );
-	row_type v_row = tr::bitwise_andnot(
-	    get_himask( m_n ), tr::bitwise_xnor( v_set, get_row( v ) ) );
-	VID deg = get_size( v_row );
-	if( deg == 0 ) {
-	    vc_iterate( v+1, cin, tr::bitwise_or( cout, v_set ), cin_sz );
-	    return;
-	}
-
-	// Count number of covered neighbours
-	VID num_covered = get_size( tr::bitwise_and( v_row, cin ) );
-
-	// In case we don't have choice: including all neighbours would result
-	// in a vertex cover larger than the one of interest. In that case,
-	// include the vertex and not the (remaining) neighbours
-	if( cin_sz + deg - num_covered >= m_mc_size ) {
-	    vc_iterate( v+1, tr::bitwise_or( cin, v_set ), cout, cin_sz+1 );
-	    return;
-	}
-
-	// All neighbours included, so this vertex is not needed
-	// Any neighbour not included, then this vertex must be included
-	if( num_covered == deg ) {
-	    vc_iterate( v+1, cin, tr::bitwise_or( cout, v_set ), cin_sz );
-	    return;
-	}
-
-	// Count number of uncovered neighbours; only chance we have any
-	// if cout_sz is non-zero
-	VID cout_sz = v - cin_sz;
-	if( cout_sz > 0 ) {
-	    VID num_uncovered = get_size( tr::bitwise_and( v_row, cout ) );
-	    if( num_uncovered > 0 ) {
-		vc_iterate( v+1, tr::bitwise_or( cin, v_set ), cout, cin_sz+1 );
-		return;
-	    }
-	}
-
-	// Otherwise, try both ways.
-	vc_iterate( v+1, cin, tr::bitwise_or( cout, v_set ), cin_sz );
-
-	vc_iterate( v+1, tr::bitwise_or( cin, v_set ), cout, cin_sz+1 );
-    }
-    
-    static std::pair<VID,row_type> remove_element( row_type s ) {
-	// find_first includes tzcnt; can be avoided because lane() includes
-	// a switch, so can check on mask & 1, mask & 2, etc instead of
-	// tzcnt == 0, tzcnt == 1, etc
-	auto mask = tr::cmpne( s, tr::setzero(), target::mt_mask() );
-
-	type xtr;
-	unsigned lane;
-	
-	if constexpr ( VL == 4 ) {
-	    __m128i half;
-	    if( ( mask & 0x3 ) == 0 ) {
-		half = tr::upper_half( s );
-		lane = 2;
-		mask >>= 2;
-	    } else {
-		half = tr::lower_half( s );
-		lane = 0;
-	    }
-	    if( ( mask & 0x1 ) == 0 ) {
-		lane += 1;
-		xtr = _mm_extract_epi64( half, 1 );
-	    } else {
-		xtr = _mm_extract_epi64( half, 0 );
-	    }
-	} else if constexpr ( VL == 2 ) {
-	    if( ( mask & 0x1 ) == 0 ) {
-		xtr = tr::upper_half( s );
-		lane = 1;
-	    } else {
-		xtr = tr::lower_half( s );
-		lane = 0;
-	    }
-	} else if constexpr ( VL == 1 ) {
-	    lane = 0;
-	    xtr = s;
-	} else
-	    assert( 0 && "Oops" );
-
-	assert( xtr != 0 );
-	unsigned off = _tzcnt_u64( xtr );
-	assert( off != bits_per_lane );
-	row_type s_upd = tr::bitwise_and( s, tr::sub( s, tr::setoneval() ) );
-	row_type new_s = tr::blend( 1 << lane, s, s_upd );
-	return std::make_pair( lane * bits_per_lane + off, new_s );
-    }
-
-    row_type get_row( VID v ) {
-	return tr::load( &m_matrix[m_words * v] );
-    }
-
-    row_type create_row( VID v ) {
-	return tr::setglobaloneval( v );
-    }
-
-    row_type get_himask( VID v ) {
-	return tr::himask( v+1 );
-    }
-
-    void set( VID u, VID v ) {
-	assert( u != v );
-	VID word, off;
-	std::tie( word, off ) = slocate( u, v );
-	type w = type(1) << off;
-	m_matrix[word] |= w;
-	// assert( tr::is_zero( tr::bitwise_and( get_row( u ), create_row( u ) ) ) );
-	// assert( tr::is_zero( tr::bitwise_and( get_row( v ), create_row( v ) ) ) );
-    }
-
-    static VID get_size( row_type r ) {
-	return target::allpopcnt<VID,type,VL>::compute( r );
-    }
-
-    std::pair<VID,VID> slocate( VID u, VID v ) const {
-	VID col = v / bits_per_lane;
-	VID word = u * VL + col;
-	return std::make_pair( word, v % bits_per_lane );
-    }
-
-    VID get_start_pos() const { return m_start_pos; }
-		    
-private:
-    VID m_n;
-    static constexpr unsigned m_words = VL;
-    EID m_m;
-    type * m_matrix;
-    type * m_matrix_alc;
-
-    VID m_mc_size;
-    row_type m_mc;
-    VID m_start_pos;
-
-    VID m_s2g[Bits];
-    DID m_degree[Bits];
-};
-
 static std::mutex io_mux;
 
 template<unsigned XBits, unsigned PBits, typename Enumerator>
@@ -3270,7 +2010,7 @@ void mce_top_level(
     const GraphCSx & G,
     Enumerator & E,
     VID v,
-    const NeighbourCutOutXP<VID,EID> & cut,
+    const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
     const VID * const core_order,
     variant_statistics & stats ) {
 
@@ -3343,7 +2083,7 @@ void mce_top_level(
     const GraphCSx & G,
     Enumerator & E,
     VID v,
-    const NeighbourCutOutXP<VID,EID> & cut,
+    const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
     const VID * const core_order,
     variant_statistics & stats ) {
 
@@ -3425,7 +2165,7 @@ void mce_top_level(
     VID v,
     const VID * const core_order,
     VID degeneracy ) {
-    NeighbourCutOutXP<VID,EID> cut( G, v, core_order );
+    graptor::graph::NeighbourCutOutXP<VID,EID> cut( G, v, core_order );
 
     all_variant_statistics & stats = mce_stats.get_statistics();
 
