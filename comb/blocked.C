@@ -6,6 +6,15 @@
  * of vertices and compares algorithms at various sizes.
  *======================================================================*/
 
+/*!=====================================================================*
+ * TODO:
+ * + Create a variant with building matrix only to split out time building
+ *   from time searching. Building time is relatively high. Might be faster
+ *   for very small problems to directly work on the main representation.
+ * + Construct an optimised variant, picking the fastest variations as
+ *   applicable.
+ *======================================================================*/
+
 #include <mutex>
 #include <numeric>
 #include <thread>

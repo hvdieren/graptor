@@ -103,171 +103,67 @@ exceed_threshold( const VID * lb, const VID * le,
     return std::max( (3*d)/4, (size_t)1 );
 }
 
+template<variant>
+struct intersect_traits;
+
+template<>
+struct intersect_traits<var_merge_scalar> : public graptor::merge_scalar {
+    static constexpr bool uses_hash = false;
+};
+
+template<>
+struct intersect_traits<var_merge_vector> : public graptor::merge_vector {
+    static constexpr bool uses_hash = false;
+};
+
+template<>
+struct intersect_traits<var_merge_jump> : public graptor::merge_jump {
+    static constexpr bool uses_hash = false;
+};
+
+template<>
+struct intersect_traits<var_hash_scalar> : public graptor::hash_scalar {
+    static constexpr bool uses_hash = true;
+};
+
+template<>
+struct intersect_traits<var_hash_vector> : public graptor::hash_vector {
+    static constexpr bool uses_hash = true;
+};
+
 /*! Generic driver method for the various variants and operations.
  *
  * The main purpose of this method and its specialisations is to provide
  * a common interface to call all methods.
  */
-template<variant, operation>
-size_t
+template<variant var, operation op>
+auto
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
        const graptor::hash_table<VID,hash_fn> & ht,
-       VID * out );
+       VID * out ) {
+    using traits = intersect_traits<var>;
 
-template<>
-size_t
-bench<var_merge_scalar,op_intersect>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_scalar::intersect( lb, le, rb, re, out ) - out;
-}
-
-template<>
-size_t
-bench<var_merge_scalar,op_intersect_size>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_scalar::intersect_size( lb, le, rb, re );
-}
-
-template<>
-size_t
-bench<var_merge_scalar,op_intersect_size_exceed>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    size_t x = exceed_threshold( lb, le, rb, re );
-    return graptor::merge_scalar::intersect_size_exceed( lb, le, rb, re, x );
-}
-
-template<>
-size_t
-bench<var_merge_vector,op_intersect>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_vector::intersect( lb, le, rb, re, out ) - out;
-}
-
-template<>
-size_t
-bench<var_merge_vector,op_intersect_size>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_vector::intersect_size( lb, le, rb, re );
-}
-
-template<>
-size_t
-bench<var_merge_vector,op_intersect_size_exceed>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    size_t x = exceed_threshold( lb, le, rb, re );
-    return graptor::merge_vector::intersect_size_exceed( lb, le, rb, re, x );
-}
-
-template<>
-size_t
-bench<var_merge_jump,op_intersect>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_jump::intersect( lb, le, rb, re, out ) - out;
-}
-
-template<>
-size_t
-bench<var_merge_jump,op_intersect_size>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::merge_jump::intersect_size( lb, le, rb, re );
-}
-
-template<>
-size_t
-bench<var_merge_jump,op_intersect_size_exceed>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    size_t x = exceed_threshold( lb, le, rb, re );
-    return graptor::merge_jump::intersect_size_exceed( lb, le, rb, re, x );
-}
-
-template<>
-size_t
-bench<var_hash_scalar,op_intersect>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::hash_scalar::intersect( lb, le, ht, out ) - out;
-}
-
-template<>
-size_t
-bench<var_hash_scalar,op_intersect_size>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::hash_scalar::intersect_size( lb, le, ht );
-}
-
-template<>
-size_t
-bench<var_hash_scalar,op_intersect_size_exceed>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    size_t x = exceed_threshold( lb, le, rb, re );
-    return graptor::hash_scalar::intersect_size_exceed( lb, le, ht, x );
-}
-
-template<>
-size_t
-bench<var_hash_vector,op_intersect>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::hash_vector::intersect( lb, le, ht, out ) - out;
-}
-
-template<>
-size_t
-bench<var_hash_vector,op_intersect_size>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    return graptor::hash_vector::intersect_size( lb, le, ht );
-}
-
-template<>
-size_t
-bench<var_hash_vector,op_intersect_size_exceed>(
-    const VID * lb, const VID * le,
-    const VID * rb, const VID * re,
-    const graptor::hash_table<VID,hash_fn> & ht,
-    VID * out ) {
-    size_t x = exceed_threshold( lb, le, rb, re );
-    return graptor::hash_vector::intersect_size_exceed( lb, le, ht, x );
+    if constexpr ( op == op_intersect ) {
+	if constexpr ( traits::uses_hash )
+	    return traits::intersect( lb, le, ht, out ) - out;
+	else
+	    return traits::intersect( lb, le, rb, re, out ) - out;
+    } else if constexpr ( op == op_intersect_size ) {
+	if constexpr ( traits::uses_hash )
+	    return traits::intersect_size( lb, le, ht );
+	else
+	    return traits::intersect_size( lb, le, rb, re );
+    } else if constexpr ( op == op_intersect_size_exceed ) {
+	size_t x = exceed_threshold( lb, le, rb, re );
+	if constexpr ( traits::uses_hash )
+	    return traits::intersect_size_exceed( lb, le, ht, x );
+	else
+	    return traits::intersect_size_exceed( lb, le, rb, re, x );
+    } else {
+	assert( 0 && "Invalid operation" );
+	return 0;
+    }
 }
 
 template<variant var, operation op>
