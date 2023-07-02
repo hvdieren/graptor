@@ -728,6 +728,37 @@ private:
     std::vector<info> info_buf;
 };
 
+//! Auxiliary method for downstream tasks
+void
+sort_order( VID * order, VID * rev_order,
+	    const VID * const coreness,
+	    VID n,
+	    VID K ) {
+    VID * histo = new VID[K+1];
+    std::fill( &histo[0], &histo[K+1], 0 );
+
+    // Histogram
+    for( VID v=0; v < n; ++v ) {
+	VID c = coreness[v];
+	assert( c <= K );
+	histo[K-c]++;
+    }
+
+    // Prefix sum
+    VID sum = sequence::plusScan( histo, histo, K+1 );
+
+    // Place in order
+    for( VID v=0; v < n; ++v ) {
+	VID c = coreness[v];
+	VID pos = histo[K-c]++;
+	order[pos] = v;
+	rev_order[v] = pos;
+    }
+
+    delete[] histo;
+}
+
+
 #ifndef NOBENCH
 template <class GraphType>
 using Benchmark = KCv<GraphType>;
