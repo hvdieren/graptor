@@ -48,8 +48,9 @@ enum variant {
     var_merge_jump = 2,		/**< merge-based, scalar and jumping ahead */
     var_hash_scalar = 3,	/**< hash-based, scalar */
     var_hash_vector = 4,	/**< hash-based, vector */
-    var_merge_partitioned = 5,	/**< partition pre-study, scalar */
-    var_N = 6 	 		/**< number of options */
+    var_merge_partitioned_scalar = 5,	/**< partition pre-study, scalar */
+    var_hash_partitioned_vector = 6,	/**< partition pre-study, vector hash */
+    var_N = 7 	 		/**< number of options */
 };
 
 /*! Enumeration of operation types
@@ -70,7 +71,8 @@ std::ostream & operator << ( ostream & os, variant v ) {
     case var_merge_jump: return os << "merge_jump";
     case var_hash_scalar: return os << "hash_scalar";
     case var_hash_vector: return os << "hash_vector";
-    case var_merge_partitioned: return os << "merge_partitioned";
+    case var_merge_partitioned_scalar: return os << "merge_partitioned_scalar";
+    case var_hash_partitioned_vector: return os << "hash_partitioned_vector";
     default:
 	return os << "illegal-variant";
     }
@@ -139,8 +141,15 @@ struct intersect_traits<var_hash_vector> : public graptor::hash_vector {
 };
 
 template<>
-struct intersect_traits<var_merge_partitioned>
-    : public graptor::merge_partitioned {
+struct intersect_traits<var_merge_partitioned_scalar>
+    : public graptor::merge_partitioned<graptor::merge_scalar> {
+    static constexpr bool uses_hash = false;
+    static constexpr bool uses_prestudy = true;
+};
+
+template<>
+struct intersect_traits<var_hash_partitioned_vector>
+    : public graptor::merge_partitioned<graptor::hash_vector> {
     static constexpr bool uses_hash = false;
     static constexpr bool uses_prestudy = true;
 };
@@ -170,7 +179,7 @@ bench( const VID * lb, const VID * le,
 	    return traits::intersect( lb, le, ht, out ) - out;
 	else if constexpr ( traits::uses_prestudy )
 	    return traits::intersect(
-		lb, le, rb, re,
+		lb, le, rb, re, ht,
 		levels, 0, 1<<levels, lidx, ridx,
 		out ) - out;
 	else
@@ -180,7 +189,7 @@ bench( const VID * lb, const VID * le,
 	    return traits::intersect_size( lb, le, ht );
 	else if constexpr ( traits::uses_prestudy )
 	    return traits::intersect_size(
-		lb, le, rb, re,
+		lb, le, rb, re, ht,
 		levels, 0, 1<<levels, lidx, ridx );
 	else
 	    return traits::intersect_size( lb, le, rb, re );
@@ -189,7 +198,7 @@ bench( const VID * lb, const VID * le,
 	    return traits::intersect_size_exceed( lb, le, ht, x );
 	else if constexpr ( traits::uses_prestudy )
 	    return traits::intersect_size_exceed(
-		lb, le, rb, re,
+		lb, le, rb, re, ht,
 		levels, 0, 1<<levels, lidx, ridx, x );
 	else
 	    return traits::intersect_size_exceed( lb, le, rb, re, x );
@@ -288,9 +297,13 @@ bench( VID lv, VID rv,
 	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_hash_vector, op );
 
-    tm = bench<var_merge_partitioned,op>(
+    tm = bench<var_merge_partitioned_scalar,op>(
 	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
-    record( le-lb, re-rb, tm, var_merge_partitioned, op );
+    record( le-lb, re-rb, tm, var_merge_partitioned_scalar, op );
+
+    tm = bench<var_hash_partitioned_vector,op>(
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
+    record( le-lb, re-rb, tm, var_hash_partitioned_vector, op );
 
     delete[] out;
 }
@@ -299,14 +312,14 @@ int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
     int repetitions = P.getOptionLongValue("-r", 3);
-    VID u_min_length = P.getOptionLongValue("--u-min-length", 0);
-    VID v_min_length = P.getOptionLongValue("--v-min-length", 0);
-    VID min_length = P.getOptionLongValue("--min-length", 0);
+    VID u_min_size = P.getOptionLongValue("--u-min-size", 0);
+    VID v_min_size = P.getOptionLongValue("--v-min-size", 0);
+    VID min_size = P.getOptionLongValue("--min-size", 0);
     levels = P.getOptionLongValue("--levels", 3);
     const char * ifile = P.getOptionValue( "-i" );
 
-    if( min_length > 0 )
-	u_min_length = v_min_length = min_length;
+    if( min_size > 0 )
+	u_min_size = v_min_size = min_size;
 
     timer tm;
     tm.start();
@@ -339,7 +352,7 @@ int main( int argc, char *argv[] ) {
     prestudy.allocate( n * ( 1 + ( 1 << levels ) ),
 		       numa_allocation_interleaved() );
     parallel_loop( VID(0), n, [&]( VID v ) {
-	graptor::merge_partitioned::prestudy(
+	graptor::merge_partitioned<void>::prestudy(
 	    &edges[index[v]], &edges[index[v+1]],
 	    n, levels, &prestudy[v*(1+(1<<levels))] );
     } );
@@ -356,20 +369,20 @@ int main( int argc, char *argv[] ) {
     std::cerr << "Configuration:"
 	      << "\n  repetitions: " << repetitions
 	      << "\n  operation: " << (operation)OPERATION
-	      << "\n  v_min_length: " << v_min_length
-	      << "\n  u_min_length: " << u_min_length
-	      << "\n  min_length: " << min_length
+	      << "\n  v_min_size: " << v_min_size
+	      << "\n  u_min_size: " << u_min_size
+	      << "\n  min_size: " << min_size
 	      << "\n  levels: " << levels
 	      << "\n";
 
     parallel_loop( VID(0), n, [&]( VID v ) {
-	// Filter length of adjacency lists
-	if( index[v+1] - index[v] >= v_min_length ) {
+	// Filter size of adjacency lists
+	if( index[v+1] - index[v] >= v_min_size ) {
 	    for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
 		VID u = edges[e];
 
-		// Filter length of adjacency lists
-		if( index[u+1] - index[u] < u_min_length )
+		// Filter size of adjacency lists
+		if( index[u+1] - index[u] < u_min_size )
 		    continue;
 
 		// Benchmark intersection operations between neighbour lists of

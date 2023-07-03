@@ -516,6 +516,7 @@ public:
     }
 };
 
+template<typename Underlying>
 struct merge_partitioned {
     template<typename T, typename I>
     static
@@ -539,61 +540,74 @@ struct merge_partitioned {
 	idx[size_t(1)<<levels] = le - lb; // unconditionally overwrite
     }
 
-    template<typename T, typename I>
+    template<typename T, typename HT, typename I>
     static
     T *
     intersect( const T* lb, const T* le,
 	       const T* rb, const T* re,
+	       const HT & htable,
 	       size_t levels,
 	       size_t lo, size_t hi,
 	       const I* lidx, // prestudy of lhs
 	       const I* ridx, // prestudy of rhs
 	       T * out ) {
-	if( levels == 0 || lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
+	if( lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
 	    return out;
-	else if( levels == 1 ) {
-	    return merge_scalar::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
-					    &rb[ridx[lo]], &rb[ridx[hi]],
-					    out );
+	else if( levels == 0 ) {
+	    if constexpr ( std::is_same_v<Underlying,hash_vector> )
+		return Underlying::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
+					      htable,
+					      out );
+	    else
+		return Underlying::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
+					      &rb[ridx[lo]], &rb[ridx[hi]],
+					      out );
 	} else {
 	    size_t mid = ( lo + hi ) / 2;
-	    T * out1 = intersect( lb, le, rb, re, levels-1,
+	    T * out1 = intersect( lb, le, rb, re, htable, levels-1,
 				  lo, mid, lidx, ridx, out );
-	    return intersect( lb, le, rb, re, levels-1,
+	    return intersect( lb, le, rb, re, htable, levels-1,
 			      mid, hi, lidx, ridx, out1 );
 	}
     }
 
-    template<typename T, typename I>
+    template<typename T, typename HT, typename I>
     static
     size_t
     intersect_size( const T* lb, const T* le,
 		    const T* rb, const T* re,
+		    const HT & htable,
 		    size_t levels,
 		    size_t lo, size_t hi,
 		    const I* lidx, // prestudy of lhs
 		    const I* ridx // prestudy of rhs
 	) {
-	if( levels == 0 || lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
+	if( lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
 	    return 0;
-	else if( levels == 1 ) {
-	    return merge_scalar::intersect_size(
-		&lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]] );
+	else if( levels == 0 ) {
+	    if constexpr ( std::is_same_v<Underlying,hash_vector> )
+		return Underlying::intersect_size(
+		    &lb[lidx[lo]], &lb[lidx[hi]], htable );
+	    else
+		return Underlying::intersect_size(
+		    &lb[lidx[lo]], &lb[lidx[hi]],
+		    &rb[ridx[lo]], &rb[ridx[hi]] );
 	} else {
 	    size_t mid = ( lo + hi ) / 2;
-	    size_t sz0 = intersect_size( lb, le, rb, re, levels-1,
+	    size_t sz0 = intersect_size( lb, le, rb, re, htable, levels-1,
 					 lo, mid, lidx, ridx );
-	    size_t sz1 = intersect_size( lb, le, rb, re, levels-1,
+	    size_t sz1 = intersect_size( lb, le, rb, re, htable, levels-1,
 					 mid, hi, lidx, ridx );
 	    return sz0 + sz1;
 	}
     }
 
-    template<typename T, typename I>
+    template<typename T, typename HT, typename I>
     static
     size_t
     intersect_size_exceed( const T* lb, const T* le,
 			   const T* rb, const T* re,
+			   const HT & htable,
 			   size_t levels,
 			   size_t lo, size_t hi,
 			   const I* lidx, // prestudy of lhs
@@ -601,18 +615,21 @@ struct merge_partitioned {
 			   size_t exceed ) {
 	I ldiff = lidx[hi] - lidx[lo];
 	I rdiff = ridx[hi] - ridx[lo];
-	if( levels == 0
-	    || exceed > ldiff || ldiff == 0
-	    || exceed > rdiff || rdiff == 0 )
+	if( exceed > ldiff || ldiff == 0 || exceed > rdiff || rdiff == 0 )
 	    return 0;
-	else if( levels == 1 ) {
-	    return merge_scalar::intersect_size_exceed(
-		&lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]],
-		exceed );
+	else if( levels == 0 ) {
+	    assert( lo+1 == hi );
+	    if constexpr ( std::is_same_v<Underlying,hash_vector> )
+		return Underlying::intersect_size_exceed(
+		    &lb[lidx[lo]], &lb[lidx[hi]], htable, exceed );
+	    else
+		return Underlying::intersect_size_exceed(
+		    &lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]],
+		    exceed );
 	} else {
 	    // TODO: a further optimisation would be to ponder which of the
-	    // two branches to execute first, as it may affect the effectiveness
-	    // of pruning.
+	    // two branches to execute first, as it may affect the
+	    // effectiveness of pruning (early return 0).
 	    //
 	    // The first branch must find at least exceed elements minus
 	    // the number of elements that can be found from the second
@@ -629,7 +646,7 @@ struct merge_partitioned {
 	    // intersection size.
 	    if( exceed > d2 ) {
 		sz0 = intersect_size_exceed(
-		    lb, le, rb, re, levels-1,
+		    lb, le, rb, re, htable, levels-1,
 		    lo, mid, lidx, ridx, exceed-d2 );
 		// If this branch fails to find at least exceed-d2 elements,
 		// then it will be impossible to find exceed elements in
@@ -638,17 +655,17 @@ struct merge_partitioned {
 		    return 0;
 	    } else
 		sz0 = intersect_size(
-		    lb, le, rb, re, levels-1,
+		    lb, le, rb, re, htable, levels-1,
 		    lo, mid, lidx, ridx );
 	    // The second branch needs to exceed the threshold, minus
 	    // the elements found in the first branch. If the first branch
 	    // has all the required elements, just complete the count correctly.
 	    if( sz0 > exceed )
-		sz1 = intersect_size( lb, le, rb, re, levels-1,
+		sz1 = intersect_size( lb, le, rb, re, htable, levels-1,
 				      mid, hi, lidx, ridx );
 	    else
 		sz1 = intersect_size_exceed(
-		    lb, le, rb, re, levels-1,
+		    lb, le, rb, re, htable, levels-1,
 		    mid, hi, lidx, ridx, exceed-sz0 );
 	    return sz0 + sz1;
 	}
