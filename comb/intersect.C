@@ -48,7 +48,8 @@ enum variant {
     var_merge_jump = 2,		/**< merge-based, scalar and jumping ahead */
     var_hash_scalar = 3,	/**< hash-based, scalar */
     var_hash_vector = 4,	/**< hash-based, vector */
-    var_N = 5 	 		/**< number of options */
+    var_merge_partitioned = 5,	/**< partition pre-study, scalar */
+    var_N = 6 	 		/**< number of options */
 };
 
 /*! Enumeration of operation types
@@ -69,6 +70,7 @@ std::ostream & operator << ( ostream & os, variant v ) {
     case var_merge_jump: return os << "merge_jump";
     case var_hash_scalar: return os << "hash_scalar";
     case var_hash_vector: return os << "hash_vector";
+    case var_merge_partitioned: return os << "merge_partitioned";
     default:
 	return os << "illegal-variant";
     }
@@ -109,27 +111,44 @@ struct intersect_traits;
 template<>
 struct intersect_traits<var_merge_scalar> : public graptor::merge_scalar {
     static constexpr bool uses_hash = false;
+    static constexpr bool uses_prestudy = false;
 };
 
 template<>
 struct intersect_traits<var_merge_vector> : public graptor::merge_vector {
     static constexpr bool uses_hash = false;
+    static constexpr bool uses_prestudy = false;
 };
 
 template<>
 struct intersect_traits<var_merge_jump> : public graptor::merge_jump {
     static constexpr bool uses_hash = false;
+    static constexpr bool uses_prestudy = false;
 };
 
 template<>
 struct intersect_traits<var_hash_scalar> : public graptor::hash_scalar {
     static constexpr bool uses_hash = true;
+    static constexpr bool uses_prestudy = false;
 };
 
 template<>
 struct intersect_traits<var_hash_vector> : public graptor::hash_vector {
     static constexpr bool uses_hash = true;
+    static constexpr bool uses_prestudy = false;
 };
+
+template<>
+struct intersect_traits<var_merge_partitioned>
+    : public graptor::merge_partitioned {
+    static constexpr bool uses_hash = false;
+    static constexpr bool uses_prestudy = true;
+};
+
+/*! Prestudy data
+ */
+static size_t levels;
+static mmap_ptr<VID> prestudy;
 
 /*! Generic driver method for the various variants and operations.
  *
@@ -141,23 +160,37 @@ auto
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
        const graptor::hash_table<VID,hash_fn> & ht,
-       VID * out ) {
+       const VID * lidx, const VID * ridx,
+       VID * out,
+       VID x ) {
     using traits = intersect_traits<var>;
 
     if constexpr ( op == op_intersect ) {
 	if constexpr ( traits::uses_hash )
 	    return traits::intersect( lb, le, ht, out ) - out;
+	else if constexpr ( traits::uses_prestudy )
+	    return traits::intersect(
+		lb, le, rb, re,
+		levels, 0, 1<<levels, lidx, ridx,
+		out ) - out;
 	else
 	    return traits::intersect( lb, le, rb, re, out ) - out;
     } else if constexpr ( op == op_intersect_size ) {
 	if constexpr ( traits::uses_hash )
 	    return traits::intersect_size( lb, le, ht );
+	else if constexpr ( traits::uses_prestudy )
+	    return traits::intersect_size(
+		lb, le, rb, re,
+		levels, 0, 1<<levels, lidx, ridx );
 	else
 	    return traits::intersect_size( lb, le, rb, re );
     } else if constexpr ( op == op_intersect_size_exceed ) {
-	size_t x = exceed_threshold( lb, le, rb, re );
 	if constexpr ( traits::uses_hash )
 	    return traits::intersect_size_exceed( lb, le, ht, x );
+	else if constexpr ( traits::uses_prestudy )
+	    return traits::intersect_size_exceed(
+		lb, le, rb, re,
+		levels, 0, 1<<levels, lidx, ridx, x );
 	else
 	    return traits::intersect_size_exceed( lb, le, rb, re, x );
     } else {
@@ -168,21 +201,26 @@ bench( const VID * lb, const VID * le,
 
 template<variant var, operation op>
 double
-bench( const VID * lb, const VID * le,
+bench( VID lv, VID rv,
+       const VID * lb, const VID * le,
        const VID * rb, const VID * re,
        const graptor::hash_table<VID,hash_fn> & ht,
+       const VID * lidx, const VID * ridx,
        VID * out,
        int repeat,
        size_t ref ) {
+    size_t x = exceed_threshold( lb, le, rb, re );
     timer tm;
     tm.start();
     for( int r=0; r < repeat; ++r ) {
-	size_t sz = bench<var,op>( lb, le, rb, re, ht, out );
+	size_t sz = bench<var,op>( lb, le, rb, re, ht, lidx, ridx, out, x );
 	if( ( sz != ref && op != op_intersect_size_exceed )
-	    || ( sz != ref && sz != 0 && op == op_intersect_size_exceed )
+	    || ( !( ( sz <= x && ref <= x ) || ( sz == ref ) )
+		 && op == op_intersect_size_exceed )
 	    ) {
 	    std::cerr << "FAIL: " << var
-		      << ", " << op << ": result: " << sz
+		      << ", " << op << ": lv=" << lv << " rv=" << rv
+		      << " result: " << sz
 		      << " reference: " << ref << "\n";
 	    assert( 0 && "WRONG" );
 	}
@@ -218,35 +256,41 @@ record( size_t l, size_t r, double tm, variant var, operation op ) {
 
 template<operation op>
 void
-bench( const VID * lb, const VID * le,
+bench( VID lv, VID rv,
+       const VID * lb, const VID * le,
        const VID * rb, const VID * re,
        graptor::hash_table<VID,hash_fn> & ht,
+       const VID * lidx, const VID * ridx,
        int repeat ) {
     size_t len = std::min( le - lb, re - rb );
     VID * out = new VID[len];
     
     size_t sz_ref = bench<var_merge_scalar,op_intersect_size>(
-	lb, le, rb, re, ht, out );
+	lb, le, rb, re, ht, lidx, ridx, out, 0 );
 
     double tm = bench<var_merge_scalar,op>(
-	lb, le, rb, re, ht, out, repeat, sz_ref );
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_merge_scalar, op );
 
     tm = bench<var_merge_vector,op>(
-	lb, le, rb, re, ht, out, repeat, sz_ref );
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_merge_vector, op );
 
     tm = bench<var_merge_jump,op>(
-	lb, le, rb, re, ht, out, repeat, sz_ref );
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_merge_jump, op );
 
     tm = bench<var_hash_scalar,op>(
-	lb, le, rb, re, ht, out, repeat, sz_ref );
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_hash_scalar, op );
 
     tm = bench<var_hash_vector,op>(
-	lb, le, rb, re, ht, out, repeat, sz_ref );
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_hash_vector, op );
+
+    tm = bench<var_merge_partitioned,op>(
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
+    record( le-lb, re-rb, tm, var_merge_partitioned, op );
 
     delete[] out;
 }
@@ -258,6 +302,7 @@ int main( int argc, char *argv[] ) {
     VID u_min_length = P.getOptionLongValue("--u-min-length", 0);
     VID v_min_length = P.getOptionLongValue("--v-min-length", 0);
     VID min_length = P.getOptionLongValue("--min-length", 0);
+    levels = P.getOptionLongValue("--levels", 3);
     const char * ifile = P.getOptionValue( "-i" );
 
     if( min_length > 0 )
@@ -291,6 +336,15 @@ int main( int argc, char *argv[] ) {
 
     std::cerr << "Building hashed graph: " << tm.next() << "\n";
 
+    prestudy.allocate( n * ( 1 + ( 1 << levels ) ),
+		       numa_allocation_interleaved() );
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	graptor::merge_partitioned::prestudy(
+	    &edges[index[v]], &edges[index[v+1]],
+	    n, levels, &prestudy[v*(1+(1<<levels))] );
+    } );
+    std::cerr << "Building prestudy: " << tm.next() << "\n";
+
     for( int var=0; var < var_N; ++var ) {
 	for( size_t l=0; l < MAX_CLASS; ++l )
 	    for( size_t r=0; r < MAX_CLASS; ++r ) {
@@ -305,6 +359,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n  v_min_length: " << v_min_length
 	      << "\n  u_min_length: " << u_min_length
 	      << "\n  min_length: " << min_length
+	      << "\n  levels: " << levels
 	      << "\n";
 
     parallel_loop( VID(0), n, [&]( VID v ) {
@@ -321,19 +376,31 @@ int main( int argc, char *argv[] ) {
 		// u and v
 #if OPERATION == 0
 		bench<op_intersect>(
+		    v, u,
 		    &edges[index[v]], &edges[index[v+1]],
 		    &edges[index[u]], &edges[index[u+1]],
-		    H.get_adjacency( u ), repetitions );
+		    H.get_adjacency( u ),
+		    &prestudy[v*(1+(1<<levels))],
+		    &prestudy[u*(1+(1<<levels))],
+		    repetitions );
 #elif OPERATION == 1
 		bench<op_intersect_size>(
+		    v, u,
 		    &edges[index[v]], &edges[index[v+1]],
 		    &edges[index[u]], &edges[index[u+1]],
-		    H.get_adjacency( u ), repetitions );
+		    H.get_adjacency( u ),
+		    &prestudy[v*(1+(1<<levels))],
+		    &prestudy[u*(1+(1<<levels))],
+		    repetitions );
 #elif OPERATION == 2
 		bench<op_intersect_size_exceed>(
+		    v, u,
 		    &edges[index[v]], &edges[index[v+1]],
 		    &edges[index[u]], &edges[index[u+1]],
-		    H.get_adjacency( u ), repetitions );
+		    H.get_adjacency( u ),
+		    &prestudy[v*(1+(1<<levels))],
+		    &prestudy[u*(1+(1<<levels))],
+		    repetitions );
 #else
 #error "invalid value for OPERATION (0,1,2)"
 #endif
