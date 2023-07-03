@@ -165,7 +165,7 @@ struct merge_jump {
     size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
 	size_t ld = std::distance( lb, le );
 	size_t rd = std::distance( rb, re );
-	if( ld < rd ) {
+	if( ld > rd ) {
 	    std::swap( lb, rb );
 	    std::swap( le, re );
 	    std::swap( ld, rd );
@@ -350,12 +350,16 @@ public:
 	if( !detail_intersect_size_exceed<64/sizeof(T)>(
 		lb, le, htable, exceed, sz0 ) )
 	    return 0;
+	if( sz0 > exceed )
+	    return sz0 + hash_scalar::intersect_size( lb, le, htable );
 	exceed -= sz0;
 #endif
 #if __AVX2__
 	if( !detail_intersect_size_exceed<32/sizeof(T)>(
 		lb, le, htable, exceed, sz1 ) )
 	    return 0;
+	if( sz1 > exceed )
+	    return sz0 + sz1 + hash_scalar::intersect_size( lb, le, htable );
 	exceed -= sz1;
 #endif
 	sz2 = hash_scalar::intersect_size_exceed( lb, le, htable, exceed );
@@ -429,10 +433,6 @@ private:
 
 	    mask_type ma = tr::intersect( vl, rb );
 
-	    options -= VL - _popcnt32( ma );
-	    if( options <= 0 )
-		return false;
-
 	    type lf = tr::set1( lb[VL-1] );
 	    type rf = tr::set1( rb[VL-1] );
 
@@ -440,9 +440,13 @@ private:
 	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
 
 	    size_t la = ilog2( ((uint64_t)ladv) + 1 );
-	    options += VL - la; // whichever elements not matched, put back options
+	    // options += VL - la; // whichever elements not matched, put back options
 	    lb += la;
 	    rb += ilog2( ((uint64_t)radv) + 1 );
+
+	    options -= la - _popcnt32( ma );
+	    if( options <= 0 )
+		return false;
 	}
 
 	sz = options + exceed - ( le - lb );
@@ -492,12 +496,16 @@ public:
 	if( !detail_intersect_size_exceed<64/sizeof(T)>(
 		lb, le, rb, re, exceed, sz0 ) )
 	    return 0;
+	if( sz0 > exceed )
+	    return sz0 + merge_scalar::intersect_size( lb, le, rb, re );
 	exceed -= sz0;
 #endif
 #if __AVX2__
 	if( !detail_intersect_size_exceed<32/sizeof(T)>(
 		lb, le, rb, re, exceed, sz1 ) )
 	    return 0;
+	if( sz1 > exceed )
+	    return sz0 + sz1 + merge_scalar::intersect_size( lb, le, rb, re );
 	exceed -= sz1;
 #endif
 	sz2 = merge_scalar::intersect_size_exceed( lb, le, rb, re, exceed );
@@ -506,7 +514,145 @@ public:
 
 	return sz0 + sz1 + sz2;
     }
+};
 
+struct merge_partitioned {
+    template<typename T, typename I>
+    static
+    void
+    prestudy( const T* lb, const T* le, T max_range, size_t levels, I* idx ) {
+	assert( lb == le || *(le-1) < max_range );
+	const T step = max_range >> levels;
+	T cur = step;
+	size_t off = 1;
+	idx[0] = 0;
+
+	for( const T * l=lb; l != le; ++l ) {
+	    while( cur <= *l ) { // TODO: <= ??
+		idx[off++] = l - lb;
+		cur += step;
+	    }
+	}
+	while( off < (size_t(1)<<levels) )
+	    idx[off++] = le - lb;
+
+	idx[size_t(1)<<levels] = le - lb; // unconditionally overwrite
+    }
+
+    template<typename T, typename I>
+    static
+    T *
+    intersect( const T* lb, const T* le,
+	       const T* rb, const T* re,
+	       size_t levels,
+	       size_t lo, size_t hi,
+	       const I* lidx, // prestudy of lhs
+	       const I* ridx, // prestudy of rhs
+	       T * out ) {
+	if( levels == 0 || lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
+	    return out;
+	else if( levels == 1 ) {
+	    return merge_scalar::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
+					    &rb[ridx[lo]], &rb[ridx[hi]],
+					    out );
+	} else {
+	    size_t mid = ( lo + hi ) / 2;
+	    T * out1 = intersect( lb, le, rb, re, levels-1,
+				  lo, mid, lidx, ridx, out );
+	    return intersect( lb, le, rb, re, levels-1,
+			      mid, hi, lidx, ridx, out1 );
+	}
+    }
+
+    template<typename T, typename I>
+    static
+    size_t
+    intersect_size( const T* lb, const T* le,
+		    const T* rb, const T* re,
+		    size_t levels,
+		    size_t lo, size_t hi,
+		    const I* lidx, // prestudy of lhs
+		    const I* ridx // prestudy of rhs
+	) {
+	if( levels == 0 || lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
+	    return 0;
+	else if( levels == 1 ) {
+	    return merge_scalar::intersect_size(
+		&lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]] );
+	} else {
+	    size_t mid = ( lo + hi ) / 2;
+	    size_t sz0 = intersect_size( lb, le, rb, re, levels-1,
+					 lo, mid, lidx, ridx );
+	    size_t sz1 = intersect_size( lb, le, rb, re, levels-1,
+					 mid, hi, lidx, ridx );
+	    return sz0 + sz1;
+	}
+    }
+
+    template<typename T, typename I>
+    static
+    size_t
+    intersect_size_exceed( const T* lb, const T* le,
+			   const T* rb, const T* re,
+			   size_t levels,
+			   size_t lo, size_t hi,
+			   const I* lidx, // prestudy of lhs
+			   const I* ridx, // prestudy of rhs
+			   size_t exceed ) {
+	I ldiff = lidx[hi] - lidx[lo];
+	I rdiff = ridx[hi] - ridx[lo];
+	if( levels == 0
+	    || exceed > ldiff || ldiff == 0
+	    || exceed > rdiff || rdiff == 0 )
+	    return 0;
+	else if( levels == 1 ) {
+	    return merge_scalar::intersect_size_exceed(
+		&lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]],
+		exceed );
+	} else {
+	    // TODO: a further optimisation would be to ponder which of the
+	    // two branches to execute first, as it may affect the effectiveness
+	    // of pruning.
+	    //
+	    // The first branch must find at least exceed elements minus
+	    // the number of elements that can be found from the second
+	    // branch, which is the minimum of the two list sizes.
+	    size_t mid = ( lo + hi ) / 2;
+	    size_t ld2 = lidx[hi] - lidx[mid];
+	    size_t rd2 = ridx[hi] - ridx[mid];
+	    size_t d2 = std::min( ld2, rd2 );
+	    size_t sz0, sz1;
+	    // If the second branch lists are longer than the exceed
+	    // threshold, then we can find everything in the second list
+	    // and the threshold for the first branch is 0. In that case,
+	    // be faster by avoiding exceed checks and simply determine the
+	    // intersection size.
+	    if( exceed > d2 ) {
+		sz0 = intersect_size_exceed(
+		    lb, le, rb, re, levels-1,
+		    lo, mid, lidx, ridx, exceed-d2 );
+		// If this branch fails to find at least exceed-d2 elements,
+		// then it will be impossible to find exceed elements in
+		// total as the second branch can only find d2 elements.
+		if( sz0 < exceed-d2 )
+		    return 0;
+	    } else
+		sz0 = intersect_size(
+		    lb, le, rb, re, levels-1,
+		    lo, mid, lidx, ridx );
+	    // The second branch needs to exceed the threshold, minus
+	    // the elements found in the first branch. If the first branch
+	    // has all the required elements, just complete the count correctly.
+	    if( sz0 > exceed )
+		sz1 = intersect_size( lb, le, rb, re, levels-1,
+				      mid, hi, lidx, ridx );
+	    else
+		sz1 = intersect_size_exceed(
+		    lb, le, rb, re, levels-1,
+		    mid, hi, lidx, ridx, exceed-sz0 );
+	    return sz0 + sz1;
+	}
+    }
 };
 
 } // namespace graptor
