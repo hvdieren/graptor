@@ -51,7 +51,11 @@ bench( const GraphCSx & G,
 	    cut.get_s2g(), cut.get_n2s(), cut.get_start_pos(),
 	    core_order );
     size_t num_cliques = 0;
+#if ONLY_CUTOUT
+    volatile __asm__( "" : : : "memory" );
+#else
     IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) { ++num_cliques; } );
+#endif
     return num_cliques;
 }
 
@@ -125,6 +129,10 @@ int main( int argc, char *argv[] ) {
 	      << "\n  min_size: " << min_size
 	      << "\n  max_size: " << max_size
 	      << "\n";
+
+#if ONLY_CUTOUT
+    std::cerr << "  Only timing cutout operation\n";
+#endif
 
     parallel_loop( VID(0), n, [&]( VID i ) {
 	VID v = order[i];
