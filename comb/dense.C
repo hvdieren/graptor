@@ -52,7 +52,7 @@ bench( const GraphCSx & G,
 	    core_order );
     size_t num_cliques = 0;
 #if ONLY_CUTOUT
-    volatile __asm__( "" : : : "memory" );
+    __asm__ __volatile__ ( "" : : : "memory" );
 #else
     IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) { ++num_cliques; } );
 #endif
