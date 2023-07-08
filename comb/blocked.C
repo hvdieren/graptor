@@ -26,6 +26,7 @@
 
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/blocked.h"
+#include "graptor/stat/timing.h"
 
 #define NOBENCH
 #define MD_ORDERING 0

@@ -158,7 +158,7 @@ int main( int argc, char *argv[] ) {
 
     for( size_t r=0; r < MAX_CLASS; ++r ) {
 	std::cerr << (size_t(1)<<(r+5)) << ' '
-		  << timings[r].characterize( 1000, 100 )
+		  << timings[r].characterize( .95, 1000, 100 )
 		  << '\n';
     }
 
