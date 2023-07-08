@@ -37,6 +37,7 @@
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/container/intersect.h"
 #include "graptor/container/hash_fn.h"
+#include "graptor/stat/timing.h"
 
 using hash_fn = graptor::rand_hash<uint32_t>;
 
@@ -103,7 +104,7 @@ exceed_threshold( const VID * lb, const VID * le,
 		  const VID * rb, const VID * re ) {
     size_t l = std::distance( lb, le );
     size_t r = std::distance( rb, re );
-    size_t d = std::min( l ,r );
+    size_t d = std::min( l, r );
     return std::max( (3*d)/4, (size_t)1 );
 }
 
@@ -239,15 +240,10 @@ bench( VID lv, VID rv,
 
 static constexpr size_t MAX_CLASS = 10;
 
-struct timing {
-    size_t cnt;
-    double tm;
-};
-
 //! Mutually exclusive access to timings
 static std::mutex timings_mux;
 
-timing timings[var_N][MAX_CLASS][MAX_CLASS];
+static graptor::distribution_timing timings[var_N][MAX_CLASS][MAX_CLASS];
 
 void
 record( size_t l, size_t r, double tm, variant var, operation op ) {
@@ -259,8 +255,7 @@ record( size_t l, size_t r, double tm, variant var, operation op ) {
 	cr = MAX_CLASS-1;
 
     std::lock_guard<std::mutex> g( timings_mux );
-    timings[(int)var][cl][cr].tm += tm;
-    timings[(int)var][cl][cr].cnt++;
+    timings[(int)var][cl][cr].add_sample( tm );
 }
 
 template<operation op>
@@ -306,6 +301,25 @@ bench( VID lv, VID rv,
     record( le-lb, re-rb, tm, var_hash_partitioned_vector, op );
 
     delete[] out;
+}
+
+void report_difference( int compare0, int compare1 ) {
+    if( compare0 != compare1 ) {
+	assert( 0 <= compare0 && compare0 < var_N );
+	assert( 0 <= compare1 && compare1 < var_N );
+	
+	std::cerr << "mean difference " << (variant)compare0
+		  << " and " << (variant)compare1 << ":\n";
+	for( size_t l=0; l < MAX_CLASS; ++l )
+	    for( size_t r=0; r < MAX_CLASS; ++r )
+		std::cerr
+		    << l << "," << r << ": "
+		    << graptor::characterize_mean_difference<double>(
+			timings[compare0][l][r].samples,
+			timings[compare1][l][r].samples,
+			0.95, 1000, 100 )
+		    << '\n';
+    }
 }
 
 int main( int argc, char *argv[] ) {
@@ -357,14 +371,6 @@ int main( int argc, char *argv[] ) {
 	    n, levels, &prestudy[v*(1+(1<<levels))] );
     } );
     std::cerr << "Building prestudy: " << tm.next() << "\n";
-
-    for( int var=0; var < var_N; ++var ) {
-	for( size_t l=0; l < MAX_CLASS; ++l )
-	    for( size_t r=0; r < MAX_CLASS; ++r ) {
-		timings[(int)var][l][r].cnt = 0;
-		timings[(int)var][l][r].tm = 0;
-	    }
-    }
 
     std::cerr << "Configuration:"
 	      << "\n  repetitions: " << repetitions
@@ -427,13 +433,14 @@ int main( int argc, char *argv[] ) {
 	std::cerr << "Results for variant " << (variant)var << ":\n";
 	for( size_t l=0; l < MAX_CLASS; ++l )
 	    for( size_t r=0; r < MAX_CLASS; ++r )
-		std::cerr << l << "," << r << ": "
-			  << timings[var][l][r].cnt << ' '
-			  << timings[var][l][r].tm << ' '
-			  << (timings[var][l][r].tm
-			      / double(timings[var][l][r].cnt))
-			  << '\n';
+		std::cerr
+		    << l << "," << r << ": "
+		    << timings[var][l][r].characterize( .95, 1000, 100 )
+		    << '\n';
     }
+
+    report_difference( var_hash_vector, var_merge_partitioned_scalar );
+    report_difference( var_hash_vector, var_hash_partitioned_vector );
 
     G.del();
 

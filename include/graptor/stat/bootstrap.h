@@ -19,7 +19,7 @@ std::vector<T> get_sample(
 	pthread_t self = pthread_self();
 	generator = new mt19937( clock() + self );
     }
-    uniform_int_distribution<size_t> distribution( 0, sample_size );
+    uniform_int_distribution<size_t> distribution( 0, x.size() );
     std::vector<T> sample( sample_size );
 
     for( size_t i=0; i < sample_size; ++i ) {
@@ -216,18 +216,19 @@ struct characterize_mean_difference {
 	    m_mu = m_sdev = m_ci_lo = m_ci_hi = m_min = m_max
 		= std::numeric_limits<double>::quiet_NaN();
 	} else {
-	    std::vector<double> dist = bootstrap_difference(
+	    m_dist = bootstrap_difference(
 		m_x, m_y, mean<double>, samples, sample_size );
-	    m_mu = mean<double>( dist );
-	    m_sdev = sdev<double>( dist );
+	    m_mu = mean<double>( m_dist );
+	    m_sdev = sdev<double>( m_dist );
 	    std::tie( m_ci_lo, m_ci_hi ) = confidence_interval( pctile )
-		( bootstrap( dist, mean<double>, samples, sample_size ) );
-	    m_min = *std::min_element( dist.begin(), dist.end() );
-	    m_max = *std::max_element( dist.begin(), dist.end() );
+		( bootstrap( m_dist, mean<double>, samples, sample_size ) );
+	    m_min = *std::min_element( m_dist.begin(), m_dist.end() );
+	    m_max = *std::max_element( m_dist.begin(), m_dist.end() );
 	}
     }
 
-    const std::vector<T> & m_x, m_y;
+    const std::vector<T> & m_x, & m_y;
+    std::vector<T> m_dist;
     const double m_pctile;
     double m_mu, m_sdev, m_ci_lo, m_ci_hi, m_min, m_max;
 };

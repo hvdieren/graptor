@@ -40,17 +40,11 @@
 //! Number of size classes distinguished (32, 64, 128, 256, 512)
 static constexpr size_t MAX_CLASS = 5;
 
-//! Summary timing information
-struct timing {
-    size_t cnt;
-    double tm;
-};
-
 //! Mutually exclusive access to timings
 static std::mutex timings_mux;
 
 //! Variables holding timing information, X and P parts
-static timing timings[MAX_CLASS][MAX_CLASS];
+static graptor::distribution_timing timings[MAX_CLASS][MAX_CLASS];
 
 /*! Generic driver method for MCE.
  */
@@ -92,8 +86,7 @@ mce_search( const GraphCSx & G,
     assert( 0 <= bp && bp < 5 );
 
     std::lock_guard<std::mutex> g( timings_mux );
-    timings[bx][bp].cnt++;
-    timings[bx][bp].tm += t;
+    timings[bx][bp].add_sample( t );
 }
 
 int main( int argc, char *argv[] ) {
@@ -142,13 +135,6 @@ int main( int argc, char *argv[] ) {
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
     std::cerr << "Calculating degeneracy order: " << tm.next() << "\n";
-
-    for( size_t l=0; l < MAX_CLASS; ++l ) {
-	for( size_t r=0; r < MAX_CLASS; ++r ) {
-	    timings[l][r].cnt = 0;
-	    timings[l][r].tm = 0;
-	}
-    }
 
     std::cerr << "Configuration:"
 	      << "\n  repetitions: " << repetitions
@@ -228,9 +214,7 @@ int main( int argc, char *argv[] ) {
 	for( size_t r=0; r < MAX_CLASS; ++r ) {
 	    std::cerr << "x=" << (size_t(1)<<(l+5)) << ','
 		      << "p=" << (size_t(1)<<(r+5)) << ' '
-		      << timings[l][r].cnt << ' '
-		      << timings[l][r].tm << ' '
-		      << (timings[l][r].tm / double(timings[l][r].cnt))
+		      << timings[l][r].characterize( .95, 1000, 100 )
 		      << '\n';
 	}
     }

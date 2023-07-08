@@ -69,21 +69,19 @@ struct merge_scalar {
 
 	It l = lb;
 	It r = rb;
-	size_t sz = 0;
 	size_t d = std::min( ld, rd );
 
 	if( d < exceed )
 	    return 0;
 
-	size_t options = d - exceed;
+	std::make_signed_t<size_t> options = d - exceed;
 
 	while( l != le && r != re ) {
 	    if( *l == *r ) {
-		++sz;
 		++l;
 		++r;
 	    } else if( *l < *r ) {
-		if( --options == 0 )
+		if( --options < 0 )
 		    return 0;
 		++l;
 	    } else {
@@ -242,7 +240,7 @@ struct hash_scalar {
 	while( lb != le ) {
 	    VID v = *lb;
 	    if( !htable.contains( v ) )
-		if( --options == 0 )
+		if( --options < 0 )
 		    return 0;
 	    ++lb;
 	}
@@ -297,7 +295,7 @@ private:
 	    type v = tr::loadu( l );
 	    auto m = htable.template multi_contains<T,VL>( v, target::mt_mask() );
 	    options -= VL - _popcnt32( m );
-	    if( options <= 0 ) {
+	    if( options < 0 ) {
 		lb = l;
 		return false;
 	    }
@@ -371,6 +369,18 @@ public:
 
 };
 
+/*!=====================================================================*
+ * TODO:
+ * + Most vectors return no or few matches. Measure frequency of outcomes
+ *   and adjust code accordingly.
+ * + Search for "bulls" first and then solve smaller sub-problems (e.g.,
+ *   intersecting up to the next bull, shorter vector, fewer comparisons),
+ *   or specialise the computation to limit the number of rotations to
+ *   consider while maintaining vector length.
+ * + Consider how to move ahead in the stream (jumping?), but maintain
+ *   invariant ladv, radv >= #matches and avoid counting duplicates.
+ *   
+ *======================================================================*/
 struct merge_vector {
 
 private:
@@ -445,7 +455,7 @@ private:
 	    rb += ilog2( ((uint64_t)radv) + 1 );
 
 	    options -= la - _popcnt32( ma );
-	    if( options <= 0 )
+	    if( options < 0 )
 		return false;
 	}
 
@@ -529,7 +539,7 @@ struct merge_partitioned {
 	idx[0] = 0;
 
 	for( const T * l=lb; l != le; ++l ) {
-	    while( cur <= *l ) { // TODO: <= ??
+	    while( cur <= *l ) {
 		idx[off++] = l - lb;
 		cur += step;
 	    }
