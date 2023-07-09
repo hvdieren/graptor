@@ -296,6 +296,12 @@ public:
 	else
 	    return _mm256_cmpge_epu32_mask( a, b );
     }
+    static mask_type cmpge( mask_type m, type a, type b, mt_mask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return _mm256_mask_cmpge_epi32_mask( m, a, b );
+	else
+	    return _mm256_mask_cmpge_epu32_mask( m, a, b );
+    }
     static mask_type cmple( type a, type b, mt_mask ) {
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm256_cmple_epi32_mask( a, b );
@@ -317,6 +323,9 @@ public:
     }
     static mask_type cmpge( type a, type b, mt_mask ) {
 	return asmask( cmpge( a, b, mt_vmask() ) );
+    }
+    static mask_type cmpge( mask_type m, type a, type b, mt_mask ) {
+	return mask_traits::logical_and( m, cmpge( a, b, mt_mask() ) );
     }
     static mask_type cmplt( type a, type b, mt_mask ) {
 	return asmask( cmplt( a, b, mt_vmask() ) );

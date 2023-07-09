@@ -62,6 +62,10 @@ struct mask_type_traits<8> {
 	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
     }
 
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
+
     static type blend( type c, type no, type yes ) {
 	return ( ~c & no ) | ( c & yes );
     }
@@ -92,6 +96,13 @@ struct mask_type_traits<8> {
     }
     static type cmpeq( type l, type r, target::mt_bool ) {
 	return l == r;
+    }
+
+    static type slli( type a, size_t s ) {
+	return (type)( a << s ); // truncate, please
+    }
+    static type srli( type a, size_t s ) {
+	return (type)( a >> s ); // truncate, please
     }
 
     template<typename T>
