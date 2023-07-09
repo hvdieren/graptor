@@ -318,7 +318,7 @@ public:
     GraphCSx( const wholeGraph<vertex> & WG, int allocation )
 	: n( WG.n ), m( WG.m ),
 	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr ) {
+	  weights( nullptr ), flags( 0 ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
@@ -355,6 +355,17 @@ public:
 	std::copy( &WG.edges[0], &WG.edges[m], &edges[0] );
 
 	build_degree();
+    }
+    GraphCSx( const GraphCSx & G,
+	      std::pair<const VID *, const VID *> remap,
+	      int allocation = -1 )
+	: n( G.n ), m( G.m ), symmetric( G.isSymmetric() ),
+	  weights( nullptr ), flags( 0 ) {
+	if( allocation == -1 )
+	    allocateInterleaved();
+	else
+	    allocateLocal( allocation );
+	import( G, remap );
     }
 /*
     void import_expand( const GraphCSx & WG ) {
