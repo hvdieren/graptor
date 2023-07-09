@@ -87,6 +87,37 @@ private:
     VID m_start_pos;
 };
 
+template<typename lVID, typename lEID>
+class NeighbourCutOutDegeneracyOrder {
+public:
+    using VID = lVID;
+    using EID = lEID;
+
+public:
+    // For maximal clique enumeration: all vertices regardless of coreness
+    // Sort neighbour list in increasing order
+    NeighbourCutOutDegeneracyOrder( const ::GraphCSx & G, VID v )
+	: NeighbourCutOutDegeneracyOrder(
+	    G, v, G.getIndex()[v+1] - G.getIndex()[v] ) { }
+    NeighbourCutOutDegeneracyOrder( const ::GraphCSx & G, VID v, VID deg )
+	: m_iset( &G.getEdges()[G.getIndex()[v]] ),
+	  m_num_iset( deg ) {
+	const lVID * pos = std::lower_bound( m_iset, m_iset+deg, v );
+	m_start_pos = pos - m_iset;
+    }
+
+    lVID get_num_vertices() const { return m_num_iset; }
+    const lVID * get_vertices() const { return m_iset; }
+
+    lVID get_start_pos() const { return m_start_pos; }
+
+private:
+    const VID * const m_iset;
+    VID m_num_iset;
+    VID m_start_pos;
+};
+
+
 } // namespace graph
 
 } // namespace graptor
