@@ -8,14 +8,23 @@
 
 #include "graptor/target/vector.h"
 
-/*======================================================================*
+/*!=====================================================================*
+ * Various intersection algorithms
  *======================================================================*/
 
 namespace graptor {
 
 struct merge_scalar {
 
+    static constexpr bool uses_hash = false;
+
     template<typename It, typename Ot>
+    static
+    Ot intersect( It lb, It le, It rb, It re, Ot o ) {
+	return intersect<false>( lb, le, rb, re, o );
+    }
+
+    template<bool send_lhs_ptr, typename It, typename Ot>
     static
     Ot intersect( It lb, It le, It rb, It re, Ot o ) {
 	It l = lb;
@@ -23,7 +32,10 @@ struct merge_scalar {
 
 	while( l != le && r != re ) {
 	    if( *l == *r ) {
-		*o++ = *l;
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( l );
+		else
+		    *o++ = *l;
 		++l;
 		++r;
 	    } else if( *l < *r )
@@ -95,6 +107,8 @@ struct merge_scalar {
 };
 
 struct merge_jump {
+
+    static constexpr bool uses_hash = false;
 
     template<typename It, typename T>
     static
@@ -202,6 +216,8 @@ struct merge_jump {
 
 struct hash_scalar {
 
+    static constexpr bool uses_hash = true;
+
     template<typename It, typename HT, typename Ot>
     static
     Ot intersect( It lb, It le, const HT & htable, Ot o ) {
@@ -209,6 +225,22 @@ struct hash_scalar {
 	    VID v = *lb;
 	    if( htable.contains( v ) )
 		*o++ = v;
+	    ++lb;
+	}
+	return o;
+    }
+
+    template<bool send_lhs_ptr, typename It, typename HT, typename Ot>
+    static
+    Ot intersect( It lb, It le, const HT & htable, Ot o ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( htable.contains( v ) ) {
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( lb );
+		else
+		    *o++ = v;
+	    }
 	    ++lb;
 	}
 	return o;
@@ -252,12 +284,15 @@ struct hash_scalar {
 
 struct hash_vector {
 
+    static constexpr bool uses_hash = true;
+
 private:
-    template<unsigned VL, bool store, typename T, typename HT, typename Ot>
+    template<bool send_lhs_ptr,
+	     unsigned VL, bool store, typename T, typename HT, typename Ot>
     static
     const T *
     detail_intersect(
-	const T * lb, const T * le, const HT & htable, Ot & out ) {
+	const T * lb, const T * le, const HT & htable, Ot out ) {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 
@@ -265,9 +300,13 @@ private:
 	    type v = tr::loadu( lb );
 	    typename target::mask_type_traits<VL>::type m
 		= htable.template multi_contains<T,VL>( v, target::mt_mask() );
-	    if constexpr ( store )
-		tr::cstoreu( out, m, v );
-	    out += _popcnt32( m );
+	    if constexpr ( send_lhs_ptr )
+		out.template push_back<VL>( m, v, lb );
+	    else {
+		if constexpr ( store )
+		    tr::cstoreu( out, m, v );
+		out += _popcnt32( m );
+	    }
 	    lb += VL;
 	}
 
@@ -308,16 +347,23 @@ private:
     }
 
 public:
-    template<typename T, typename HT>
+    template<typename T, typename HT, typename Ot>
     static
-    T * intersect( const T * lb, const T * le, const HT & htable, T * out ) {
+    Ot intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
+	return intersect<false>( lb, le, htable, out );
+    } 
+
+    template<bool send_lhs_ptr, typename T, typename HT, typename Ot>
+    static
+    Ot intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
 #if __AVX512F__
-	lb = detail_intersect<64/sizeof(T),true>( lb, le, htable, out );
+	lb = detail_intersect<send_lhs_ptr,64/sizeof(T),true>( lb, le, htable, out );
 #endif
 #if __AVX2__
-	lb = detail_intersect<32/sizeof(T),true>( lb, le, htable, out );
+	lb = detail_intersect<send_lhs_ptr,32/sizeof(T),true>( lb, le, htable, out );
 #endif
-	out = graptor::hash_scalar::intersect( lb, le, htable, out );
+	out = graptor::hash_scalar::template intersect<send_lhs_ptr>(
+	    lb, le, htable, out );
 
 	return out;
     }
@@ -327,10 +373,10 @@ public:
     size_t intersect_size( const T * lb, const T * le, const HT & htable ) {
 	size_t sz = 0;
 #if __AVX512F__
-	lb = detail_intersect<64/sizeof(T),false>( lb, le, htable, sz );
+	lb = detail_intersect<false,64/sizeof(T),false>( lb, le, htable, sz );
 #endif
 #if __AVX2__
-	lb = detail_intersect<32/sizeof(T),false>( lb, le, htable, sz );
+	lb = detail_intersect<false,32/sizeof(T),false>( lb, le, htable, sz );
 #endif
 	sz += hash_scalar::intersect_size( lb, le, htable );
 
@@ -383,12 +429,15 @@ public:
  *======================================================================*/
 struct merge_vector {
 
+    static constexpr bool uses_hash = false;
+
 private:
-    template<unsigned VL, bool store, typename T, typename Inc>
+    template<bool send_lhs_ptr,
+	     unsigned VL, bool store, typename T, typename Inc>
     static
     void
     detail_intersect( const T *& lb, const T * le, const T *& rb, const T * re,
-	       Inc & out ) {
+	       Inc out ) {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 	using mask_type = typename tr::mask_type;
@@ -398,9 +447,13 @@ private:
 
 	    mask_type ma = tr::intersect( vl, rb );
 
-	    if constexpr ( store )
-		tr::cstoreu( out, ma, vl );
-	    out += _popcnt32( ma );
+	    if constexpr ( send_lhs_ptr )
+		out.template push_back<VL>( ma, vl, lb );
+	    else {
+		if constexpr ( store )
+		    tr::cstoreu( out, ma, vl );
+		out += _popcnt32( ma );
+	    }
 
 	    type lf = tr::set1( lb[VL-1] );
 	    type rf = tr::set1( rb[VL-1] );
@@ -468,13 +521,21 @@ public:
     static
     T *
     intersect( const T* lb, const T* le, const T* rb, const T* re, T * out ) {
+	return intersect<false>( lb, le, rb, re, out );
+    }
+    
+    template<bool send_lhs_ptr, typename T, typename Out>
+    static
+    Out
+    intersect( const T* lb, const T* le, const T* rb, const T* re, Out out ) {
 #if __AVX512F__
-	detail_intersect<64/sizeof(T),true>( lb, le, rb, re, out );
+	detail_intersect<send_lhs_ptr,64/sizeof(T),true>( lb, le, rb, re, out );
 #endif
 #if __AVX2__
-	detail_intersect<32/sizeof(T),true>( lb, le, rb, re, out );
+	detail_intersect<send_lhs_ptr,32/sizeof(T),true>( lb, le, rb, re, out );
 #endif
-	out = graptor::merge_scalar::intersect( lb, le, rb, re, out );
+	out = graptor::merge_scalar::template intersect<send_lhs_ptr>(
+	    lb, le, rb, re, out );
 
 	return out;
     }
@@ -528,6 +589,9 @@ public:
 
 template<typename Underlying>
 struct merge_partitioned {
+
+    static constexpr bool uses_hash = false;
+
     template<typename T, typename I>
     static
     void
@@ -561,23 +625,41 @@ struct merge_partitioned {
 	       const I* lidx, // prestudy of lhs
 	       const I* ridx, // prestudy of rhs
 	       T * out ) {
+       return intersect<false>( lb, le, rb, re, htable, levels,
+				lo, hi, lidx, ridx, out );
+   }
+
+    template<bool send_lhs_ptr, typename T, typename HT, typename I, typename O>
+    static
+    O
+    intersect( const T* lb, const T* le,
+	       const T* rb, const T* re,
+	       const HT & htable,
+	       size_t levels,
+	       size_t lo, size_t hi,
+	       const I* lidx, // prestudy of lhs
+	       const I* ridx, // prestudy of rhs
+	       O out ) {
 	if( lidx[lo] == lidx[hi] || ridx[lo] == ridx[hi] )
 	    return out;
 	else if( levels == 0 ) {
-	    if constexpr ( std::is_same_v<Underlying,hash_vector> )
-		return Underlying::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
-					      htable,
-					      out );
+	    if constexpr ( std::is_same_v<Underlying,hash_scalar>
+			   || std::is_same_v<Underlying,hash_vector> )
+		return Underlying::template intersect<send_lhs_ptr>(
+		    &lb[lidx[lo]], &lb[lidx[hi]], htable, out );
 	    else
-		return Underlying::intersect( &lb[lidx[lo]], &lb[lidx[hi]],
-					      &rb[ridx[lo]], &rb[ridx[hi]],
-					      out );
+		return Underlying::template intersect<send_lhs_ptr>(
+		    &lb[lidx[lo]], &lb[lidx[hi]],
+		    &rb[ridx[lo]], &rb[ridx[hi]],
+		    out );
 	} else {
 	    size_t mid = ( lo + hi ) / 2;
-	    T * out1 = intersect( lb, le, rb, re, htable, levels-1,
-				  lo, mid, lidx, ridx, out );
-	    return intersect( lb, le, rb, re, htable, levels-1,
-			      mid, hi, lidx, ridx, out1 );
+	    auto out1 = intersect<send_lhs_ptr>(
+		lb, le, rb, re, htable, levels-1,
+		lo, mid, lidx, ridx, out );
+	    return intersect<send_lhs_ptr>(
+		lb, le, rb, re, htable, levels-1,
+		mid, hi, lidx, ridx, out1 );
 	}
     }
 
