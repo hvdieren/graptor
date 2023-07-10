@@ -129,12 +129,21 @@ struct merge_jump {
     template<typename It, typename Ot>
     static
     Ot intersect( It lb, It le, It rb, It re, Ot o ) {
+	return intersect<false>( lb, le, rb, re, o );
+    }
+
+    template<bool send_lhs_ptr, typename It, typename Ot>
+    static
+    Ot intersect( It lb, It le, It rb, It re, Ot o ) {
 	It l = lb;
 	It r = rb;
 
 	while( l != le && r != re ) {
 	    if( *l == *r ) {
-		*o++ = *l;
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( l );
+		else
+		    *o++ = *l;
 		++l;
 		++r;
 	    } else if( *l < *r ) {

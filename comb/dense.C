@@ -90,8 +90,7 @@ size_t
 bench( const GraphCSx & G,
        const HGraph & H,
        VID v,
-       const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
-       const VID * const core_order ) {
+       const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut ) {
 #if USE_PRESTUDY
     graptor::graph::DenseMatrix<Bits,VID,EID>
 	IG( G, H, v, cut, levels, prestudy, graptor:: UNDERLYING () );
@@ -179,8 +178,8 @@ int main( int argc, char *argv[] ) {
     std::cerr << "Remapping graph: " << tm.next() << "\n";
 
     graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( n );
-    const EID * const index = R.getIndex();
-    const VID * const edges = R.getEdges();
+    const EID * const index = remap_graph ? R.getIndex() : G.getIndex();
+    const VID * const edges = remap_graph ? R.getEdges() : G.getEdges();
     
     parallel_loop( (VID)0, n, [&]( VID v ) {
 	auto & adj = H.get_adjacency( v );
@@ -207,6 +206,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n  min_size: " << min_size
 	      << "\n  max_size: " << max_size
 	      << "\n  levels: " << levels
+	      << "\n  remap: " << ( remap_graph ? "yes" : "no" )
 	      << "\n";
 
 #if ONLY_CUTOUT
@@ -215,8 +215,6 @@ int main( int argc, char *argv[] ) {
 
     if( remap_graph ) {
 	parallel_loop( VID(0), n, [&]( VID v ) {
-	// VID v = 924392;
-
 	    graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> cut( R, v );
 	    size_t num = cut.get_num_vertices();
 	    size_t rep = repetitions;
@@ -233,7 +231,7 @@ int main( int argc, char *argv[] ) {
 		if( num <= 512 )
 		    mce_search<512>( R, H, v, cut, nullptr, rep, ref );
 	    }
-	    } );
+	} );
     } else {
 	parallel_loop( VID(0), n, [&]( VID i ) {
 	    VID v = order[i];

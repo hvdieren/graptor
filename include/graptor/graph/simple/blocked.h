@@ -8,6 +8,7 @@
 #include "graptor/graph/GraphCSx.h"
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/hadjt.h"
+#include "graptor/graph/simple/dense.h" // support iterators
 #include "graptor/target/vector.h"
 
 namespace graptor {
@@ -61,7 +62,7 @@ public:
 	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
@@ -105,6 +106,64 @@ public:
 	    m_m += deg;
 	}
     }
+    // Assumes no relabeling required
+    template<typename utr, typename HGraph, typename DID, typename AddDegree,
+	     typename gVID = VID, typename gEID = EID>
+    BinaryMatrix( const ::GraphCSx & G,
+		 const HGraph & H,
+		  gVID rs, gVID re,
+		  gVID cs, gVID ce,
+		  const gVID * const s2g, // neighbours in natural sort and degeneracy sort order at same time
+		  DID * m_degree,
+		  AddDegree &&,
+		  utr )
+	: m_row_start( rs ), m_rows( re-rs ),
+	  m_col_start( cs ), m_cols( ce-cs ),
+	  m_s2g( s2g ) {
+	assert( m_cols <= MAX_COL_VERTICES
+		&& "Cap on number of vertices that fit in bitmask" );
+	assert( ( m_cols + bits_per_lane - 1 ) / bits_per_lane <= VL );
+	gVID n = G.numVertices();
+	gEID m = G.numEdges();
+	const gEID * const gindex = G.getIndex();
+	const gVID * const gedges = G.getEdges();
+
+	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+	std::fill( m_matrix, m_matrix+VL*m_rows, type(0) );
+
+	// Place edges
+	VID ni = 0;
+	m_m = 0;
+	for( VID r=rs; r < re; ++r ) {
+	    VID u = s2g[r];
+
+	    bitmask_lhs_sorted_output_iterator<type, VID, true, true>
+		row_u( &m_matrix[VL * (r-rs)], s2g, cs, ce );
+
+	    if constexpr ( utr::uses_hash ) {
+		row_u = utr::template intersect<true>(
+		    s2g+cs, s2g+re, H.get_adjacency( u ), row_u );
+	    } else {
+		const VID * const q = &gedges[gindex[u]];
+		const VID * const qe = &gedges[gindex[u+1]];
+
+		row_u = utr::template intersect<true>(
+		    s2g+cs, s2g+re, q, qe, row_u );
+	    }
+	    
+	    VID deg = row_u.get_degree();
+	    if constexpr ( AddDegree::value )
+		m_degree[r] += deg;
+	    else
+		m_degree[r] = deg;
+	    m_m += deg;
+	}
+    }
+
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
     template<typename hVID, typename hEID, typename Hash, typename DID,
@@ -137,7 +196,7 @@ public:
 	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
@@ -353,6 +412,35 @@ public:
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
 	    G, start_pos, ns, VID(0), start_pos, neighbours, m_s2g, n2s,
 	    m_degree, std::true_type() );
+    }
+    template<typename utr, typename HGraph,
+	     typename gVID = VID, typename gEID = EID>
+    BlockedBinaryMatrix(
+	const ::GraphCSx & G,
+	const HGraph & H,
+	gVID v,
+	const NeighbourCutOutDegeneracyOrder<gVID,gEID> & cut,
+	utr )
+	: m_s2g( cut.get_vertices() ) {
+	gVID n = G.numVertices();
+	gEID m = G.numEdges();
+	const gEID * const gindex = G.getIndex();
+	const gVID * const gedges = G.getEdges();
+
+	// Set of eligible neighbours
+	gVID ns = cut.get_num_vertices();
+	gVID start_pos = cut.get_start_pos();
+	assert( ns - start_pos <= MAX_COL_VERTICES );
+
+	// Construct two matrices
+	// Rows: X union P; columns: P
+	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
+	    G, H, VID(0), ns, start_pos, ns, m_s2g,
+	    m_degree, std::false_type(), utr() );
+	// Rows: P; columns: X
+	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
+	    G, H, start_pos, ns, VID(0), start_pos, m_s2g,
+	    m_degree, std::true_type(), utr() );
     }
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.

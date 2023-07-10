@@ -79,7 +79,7 @@ private:
     const lVID m_start_pos;
 };
 
-template<typename BitMaskTy, typename lVID, bool aligned>
+template<typename BitMaskTy, typename lVID, bool aligned, bool two_sided>
 struct bitmask_lhs_sorted_output_iterator {
     using bitmask_type = BitMaskTy;
     static constexpr size_t word_size = 8 * sizeof( bitmask_type );
@@ -87,9 +87,10 @@ struct bitmask_lhs_sorted_output_iterator {
     bitmask_lhs_sorted_output_iterator(
 	bitmask_type * bitmask,
 	const lVID * start,
-	lVID start_pos )
+	lVID start_pos,
+	lVID end_pos = std::numeric_limits<lVID>::max() )
 	: m_bitmask( bitmask ), m_start( start ),
-	  m_deg( 0 ), m_start_pos( start_pos ) { }
+	  m_deg( 0 ), m_start_pos( start_pos ), m_end_pos( end_pos ) { }
 
     const bitmask_lhs_sorted_output_iterator &
     operator = ( const bitmask_lhs_sorted_output_iterator & it ) {
@@ -100,8 +101,14 @@ struct bitmask_lhs_sorted_output_iterator {
 
     void push_back( const lVID * p ) {
 	lVID v = p - m_start;
-	// no X-X edges
-	if( v >= m_start_pos ) {
+	bool accept = v >= m_start_pos;
+	if constexpr ( two_sided ) {
+	    accept = accept && v < m_end_pos;
+	    v -= m_start_pos;
+	}
+
+	// no X-X edges / slice of matrix
+	if( accept ) {
 	    m_bitmask[v/word_size]
 		|= bitmask_type(1) << ( v & ( word_size-1 ) );
 	    m_deg++;
@@ -110,26 +117,40 @@ struct bitmask_lhs_sorted_output_iterator {
 
     template<unsigned VL>
     void push_back( typename vector_type_traits_vl<lVID,VL>::mask_type m,
-		    typename vector_type_traits_vl<lVID,VL>::type v,
+		    typename vector_type_traits_vl<lVID,VL>::type gv,
 		    const lVID * base ) {
 	using tr = vector_type_traits_vl<lVID,VL>;
 	using mtr = typename tr::mask_traits;
 	using type = typename tr::type;
 	using mask_type = typename tr::mask_type;
 
+	lVID v = base - m_start;
 	type vsp = tr::set1( m_start_pos );
-	type vns = tr::set1inc( base - m_start );
+	type vns = tr::set1inc( v );
 	mask_type mm = tr::cmpge( m, vns, vsp, target::mt_mask() );
+	if constexpr ( two_sided ) {
+	    type vep = tr::set1( m_end_pos );
+	    mm = tr::cmplt( mm, vns, vep, target::mt_mask() );
+	    // vns = tr::sub( vns, vsp ); -- vns unused further down
+	}
 	mask_type * b = reinterpret_cast<mask_type *>( m_bitmask );
-	m_deg += mtr::popcnt( mm );
 
-	if constexpr ( aligned ) {
-	    b[(base-m_start)/VL] = mm;
-	} else {
-	    size_t word = ( base - m_start ) / VL;
-	    size_t off = ( base - m_start ) % VL;
-	    b[(base-m_start)/VL] |= mtr::slli( mm, off );
-	    b[1+(base-m_start)/VL] |= mtr::srli( mm, VL - off );
+	// What if only part of vector is acceptable (blocked + prestudy)???
+	bool perform = true;
+	if constexpr ( two_sided ) {
+	    perform = ( v >= m_start_pos && v < m_end_pos );
+	    v -= m_start_pos;
+	}
+	if( perform ) {
+	    if constexpr ( aligned ) {
+		b[v/VL] = mm;
+	    } else {
+		size_t word = v / VL;
+		size_t off = v % VL;
+		b[word/VL] |= mtr::slli( mm, off );
+		b[1+word/VL] |= mtr::srli( mm, VL - off );
+	    }
+	    m_deg += mtr::popcnt( mm );
 	}
     }
 
@@ -139,7 +160,7 @@ private:
     bitmask_type * m_bitmask;
     const lVID * m_start;
     lVID m_deg;
-    const lVID m_start_pos;
+    const lVID m_start_pos, m_end_pos;
 };
 
 
@@ -352,6 +373,14 @@ public:
 	const EID * const gindex = G.getIndex();
 	const VID * const gedges = G.getEdges();
 
+#if __AVX512F__
+	constexpr VID VL = 64 / sizeof(VID);
+#elif __AVX2__
+	constexpr VID VL = 32 / sizeof(VID);
+#else
+	constexpr VID VL = 1;
+#endif
+
 	// Set of eligible neighbours
 	VID ns = cut.get_num_vertices();
 
@@ -369,19 +398,24 @@ public:
 	for( VID su=0; su < ns; ++su ) {
 	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
 
-	    bitmask_lhs_sorted_output_iterator<type, VID, true>
+	    bitmask_lhs_sorted_output_iterator<type, VID, true, false>
 		row_u( &m_matrix[m_words * su], s2g,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
+	    // Trim off vertices that will be filtered out, but keep alignment.
+	    const VID * const s2g_start
+		= su >= m_start_pos ? s2g
+		: s2g + ( m_start_pos & ~( VL - 1 ) );
+
 	    if constexpr ( utr::uses_hash ) {
 		row_u = utr::template intersect<true>(
-		    s2g, s2g+ns, H.get_adjacency( u ), row_u );
+		    s2g_start, s2g+ns, H.get_adjacency( u ), row_u );
 	    } else {
 		const VID * q = &gedges[gindex[u]];
 		const VID * const qe = &gedges[gindex[u+1]];
 
 		row_u = utr::template intersect<true>(
-		    s2g, s2g+ns, q, qe, row_u );
+		    s2g_start, s2g+ns, q, qe, row_u );
 	    }
 	    
 	    VID deg = row_u.get_degree();
@@ -419,6 +453,14 @@ public:
 	const EID * const gindex = G.getIndex();
 	const VID * const gedges = G.getEdges();
 
+#if __AVX512F__
+	constexpr VID VL = 64 / sizeof(VID);
+#elif __AVX2__
+	constexpr VID VL = 32 / sizeof(VID);
+#else
+	constexpr VID VL = 1;
+#endif
+
 	// Set of eligible neighbours
 	VID ns = cut.get_num_vertices();
 
@@ -441,12 +483,17 @@ public:
 	    const VID * const qe = &gedges[gindex[u+1]];
 	    const VID * uidx = &prestudy[u*((size_t(1)<<levels)+1)];
 
-	    bitmask_lhs_sorted_output_iterator<type, VID, false>
+	    // Trim off vertices that will be filtered out, but keep alignment.
+	    const VID * const s2g_start
+		= su >= m_start_pos ? s2g
+		: s2g + ( m_start_pos & ~( VL - 1 ) );
+
+	    bitmask_lhs_sorted_output_iterator<type, VID, false, false>
 		row_u( &m_matrix[m_words * su], s2g,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
 	    row_u = graptor::merge_partitioned<utr>::template intersect<true>(
-		    s2g, s2g+ns,
+		    s2g_start, s2g+ns,
 		    q, qe,
 		    H.get_adjacency( u ),
 		    levels, 0, 1<<levels, vidx, uidx, row_u );
@@ -458,6 +505,7 @@ public:
 
 	m_n = ns;
     }
+#if 0
     DenseMatrix( const ::GraphCSx & G, VID v,
 		 VID num_neighbours, const VID * neighbours,
 		 const VID * const core_order )
@@ -610,6 +658,7 @@ public:
 
 	m_n = ns;
     }
+#endif
 
     ~DenseMatrix() {
 	if( m_matrix_alc != nullptr )
@@ -732,7 +781,9 @@ public:
     VID numVertices() const { return m_n; }
     EID numEdges() const { return m_m; }
 
+#if 0
     const VID * get_s2g() const { return &m_s2g[0]; }
+#endif
 
 private:
     void bk_iterate( row_type R, row_type P, int depth, VID cutoff ) {
@@ -974,7 +1025,9 @@ private:
     row_type m_mc;
     VID m_start_pos;
 
+#if 0
     VID m_s2g[Bits];
+#endif
     DID m_degree[Bits];
 };
 
