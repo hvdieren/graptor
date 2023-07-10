@@ -220,7 +220,7 @@ public:
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
@@ -314,7 +314,7 @@ public:
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
 
@@ -388,7 +388,7 @@ public:
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
 
@@ -468,7 +468,7 @@ public:
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
 
@@ -484,19 +484,21 @@ public:
 	    const VID * uidx = &prestudy[u*((size_t(1)<<levels)+1)];
 
 	    // Trim off vertices that will be filtered out, but keep alignment.
-	    const VID * const s2g_start
-		= su >= m_start_pos ? s2g
-		: s2g + ( m_start_pos & ~( VL - 1 ) );
+	    // Note: must keep alignment with prestudy data...
+	    // const VID * const s2g_start
+	    // = su >= m_start_pos ? s2g
+	    // : s2g + ( m_start_pos & ~( VL - 1 ) );
 
 	    bitmask_lhs_sorted_output_iterator<type, VID, false, false>
 		row_u( &m_matrix[m_words * su], s2g,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
 	    row_u = graptor::merge_partitioned<utr>::template intersect<true>(
-		    s2g_start, s2g+ns,
-		    q, qe,
-		    H.get_adjacency( u ),
-		    levels, 0, 1<<levels, vidx, uidx, row_u );
+		// s2g_start, s2g+ns,
+		s2g, s2g+ns,
+		q, qe,
+		H.get_adjacency( u ),
+		levels, 0, 1<<levels, vidx, uidx, row_u );
 
 	    VID deg = row_u.get_degree();
 	    m_degree[su] = deg;
@@ -563,7 +565,7 @@ public:
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
@@ -608,6 +610,7 @@ public:
 
 	delete[] n2s;
     }
+#endif
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
     template<typename hVID, typename hEID, typename Hash>
@@ -623,20 +626,20 @@ public:
 	// for efficiency of enumeration.
 	// Do we need to copy, or can we just keep a pointer to XP?
 	VID ns = ce;
-	std::copy( XP, XP+ce, m_s2g );
+	// std::copy( XP, XP+ce, m_s2g );
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
 	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[(p&63)/sizeof(type)];
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = m_s2g[su]; // or XP[su]
+	    VID u = XP[su]; // m_s2g[su]; // or XP[su]
 	    VID deg = 0;
 
 	    row_type row_u = tr::setzero();
@@ -658,7 +661,6 @@ public:
 
 	m_n = ns;
     }
-#endif
 
     ~DenseMatrix() {
 	if( m_matrix_alc != nullptr )
