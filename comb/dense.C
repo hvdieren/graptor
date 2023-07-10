@@ -90,7 +90,8 @@ size_t
 bench( const GraphCSx & G,
        const HGraph & H,
        VID v,
-       const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut ) {
+       const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
+       const VID * const core_order ) {
 #if USE_PRESTUDY
     graptor::graph::DenseMatrix<Bits,VID,EID>
 	IG( G, H, v, cut, levels, prestudy, graptor:: UNDERLYING () );
