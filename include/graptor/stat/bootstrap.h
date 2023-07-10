@@ -66,10 +66,12 @@ std::vector<T> bootstrap_difference(
 
 template<typename T>
 double mean( const std::vector<T> & x ) {
-    T sum = 0;
+    double sum = 0;
     for( auto v : x )
 	sum += v;
-    return double(sum) / double(x.size());
+    double mu = sum / double(x.size());
+    assert( !std::isnan( mu ) && "NaN detected" );
+    return mu;
 }
 
 template<typename T>
@@ -80,7 +82,9 @@ double sdev( const std::vector<T> & x ) {
 	sumsq += v * v;
     }
     double n = x.size();
-    return std::sqrt( n * ( sumsq/n - (sum/n)*(sum/n) ) / (n-1.0) );
+    double sd = std::sqrt( n * ( sumsq/n - (sum/n)*(sum/n) ) / (n-1.0) );
+    assert( !std::isnan( sd ) && "NaN detected" );
+    return sd;
 }
 
 template<typename T>
