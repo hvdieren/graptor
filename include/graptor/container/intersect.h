@@ -301,7 +301,7 @@ private:
     static
     const T *
     detail_intersect(
-	const T * lb, const T * le, const HT & htable, Ot out ) {
+	const T * lb, const T * le, const HT & htable, Ot & out ) {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 
@@ -446,7 +446,7 @@ private:
     static
     void
     detail_intersect( const T *& lb, const T * le, const T *& rb, const T * re,
-	       Inc out ) {
+	       Inc & out ) {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 	using mask_type = typename tr::mask_type;
