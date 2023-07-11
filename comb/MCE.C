@@ -11,6 +11,9 @@
 // * Look at Blocked and Binary matrix design:
 //   + col_start and row_start redundant to each other
 // * VIDs of 8 or 16 bits
+// * Consider sorting vertices first by non-increasing degeneracy, secondly
+//   by non-increasing degree within a group of equal degeneracy.
+//   The non-increasing degree means faster reduction of size of P?
 
 // Novelties:
 // + find pivot -> abort intersection if seen to be too small
@@ -1292,100 +1295,6 @@ mce_iterate_xp_iterative(
 }
 
 
-template<typename lVID, typename lEID>
-class NeighbourCutOut {
-public:
-    using VID = lVID;
-    using EID = lEID;
-
-public:
-    // For maximal clique enumeration: all vertices regardless of coreness
-    // Sort neighbour list in increasing order
-    NeighbourCutOut( const GraphCSx & G,
-		     VID v )
-	: NeighbourCutOut( G, v, G.getIndex()[v+1] - G.getIndex()[v] ) { }
-    NeighbourCutOut( const GraphCSx & G,
-		     VID v,
-		     VID deg )
-	: m_iset( deg ), m_totdeg( 0 ), m_maxdeg( 0 ), m_num_iset( 0 ) {
-	const EID * const index = G.getIndex();
-	const VID * const edges = G.getEdges();
-
-	for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
-	    VID u = edges[e];
-
-	    if( u == v ) // self-edge
-		continue;
-
-	    VID udeg = 0;
-// TODO: redundant loop??? (prunes #vertices - successful?)
-	    for( EID f=index[u], ff=index[u+1]; f != ff; ++f ) {
-		VID w = edges[f];
-		// Filter vertices (duplicates)
-		// if( coreness[w] > coreness[v] )
-		// continue;
-	    
-		if( w == v ) // v is not included in cutout
-		    continue;
-		const VID * pos
-		    = std::lower_bound( &edges[index[v]], &edges[index[v+1]],
-					w );
-		if( pos != &edges[index[v+1]] && *pos == w )
-		    ++udeg;
-	    }
-
-	    // The calculated degrees are not precise as we may consider
-	    // edges to neighbours that are later discarded because
-	    // those neighbours later turn out to have insufficient
-	    // degree themselves. As such, udeg is an upper bound to the
-	    // actual degree of the vertex.
-	    // m_maxdeg, m_totdeg and m_degrees are therefore also upper
-	    // bounds.
-	    m_iset[m_num_iset] = u;
-	    m_totdeg += udeg;
-	    ++m_num_iset;
-	    if( udeg > m_maxdeg )
-		m_maxdeg = udeg;
-	}
-
-	assert( m_num_iset <= deg );
-    }
-
-    VID get_max_degree() const { return m_maxdeg; }
-    VID get_num_vertices() const { return m_num_iset; }
-    const VID * get_vertices() const { return &m_iset[0]; }
-
-private:
-    std::vector<VID> m_iset;
-    EID m_totdeg;
-    VID m_maxdeg;
-    VID m_num_iset;
-};
-
-template<typename lVID, typename lEID>
-class NeighbourCutOutAll {
-public:
-    using VID = lVID;
-    using EID = lEID;
-
-public:
-    // For maximal clique enumeration: all vertices regardless of coreness
-    // Sort neighbour list in increasing order
-    NeighbourCutOutAll( const GraphCSx & G, VID v )
-	: NeighbourCutOutAll( G, v, G.getIndex()[v+1] - G.getIndex()[v] ) { }
-    NeighbourCutOutAll( const GraphCSx & G, VID v, VID deg )
-	: m_iset( &G.getEdges()[G.getIndex()[v]] ),
-	  m_num_iset( deg ) { }
-
-    VID get_num_vertices() const { return m_num_iset; }
-    const VID * get_vertices() const { return m_iset; }
-
-private:
-    const VID * m_iset;
-    VID m_num_iset;
-};
-
-
 template<typename GraphType>
 class GraphBuilderInduced;
 
@@ -1395,25 +1304,6 @@ class GraphBuilderInduced;
 template<typename VID, typename EID, typename Hash>
 class GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>> {
 public:
-    GraphBuilderInduced( const GraphCSx & G,
-			 VID v,
-			 const NeighbourCutOut<VID,EID> & cut,
-			 const VID * const core_order )
-	: GraphBuilderInduced( G, v, cut.get_num_vertices(), cut.get_vertices(),
-			       core_order ) { }
-    GraphBuilderInduced( const GraphCSx & G,
-			 VID v,
-			 const NeighbourCutOutAll<VID,EID> & cut,
-			 const VID * const core_order )
-	: GraphBuilderInduced( G, v, cut.get_num_vertices(), cut.get_vertices(),
-			       core_order ) { }
-    GraphBuilderInduced( const GraphCSx & G,
-			 VID v,
-			 const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
-			 const VID * const core_order )
-	: GraphBuilderInduced( G, v,
-			       cut.get_num_vertices(), cut.get_vertices(),
-			       core_order ) { }
     GraphBuilderInduced( const GraphCSx & G,
 			 VID v,
 			 VID num_neighbours,
@@ -2125,8 +2015,6 @@ void mce_top_level(
     Enumerator & E,
     VID v,
     VID start_pos,
-    // const NeighbourCutOutAll<VID,EID> & cut,
-    // const VID * const core_order,
     VID degeneracy
     ) {
     auto Ee = [&]( const contract::vertex_set<VID> & c,
