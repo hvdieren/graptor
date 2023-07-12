@@ -1076,7 +1076,7 @@ mce_iterate_xp_iterative(
     // Base case - trivial problem
     if( ce == ne ) {
 	if( ne == 0 )
-	    Ee( R );
+	    Ee( R.size() );
 	return;
     }
 
@@ -1153,7 +1153,7 @@ mce_iterate_xp_iterative(
 	    // Recursion, check base case (avoid pushing on stack)
 	    if( ce_new == ne_new ) {
 		if( ne_new == 0 )
-		    Ee( R );
+		    Ee( R.size() );
 		// done
 	    // Tunable
 	    } else if( ce_new - ne_new < 16
@@ -1185,20 +1185,20 @@ mce_iterate_xp_iterative(
 		{
 		if( ce_new <= 32 ) {
 		    DenseMatrix<32,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<32> & c ) {
-			Ee( R, c.size() );
+		    D.mce_bron_kerbosch( [&]( const bitset<32> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		    // done
 		} else if( ce_new <= 64 ) {
 		    DenseMatrix<64,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<64> & c ) {
-			Ee( R, c.size() );
+		    D.mce_bron_kerbosch( [&]( const bitset<64> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		    // done
 		} else if( ce_new <= 128 ) {
 		    DenseMatrix<128,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<128> & c ) {
-			Ee( R, c.size() );
+		    D.mce_bron_kerbosch( [&]( const bitset<128> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		    // done
 #if __AVX512F__
@@ -1207,16 +1207,16 @@ mce_iterate_xp_iterative(
 		} else {
 #endif
 		    DenseMatrix<256,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<256> & c ) {
-			Ee( R, c.size() );
+		    D.mce_bron_kerbosch( [&]( const bitset<256> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		    // done
 		}
 #if __AVX512F__
 		else {
 		    DenseMatrix<512,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<512> & c ) {
-			Ee( R, c.size() );
+		    D.mce_bron_kerbosch( [&]( const bitset<512> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		    // done
 		}
@@ -1226,44 +1226,44 @@ mce_iterate_xp_iterative(
 		if( ce_new-ne_new <= 32 ) {
 		    BlockedBinaryMatrix<256,32,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<32> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<32> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		} else if( ce_new-ne_new <= 64 ) {
 		    BlockedBinaryMatrix<256,64,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<64> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<64> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		} /* else if( ce_new-ne_new <= 128 ) {
 		    BlockedBinaryMatrix<256,128,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<128> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<128> & c, size_t sz ) {
+			Ee( R.size() + sz );
 			} );
 		} */ else if( ne_new <= 32 ) {
 		    BlockedBinaryMatrix<32,256,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		} else if( ne_new <= 64 ) {
 		    BlockedBinaryMatrix<64,256,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		} /* else if( ne_new <= 128 ) {
 		    BlockedBinaryMatrix<128,256,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
+			Ee( R.size() + sz );
 			} );
 		} */ else {
 		    BlockedBinaryMatrix<256,256,VID,EID>
 			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c ) {
-			Ee( R, c.size() );
+		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
+			Ee( R.size() + sz );
 		    } );
 		}
 #endif
@@ -1374,8 +1374,50 @@ public:
 
 	delete[] n2s;
     }
+    template<typename HGraph>
+    GraphBuilderInduced(
+	const GraphCSx & G,
+	const HGraph & H,
+	VID v,
+	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
+	: s2g( cut.get_vertices(), cut.get_vertices()+cut.get_num_vertices() ),
+	  S( cut.get_num_vertices() ),
+	  start_pos( cut.get_start_pos() ) {
+	VID n = G.numVertices();
+	EID m = G.numEdges();
+	const EID * const gindex = G.getIndex();
+	const VID * const gedges = G.getEdges();
 
-    const VID * get_s2g() const { return &s2g[0]; }
+	// Indices:
+	// global (g): original graph's vertex IDs
+	// short (s): relabeled vertex IDs in induced graph S
+	// neighbours (n): position of vertex in neighbour list, which is
+	//                 sorted by global IDs, facilitating lookup
+	VID ns = cut.get_num_vertices();
+
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = s2g[su];
+	    VID k = 0;
+	    auto & adj = S.get_adjacency( su );
+	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
+		VID w = gedges[e];
+		while( k != ns && s2g[k] < w )
+		    ++k;
+		if( k == ns )
+		    break;
+		// If neighbour is selected in cut-out, add to induced graph.
+		// Skip self-edges.
+		// Skip edges between vertices in X.
+		if( s2g[k] == w && w != u
+		    && ( su >= start_pos || k >= start_pos ) )
+		    adj.insert( k );
+	    }
+	}
+
+	S.sum_up_edges();
+    }
+
+    // const VID * get_s2g() const { return &s2g[0]; }
     const auto & get_graph() const { return S; }
     VID get_start_pos() const { return start_pos; }
 
@@ -1895,131 +1937,63 @@ auto make_alternative_selector( Fn && ... fn ) {
 
 static std::mutex io_mux;
 
-template<unsigned XBits, unsigned PBits, typename Enumerator>
-void mce_top_level(
+template<unsigned XBits, unsigned PBits, typename HGraph, typename Enumerator>
+void mce_blocked_fn(
     const GraphCSx & G,
+    const HGraph & H,
     Enumerator & E,
     VID v,
-    const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
-    const VID * const core_order,
+    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
     variant_statistics & stats ) {
 
     timer tm;
     tm.start();
 
+    // Build induced graph
+    // TODO: Make merge method depend on size of neighbour lists
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	IG( G, v, cut.get_num_vertices(), cut.get_vertices(),
-	    cut.get_s2g(), cut.get_n2s(), cut.get_start_pos(),
-	    core_order );
+	IG( G, H, v, cut, graptor::merge_scalar() );
 
-    EID n = IG.numVertices();
-    EID x = IG.numXVertices();
-    EID m = IG.numEdges();
-    // if( m+x*x < n*n/2 ) {
-    if( true /* && m < (n-x)*(n-x)/4 */ ) {
-	// Needs to include X? Pivoting?
-	mce_bron_kerbosch( IG, [&]( const bitset<PBits> & c ) {
-	    E.record( 1 + c.size() );
-	} );
-    } else {
-#if 0
-	size_t cntc = 0, cntv = 0;
-	double tb = tm.next();
-	mce_bron_kerbosch( IG, [&]( const bitset<PBits> & c ) {
-/*
-	    std::cerr << "clique:";
-	    for( auto I=c.begin(), E=c.end(); I != E; ++I )
-		std::cerr << ' ' << *I;
-	    std::cerr << "\n";
-*/
-	    cntc++;
-	} );
-	double tc = tm.next();
-	// IG.complement();
-	mce_vertex_cover( IG, [&]( const bitset<PBits> & c ) {
-/*
-	    std::cerr << "cover:";
-	    for( auto I=c.begin(), E=c.end(); I != E; ++I )
-		std::cerr << ' ' << *I;
-	    std::cerr << "\n";
-*/
-	    cntv++;
-	} );
-	double tv = tm.next();
-	assert( cntc == cntv );
-	{
-	std::lock_guard<std::mutex> g( io_mux );
-	std::cerr << "X: " << XBits
-		  << " P: " << PBits
-		  << " n: " << n
-		  << " m: " << m
-		  << " c: " << x
-		  << " build: " << tb
-		  << " bk: " << tc
-		  << " vc: " << tv
-		  << "\n";
-	}
-#endif
-	mce_vertex_cover( IG, [&]( const bitset<PBits> & c ) {
-	    E.record( c.size() + 1 );
-	} );
-    }
+    mce_bron_kerbosch( IG, [&]( const bitset<PBits> & c, size_t sz ) {
+	E.record( 1 + sz );
+    } );
 
     stats.record( tm.stop() );
 }
 
-template<unsigned Bits, typename Enumerator>
-void mce_top_level(
+template<unsigned Bits, typename HGraph, typename Enumerator>
+void mce_dense_fn(
     const GraphCSx & G,
+    const HGraph & H,
     Enumerator & E,
     VID v,
-    const graptor::graph::NeighbourCutOutXP<VID,EID> & cut,
-    const VID * const core_order,
+    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
     variant_statistics & stats ) {
 
     timer tm;
     tm.start();
 
-    DenseMatrix<Bits,VID,EID>
-	IG( G, v, cut.get_num_vertices(), cut.get_vertices(),
-	    cut.get_s2g(), cut.get_n2s(), cut.get_start_pos(),
-	    core_order );
+    // Build induced graph
+    // TODO: Make merge method depend on size of neighbour lists
+    DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_vector() );
 
-    // Needs to include X? Pivoting?
-    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) {
-	E.record( 1 + c.size() );
-/*
-	std::cerr << "MC: " << v;
-	for( auto v : c )
-	    std::cerr << ' ' << IG.get_s2g()[v];
-	std::cerr << " | cutout: ";
-	for( auto v : c )
-	    std::cerr << ' ' << v;
-	std::cerr << "\n";
-
-	std::vector<VID> cc( c.begin(), c.end() );
-	std::transform( cc.begin(), cc.end(), cc.begin(),
-			[&]( auto v ) { return IG.get_s2g()[v]; } );
-	cc.push_back( v );
-	std::sort( cc.begin(), cc.end() );
-	check_clique( G, cc.size(), &cc[0] );
-*/
+    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
+	E.record( 1 + sz );
     } );
 
     stats.record( tm.stop() );
 }
 
 template<typename Enumerator, typename VID, typename EID, typename Hash>
-void mce_top_level(
+void mce_variable(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & HG,
     Enumerator & E,
     VID v,
     VID start_pos,
     VID degeneracy
     ) {
-    auto Ee = [&]( const contract::vertex_set<VID> & c,
-		   size_t surplus = 0 ) {
-	E.record( 1+c.size()+surplus );
+    auto Ee = [&]( size_t size, size_t surplus = 0 ) {
+	E.record( 1+size+surplus );
 /*
 	    std::cerr << "MC: " << v;
 	    for( auto v : c )
@@ -2046,14 +2020,15 @@ void mce_top_level(
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
 }
 
-template<typename Enumerator>
+template<typename HGraph, typename Enumerator>
 void mce_top_level(
     const GraphCSx & G,
+    const HGraph & H,
     Enumerator & E,
     VID v,
-    const VID * const core_order,
     VID degeneracy ) {
-    graptor::graph::NeighbourCutOutXP<VID,EID> cut( G, v, core_order );
+    // graptor::graph::NeighbourCutOutXP<VID,EID> cut( G, v, core_order );
+    graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> cut( G, v );
 
     all_variant_statistics & stats = mce_stats.get_statistics();
 
@@ -2063,61 +2038,60 @@ void mce_top_level(
 
 #if __AVX512F__
     if( num <= 512 ) {
-	mce_top_level<512>( G, E, v, cut, core_order, stats.get_512() );
+	mce_dense_fn<512>( G, H, E, v, cut, stats.get_512() );
     } else
 #endif
     if( num <= 256 ) {
 	if( num <= 32 )
-	    mce_top_level<32>( G, E, v, cut, core_order, stats.get_32() );
+	    mce_dense_fn<32>( G, H, E, v, cut, stats.get_32() );
 	else if( num <= 64 )
-	    mce_top_level<64>( G, E, v, cut, core_order, stats.get_64() );
+	    mce_dense_fn<64>( G, H, E, v, cut, stats.get_64() );
 	else if( num <= 128 )
-	    mce_top_level<128>( G, E, v, cut, core_order, stats.get_128() );
+	    mce_dense_fn<128>( G, H, E, v, cut, stats.get_128() );
 	else
-	    mce_top_level<256>( G, E, v, cut, core_order, stats.get_256() );
+	    mce_dense_fn<256>( G, H, E, v, cut, stats.get_256() );
     } else if( xnum <= 256 && pnum <= 256 ) {
 	if( xnum <= 32 && pnum <= 256 )
-	    mce_top_level<32,256>( G, E, v, cut, core_order, stats.get_32_256() );
+	    mce_blocked_fn<32,256>( G, H, E, v, cut, stats.get_32_256() );
 	else if( xnum <= 256 && pnum <= 32 )
-	    mce_top_level<256,32>( G, E, v, cut, core_order, stats.get_32_256() );
+	    mce_blocked_fn<256,32>( G, H, E, v, cut, stats.get_32_256() );
 	else if( xnum <= 64 && pnum <= 256 )
-	    mce_top_level<64,256>( G, E, v, cut, core_order, stats.get_64_256() );
+	    mce_blocked_fn<64,256>( G, H, E, v, cut, stats.get_64_256() );
 	else if( xnum <= 256 && pnum <= 64 )
-	    mce_top_level<256,64>( G, E, v, cut, core_order, stats.get_64_256() );
+	    mce_blocked_fn<256,64>( G, H, E, v, cut, stats.get_64_256() );
 	/*
 	else if( xnum <= 128 && pnum <= 256 )
-	    mce_top_level<128,256>( G, E, v, cut, core_order, stats.get_128_256() );
+	    mce_blocked_fn<128,256>( G, H, E, v, cut, stats.get_128_256() );
 	else if( xnum <= 256 && pnum <= 128 )
-	    mce_top_level<256,128>( G, E, v, cut, core_order, stats.get_128_256() );
+	    mce_blocked_fn<256,128>( G, H, E, v, cut, stats.get_128_256() );
 	*/
 	else if( xnum <= 32 && pnum <= 256 )
-	    mce_top_level<32,256>( G, E, v, cut, core_order, stats.get_32_256() );
+	    mce_blocked_fn<32,256>( G, H, E, v, cut, stats.get_32_256() );
 	else if( xnum <= 256 && pnum <= 32 )
-	    mce_top_level<256,32>( G, E, v, cut, core_order, stats.get_32_256() );
+	    mce_blocked_fn<256,32>( G, H, E, v, cut, stats.get_32_256() );
 	else if( xnum <= 64 && pnum <= 256 )
-	    mce_top_level<64,256>( G, E, v, cut, core_order, stats.get_64_256() );
+	    mce_blocked_fn<64,256>( G, H, E, v, cut, stats.get_64_256() );
 	else if( xnum <= 256 && pnum <= 64 )
-	    mce_top_level<256,64>( G, E, v, cut, core_order, stats.get_64_256() );
+	    mce_blocked_fn<256,64>( G, H, E, v, cut, stats.get_64_256() );
 	/*
 	else if( xnum <= 128 && pnum <= 256 )
-	    mce_top_level<128,256>( G, E, v, cut, core_order, stats.get_128_256() );
+	    mce_blocked_fn<128,256>( G, H, E, v, cut, stats.get_128_256() );
 	else if( xnum <= 256 && pnum <= 128 )
-	    mce_top_level<256,128>( G, E, v, cut, core_order, stats.get_128_256() );
+	    mce_blocked_fn<256,128>( G, H, E, v, cut, stats.get_128_256() );
 	*/
 	else
-	    mce_top_level<256,256>( G, E, v, cut, core_order, stats.get_256_256() );
+	    mce_blocked_fn<256,256>( G, H, E, v, cut, stats.get_256_256() );
     } else {
 	timer tm;
 	tm.start();
-	GraphBuilderInduced<
-	    graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
-	    ibuilder( G, v, cut, core_order );
+	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
+	    ibuilder( G, H, v, cut );
 	const auto & HG = ibuilder.get_graph();
 
 	stats.record_genbuild( tm.stop() );
 
 	tm.start();
-	mce_top_level( HG, E, v, ibuilder.get_start_pos(), degeneracy );
+	mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
 	stats.record_gen( tm.stop() );
     }
 }
@@ -2175,23 +2149,35 @@ int main( int argc, char *argv[] ) {
     assert( G.isSymmetric() );
     std::cerr << "Undirected graph: n=" << n << " m=" << m << std::endl;
 
-    std::cerr << "Calculating coreness...\n";
     GraphCSRAdaptor GA( G, 256 );
     KCv<GraphCSRAdaptor> kcore( GA, P );
     kcore.run();
     auto & coreness = kcore.getCoreness();
+    std::cerr << "Calculating coreness: " << tm.next() << "\n";
     std::cerr << "coreness=" << kcore.getLargestCore() << "\n";
 
-    std::cerr << "Calculating coreness: " << tm.next() << "\n";
-
-    std::cerr << "Calculating sort order...\n";
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
-
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
-
     std::cerr << "Determining sort order: " << tm.next() << "\n";
+
+    GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
+    std::cerr << "Remapping graph: " << tm.next() << "\n";
+
+    graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( n );
+    const EID * const index = R.getIndex();
+    const VID * const edges = R.getEdges();
+    
+    parallel_loop( (VID)0, n, [&]( VID v ) {
+	auto & adj = H.get_adjacency( v );
+	EID ee = index[v+1];
+	for( EID e=index[v]; e != ee; ++e ) {
+	    VID u = edges[e];
+	    adj.insert( u );
+	}
+    } );
+    std::cerr << "Building hashed graph: " << tm.next() << "\n";
 
     MCE_Enumerator E( kcore.getLargestCore() );
 
@@ -2207,7 +2193,8 @@ int main( int argc, char *argv[] ) {
 		  << "\n";
 */
 	
-	mce_top_level( G, E, v, rev_order.get(), kcore.getLargestCore() );
+	// mce_top_level( G, E, v, rev_order.get(), kcore.getLargestCore() );
+	mce_top_level( R, H, E, v, kcore.getLargestCore() );
 
 	// std::cerr << "  vertex " << v << " complete\n";
     } );

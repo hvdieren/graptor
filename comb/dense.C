@@ -78,7 +78,9 @@ bench( const GraphCSx & G,
 #if ONLY_CUTOUT
     __asm__ __volatile__ ( "" : : : "memory" );
 #else
-    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) { ++num_cliques; } );
+    IG.mce_bron_kerbosch( [&]( const bitset<Bits> &, size_t ) {
+	++num_cliques;
+    } );
 #endif
     return num_cliques;
 }
@@ -103,7 +105,9 @@ bench( const GraphCSx & G,
 #if ONLY_CUTOUT
     __asm__ __volatile__ ( "" : : : "memory" );
 #else
-    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c ) { ++num_cliques; } );
+    IG.mce_bron_kerbosch( [&]( const bitset<Bits> &, size_t ) {
+	++num_cliques;
+    } );
 #endif
     return num_cliques;
 }
