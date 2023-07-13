@@ -32,7 +32,9 @@ public:
     static constexpr size_t MAX_COL_VERTICES = bits_per_lane * VL;
 
 public:
-    BinaryMatrix() : m_matrix_alc( nullptr ) { }
+    BinaryMatrix()
+	: m_rows( 0 ), m_cols( 0 ), m_row_start( 0 ), m_col_start( 0 ),
+	  m_matrix_alc( nullptr ) { }
     // The neighbours are split up in ineligible neighbours (initial X set)
     // and eligible neighbours (initial P set). They are already sorted
     // by decreasing coreness in the gID array. Their position in this array
@@ -99,9 +101,9 @@ public:
 	    // assert( get_size( row_u ) == deg );
 	    // assert( VL * (r-rs) <= VL * m_rows );
 	    tr::store( &m_matrix[VL * (r-rs)], row_u );
-	    if constexpr ( AddDegree::value )
-		m_degree[r] += deg;
-	    else
+	    if constexpr ( !AddDegree::value )
+		// m_degree[r] += deg;
+	    // else
 		m_degree[r] = deg;
 	    m_m += deg;
 	}
@@ -156,9 +158,9 @@ public:
 	    }
 	    
 	    VID deg = row_u.get_degree();
-	    if constexpr ( AddDegree::value )
-		m_degree[r] += deg;
-	    else
+	    if constexpr ( !AddDegree::value )
+		// m_degree[r] += deg;
+	    // else
 		m_degree[r] = deg;
 	    m_m += deg;
 	}
@@ -211,6 +213,18 @@ public:
 	    auto & adj = G.get_adjacency( u );
 
 	    // Intersect XP with adjacency list
+#if 0
+	    for( hVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
+		hVID xp = XP[l];
+		// TODO: vectorized lookup (VL values at once) + customise
+		//       the construction of the row_u by inserting blocks
+		//       of VL bits at a time.
+		if( adj.contains( xp ) ) {
+		    row_u = tr::bitwise_or( row_u, create_singleton( l ) );
+		    ++deg;
+		}
+	    }
+#else
 #if __AVX512F__
 	    static constexpr unsigned RVL = 512/Bits;
 #elif __AVX2__
@@ -221,8 +235,9 @@ public:
 	    static constexpr unsigned RVL = 1;
 #endif
 	    if constexpr ( sizeof(hVID)*8 == Bits && RVL >= 4 ) {
-		hVID l = ne;
-		if( ce-ne >= RVL ) {
+		hVID col_end = m_col_start + m_cols;
+		hVID l = m_col_start;
+		if( m_cols >= RVL ) {
 		    // A vertex identifier is not wider than a row of the matrix.
 		    // We can fit multiple row_type into a vector
 		    using itr = vector_type_traits_vl<hVID,RVL>;
@@ -235,7 +250,7 @@ public:
 		    rtype off = rtr::set1inc0();
 		    rtype mrow = rtr::setzero();
 		    itype mdeg = itr::setzero();
-		    while( l+VL <= ce ) {
+		    while( l+RVL <= col_end ) {
 			itype v = itr::loadu( &XP[l] );
 			rtype c = rtr::sllv( one, off );
 #if __AVX512F__
@@ -247,18 +262,18 @@ public:
 			itype b = adj.template multi_contains<hVID,RVL>( v, target::mt_vmask() );
 			rtype br = conversion_traits<logical<sizeof(hVID)>,logical<sizeof(type)>,RVL>::convert( b );
 			rtype d = rtr::bitwise_and( br, c );
-			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) );
+			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) ); // 4-argument add( mdeg, b, ione, mdeg );
 #else
 			assert( 0 && "NYI" );
 #endif
 			mrow = rtr::bitwise_or( mrow, d );
 			off = rtr::add( off, step );
-			l += VL;
+			l += RVL;
 		    }
 		    row_u = rtr::reduce_bitwiseor( mrow );
 		    deg = itr::reduce_add( mdeg );
 		}
-		while( l < ce ) {
+		while( l < col_end ) {
 		    hVID xp = XP[l];
 		    if( adj.contains( xp ) ) {
 			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
@@ -267,7 +282,7 @@ public:
 		    ++l;
 		}
 	    } else {
-		for( hVID l=ne; l < ce; ++l ) {
+		for( hVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
 		    hVID xp = XP[l];
 		    // TODO: vectorized lookup (VL values at once) + customise
 		    //       the construction of the row_u by inserting blocks
@@ -278,11 +293,12 @@ public:
 		    }
 		}
 	    }
+#endif
 
 	    tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
-	    if constexpr ( AddDegree::value )
-		m_degree[r] += deg;
-	    else
+	    if constexpr ( !AddDegree::value )
+		// m_degree[r] += deg;
+	    // else
 		m_degree[r] = deg;
 	    m_m += deg;
 	}
@@ -350,10 +366,10 @@ public:
 #endif
 
 private:
-    sVID m_rows;
-    sVID m_cols;
-    sVID m_row_start;
-    sVID m_col_start;
+    const sVID m_rows;
+    const sVID m_cols;
+    const sVID m_row_start;
+    const sVID m_col_start;
     sEID m_m;
     type * m_matrix;
     type * m_matrix_alc;
@@ -576,7 +592,7 @@ void mce_bk_iterate(
     // depth == get_size( R )
     if( ptr::is_zero( Pp ) ) {
 	if( ptr::is_zero( Xp ) && xtr::is_zero( Xx ) )
-	    EE( bitset<PBits>( R ) ); // note: offset elements by n-x
+	    EE( bitset<PBits>( R ), depth ); // note: offset elements by n-x
 	return;
     }
 
@@ -632,7 +648,7 @@ mce_bron_kerbosch(
 
 	// if no neighbours in cut-out, then trivial 2-clique
 	if( ptr::is_zero( r ) && xtr::is_zero( Xx ) ) {
-	    EE( bitset<PBits>( R ) );
+	    EE( bitset<PBits>( R ), 1 );
 	    continue;
 	}
 

@@ -69,65 +69,75 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
+using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
+
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
 using graptor::graph::BlockedBinaryMatrix;
 
-enum cvt_pdg_variable_name {
-    var_dcount = var_kc_num + 0,
-    var_max = var_kc_num + 1,
-    var_min = var_kc_num + 2,
-    var_priority = var_kc_num + 3
-};
+static constexpr size_t X_MIN_SIZE = 5;
+static constexpr size_t X_MAX_SIZE = 9;
+static constexpr size_t X_DIM = X_MAX_SIZE - X_MIN_SIZE + 1;
+static constexpr size_t P_MIN_SIZE = 5;
+static constexpr size_t P_MAX_SIZE = 9;
+static constexpr size_t P_DIM = P_MAX_SIZE - P_MIN_SIZE + 1;
+static constexpr size_t N_MIN_SIZE = 5;
+static constexpr size_t N_MAX_SIZE = 9;
+static constexpr size_t N_DIM = N_MAX_SIZE - N_MIN_SIZE + 1;
 
 static bool verbose = false;
 
-template<typename T>
-struct murmur_hash;
+class MCE_Enumerator {
+public:
+    MCE_Enumerator( size_t degen = 0 )
+	: m_degeneracy( degen ),
+	  m_histogram( degen+1 ) { }
 
-template<>
-struct murmur_hash<uint64_t> {
-    using type = uint64_t;
-    
-    type operator()( type h ) const {
-	h ^= h >> 33;
-	h *= 0xff51afd7ed558ccdL;
-	h ^= h >> 33;
-	h *= 0xc4ceb9fe1a85ec53L;
-	h ^= h >> 33;
-	return h;
+    // Recod clique of size s
+    void record( size_t s ) {
+	assert( s <= m_degeneracy+1 );
+	__sync_fetch_and_add( &m_histogram[s-1], 1 );
     }
+
+    std::ostream & report( std::ostream & os ) const {
+	assert( m_histogram.size() >= m_degeneracy+1 );
+
+	size_t num_maximal_cliques = 0;
+	for( size_t i=0; i < m_histogram.size(); ++i )
+	    num_maximal_cliques += m_histogram[i];
+	
+	os << "Number of maximal cliques: " << num_maximal_cliques
+	   << "\n";
+	os << "Clique histogram: clique_size, num_of_cliques\n";
+	for( size_t i=0; i <= m_degeneracy; ++i ) {
+	    if( m_histogram[i] != 0 ) {
+		os << (i+1) << ", " << m_histogram[i] << "\n";
+	    }
+	}
+	return os;
+    }
+
+private:
+    size_t m_degeneracy;
+    std::vector<size_t> m_histogram;
 };
 
-template<>
-struct murmur_hash<uint32_t> {
-    using type = uint32_t;
+struct MCE_Enumerator_stage2 {
+    MCE_Enumerator_stage2( MCE_Enumerator & _E ) : E( _E ) { }
+
+    template<unsigned Bits>
+    void operator() ( const bitset<Bits> & c, size_t sz ) {
+	E.record( 1 + sz );
+    }
     
-    type operator()( type h ) const {
-	h ^= h >> 16;
-	h *= 0x85ebca6b;
-	h ^= h >> 13;
-	h *= 0xc2b2ae35;
-	h ^= h >> 16;
-
-	return h;
+    void record( size_t sz ) {
+	E.record( 1 + sz );
     }
-
-    template<unsigned short VL>
-    typename vector_type_traits_vl<uint32_t,VL>::type
-    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-	const vtype c1 = tr::set1( 0x85ebca6b );
-	const vtype c2 = tr::set1( 0xc2b2ae35 );
-	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
-	h = tr::mul( h, c1 );
-	h = tr::bitwise_xor( h, tr::srli( h, 13 ) );
-	h = tr::mul( h, c2 );
-	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
-	return h;
-    }
+    
+private:
+    MCE_Enumerator & E;
 };
+
 
 struct variant_statistics {
     variant_statistics()
@@ -146,16 +156,11 @@ struct variant_statistics {
 	m_tm += atm;
 	if( m_max < atm )
 	    m_max = atm;
-	if( atm > 4.0 ) {
-	    static int x = 0;
-	    ++x;
-	}
 	++m_calls;
     }
 
-    ostream & print( ostream & os, std::string && name ) const {
-	return os << " " << name << " version: "
-		  << m_tm << " seconds in "
+    ostream & print( ostream & os ) const {
+	return os << m_tm << " seconds in "
 		  << m_calls << " calls @ "
 		  << ( m_tm / double(m_calls) )
 		  << " s/call; max " << m_max << "\n";
@@ -166,67 +171,33 @@ struct variant_statistics {
 };
 
 struct all_variant_statistics {
-    all_variant_statistics() { }
-    all_variant_statistics(
-	variant_statistics && v32,
-	variant_statistics && v64,
-	variant_statistics && v128,
-	variant_statistics && v256,
-	variant_statistics && v512,
-	variant_statistics && v32_256,
-	variant_statistics && v64_256,
-	variant_statistics && v128_256,
-	variant_statistics && v256_256,
-	variant_statistics && vgen,
-	variant_statistics && vgenbuild ) :
-	m_32( std::forward<variant_statistics>( v32 ) ),
-	m_64( std::forward<variant_statistics>( v64 ) ),
-	m_128( std::forward<variant_statistics>( v128 ) ),
-	m_256( std::forward<variant_statistics>( v256 ) ),
-	m_512( std::forward<variant_statistics>( v512 ) ),
-	m_32_256( std::forward<variant_statistics>( v32_256 ) ),
-	m_64_256( std::forward<variant_statistics>( v64_256 ) ),
-	m_128_256( std::forward<variant_statistics>( v128_256 ) ),
-	m_256_256( std::forward<variant_statistics>( v256_256 ) ),
-	m_gen( std::forward<variant_statistics>( vgen ) ),
-	m_genbuild( std::forward<variant_statistics>( vgenbuild ) ) { }
-
     all_variant_statistics
     operator + ( const all_variant_statistics & s ) const {
-	return all_variant_statistics(
-	    m_32 + s.m_32,
-	    m_64 + s.m_64,
-	    m_128 + s.m_128,
-	    m_256 + s.m_256,
-	    m_512 + s.m_512,
-	    m_32_256 + s.m_32_256,
-	    m_64_256 + s.m_64_256,
-	    m_128_256 + s.m_128_256,
-	    m_256_256 + s.m_256_256,
-	    m_gen + s.m_gen,
-	    m_genbuild + s.m_genbuild );
+	all_variant_statistics sum;
+	for( size_t n=0; n < N_DIM; ++n )
+	    sum.m_dense[n] = m_dense[n] + s.m_dense[n];
+	for( size_t x=0; x < X_DIM; ++x )
+	    for( size_t p=0; p < P_DIM; ++p )
+		sum.m_blocked[x][p] = m_blocked[x][p] + s.m_blocked[x][p];
+	sum.m_gen = m_gen + s.m_gen;
+	sum.m_genbuild = m_genbuild + s.m_genbuild;
+	return sum;
     }
 
-    void record_32( double atm ) { m_32.record( atm ); }
-    void record_64( double atm ) { m_64.record( atm ); }
-    void record_128( double atm ) { m_128.record( atm ); }
-    void record_256( double atm ) { m_256.record( atm ); }
     void record_gen( double atm ) { m_gen.record( atm ); }
     void record_genbuild( double atm ) { m_genbuild.record( atm ); }
 
-    variant_statistics & get_32() { return m_32; }
-    variant_statistics & get_64() { return m_64; }
-    variant_statistics & get_128() { return m_128; }
-    variant_statistics & get_256() { return m_256; }
-    variant_statistics & get_512() { return m_512; }
-    variant_statistics & get_32_256() { return m_32_256; }
-    variant_statistics & get_64_256() { return m_64_256; }
-    variant_statistics & get_128_256() { return m_128_256; }
-    variant_statistics & get_256_256() { return m_256_256; }
+    variant_statistics & get( size_t n ) {
+	return m_dense[n-N_MIN_SIZE];
+    }
+    variant_statistics & get( size_t x, size_t p ) {
+	return m_blocked[x-X_MIN_SIZE][p-P_MIN_SIZE];
+    }
     
-    variant_statistics m_32, m_64, m_128, m_256, m_512;
-    variant_statistics m_32_256, m_64_256, m_128_256, m_256_256;
+    variant_statistics m_dense[N_DIM];
+    variant_statistics m_blocked[X_DIM][P_DIM];
     variant_statistics m_gen, m_genbuild;
+
 };
 
 // thread_local static all_variant_statistics * mce_pt_stats = nullptr;
@@ -258,7 +229,6 @@ struct per_thread_statistics {
 };
 
 per_thread_statistics mce_stats;
-
 
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
 	 typename Enumerate>
@@ -1049,13 +1019,20 @@ bool is_subset( VID S_size, const VID * S_set,
     return true;
 }
 
-std::atomic<size_t> pruning;
+template<typename VID, typename EID>
+bool mce_leaf(
+    const HGraphTy & H,
+    MCE_Enumerator_stage2 & E,
+    VID r,
+    const VID * XP,
+    VID ne,
+    VID ce );
 
-template<typename Enumerate, typename VID, typename EID, typename Hash>
+template<typename VID, typename EID, typename Hash>
 void
 mce_iterate_xp_iterative(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
-    Enumerate && Ee,
+    MCE_Enumerator_stage2 & Ee,
     StackLikeAllocator & alloc,
     contract::vertex_set<VID> & R,
     VID degeneracy,
@@ -1076,7 +1053,7 @@ mce_iterate_xp_iterative(
     // Base case - trivial problem
     if( ce == ne ) {
 	if( ne == 0 )
-	    Ee( R.size() );
+	    Ee.record( R.size() );
 	return;
     }
 
@@ -1153,122 +1130,36 @@ mce_iterate_xp_iterative(
 	    // Recursion, check base case (avoid pushing on stack)
 	    if( ce_new == ne_new ) {
 		if( ne_new == 0 )
-		    Ee( R.size() );
+		    Ee.record( R.size() );
 		// done
 	    // Tunable
-	    } else if( ce_new - ne_new < 16
-		       // || ne_new > 256 || ce_new-ne_new > 256
-		       || ce_new > 256
-#if __AVX512F__
-		       || ce_new > 512
-#endif
-		) {
-		// mce_iterate_xp( G, Ee, alloc, R, XP_new, ne_new, ce_new, depth+1 );
-		// Recursion - push new frame
-		assert( depth+1 < degeneracy+1 );
-		frame_t & nfr = frame[depth++];
-		new ( &nfr ) frame_t {
-		    fr.XP_new, ne_new, ce_new, 0, nullptr, nullptr, ne_new };
-
-		nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new );
-		nfr.XP_new = alloc.template allocate<VID>( ce_new );
-		nfr.prev_tgt = XP_new;
-		assert( R.size() == depth );
-		// Go to handle top frame
-		continue;
-	    } else
-#if __AVX512F__
-		if( ce_new <= 512 )
-#else
-		if( ce_new <= 256 )
-#endif
-		{
-		if( ce_new <= 32 ) {
-		    DenseMatrix<32,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<32> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		    // done
-		} else if( ce_new <= 64 ) {
-		    DenseMatrix<64,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<64> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		    // done
-		} else if( ce_new <= 128 ) {
-		    DenseMatrix<128,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<128> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		    // done
-#if __AVX512F__
-		} else if( ce_new <= 256 ) {
-#else
-		} else {
-#endif
-		    DenseMatrix<256,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<256> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		    // done
-		}
-#if __AVX512F__
-		else {
-		    DenseMatrix<512,VID,EID> D( G, XP_new, ne_new, ce_new );
-		    D.mce_bron_kerbosch( [&]( const bitset<512> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		    // done
-		}
-#endif
-#if 0
-	    } else if( ne_new <= 256 && ce_new - ne_new <= 256 ) {
-		if( ce_new-ne_new <= 32 ) {
-		    BlockedBinaryMatrix<256,32,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<32> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		} else if( ce_new-ne_new <= 64 ) {
-		    BlockedBinaryMatrix<256,64,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<64> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		} /* else if( ce_new-ne_new <= 128 ) {
-		    BlockedBinaryMatrix<256,128,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<128> & c, size_t sz ) {
-			Ee( R.size() + sz );
-			} );
-		} */ else if( ne_new <= 32 ) {
-		    BlockedBinaryMatrix<32,256,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		} else if( ne_new <= 64 ) {
-		    BlockedBinaryMatrix<64,256,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		} /* else if( ne_new <= 128 ) {
-		    BlockedBinaryMatrix<128,256,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
-			Ee( R.size() + sz );
-			} );
-		} */ else {
-		    BlockedBinaryMatrix<256,256,VID,EID>
-			D( G, XP_new, ne_new, ce_new );
-		    mce_bron_kerbosch( D, [&]( const bitset<256> & c, size_t sz ) {
-			Ee( R.size() + sz );
-		    } );
-		}
-#endif
 	    } else {
-		assert( 0 && "Should not get here" );
+		bool ok = false;
+
+		// Clear min/max size requirements to attempt
+		if( ce_new - ne_new >= 16
+		    && ( ce_new <= (1<<N_MAX_SIZE)
+			 || ( ne_new <= (1<<X_MAX_SIZE)
+			      && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
+		    ) {
+		    ok = mce_leaf<VID,EID>(
+			G, Ee, R.size(), XP_new, ne_new, ce_new );
+		}
+
+		if( !ok ) { // Need recursion
+		    // Recursion - push new frame
+		    assert( depth+1 < degeneracy+1 );
+		    frame_t & nfr = frame[depth++];
+		    new ( &nfr ) frame_t {
+			fr.XP_new, ne_new, ce_new, 0, nullptr, nullptr, ne_new };
+
+		    nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new );
+		    nfr.XP_new = alloc.template allocate<VID>( ce_new );
+		    nfr.prev_tgt = XP_new;
+		    assert( R.size() == depth );
+		    // Go to handle top frame
+		    continue;
+		}
 	    }
 
 	    R.pop();
@@ -1293,7 +1184,6 @@ mce_iterate_xp_iterative(
     assert( frame[0].XP_new == 0 );
     delete[] frame;
 }
-
 
 template<typename GraphType>
 class GraphBuilderInduced;
@@ -1427,13 +1317,13 @@ private:
     VID start_pos;
 };
 
-template<typename Enumerate, typename VID, typename EID, typename Hash>
+template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_seq_xp(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
     VID start_pos,
     VID degeneracy,
-    Enumerate && E ) {
+    MCE_Enumerator_stage2 & E ) {
     VID n = G.numVertices();
 
     StackLikeAllocator alloc;
@@ -1468,13 +1358,13 @@ mce_bron_kerbosch_seq_xp(
     }
 }
 
-template<typename Enumerate, typename VID, typename EID, typename Hash>
+template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_par_xp(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
     VID start_pos,
     VID degeneracy,
-    Enumerate && E ) {
+    MCE_Enumerator_stage2 & E ) {
     VID n = G.numVertices();
 
     // start_pos calculate to avoid revisiting vertices ordered before the
@@ -1952,11 +1842,12 @@ void mce_blocked_fn(
     // Build induced graph
     // TODO: Make merge method depend on size of neighbour lists
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	IG( G, H, v, cut, graptor::merge_scalar() );
+	// IG( G, H, v, cut, graptor::hash_scalar() );
+	// IG( G, H, v, cut, graptor::merge_scalar() );
+	IG( G, H, v, cut, graptor::hash_vector() );
 
-    mce_bron_kerbosch( IG, [&]( const bitset<PBits> & c, size_t sz ) {
-	E.record( 1 + sz );
-    } );
+    MCE_Enumerator_stage2 E2( E );
+    mce_bron_kerbosch( IG, E2 );
 
     stats.record( tm.stop() );
 }
@@ -1975,23 +1866,34 @@ void mce_dense_fn(
 
     // Build induced graph
     // TODO: Make merge method depend on size of neighbour lists
+    //       merge_scalar is fastest for pokec, but not for orkut
     DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_vector() );
+    // DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_scalar() );
+    // DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::merge_scalar() );
 
-    IG.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
-	E.record( 1 + sz );
-    } );
+    MCE_Enumerator_stage2 E2( E );
+    IG.mce_bron_kerbosch( E2 );
 
-    stats.record( tm.stop() );
+    double t = tm.stop();
+    if( t >= 3.0 ) {
+	std::cerr << "dense " << Bits << " v=" << v
+		  << " num=" << cut.get_num_vertices()
+		  << " start=" << cut.get_start_pos()
+		  << " t=" << t << "\n";
+    }
+
+    stats.record( t );
 }
 
-template<typename Enumerator, typename VID, typename EID, typename Hash>
+template<typename VID, typename EID, typename Hash>
 void mce_variable(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & HG,
-    Enumerator & E,
+    MCE_Enumerator & E,
     VID v,
     VID start_pos,
     VID degeneracy
     ) {
+#if 0
     auto Ee = [&]( size_t size, size_t surplus = 0 ) {
 	E.record( 1+size+surplus );
 /*
@@ -2011,7 +1913,9 @@ void mce_variable(
 	    check_clique( G, cc.size(), &cc[0] );
 */
 	};
-
+#else
+    MCE_Enumerator_stage2 Ee( E );
+#endif
     
     VID n = HG.numVertices();
     if( n > 1024 )
@@ -2020,14 +1924,73 @@ void mce_variable(
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
 }
 
-template<typename HGraph, typename Enumerator>
+typedef void (*mce_func)(
+    const GraphCSx &, 
+    const HGraphTy &,
+    MCE_Enumerator &,
+    VID,
+    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
+    variant_statistics & );
+    
+static mce_func mce_dense_func[N_DIM] = {
+    &mce_dense_fn<32,HGraphTy,MCE_Enumerator>,  // N=32
+    &mce_dense_fn<64,HGraphTy,MCE_Enumerator>,  // N=64
+    &mce_dense_fn<128,HGraphTy,MCE_Enumerator>, // N=128
+    &mce_dense_fn<256,HGraphTy,MCE_Enumerator>, // N=256
+    &mce_dense_fn<512,HGraphTy,MCE_Enumerator>  // N=512
+};
+
+static mce_func mce_blocked_func[X_DIM][P_DIM] = {
+    // X == 2**5
+    { &mce_blocked_fn<32,32,HGraphTy,MCE_Enumerator>,  // X=32, P=32
+      &mce_blocked_fn<32,64,HGraphTy,MCE_Enumerator>,  // X=32, P=64
+      &mce_blocked_fn<32,128,HGraphTy,MCE_Enumerator>, // X=32, P=128
+      &mce_blocked_fn<32,256,HGraphTy,MCE_Enumerator>, // X=32, P=256
+      &mce_blocked_fn<32,512,HGraphTy,MCE_Enumerator>  // X=32, P=512
+    },
+    // X == 2**6
+    { &mce_blocked_fn<64,32,HGraphTy,MCE_Enumerator>,  // X=64, P=32
+      &mce_blocked_fn<64,64,HGraphTy,MCE_Enumerator>,  // X=64, P=64
+      &mce_blocked_fn<64,128,HGraphTy,MCE_Enumerator>, // X=64, P=128
+      &mce_blocked_fn<64,256,HGraphTy,MCE_Enumerator>, // X=64, P=256
+      &mce_blocked_fn<64,512,HGraphTy,MCE_Enumerator>  // X=64, P=512
+    },
+    // X == 2**7
+    { &mce_blocked_fn<128,32,HGraphTy,MCE_Enumerator>,  // X=128, P=32
+      &mce_blocked_fn<128,64,HGraphTy,MCE_Enumerator>,  // X=128, P=64
+      &mce_blocked_fn<128,128,HGraphTy,MCE_Enumerator>, // X=128, P=128
+      &mce_blocked_fn<128,256,HGraphTy,MCE_Enumerator>, // X=128, P=256
+      &mce_blocked_fn<128,512,HGraphTy,MCE_Enumerator>  // X=128, P=512
+    },
+    // X == 2**8
+    { &mce_blocked_fn<256,32,HGraphTy,MCE_Enumerator>,  // X=256, P=32
+      &mce_blocked_fn<256,64,HGraphTy,MCE_Enumerator>,  // X=256, P=64
+      &mce_blocked_fn<256,128,HGraphTy,MCE_Enumerator>, // X=256, P=128
+      &mce_blocked_fn<256,256,HGraphTy,MCE_Enumerator>, // X=256, P=256
+      &mce_blocked_fn<256,512,HGraphTy,MCE_Enumerator>  // X=256, P=512
+    },
+    // X == 2**9
+    { &mce_blocked_fn<512,32,HGraphTy,MCE_Enumerator>,  // X=512, P=32
+      &mce_blocked_fn<512,64,HGraphTy,MCE_Enumerator>,  // X=512, P=64
+      &mce_blocked_fn<512,128,HGraphTy,MCE_Enumerator>, // X=512, P=128
+      &mce_blocked_fn<512,256,HGraphTy,MCE_Enumerator>, // X=512, P=256
+      &mce_blocked_fn<512,512,HGraphTy,MCE_Enumerator>  // X=512, P=512
+    }
+};
+
+size_t get_size_class( uint32_t v ) {
+    size_t b = _lzcnt_u32( v-1 );
+    size_t cl = 32 - b;
+    assert( v <= (1<<cl) );
+    return cl;
+}
+
 void mce_top_level(
     const GraphCSx & G,
-    const HGraph & H,
-    Enumerator & E,
+    const HGraphTy & H,
+    MCE_Enumerator & E,
     VID v,
     VID degeneracy ) {
-    // graptor::graph::NeighbourCutOutXP<VID,EID> cut( G, v, core_order );
     graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> cut( G, v );
 
     all_variant_statistics & stats = mce_stats.get_statistics();
@@ -2036,104 +1999,193 @@ void mce_top_level(
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
-#if __AVX512F__
-    if( num <= 512 ) {
-	mce_dense_fn<512>( G, H, E, v, cut, stats.get_512() );
-    } else
-#endif
-    if( num <= 256 ) {
-	if( num <= 32 )
-	    mce_dense_fn<32>( G, H, E, v, cut, stats.get_32() );
-	else if( num <= 64 )
-	    mce_dense_fn<64>( G, H, E, v, cut, stats.get_64() );
-	else if( num <= 128 )
-	    mce_dense_fn<128>( G, H, E, v, cut, stats.get_128() );
-	else
-	    mce_dense_fn<256>( G, H, E, v, cut, stats.get_256() );
-    } else if( xnum <= 256 && pnum <= 256 ) {
-	if( xnum <= 32 && pnum <= 256 )
-	    mce_blocked_fn<32,256>( G, H, E, v, cut, stats.get_32_256() );
-	else if( xnum <= 256 && pnum <= 32 )
-	    mce_blocked_fn<256,32>( G, H, E, v, cut, stats.get_32_256() );
-	else if( xnum <= 64 && pnum <= 256 )
-	    mce_blocked_fn<64,256>( G, H, E, v, cut, stats.get_64_256() );
-	else if( xnum <= 256 && pnum <= 64 )
-	    mce_blocked_fn<256,64>( G, H, E, v, cut, stats.get_64_256() );
-	/*
-	else if( xnum <= 128 && pnum <= 256 )
-	    mce_blocked_fn<128,256>( G, H, E, v, cut, stats.get_128_256() );
-	else if( xnum <= 256 && pnum <= 128 )
-	    mce_blocked_fn<256,128>( G, H, E, v, cut, stats.get_128_256() );
-	*/
-	else if( xnum <= 32 && pnum <= 256 )
-	    mce_blocked_fn<32,256>( G, H, E, v, cut, stats.get_32_256() );
-	else if( xnum <= 256 && pnum <= 32 )
-	    mce_blocked_fn<256,32>( G, H, E, v, cut, stats.get_32_256() );
-	else if( xnum <= 64 && pnum <= 256 )
-	    mce_blocked_fn<64,256>( G, H, E, v, cut, stats.get_64_256() );
-	else if( xnum <= 256 && pnum <= 64 )
-	    mce_blocked_fn<256,64>( G, H, E, v, cut, stats.get_64_256() );
-	/*
-	else if( xnum <= 128 && pnum <= 256 )
-	    mce_blocked_fn<128,256>( G, H, E, v, cut, stats.get_128_256() );
-	else if( xnum <= 256 && pnum <= 128 )
-	    mce_blocked_fn<256,128>( G, H, E, v, cut, stats.get_128_256() );
-	*/
-	else
-	    mce_blocked_fn<256,256>( G, H, E, v, cut, stats.get_256_256() );
-    } else {
-	timer tm;
-	tm.start();
-	GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
-	    ibuilder( G, H, v, cut );
-	const auto & HG = ibuilder.get_graph();
+    VID nlg = get_size_class( num );
+    if( nlg < N_MIN_SIZE )
+	nlg = N_MIN_SIZE;
 
-	stats.record_genbuild( tm.stop() );
-
-	tm.start();
-	mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
-	stats.record_gen( tm.stop() );
+    if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
+	return mce_dense_func[nlg-N_MIN_SIZE](
+	    G, H, E, v, cut, stats.get( nlg ) );
     }
+
+    VID xlg = get_size_class( xnum );
+    if( xlg < X_MIN_SIZE )
+	xlg = X_MIN_SIZE;
+
+    VID plg = get_size_class( pnum );
+    if( plg < P_MIN_SIZE )
+	plg = P_MIN_SIZE;
+
+    if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
+	return mce_dense_func[nlg-N_MIN_SIZE](
+	    G, H, E, v, cut, stats.get( nlg ) );
+    }
+
+    if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
+	return mce_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
+	    G, H, E, v, cut, stats.get( xlg, plg ) );
+    }
+
+    if( nlg <= N_MAX_SIZE ) {
+	return mce_dense_func[nlg-N_MIN_SIZE](
+	    G, H, E, v, cut, stats.get( nlg ) );
+    }
+
+    timer tm;
+    tm.start();
+    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
+	ibuilder( G, H, v, cut );
+    const auto & HG = ibuilder.get_graph();
+
+    stats.record_genbuild( tm.stop() );
+
+    tm.start();
+    mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
+    double t = tm.stop();
+    if( t >= 3.0 ) {
+	std::cerr << "generic v=" << v << " num=" << num
+		  << " xnum=" << xnum << " pnum=" << pnum
+		  << " t=" << t << "\n";
+    }
+    stats.record_gen( t );
 }
 
-class MCE_Enumerator {
-public:
-    MCE_Enumerator( size_t degen = 0 )
-	: m_degeneracy( degen ),
-	  m_histogram( degen+1 ) { }
+template<unsigned Bits, typename VID, typename EID>
+void leaf_dense_fn(
+    const HGraphTy & H,
+    MCE_Enumerator_stage2 & Ee,
+    VID r,
+    const VID * XP,
+    VID ne,
+    VID ce ) {
+    DenseMatrix<Bits,VID,EID> D( H, XP, ne, ce );
+    D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
+	Ee.record( r + sz );
+    } );
+}
 
-    // Recod clique of size s
-    void record( size_t s ) {
-	assert( s <= m_degeneracy+1 );
-	__sync_fetch_and_add( &m_histogram[s-1], 1 );
-    }
+template<unsigned XBits, unsigned PBits, typename VID, typename EID>
+void leaf_blocked_fn(
+    const HGraphTy & H,
+    MCE_Enumerator_stage2 & Ee,
+    VID r,
+    const VID * XP,
+    VID ne,
+    VID ce ) {
+    BlockedBinaryMatrix<XBits,PBits,VID,EID> D( H, XP, ne, ce );
+    mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
+	Ee.record( r + sz );
+    } );
+}
 
-    std::ostream & report( std::ostream & os ) const {
-	assert( m_histogram.size() >= m_degeneracy+1 );
-
-	size_t num_maximal_cliques = 0;
-	for( size_t i=0; i < m_histogram.size(); ++i )
-	    num_maximal_cliques += m_histogram[i];
-	
-	os << "Number of maximal cliques: " << num_maximal_cliques
-	   << "\n";
-	os << "Clique histogram: clique_size, num_of_cliques\n";
-	for( size_t i=0; i <= m_degeneracy; ++i ) {
-	    if( m_histogram[i] != 0 ) {
-		os << (i+1) << ", " << m_histogram[i] << "\n";
-	    }
-	}
-	return os;
-    }
-
-private:
-    size_t m_degeneracy;
-    std::vector<size_t> m_histogram;
+typedef void (*mce_leaf_func)(
+    const HGraphTy &,
+    MCE_Enumerator_stage2 & Ee,
+    VID,
+    const VID *,
+    VID,
+    VID );
+    
+static mce_leaf_func leaf_dense_func[N_DIM] = {
+    &leaf_dense_fn<32,VID,EID>,  // N=32
+    &leaf_dense_fn<64,VID,EID>,  // N=64
+    &leaf_dense_fn<128,VID,EID>, // N=128
+    &leaf_dense_fn<256,VID,EID>, // N=256
+    &leaf_dense_fn<512,VID,EID>  // N=512
 };
+
+static mce_leaf_func leaf_blocked_func[X_DIM][P_DIM] = {
+    // X == 2**5
+    { &leaf_blocked_fn<32,32,VID,EID>,  // X=32, P=32
+      &leaf_blocked_fn<32,64,VID,EID>,  // X=32, P=64
+      &leaf_blocked_fn<32,128,VID,EID>, // X=32, P=128
+      &leaf_blocked_fn<32,256,VID,EID>, // X=32, P=256
+      &leaf_blocked_fn<32,512,VID,EID>  // X=32, P=512
+    },
+    // X == 2**6
+    { &leaf_blocked_fn<64,32,VID,EID>,  // X=64, P=32
+      &leaf_blocked_fn<64,64,VID,EID>,  // X=64, P=64
+      &leaf_blocked_fn<64,128,VID,EID>, // X=64, P=128
+      &leaf_blocked_fn<64,256,VID,EID>, // X=64, P=256
+      &leaf_blocked_fn<64,512,VID,EID>  // X=64, P=512
+    },
+    // X == 2**7
+    { &leaf_blocked_fn<128,32,VID,EID>,  // X=128, P=32
+      &leaf_blocked_fn<128,64,VID,EID>,  // X=128, P=64
+      &leaf_blocked_fn<128,128,VID,EID>, // X=128, P=128
+      &leaf_blocked_fn<128,256,VID,EID>, // X=128, P=256
+      &leaf_blocked_fn<128,512,VID,EID>  // X=128, P=512
+    },
+    // X == 2**8
+    { &leaf_blocked_fn<256,32,VID,EID>,  // X=256, P=32
+      &leaf_blocked_fn<256,64,VID,EID>,  // X=256, P=64
+      &leaf_blocked_fn<256,128,VID,EID>, // X=256, P=128
+      &leaf_blocked_fn<256,256,VID,EID>, // X=256, P=256
+      &leaf_blocked_fn<256,512,VID,EID>  // X=256, P=512
+    },
+    // X == 2**9
+    { &leaf_blocked_fn<512,32,VID,EID>,  // X=512, P=32
+      &leaf_blocked_fn<512,64,VID,EID>,  // X=512, P=64
+      &leaf_blocked_fn<512,128,VID,EID>, // X=512, P=128
+      &leaf_blocked_fn<512,256,VID,EID>, // X=512, P=256
+      &leaf_blocked_fn<512,512,VID,EID>  // X=512, P=512
+    }
+};
+
+template<typename VID, typename EID>
+bool mce_leaf(
+    const HGraphTy & H,
+    MCE_Enumerator_stage2 & E,
+    VID r,
+    const VID * XP,
+    VID ne,
+    VID ce ) {
+    VID num = ce;
+    VID xnum = ne;
+    VID pnum = ce - ne;
+
+    VID nlg = get_size_class( num );
+    if( nlg < N_MIN_SIZE )
+	nlg = N_MIN_SIZE;
+
+    if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	return true;
+    }
+
+    VID xlg = get_size_class( xnum );
+    if( xlg < X_MIN_SIZE )
+	xlg = X_MIN_SIZE;
+
+    VID plg = get_size_class( pnum );
+    if( plg < P_MIN_SIZE )
+	plg = P_MIN_SIZE;
+
+/*
+    if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	return true;
+    }
+*/
+
+    if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
+	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
+	    H, E, r, XP, ne, ce );
+	return true;
+    }
+
+    if( nlg <= N_MAX_SIZE ) {
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	return true;
+    }
+
+    return false;
+}
 
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
+    verbose = P.getOptionValue("-v");
     const char * ifile = P.getOptionValue( "-i" );
 
     timer tm;
@@ -2205,18 +2257,19 @@ int main( int argc, char *argv[] ) {
 
     double duration = tm.total();
     std::cerr << "Completed MCE in " << duration << " seconds\n";
-    stats.m_32.print( std::cerr, "32-bit" );
-    stats.m_64.print( std::cerr, "64-bit" );
-    stats.m_128.print( std::cerr, "128-bit" );
-    stats.m_256.print( std::cerr, "256-bit" );
-    stats.m_32_256.print( std::cerr, "32+256-bit" );
-    stats.m_64_256.print( std::cerr, "64+256-bit" );
-    stats.m_128_256.print( std::cerr, "128+256-bit" );
-    stats.m_256_256.print( std::cerr, "256+256-bit" );
-    stats.m_gen.print( std::cerr, "generic" );
-    stats.m_genbuild.print( std::cerr, "generic build" );
-
-    std::cerr << " pruning: " << pruning << "\n";
+    for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
+	std::cerr << (1<<n) << "-bit dense: ";
+	stats.get( n ).print( std::cerr ); 
+    }
+    for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
+	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
+	    std::cerr << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
+	    stats.get( x, p ).print( std::cerr );
+	}
+    std::cerr << "generic: ";
+    stats.m_gen.print( std::cerr );
+    std::cerr << "generic build: ";
+    stats.m_genbuild.print( std::cerr );
 
     E.report( std::cerr );
 

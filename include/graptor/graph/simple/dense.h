@@ -711,7 +711,7 @@ public:
 
 	    // if no neighbours in cut-out, then trivial 2-clique
 	    if( tr::is_zero( get_row( v ) ) ) {
-		E( bitset<Bits>( R ) );
+		E( bitset<Bits>( R ), 1 );
 		continue;
 	    }
 
@@ -824,7 +824,7 @@ private:
 	// depth == get_size( R )
 	if( tr::is_zero( P ) ) {
 	    if( tr::is_zero( X ) )
-		EE( bitset<Bits>( R ) );
+		EE( bitset<Bits>( R ), depth );
 	    return;
 	}
 

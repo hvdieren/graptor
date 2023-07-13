@@ -94,6 +94,54 @@ private:
     uint32_t m_shift;
 };
 
+template<typename T>
+struct murmur_hash;
+
+template<>
+struct murmur_hash<uint64_t> {
+    using type = uint64_t;
+    
+    type operator()( type h ) const {
+	h ^= h >> 33;
+	h *= 0xff51afd7ed558ccdL;
+	h ^= h >> 33;
+	h *= 0xc4ceb9fe1a85ec53L;
+	h ^= h >> 33;
+	return h;
+    }
+};
+
+template<>
+struct murmur_hash<uint32_t> {
+    using type = uint32_t;
+    
+    type operator()( type h ) const {
+	h ^= h >> 16;
+	h *= 0x85ebca6b;
+	h ^= h >> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >> 16;
+
+	return h;
+    }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+	const vtype c1 = tr::set1( 0x85ebca6b );
+	const vtype c2 = tr::set1( 0xc2b2ae35 );
+	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
+	h = tr::mul( h, c1 );
+	h = tr::bitwise_xor( h, tr::srli( h, 13 ) );
+	h = tr::mul( h, c2 );
+	h = tr::bitwise_xor( h, tr::srli( h, 16 ) );
+	return h;
+    }
+};
+
+
 } // namespace graptor
 
 #endif // GRAPTOR_CONTAINER_HASH_FN_H
