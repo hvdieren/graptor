@@ -144,7 +144,7 @@ public:
 	    VID u = s2g[r];
 
 	    bitmask_lhs_sorted_output_iterator<type, VID, true, true>
-		row_u( &m_matrix[VL * (r-rs)], s2g, cs, ce );
+		row_u( &m_matrix[VL * (r-rs)], s2g, cs, cs, ce );
 
 	    if constexpr ( utr::uses_hash ) {
 		row_u = utr::template intersect<true>(
@@ -502,10 +502,10 @@ public:
     sEID numEdges() const { return m_xp.numEdges() + m_px.numEdges(); }
 
 private:
-    BinaryMatrix<PBits,sVID,sEID> m_xp;
-    BinaryMatrix<XBits,sVID,sEID> m_px;
-    const sVID * m_s2g; // on loan
-    DID m_degree[XBits+PBits];
+    BinaryMatrix<PBits,sVID,sEID> m_xp; //!< rightmost columns, in full
+    BinaryMatrix<XBits,sVID,sEID> m_px; //!< bottommost rows, left parts
+    const sVID * m_s2g; //!< list of vertices, on loan
+    DID m_degree[XBits+PBits]; //!< degree of vertices in cutout, m_xp only
 };
 
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>

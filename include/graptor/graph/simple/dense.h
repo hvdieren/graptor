@@ -24,9 +24,11 @@ struct bitmask_output_iterator {
 	bitmask_type * bitmask,
 	const lVID * n2s,
 	const lVID * start,
+	lVID deg_start_pos,
 	lVID start_pos )
 	: m_bitmask( bitmask ), m_n2s( n2s ), m_start( start ),
-	  m_deg( 0 ), m_start_pos( start_pos ) { }
+	  m_deg( 0 ), m_deg_start_pos( deg_start_pos ),
+	  m_start_pos( start_pos ) { }
 
     const bitmask_output_iterator &
     operator = ( const bitmask_output_iterator & it ) {
@@ -41,10 +43,12 @@ struct bitmask_output_iterator {
 	if( v >= m_start_pos ) {
 	    m_bitmask[v/word_size]
 		|= bitmask_type(1) << ( v & ( word_size-1 ) );
-	    m_deg++;
+	    if( v >= m_deg_start_pos )
+		m_deg++;
 	}
     }
 
+#if 0
     template<unsigned VL>
     void push_back( typename vector_type_traits_vl<lVID,VL>::mask_type m,
 		    typename vector_type_traits_vl<lVID,VL>::type v,
@@ -68,6 +72,7 @@ struct bitmask_output_iterator {
 	mask_type * b = reinterpret_cast<mask_type *>( m_bitmask );
 	// b[(base-m_start)/VL] = mm;
     }
+#endif
 
     VID get_degree() const { return m_deg; }
 
@@ -76,6 +81,7 @@ private:
     const lVID * m_n2s;
     const lVID * m_start;
     lVID m_deg;
+    const lVID m_deg_start_pos;
     const lVID m_start_pos;
 };
 
@@ -87,10 +93,12 @@ struct bitmask_lhs_sorted_output_iterator {
     bitmask_lhs_sorted_output_iterator(
 	bitmask_type * bitmask,
 	const lVID * start,
+	lVID deg_start_pos,
 	lVID start_pos,
 	lVID end_pos = std::numeric_limits<lVID>::max() )
 	: m_bitmask( bitmask ), m_start( start ),
-	  m_deg( 0 ), m_start_pos( start_pos ), m_end_pos( end_pos ) { }
+	  m_deg( 0 ), m_deg_start_pos( deg_start_pos ),
+	  m_start_pos( start_pos ), m_end_pos( end_pos ) { }
 
     const bitmask_lhs_sorted_output_iterator &
     operator = ( const bitmask_lhs_sorted_output_iterator & it ) {
@@ -101,6 +109,7 @@ struct bitmask_lhs_sorted_output_iterator {
 
     void push_back( const lVID * p ) {
 	lVID v = p - m_start;
+	lVID vchk = v;
 	bool accept = v >= m_start_pos;
 	if constexpr ( two_sided ) {
 	    accept = accept && v < m_end_pos;
@@ -111,7 +120,8 @@ struct bitmask_lhs_sorted_output_iterator {
 	if( accept ) {
 	    m_bitmask[v/word_size]
 		|= bitmask_type(1) << ( v & ( word_size-1 ) );
-	    m_deg++;
+	    if( vchk >= m_deg_start_pos )
+		m_deg++;
 	}
     }
 
@@ -150,6 +160,8 @@ struct bitmask_lhs_sorted_output_iterator {
 		b[word/VL] |= mtr::slli( mm, off );
 		b[1+word/VL] |= mtr::srli( mm, VL - off );
 	    }
+	    type vdsp = tr::set1( m_deg_start_pos );
+	    mm = tr::cmpge( mm, vns, vdsp, target::mt_mask() );
 	    m_deg += mtr::popcnt( mm );
 	}
     }
@@ -160,7 +172,9 @@ private:
     bitmask_type * m_bitmask;
     const lVID * m_start;
     lVID m_deg;
-    const lVID m_start_pos, m_end_pos;
+    const lVID m_deg_start_pos;
+    const lVID m_start_pos;
+    const lVID m_end_pos;
 };
 
 
@@ -243,10 +257,10 @@ public:
 		    if( *p != u ) {
 			VID sw = n2s[p - neighbours];
 			// no X-X edges
-			if( sw >= m_start_pos || su >= m_start_pos ) {
-			    row_u = tr::bitwise_or( row_u, create_row( sw ) );
+			if( su >= m_start_pos )
 			    ++deg;
-			}
+			if( sw >= m_start_pos || su >= m_start_pos )
+			    row_u = tr::bitwise_or( row_u, create_row( sw ) );
 		    }
 		    ++p;
 		    ++q;
@@ -331,6 +345,7 @@ public:
 
 	    bitmask_output_iterator<type, VID>
 		row_u( &m_matrix[m_words * su], n2s, neighbours, // s2g,
+		       m_start_pos,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
 	    row_u = graptor::merge_partitioned<utr>::template intersect<true>(
@@ -400,6 +415,7 @@ public:
 
 	    bitmask_lhs_sorted_output_iterator<type, VID, true, false>
 		row_u( &m_matrix[m_words * su], s2g,
+		       m_start_pos,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
 	    // Trim off vertices that will be filtered out, but keep alignment.
@@ -491,6 +507,7 @@ public:
 
 	    bitmask_lhs_sorted_output_iterator<type, VID, false, false>
 		row_u( &m_matrix[m_words * su], s2g,
+		       m_start_pos,
 		       su >= m_start_pos ? 0 : m_start_pos );
 
 	    row_u = graptor::merge_partitioned<utr>::template intersect<true>(
@@ -1030,7 +1047,7 @@ private:
 #if 0
     VID m_s2g[Bits];
 #endif
-    DID m_degree[Bits];
+    DID m_degree[Bits]; //!< only left-most columns (P part)
 };
 
 } // namespace graph

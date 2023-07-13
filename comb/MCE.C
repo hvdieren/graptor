@@ -1875,7 +1875,7 @@ void mce_dense_fn(
     IG.mce_bron_kerbosch( E2 );
 
     double t = tm.stop();
-    if( t >= 3.0 ) {
+    if( false && t >= 3.0 ) {
 	std::cerr << "dense " << Bits << " v=" << v
 		  << " num=" << cut.get_num_vertices()
 		  << " start=" << cut.get_start_pos()
@@ -2042,7 +2042,7 @@ void mce_top_level(
     tm.start();
     mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
     double t = tm.stop();
-    if( t >= 3.0 ) {
+    if( false && t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
 		  << " xnum=" << xnum << " pnum=" << pnum
 		  << " t=" << t << "\n";
