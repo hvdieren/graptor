@@ -123,19 +123,23 @@ private:
 };
 
 struct MCE_Enumerator_stage2 {
-    MCE_Enumerator_stage2( MCE_Enumerator & _E ) : E( _E ) { }
+    MCE_Enumerator_stage2( MCE_Enumerator & _E, size_t surplus = 1 )
+	: E( _E ), m_surplus( surplus ) { }
+    MCE_Enumerator_stage2( MCE_Enumerator_stage2 & _E, size_t surplus = 1 )
+	: E( _E.E ), m_surplus( _E.m_surplus + surplus ) { }
 
     template<unsigned Bits>
     void operator() ( const bitset<Bits> & c, size_t sz ) {
-	E.record( 1 + sz );
+	E.record( m_surplus + sz );
     }
     
     void record( size_t sz ) {
-	E.record( 1 + sz );
+	E.record( m_surplus + sz );
     }
     
 private:
     MCE_Enumerator & E;
+    const size_t m_surplus;
 };
 
 
@@ -1034,7 +1038,7 @@ mce_iterate_xp_iterative(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
     MCE_Enumerator_stage2 & Ee,
     StackLikeAllocator & alloc,
-    contract::vertex_set<VID> & R,
+    size_t R_size,
     VID degeneracy,
     VID * XP,
     VID ne, // not edges
@@ -1053,7 +1057,7 @@ mce_iterate_xp_iterative(
     // Base case - trivial problem
     if( ce == ne ) {
 	if( ne == 0 )
-	    Ee.record( R.size() );
+	    Ee.record( R_size );
 	return;
     }
 
@@ -1077,7 +1081,7 @@ mce_iterate_xp_iterative(
 	if( fr.i >= fr.ce ) {
 	    // Pop frame
 	    assert( depth > 0 );
-	    assert( R.size() == depth );
+	    // assert( R.size() == depth );
 	    --depth;
 	    alloc.deallocate_to( fr.XP_new );
 	    fr.XP_new = 0;
@@ -1087,7 +1091,7 @@ mce_iterate_xp_iterative(
 		frame_t & fr = frame[depth-1];
 		VID u = fr.XP[fr.i];
 		
-		R.pop();
+		// R.pop();
 
 		// Move candidate (u) from original position to appropriate
 		// place in X part (maintaining sort order).
@@ -1124,13 +1128,13 @@ mce_iterate_xp_iterative(
 	    VID ce_new = graptor::hash_vector::intersect(
 		XP+ne, XP+ce, adj, XP_new+ne_new ) - XP_new;
 	    assert( ce_new <= ce );
-	    R.push( u );
-	    assert( R.size() == depth+1 );
+	    // R.push( u );
+	    // assert( R.size() == depth+1 );
 
 	    // Recursion, check base case (avoid pushing on stack)
 	    if( ce_new == ne_new ) {
 		if( ne_new == 0 )
-		    Ee.record( R.size() );
+		    Ee.record( depth+1 ); // R.size() );
 		// done
 	    // Tunable
 	    } else {
@@ -1143,7 +1147,7 @@ mce_iterate_xp_iterative(
 			      && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
 		    ) {
 		    ok = mce_leaf<VID,EID>(
-			G, Ee, R.size(), XP_new, ne_new, ce_new );
+			G, Ee, depth+1, XP_new, ne_new, ce_new );
 		}
 
 		if( !ok ) { // Need recursion
@@ -1156,13 +1160,13 @@ mce_iterate_xp_iterative(
 		    nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new );
 		    nfr.XP_new = alloc.template allocate<VID>( ce_new );
 		    nfr.prev_tgt = XP_new;
-		    assert( R.size() == depth );
+		    // assert( R.size() == depth );
 		    // Go to handle top frame
 		    continue;
 		}
 	    }
 
-	    R.pop();
+	    // R.pop();
 	    
 	    // Move candidate (u) from original position to appropriate
 	    // place in X part (maintaining sort order).
@@ -1184,6 +1188,7 @@ mce_iterate_xp_iterative(
     assert( frame[0].XP_new == 0 );
     delete[] frame;
 }
+
 
 template<typename GraphType>
 class GraphBuilderInduced;
@@ -1306,6 +1311,29 @@ public:
 
 	S.sum_up_edges();
     }
+    template<typename HGraph>
+    GraphBuilderInduced(
+	const HGraph & H,
+	const VID * const XP,
+	VID ne,
+	VID ce )
+	: S( ce ),
+	  start_pos( ne ) {
+	VID n = H.numVertices();
+
+	for( VID su=0; su < ce; ++su ) {
+	    VID u = XP[su];
+	    VID k = 0;
+	    auto & Hadj = H.get_adjacency( u );
+	    auto & Sadj = S.get_adjacency( su );
+	    graptor::hash_insert_iterator<graptor::hash_table<VID,Hash>>
+		out( Sadj, XP );
+	    graptor::hash_scalar::intersect<true>(
+		su < ne ? XP+ne : XP, XP+ce, Hadj, out );
+	}
+
+	S.sum_up_edges(); // necessary?
+    }
 
     // const VID * get_s2g() const { return &s2g[0]; }
     const auto & get_graph() const { return S; }
@@ -1331,9 +1359,8 @@ mce_bron_kerbosch_seq_xp(
     // start_pos calculate to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
     for( VID v=start_pos; v < n; ++v ) {
-	contract::vertex_set<VID> R;
-
-	R.push( v );
+	// contract::vertex_set<VID> R;
+	// R.push( v );
 
 	// Consider as candidates only those neighbours of v that are larger
 	// than u to avoid revisiting the vertices unnecessarily.
@@ -1351,11 +1378,211 @@ mce_bron_kerbosch_seq_xp(
 	VID ce = deg;
 
 	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
-	mce_iterate_xp_iterative( G, E, alloc, R, degeneracy, XP, ne, ce );
+	mce_iterate_xp_iterative( G, E, alloc, 1, degeneracy, XP, ne, ce );
 
 	if( ce > 0 )
 	    alloc.deallocate_to( XP );
     }
+}
+
+template<typename VID, typename EID, typename Hash>
+void
+mce_bron_kerbosch_recpar_xp(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    VID start_pos,
+    VID degeneracy,
+    MCE_Enumerator_stage2 & E,
+    int depth ) {
+    VID n = G.numVertices();
+
+    // start_pos calculate to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    parallel_loop( start_pos, n, 1, [&]( VID v ) {
+
+	// Not keeping track of R; would need linked data structure or
+	// extensive copying
+	// contract::vertex_set<VID> R_new( R );
+	// R_new.push( v );
+
+	// Consider as candidates only those neighbours of v that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	auto & adj = G.get_adjacency( v ); 
+
+	VID deg = adj.size();
+	if( deg == 0 ) { // implies ne == ce == 0
+	    // avoid overheads of copying and cutout
+	    E.record( depth+1 );
+	} else {
+	    VID * XP = new VID[deg]; // alloc.template allocate<VID>( deg );
+	    auto end = std::copy_if(
+		adj.begin(), adj.end(), XP,
+		[&]( VID v ) { return v != adj.invalid_element; } );
+	    assert( end - XP == deg );
+	    std::sort( XP, XP+deg );
+	    const VID * const start = std::upper_bound( XP, XP+deg, v );
+	    VID ne = start - XP;
+	    VID ce = deg;
+
+	    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
+		builder( G, XP, ne, ce );
+	    const auto & Gc = builder.get_graph();
+
+	    // if( Gc.density() < 0.9 ) {
+	    if( ce - ne <= (1<<P_MAX_SIZE) ) {
+		StackLikeAllocator alloc;
+		MCE_Enumerator_stage2 E2( E, depth );
+		VID * XP_new = alloc.template allocate<VID>( ce );
+		std::iota( XP_new, XP_new+ce, 0 );
+		mce_iterate_xp_iterative( Gc, E2, alloc, ce, degeneracy,
+					  XP_new, ne, ce );
+/*
+		mce_bron_kerbosch_seq_xp( Gc, ne, degeneracy, E2 );
+*/
+	    } else
+		mce_bron_kerbosch_recpar_xp( Gc, ne, degeneracy, E, depth+1 );
+
+	    delete[] XP;
+	}
+    } );
+}
+
+template<typename VID, typename EID, typename Hash>
+void
+mce_bron_kerbosch_recpar_xp2(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    VID degeneracy,
+    MCE_Enumerator_stage2 & E,
+    const VID * XP,
+    VID ne,
+    VID ce,
+    int depth ) {
+    // Termination condition
+    if( ne == ce ) {
+	if( ne == 0 )
+	    E.record( depth );
+	return;
+    }
+    const VID n = G.numVertices();
+
+    const VID pivot = mc_get_pivot_xp( G, XP, ne, ce );
+
+    parallel_loop( ne, ce, 1, [&]( VID i ) {
+	VID v = XP[i];
+
+	// Skip neighbours of the pivot
+	const auto & padj = G.get_adjacency( pivot );
+	if( !padj.contains( v ) ) {
+	    // Not keeping track of R
+
+	    const auto & adj = G.get_adjacency( v ); 
+	    VID deg = adj.size();
+	    if( deg == 0 ) { // implies ne == ce == 0
+		// avoid overheads of copying and cutout
+		E.record( depth+1 );
+	    } else {
+		// Some complexity:
+		// + Need to consider all vertices prior to v in XP are now
+		//   in the X set. Could set ne to i, however:
+		// + Vertices that are filtered due to pivoting,
+		//   i.e., neighbours of pivot, are still in P.
+		// + In sequential execution, we can update XP incrementally,
+		//   however in parallel execution we cannot.
+		VID * XP_piv = new VID[ce+std::min(ce,deg)];
+		VID * XP_new = XP_piv + ce;
+		// Adjust XP, moving processed vertices to X and keeping
+		// neighbours of pivot in P
+#if 1
+		VID ne_i = ne;
+		std::copy( XP, XP+ce, XP_piv );
+		for( VID j=ne; j < i; ++j ) {
+		    VID v = XP[j];
+		    if( !padj.contains( v ) ) {
+			// move v to position ne_i and push [ne_i,j) to j+1)
+			std::copy_backward( XP_piv+ne_i, XP_piv+j, XP_piv+j+1 );
+			XP_piv[ne_i++] = v;
+		    }
+		}
+		std::copy( XP+i, XP+ce, XP_piv+i );
+#else
+		// TODO: linear-time implementation
+		VID ne_i = ne;
+		std::copy( XP, XP+ce, XP_piv );
+		for( VID j=ne; j < i; ++j ) {
+		    VID v = XP[j];
+		    if( !padj.contains( v ) ) {
+			// move v to position ne_i and push [ne_i,j) to j+1)
+			std::copy_backward( XP_piv+ne_i, XP_piv+j, XP_piv+j+1 );
+			XP_piv[ne_i++] = v;
+		    }
+		}
+		std::copy( XP+i, XP+ce, XP_piv+i );
+#endif
+		// Now work with modified XP. Could consider intersect in-place.
+		VID ne_new = graptor::hash_vector::intersect(
+		    XP_piv, XP_piv+ne_i, adj, XP_new ) - XP_new;
+		VID ce_new = graptor::hash_vector::intersect(
+		    XP_piv+ne_i, XP_piv+ce, adj, XP_new+ne_new ) - XP_new;
+
+		// if( Gc.density() < 0.9 ) {
+		if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
+		    // TODO: direct cut-out of dense graph
+		    bool ok = mce_leaf<VID,EID>(
+			G, E, depth+1, XP_new, ne_new, ce_new );
+		    if( !ok ) {
+			GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
+			    builder( G, XP_new, ne_new, ce_new );
+			const auto & Gc = builder.get_graph();
+			StackLikeAllocator alloc;
+			MCE_Enumerator_stage2 E2( E, depth );
+			std::iota( XP_new, XP_new+ce_new, 0 );
+			mce_iterate_xp_iterative( Gc, E2, alloc, ce_new, degeneracy,
+						  XP_new, ne_new, ce_new );
+		    }
+		} else
+		    mce_bron_kerbosch_recpar_xp2(
+			G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+
+		delete[] XP_piv;
+	    }
+	}
+    } );
+}
+
+
+template<typename VID, typename EID, typename Hash>
+void
+mce_bron_kerbosch_recpar_xp2_top(
+    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    VID start_pos,
+    VID degeneracy,
+    MCE_Enumerator_stage2 & E ) {
+    VID n = G.numVertices();
+
+    // start_pos calculated to avoid revisiting vertices ordered before the
+    // reference vertex of this cut-out
+    parallel_loop( start_pos, n, 1, [&]( VID v ) {
+	StackLikeAllocator alloc;
+	// contract::vertex_set<VID> R;
+
+	// R.push( v );
+
+	// Consider as candidates only those neighbours of v that are larger
+	// than u to avoid revisiting the vertices unnecessarily.
+	auto & adj = G.get_adjacency( v ); 
+
+	VID deg = adj.size();
+	VID * XP = alloc.template allocate<VID>( deg );
+	auto end = std::copy_if(
+	    adj.begin(), adj.end(), XP,
+	    [&]( VID v ) { return v != adj.invalid_element; } );
+	assert( end - XP == deg );
+	std::sort( XP, XP+deg );
+	const VID * const start = std::upper_bound( XP, XP+deg, v );
+	VID ne = start - XP;
+	VID ce = deg;
+
+	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP, ne, ce, 2 );
+    } );
 }
 
 template<typename VID, typename EID, typename Hash>
@@ -1367,13 +1594,13 @@ mce_bron_kerbosch_par_xp(
     MCE_Enumerator_stage2 & E ) {
     VID n = G.numVertices();
 
-    // start_pos calculate to avoid revisiting vertices ordered before the
+    // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
 	StackLikeAllocator alloc;
-	contract::vertex_set<VID> R;
+	// contract::vertex_set<VID> R;
 
-	R.push( v );
+	// R.push( v );
 
 	// Consider as candidates only those neighbours of v that are larger
 	// than u to avoid revisiting the vertices unnecessarily.
@@ -1392,9 +1619,10 @@ mce_bron_kerbosch_par_xp(
 
 	// TODO: further parallel decomposition
 	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
-	mce_iterate_xp_iterative( G, E, alloc, R, degeneracy, XP, ne, ce );
+	mce_iterate_xp_iterative( G, E, alloc, 1, degeneracy, XP, ne, ce );
     } );
 }
+
 
 void check_clique_edges( EID m, const VID * assigned_clique, EID ce ) {
     EID cce = 0;
@@ -1893,34 +2121,11 @@ void mce_variable(
     VID start_pos,
     VID degeneracy
     ) {
-#if 0
-    auto Ee = [&]( size_t size, size_t surplus = 0 ) {
-	E.record( 1+size+surplus );
-/*
-	    std::cerr << "MC: " << v;
-	    for( auto v : c )
-		std::cerr << ' ' << ibuilder.get_s2g()[v];
-	    std::cerr << " | cutout: ";
-	    for( auto v : c )
-		std::cerr << ' ' << v;
-	    std::cerr << "\n";
-
-	    std::vector<VID> cc( c.begin(), c.end() );
-	    std::transform( cc.begin(), cc.end(), cc.begin(),
-			    [&]( auto v ) { return ibuilder.get_s2g()[v]; } );
-	    cc.push_back( v );
-	    std::sort( cc.begin(), cc.end() );
-	    check_clique( G, cc.size(), &cc[0] );
-*/
-	};
-#else
-    MCE_Enumerator_stage2 Ee( E );
-#endif
-    
+    MCE_Enumerator_stage2 Ee( E, 0 );
     VID n = HG.numVertices();
-    if( n > 1024 )
-	mce_bron_kerbosch_par_xp( HG, start_pos, degeneracy, Ee );
-    else
+    if( n - start_pos >= (1<<P_MAX_SIZE) ) {
+	mce_bron_kerbosch_recpar_xp2_top( HG, start_pos, degeneracy, Ee );
+    } else
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
 }
 
@@ -2042,9 +2247,11 @@ void mce_top_level(
     tm.start();
     mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
     double t = tm.stop();
-    if( false && t >= 3.0 ) {
+    if( t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
 		  << " xnum=" << xnum << " pnum=" << pnum
+		  << " density=" << HG.density()
+		  << " m=" << HG.numEdges()
 		  << " t=" << t << "\n";
     }
     stats.record_gen( t );

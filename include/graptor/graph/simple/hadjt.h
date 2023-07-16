@@ -43,6 +43,9 @@ public:
 
     VID numVertices() const { return m_n; }
     EID numEdges() const { return m_m; }
+    float density() const {
+	return float(m_m) / ( float(m_n) * float(m_n) );
+    }
 
     void sum_up_edges() {
 	EID m = 0;

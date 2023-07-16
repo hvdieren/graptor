@@ -10,6 +10,12 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/conditional_iterator.h"
 
+/*!=====================================================================*
+ * TODO:
+ * + ensure that high-degree vertices are closer to their intended position
+ *   than low-degree vertices.
+ *======================================================================*/
+
 namespace graptor {
 
 template<typename T, typename Hash = rand_hash<T>>
@@ -356,6 +362,23 @@ ostream & operator << ( ostream & os, const hash_table<T,Hash> & s ) {
     os << " }";
     return os;
 }
+
+template<typename HashTable>
+struct hash_insert_iterator;
+
+template<typename T, typename Hash>
+struct hash_insert_iterator<hash_table<T,Hash>> {
+    hash_insert_iterator( hash_table<T,Hash> & table, const T * start )
+	: m_table( table ), m_start( start ) { }
+
+    void push_back( const T * t ) {
+	m_table.insert( t - m_start );
+    }
+    
+private:
+    hash_table<T,Hash> & m_table;
+    const T * m_start;
+};
 
 } // namespace graptor
 
