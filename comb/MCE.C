@@ -714,7 +714,7 @@ bool is_member( VID v, VID C_size, const VID * C_set ) {
 }
 
 template<typename VID, typename EID, typename Hash>
-VID mc_get_pivot_xp(
+std::pair<VID,VID> mc_get_pivot_xp(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
     const VID * XP,
     VID ne,
@@ -724,7 +724,7 @@ VID mc_get_pivot_xp(
 
     // Tunable (|P| and selecting vertex from X or P)
     if( ce - ne <= 3 )
-	return XP[ne];
+	return std::make_pair( XP[ne], 0 );
 
     VID v_max = ~VID(0);
     VID tv_max = std::numeric_limits<VID>::min();
@@ -750,7 +750,7 @@ VID mc_get_pivot_xp(
     }
 
     // return first element of P if nothing good found
-    return ~v_max == 0 ? XP[ne] : v_max;
+    return std::make_pair( ~v_max == 0 ? XP[ne] : v_max, tv_max );
 }
 
 #if 0
@@ -1070,7 +1070,7 @@ mce_iterate_xp_iterative(
     // current size, so allocate std::min( ce, degree(u) ).
 
     new ( &frame[0] ) frame_t { XP, ne, ce, 0, nullptr, XP, ne };
-    frame[0].pivot = mc_get_pivot_xp( G, XP, ne, ce );
+    frame[0].pivot = mc_get_pivot_xp( G, XP, ne, ce ).first;
     frame[0].XP_new = alloc.template allocate<VID>( ce );
 
     while( depth >= 1 ) {
@@ -1157,7 +1157,7 @@ mce_iterate_xp_iterative(
 		    new ( &nfr ) frame_t {
 			fr.XP_new, ne_new, ce_new, 0, nullptr, nullptr, ne_new };
 
-		    nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new );
+		    nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new ).first;
 		    nfr.XP_new = alloc.template allocate<VID>( ce_new );
 		    nfr.prev_tgt = XP_new;
 		    // assert( R.size() == depth );
@@ -1464,88 +1464,85 @@ mce_bron_kerbosch_recpar_xp2(
     }
     const VID n = G.numVertices();
 
-    const VID pivot = mc_get_pivot_xp( G, XP, ne, ce );
+    // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
+    // The number of neighbours may be zero of it is not considered worthwhile
+    // to apply pivoting (few candidates).
+    const auto pp = mc_get_pivot_xp( G, XP, ne, ce );
+    const VID pivot = pp.first;
+    const VID sum = pp.second;
 
-    parallel_loop( ne, ce, 1, [&]( VID i ) {
-	VID v = XP[i];
+    const auto & padj = G.get_adjacency( pivot );
 
-	// Skip neighbours of the pivot
-	const auto & padj = G.get_adjacency( pivot );
-	if( !padj.contains( v ) ) {
-	    // Not keeping track of R
+    // Pre-sort, affects vertex selection order in recursive calls
+    const VID * XP_piv = XP;
+    VID pe = ce - sum; // neighbours of pivot moved to end.
+    if( sum > 0 ) {
+	VID * XP_prep = new VID[ce];
+	VID P_ins = pe;
+	std::copy( XP, XP+ne, XP_prep );
+	VID ne_i = ne;
+	for( VID i=ne; i < ce; ++i ) {
+	    if( padj.contains( XP[i] ) )
+		XP_prep[P_ins++] = XP[i];
+	    else
+		XP_prep[ne_i++] = XP[i];
+	}
+	assert( P_ins == ce );
+	assert( ne_i == pe );
+	XP_piv = XP_prep;
+    }
 
-	    const auto & adj = G.get_adjacency( v ); 
-	    VID deg = adj.size();
-	    if( deg == 0 ) { // implies ne == ce == 0
-		// avoid overheads of copying and cutout
-		E.record( depth+1 );
-	    } else {
-		// Some complexity:
-		// + Need to consider all vertices prior to v in XP are now
-		//   in the X set. Could set ne to i, however:
-		// + Vertices that are filtered due to pivoting,
-		//   i.e., neighbours of pivot, are still in P.
-		// + In sequential execution, we can update XP incrementally,
-		//   however in parallel execution we cannot.
-		VID * XP_piv = new VID[ce+std::min(ce,deg)];
-		VID * XP_new = XP_piv + ce;
-		// Adjust XP, moving processed vertices to X and keeping
-		// neighbours of pivot in P
-#if 1
-		VID ne_i = ne;
-		std::copy( XP, XP+ce, XP_piv );
-		for( VID j=ne; j < i; ++j ) {
-		    VID v = XP[j];
-		    if( !padj.contains( v ) ) {
-			// move v to position ne_i and push [ne_i,j) to j+1)
-			std::copy_backward( XP_piv+ne_i, XP_piv+j, XP_piv+j+1 );
-			XP_piv[ne_i++] = v;
-		    }
+    parallel_loop( ne, pe, 1, [&]( VID i ) {
+	VID v = XP_piv[i];
+
+	// Not keeping track of R
+
+	const auto & adj = G.get_adjacency( v ); 
+	VID deg = adj.size();
+	if( deg == 0 ) { // implies ne == ce == 0
+	    // avoid overheads of copying and cutout
+	    E.record( depth+1 );
+	} else {
+	    // Some complexity:
+	    // + Need to consider all vertices prior to v in XP are now
+	    //   in the X set. Could set ne to i, however:
+	    // + Vertices that are filtered due to pivoting,
+	    //   i.e., neighbours of pivot, are still in P.
+	    // + In sequential execution, we can update XP incrementally,
+	    //   however in parallel execution we cannot.
+
+	    // Now work with modified XP. Could consider intersect in-place.
+	    VID * XP_new = new VID[std::min(ce,deg)];
+	    VID ne_new = graptor::hash_vector::intersect(
+		XP_piv, XP_piv+i, adj, XP_new ) - XP_new;
+	    VID ce_new = graptor::hash_vector::intersect(
+		XP_piv+i, XP_piv+ce, adj, XP_new+ne_new ) - XP_new;
+
+	    // if( Gc.density() < 0.9 ) {
+	    if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
+		// TODO: direct cut-out of dense graph
+		bool ok = mce_leaf<VID,EID>(
+		    G, E, depth+1, XP_new, ne_new, ce_new );
+		if( !ok ) {
+		    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
+			builder( G, XP_new, ne_new, ce_new );
+		    const auto & Gc = builder.get_graph();
+		    StackLikeAllocator alloc;
+		    MCE_Enumerator_stage2 E2( E, depth );
+		    std::iota( XP_new, XP_new+ce_new, 0 );
+		    mce_iterate_xp_iterative( Gc, E2, alloc, ce_new, degeneracy,
+					      XP_new, ne_new, ce_new );
 		}
-		std::copy( XP+i, XP+ce, XP_piv+i );
-#else
-		// TODO: linear-time implementation
-		VID ne_i = ne;
-		std::copy( XP, XP+ce, XP_piv );
-		for( VID j=ne; j < i; ++j ) {
-		    VID v = XP[j];
-		    if( !padj.contains( v ) ) {
-			// move v to position ne_i and push [ne_i,j) to j+1)
-			std::copy_backward( XP_piv+ne_i, XP_piv+j, XP_piv+j+1 );
-			XP_piv[ne_i++] = v;
-		    }
-		}
-		std::copy( XP+i, XP+ce, XP_piv+i );
-#endif
-		// Now work with modified XP. Could consider intersect in-place.
-		VID ne_new = graptor::hash_vector::intersect(
-		    XP_piv, XP_piv+ne_i, adj, XP_new ) - XP_new;
-		VID ce_new = graptor::hash_vector::intersect(
-		    XP_piv+ne_i, XP_piv+ce, adj, XP_new+ne_new ) - XP_new;
+	    } else
+		mce_bron_kerbosch_recpar_xp2(
+		    G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
 
-		// if( Gc.density() < 0.9 ) {
-		if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
-		    // TODO: direct cut-out of dense graph
-		    bool ok = mce_leaf<VID,EID>(
-			G, E, depth+1, XP_new, ne_new, ce_new );
-		    if( !ok ) {
-			GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
-			    builder( G, XP_new, ne_new, ce_new );
-			const auto & Gc = builder.get_graph();
-			StackLikeAllocator alloc;
-			MCE_Enumerator_stage2 E2( E, depth );
-			std::iota( XP_new, XP_new+ce_new, 0 );
-			mce_iterate_xp_iterative( Gc, E2, alloc, ce_new, degeneracy,
-						  XP_new, ne_new, ce_new );
-		    }
-		} else
-		    mce_bron_kerbosch_recpar_xp2(
-			G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
-
-		delete[] XP_piv;
-	    }
+	    delete[] XP_new;
 	}
     } );
+
+    if( sum > 0 )
+	delete[] XP_piv;
 }
 
 
