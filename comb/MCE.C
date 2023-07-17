@@ -76,16 +76,18 @@ using graptor::graph::BinaryMatrix;
 using graptor::graph::BlockedBinaryMatrix;
 
 static constexpr size_t X_MIN_SIZE = 5;
-static constexpr size_t X_MAX_SIZE = 9;
+static constexpr size_t X_MAX_SIZE = 8; // 9;
 static constexpr size_t X_DIM = X_MAX_SIZE - X_MIN_SIZE + 1;
 static constexpr size_t P_MIN_SIZE = 5;
-static constexpr size_t P_MAX_SIZE = 9;
+static constexpr size_t P_MAX_SIZE = 8; // 9;
 static constexpr size_t P_DIM = P_MAX_SIZE - P_MIN_SIZE + 1;
 static constexpr size_t N_MIN_SIZE = 5;
-static constexpr size_t N_MAX_SIZE = 9;
+static constexpr size_t N_MAX_SIZE = 8; // 9;
 static constexpr size_t N_DIM = N_MAX_SIZE - N_MIN_SIZE + 1;
 
 static bool verbose = false;
+
+static VID * global_coreness = nullptr;
 
 class MCE_Enumerator {
 public:
@@ -233,6 +235,79 @@ struct per_thread_statistics {
 };
 
 per_thread_statistics mce_stats;
+
+void
+mce_tiny(
+    const GraphCSx & G,
+    const HGraphTy & H,
+    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
+    MCE_Enumerator & E,
+    VID v,
+    VID degeneracy ) {
+    const VID num = cut.get_num_vertices();
+    const VID * const ngh = cut.get_vertices();
+    const VID start_pos = cut.get_start_pos();
+
+    if( num == 1 )
+	E.record( 1 );
+    else if( num == 2 && start_pos == 2 ) {
+	// no maximal cliques (except size 1, already covered)
+    } else if( num == 2 ) {
+	if( H.get_adjacency( ngh[0] ).contains( ngh[1] ) ) {
+	    // Two vertices are neighbours themselves
+	    // No maximal clique in case start_pos == 1
+	    if( start_pos == 0 )
+		E.record( 2 );
+	} else if( start_pos == 0 ) {
+	    E.record( 1 );
+	    E.record( 1 );
+	} else if( start_pos == 1 ) {
+	    E.record( 1 );
+	}
+    } else if( num == 3 && start_pos == 3 ) {
+	// no maximal cliques
+    } else if( num == 3 ) {
+	int n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] ) ? 1 : 0;
+	int n02 = H.get_adjacency( ngh[0] ).contains( ngh[2] ) ? 1 : 0;
+	int n12 = H.get_adjacency( ngh[1] ).contains( ngh[2] ) ? 1 : 0;
+	if( start_pos == 0 ) {
+	    if( n01 + n02 + n12 == 3 )
+		E.record( 3 );
+	    else if( n01 + n02 + n12 == 2 ) {
+		E.record( 2 );
+		E.record( 2 );
+		E.record( 1 );
+	    } else if( n01 + n02 + n12 == 1 ) {
+		E.record( 2 );
+		E.record( 1 );
+	    } else if( n01 + n02 + n12 == 0 ) {
+		E.record( 1 );
+		E.record( 1 );
+		E.record( 1 );
+	    }
+	} else if( start_pos == 1 ) {
+	    if( n01 + n02 + n12 == 3 )
+		; // duplicate
+	    else if( n01 + n02 + n12 == 2 ) { // wedge
+		if( n01 + n02 == 2 ) { // common vertex already visited
+		    E.record( 1 );
+		} else {
+		    E.record( 2 );
+		    E.record( 1 );
+		}
+	    } else if( n01 + n02 + n12 == 1 ) {
+		if( n12 == 1 )
+		    E.record( 2 ); // v, 1, 2
+	    } else if( n01 + n02 + n12 == 0 ) {
+		E.record( 1 );
+		E.record( 1 );
+	    }
+	} else if( start_pos == 2 ) {
+	    if( n01 + n02 + n12 == 0 )
+		E.record( 1 );
+	}
+    }
+}    
 
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
 	 typename Enumerate>
@@ -1038,7 +1113,6 @@ mce_iterate_xp_iterative(
     const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
     MCE_Enumerator_stage2 & Ee,
     StackLikeAllocator & alloc,
-    size_t R_size,
     VID degeneracy,
     VID * XP,
     VID ne, // not edges
@@ -1057,7 +1131,7 @@ mce_iterate_xp_iterative(
     // Base case - trivial problem
     if( ce == ne ) {
 	if( ne == 0 )
-	    Ee.record( R_size );
+	    Ee.record( 0 );
 	return;
     }
 
@@ -1134,7 +1208,7 @@ mce_iterate_xp_iterative(
 	    // Recursion, check base case (avoid pushing on stack)
 	    if( ce_new == ne_new ) {
 		if( ne_new == 0 )
-		    Ee.record( depth+1 ); // R.size() );
+		    Ee.record( depth ); // R.size() );
 		// done
 	    // Tunable
 	    } else {
@@ -1147,7 +1221,7 @@ mce_iterate_xp_iterative(
 			      && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
 		    ) {
 		    ok = mce_leaf<VID,EID>(
-			G, Ee, depth+1, XP_new, ne_new, ce_new );
+			G, Ee, depth, XP_new, ne_new, ce_new );
 		}
 
 		if( !ok ) { // Need recursion
@@ -1378,7 +1452,8 @@ mce_bron_kerbosch_seq_xp(
 	VID ce = deg;
 
 	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
-	mce_iterate_xp_iterative( G, E, alloc, 1, degeneracy, XP, ne, ce );
+	MCE_Enumerator_stage2 Ee( E, 1 );
+	mce_iterate_xp_iterative( G, Ee, alloc, degeneracy, XP, ne, ce );
 
 	if( ce > 0 )
 	    alloc.deallocate_to( XP );
@@ -1433,7 +1508,7 @@ mce_bron_kerbosch_recpar_xp(
 		MCE_Enumerator_stage2 E2( E, depth );
 		VID * XP_new = alloc.template allocate<VID>( ce );
 		std::iota( XP_new, XP_new+ce, 0 );
-		mce_iterate_xp_iterative( Gc, E2, alloc, ce, degeneracy,
+		mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					  XP_new, ne, ce );
 /*
 		mce_bron_kerbosch_seq_xp( Gc, ne, degeneracy, E2 );
@@ -1520,7 +1595,7 @@ mce_bron_kerbosch_recpar_xp2(
 
 	    // if( Gc.density() < 0.9 ) {
 	    if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
-		// TODO: direct cut-out of dense graph
+		// direct cut-out of dense graph
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
@@ -1528,9 +1603,9 @@ mce_bron_kerbosch_recpar_xp2(
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
 		    StackLikeAllocator alloc;
-		    MCE_Enumerator_stage2 E2( E, depth );
+		    MCE_Enumerator_stage2 E2( E, depth+1 );
 		    std::iota( XP_new, XP_new+ce_new, 0 );
-		    mce_iterate_xp_iterative( Gc, E2, alloc, ce_new, degeneracy,
+		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
 		}
 	    } else
@@ -1578,7 +1653,7 @@ mce_bron_kerbosch_recpar_xp2_top(
 	VID ne = start - XP;
 	VID ce = deg;
 
-	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP, ne, ce, 2 );
+	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP, ne, ce, 1 );
     } );
 }
 
@@ -1616,7 +1691,8 @@ mce_bron_kerbosch_par_xp(
 
 	// TODO: further parallel decomposition
 	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
-	mce_iterate_xp_iterative( G, E, alloc, 1, degeneracy, XP, ne, ce );
+	MCE_Enumerator_stage2 Ee( E, 1 );
+	mce_iterate_xp_iterative( G, Ee, alloc, degeneracy, XP, ne, ce );
     } );
 }
 
@@ -2099,12 +2175,19 @@ void mce_dense_fn(
     MCE_Enumerator_stage2 E2( E );
     IG.mce_bron_kerbosch( E2 );
 
+    VID num = cut.get_num_vertices();
+    EID dsum = 0;
+    for( VID i=0; i < num; ++i )
+	dsum += global_coreness[cut.get_vertices()[i]];
+
     double t = tm.stop();
-    if( false && t >= 3.0 ) {
+    if( t >= 3.0 ) {
 	std::cerr << "dense " << Bits << " v=" << v
 		  << " num=" << cut.get_num_vertices()
 		  << " start=" << cut.get_start_pos()
-		  << " t=" << t << "\n";
+		  << " t=" << t
+		  << " dsum=" << dsum << ' ' << ( float(dsum)/float(num) )
+		  << "\n";
     }
 
     stats.record( t );
@@ -2118,11 +2201,11 @@ void mce_variable(
     VID start_pos,
     VID degeneracy
     ) {
-    MCE_Enumerator_stage2 Ee( E, 0 );
+    MCE_Enumerator_stage2 Ee( E, 1 ); // 1 for top-level vertex re: cutout
     VID n = HG.numVertices();
-    if( n - start_pos >= (1<<P_MAX_SIZE) ) {
+    if( n - start_pos >= (1<<P_MAX_SIZE) )
 	mce_bron_kerbosch_recpar_xp2_top( HG, start_pos, degeneracy, Ee );
-    } else
+    else
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
 }
 
@@ -2134,7 +2217,7 @@ typedef void (*mce_func)(
     const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
     variant_statistics & );
     
-static mce_func mce_dense_func[N_DIM] = {
+static mce_func mce_dense_func[N_DIM+1] = {
     &mce_dense_fn<32,HGraphTy,MCE_Enumerator>,  // N=32
     &mce_dense_fn<64,HGraphTy,MCE_Enumerator>,  // N=64
     &mce_dense_fn<128,HGraphTy,MCE_Enumerator>, // N=128
@@ -2142,7 +2225,7 @@ static mce_func mce_dense_func[N_DIM] = {
     &mce_dense_fn<512,HGraphTy,MCE_Enumerator>  // N=512
 };
 
-static mce_func mce_blocked_func[X_DIM][P_DIM] = {
+static mce_func mce_blocked_func[X_DIM+1][P_DIM+1] = {
     // X == 2**5
     { &mce_blocked_fn<32,32,HGraphTy,MCE_Enumerator>,  // X=32, P=32
       &mce_blocked_fn<32,64,HGraphTy,MCE_Enumerator>,  // X=32, P=64
@@ -2205,6 +2288,10 @@ void mce_top_level(
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
 
+    // special case for tiny subproblem (e.g., #vertices < 5)
+    // if( num <= 2 )
+    // return mce_tiny( G, H, cut, E, v, degeneracy );
+
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
 	return mce_dense_func[nlg-N_MIN_SIZE](
 	    G, H, E, v, cut, stats.get( nlg ) );
@@ -2239,6 +2326,10 @@ void mce_top_level(
 	ibuilder( G, H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
+    EID dsum = 0;
+    for( VID i=0; i < num; ++i )
+	dsum += global_coreness[cut.get_vertices()[i]];
+
     stats.record_genbuild( tm.stop() );
 
     tm.start();
@@ -2249,7 +2340,9 @@ void mce_top_level(
 		  << " xnum=" << xnum << " pnum=" << pnum
 		  << " density=" << HG.density()
 		  << " m=" << HG.numEdges()
-		  << " t=" << t << "\n";
+		  << " t=" << t
+		  << " dsum=" << dsum << ' ' << ( float(dsum)/float(num) )
+		  << "\n";
     }
     stats.record_gen( t );
 }
@@ -2290,7 +2383,7 @@ typedef void (*mce_leaf_func)(
     VID,
     VID );
     
-static mce_leaf_func leaf_dense_func[N_DIM] = {
+static mce_leaf_func leaf_dense_func[N_DIM+1] = {
     &leaf_dense_fn<32,VID,EID>,  // N=32
     &leaf_dense_fn<64,VID,EID>,  // N=64
     &leaf_dense_fn<128,VID,EID>, // N=128
@@ -2298,7 +2391,7 @@ static mce_leaf_func leaf_dense_func[N_DIM] = {
     &leaf_dense_fn<512,VID,EID>  // N=512
 };
 
-static mce_leaf_func leaf_blocked_func[X_DIM][P_DIM] = {
+static mce_leaf_func leaf_blocked_func[X_DIM+1][P_DIM+1] = {
     // X == 2**5
     { &leaf_blocked_fn<32,32,VID,EID>,  // X=32, P=32
       &leaf_blocked_fn<32,64,VID,EID>,  // X=32, P=64
@@ -2416,6 +2509,7 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
+    global_coreness = coreness.get_ptr();
     std::cerr << "Determining sort order: " << tm.next() << "\n";
 
     GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
