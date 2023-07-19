@@ -524,6 +524,34 @@ public:
 
 	m_n = ns;
     }
+    DenseMatrix( VID n, size_t edges )
+	: m_n( n ), m_m( 0 ), m_start_pos( 0 ) {
+	VID ns = n;
+
+	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
+	std::fill( m_degree, m_degree+ns, DID(0) );
+
+	size_t e = 1;
+	for( VID i=0; i < n-1; ++i ) {
+	    VID deg = 0;
+	    for( VID j=0; j < i; ++j ) {
+		if( ( edges & e ) != 0 ) {
+		    set( i, j );
+		    set( j, i );
+		    m_m += 2;
+		    m_degree[i]++;
+		    m_degree[j]++;
+		}
+		e <<= 1;
+	    }
+	}
+    }
 #if 0
     DenseMatrix( const ::GraphCSx & G, VID v,
 		 VID num_neighbours, const VID * neighbours,
