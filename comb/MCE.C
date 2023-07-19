@@ -138,6 +138,8 @@ struct MCE_Enumerator_stage2 {
     void record( size_t sz ) {
 	E.record( m_surplus + sz );
     }
+
+    size_t get_surplus() const { return m_surplus; }
     
 private:
     MCE_Enumerator & E;
@@ -238,73 +240,73 @@ per_thread_statistics mce_stats;
 
 void
 mce_tiny(
-    const GraphCSx & G,
     const HGraphTy & H,
-    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
-    MCE_Enumerator & E,
-    VID v,
-    VID degeneracy ) {
-    const VID num = cut.get_num_vertices();
-    const VID * const ngh = cut.get_vertices();
-    const VID start_pos = cut.get_start_pos();
-
-    if( num == 1 )
-	E.record( 1 );
-    else if( num == 2 && start_pos == 2 ) {
-	// no maximal cliques (except size 1, already covered)
+    const VID * const ngh,
+    const VID start_pos,
+    const VID num,
+    MCE_Enumerator_stage2 & E ) {
+    if( num == 0 ) {
+	if( E.get_surplus() > 1 ) // min clique size counted is 2
+	    E.record( 0 );
+    } else if( num == 1 ) {
+	if( start_pos == 0 )
+	    E.record( 2 ); // v, 0
     } else if( num == 2 ) {
-	if( H.get_adjacency( ngh[0] ).contains( ngh[1] ) ) {
-	    // Two vertices are neighbours themselves
-	    // No maximal clique in case start_pos == 1
-	    if( start_pos == 0 )
-		E.record( 2 );
-	} else if( start_pos == 0 ) {
-	    E.record( 1 );
-	    E.record( 1 );
+	bool n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] );
+	if( start_pos == 0 ) {
+	    // Two neighbours of v are neighbours themselves
+	    if( n01 )
+		E.record( 3 ); // v, 0, 1
+	    else {
+		E.record( 2 ); // v, 0
+		E.record( 2 ); // v, 1
+	    }
 	} else if( start_pos == 1 ) {
-	    E.record( 1 );
+	    // No maximal clique in case start_pos == 1
+	    if( !n01 ) // triangle v, 0, 1 does not exist
+		E.record( 2 ); // v, 1
 	}
-    } else if( num == 3 && start_pos == 3 ) {
-	// no maximal cliques
     } else if( num == 3 ) {
 	int n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] ) ? 1 : 0;
 	int n02 = H.get_adjacency( ngh[0] ).contains( ngh[2] ) ? 1 : 0;
 	int n12 = H.get_adjacency( ngh[1] ).contains( ngh[2] ) ? 1 : 0;
 	if( start_pos == 0 ) {
+	    // v < ngh[0] < ngh[1] < ngh[2]
 	    if( n01 + n02 + n12 == 3 )
-		E.record( 3 );
+		E.record( 4 );
 	    else if( n01 + n02 + n12 == 2 ) {
-		E.record( 2 );
-		E.record( 2 );
-		E.record( 1 );
+		E.record( 3 );
+		E.record( 3 );
 	    } else if( n01 + n02 + n12 == 1 ) {
+		E.record( 3 );
 		E.record( 2 );
-		E.record( 1 );
 	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 1 );
-		E.record( 1 );
-		E.record( 1 );
+		E.record( 2 );
+		E.record( 2 );
+		E.record( 2 );
 	    }
 	} else if( start_pos == 1 ) {
+	    // ngh[0] < v < ngh[1] < ngh[2]
 	    if( n01 + n02 + n12 == 3 )
 		; // duplicate
 	    else if( n01 + n02 + n12 == 2 ) { // wedge
-		if( n01 + n02 == 2 ) { // common vertex already visited
-		    E.record( 1 );
-		} else {
-		    E.record( 2 );
-		    E.record( 1 );
-		}
+		if( n12 == 1 )
+		    E.record( 3 );
 	    } else if( n01 + n02 + n12 == 1 ) {
 		if( n12 == 1 )
-		    E.record( 2 ); // v, 1, 2
+		    E.record( 3 ); // v, 1, 2
+		else if( n01 == 1 )
+		    E.record( 2 ); // v, 2
+		else if( n02 == 1 )
+		    E.record( 2 ); // v, 1
 	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 1 );
-		E.record( 1 );
+		E.record( 2 ); // v, 1
+		E.record( 2 ); // v, 2
 	    }
 	} else if( start_pos == 2 ) {
-	    if( n01 + n02 + n12 == 0 )
-		E.record( 1 );
+	    // ngh[0] < ngh[1] < v < ngh[2]
+	    if( n02 + n12 == 0 ) // not part of a triangle or more
+		E.record( 2 );
 	}
     }
 }    
@@ -1593,8 +1595,11 @@ mce_bron_kerbosch_recpar_xp2(
 	    VID ce_new = graptor::hash_vector::intersect(
 		XP_piv+i, XP_piv+ce, adj, XP_new+ne_new ) - XP_new;
 
-	    // if( Gc.density() < 0.9 ) {
-	    if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
+	    if( ce_new - ne_new == 0 ) {
+		// Reached leaf of search tree
+		if( ne_new == 0 )
+		    E.record( depth+1 );
+	    } else if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
 		// direct cut-out of dense graph
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
@@ -1608,9 +1613,11 @@ mce_bron_kerbosch_recpar_xp2(
 		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
 		}
-	    } else
+	    } else {
+		// large sub-problem; search recursively
 		mce_bron_kerbosch_recpar_xp2(
 		    G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+	    }
 
 	    delete[] XP_new;
 	}
@@ -2165,17 +2172,24 @@ void mce_dense_fn(
     timer tm;
     tm.start();
 
-    // Build induced graph
-    // TODO: Make merge method depend on size of neighbour lists
-    //       merge_scalar is fastest for pokec, but not for orkut
-    DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_vector() );
-    // DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_scalar() );
-    // DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::merge_scalar() );
-
-    MCE_Enumerator_stage2 E2( E );
-    IG.mce_bron_kerbosch( E2 );
-
     VID num = cut.get_num_vertices();
+
+    // Make merge method depend on size of neighbour lists
+    // merge_scalar is fastest for pokec, but not for orkut
+    if( num <= 8 ) {
+	// Build induced graph
+	DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::merge_scalar() );
+
+	MCE_Enumerator_stage2 E2( E );
+	IG.mce_bron_kerbosch( E2 );
+    } else {
+	// Build induced graph
+	DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_vector() );
+
+	MCE_Enumerator_stage2 E2( E );
+	IG.mce_bron_kerbosch( E2 );
+    }
+
     EID dsum = 0;
     for( VID i=0; i < num; ++i )
 	dsum += global_coreness[cut.get_vertices()[i]];
@@ -2281,16 +2295,19 @@ void mce_top_level(
     all_variant_statistics & stats = mce_stats.get_statistics();
 
     VID num = cut.get_num_vertices();
+
+    if( num <= 3 ) {
+	MCE_Enumerator_stage2 E2( E, 0 );
+	return mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
+			 cut.get_num_vertices(), E2 );
+    }
+    
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
-
-    // special case for tiny subproblem (e.g., #vertices < 5)
-    // if( num <= 2 )
-    // return mce_tiny( G, H, cut, E, v, degeneracy );
 
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
 	return mce_dense_func[nlg-N_MIN_SIZE](
@@ -2440,6 +2457,12 @@ bool mce_leaf(
     VID num = ce;
     VID xnum = ne;
     VID pnum = ce - ne;
+
+    if( ce <= 3 ) {
+	MCE_Enumerator_stage2 E2( E, r-1 );
+	mce_tiny( H, XP, ne, ce, E2 );
+	return true;
+    }
 
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
