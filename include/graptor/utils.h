@@ -52,7 +52,18 @@ constexpr T next_ipow2( T t ) {
 template<typename T>
 inline
 std::enable_if_t<std::is_integral_v<T> && sizeof(T) <= 4,T> rt_ilog2( T a ) {
-    return a <= T(0) ? -1 : _bit_scan_reverse( (unsigned int)a );
+    return a <= T(0)
+	? -1
+	: ( sizeof(uint32_t)*8 - 1 - _lzcnt_u32( (uint32_t) a ) );
+    // return a <= T(0) ? -1 : _bit_scan_reverse( (unsigned int)a );
+}
+
+template<typename T>
+inline
+std::enable_if_t<std::is_integral_v<T> && sizeof(T) == 8,T> rt_ilog2( T a ) {
+    return a <= T(0)
+	? -1
+	: ( sizeof(uint64_t)*8 - 1 - _lzcnt_u64( (uint64_t) a ) );
 }
 
 template<typename T>
