@@ -23,7 +23,7 @@ class hash_table {
 public:
     typedef T type;
     typedef Hash hash_type;
-    typedef size_t size_type;
+    typedef uint32_t size_type;
     typedef type & reference;
     typedef const type & const_reference;
 
@@ -34,15 +34,24 @@ public:
 	: m_elements( 0 ),
 	  m_log_size( 4 ),
 	  m_table( new type[16] ),
-	  m_hash( 4 ) {
+	  m_hash( 4 ),
+	  pre_allocated( false ) {
 	clear();
     }
+    explicit hash_table( type * storage, size_type num_elements,
+			 size_type log_size, const hash_type & hash )
+	: m_elements( num_elements ),
+	  m_log_size( log_size ),
+	  m_table( storage ),
+	  m_hash( hash ),
+	  pre_allocated( true ) { }
     hash_table( hash_table && ) = delete;
     hash_table( const hash_table & ) = delete;
     hash_table & operator = ( const hash_table & ) = delete;
 
     ~hash_table() {
-	delete[] m_table;
+	if( !pre_allocated )
+	    delete[] m_table;
     }
 
     void clear() {
@@ -56,6 +65,14 @@ public:
 
     auto begin() const { return m_table; }
     auto end() const { return m_table+capacity(); }
+
+    static size_type required_log_size( size_type num_elements ) {
+	// Maintain fill factor of 50% at most
+	// ilog2( num_elements-1 ) + 1 -> next higher power of two
+	// but ensure #elms+1 does not exceed 50%
+	// + 1: fill factor not exceeding 50%
+	return rt_ilog2( num_elements ) + 2;
+    }
 
 /*
     auto begin() const {
@@ -80,6 +97,8 @@ public:
 	    return false;
 	} else {
 	    if( (m_elements+1) >= ( capacity() >> 1 ) ) {
+		assert( !pre_allocated
+			&& "Cannot resize if not owning the storage" );
 		// Rehash
 		size_type old_log_size = m_log_size + 1;
 		type * old_table = new type[size_type(1)<<old_log_size];
@@ -352,6 +371,7 @@ private:
     size_type m_log_size;
     type * m_table;
     hash_type m_hash;
+    bool pre_allocated;
 };
 
 template<typename T, typename Hash>

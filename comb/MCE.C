@@ -70,6 +70,7 @@
 using hash_fn = graptor::rand_hash<uint32_t>;
 
 using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
@@ -187,11 +188,13 @@ struct all_variant_statistics {
 	for( size_t x=0; x < X_DIM; ++x )
 	    for( size_t p=0; p < P_DIM; ++p )
 		sum.m_blocked[x][p] = m_blocked[x][p] + s.m_blocked[x][p];
+	sum.m_tiny = m_tiny + s.m_tiny;
 	sum.m_gen = m_gen + s.m_gen;
 	sum.m_genbuild = m_genbuild + s.m_genbuild;
 	return sum;
     }
 
+    void record_tiny( double atm ) { m_tiny.record( atm ); }
     void record_gen( double atm ) { m_gen.record( atm ); }
     void record_genbuild( double atm ) { m_genbuild.record( atm ); }
 
@@ -204,7 +207,7 @@ struct all_variant_statistics {
     
     variant_statistics m_dense[N_DIM];
     variant_statistics m_blocked[X_DIM][P_DIM];
-    variant_statistics m_gen, m_genbuild;
+    variant_statistics m_tiny, m_gen, m_genbuild;
 
 };
 
@@ -238,9 +241,15 @@ struct per_thread_statistics {
 
 per_thread_statistics mce_stats;
 
+/*! Direct solution for tiny problems.
+ *
+ * HGraph is a graph type that supports a get_adjacency(VID) method that returns
+ * a type with contains method.
+ */
+template<typename HGraph>
 void
 mce_tiny(
-    const HGraphTy & H,
+    const HGraph & H,
     const VID * const ngh,
     const VID start_pos,
     const VID num,
@@ -254,8 +263,7 @@ mce_tiny(
     } else if( num == 2 ) {
 	bool n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] );
 	if( start_pos == 0 ) {
-	    // Two neighbours of v are neighbours themselves
-	    if( n01 )
+	    if( n01 ) // Two neighbours of v are neighbours themselves
 		E.record( 3 ); // v, 0, 1
 	    else {
 		E.record( 2 ); // v, 0
@@ -2190,26 +2198,20 @@ void mce_dense_fn(
 	IG.mce_bron_kerbosch( E2 );
     }
 
-    EID dsum = 0;
-    for( VID i=0; i < num; ++i )
-	dsum += global_coreness[cut.get_vertices()[i]];
-
     double t = tm.stop();
-    if( t >= 3.0 ) {
+    if( false && t >= 3.0 ) {
 	std::cerr << "dense " << Bits << " v=" << v
 		  << " num=" << cut.get_num_vertices()
 		  << " start=" << cut.get_start_pos()
 		  << " t=" << t
-		  << " dsum=" << dsum << ' ' << ( float(dsum)/float(num) )
 		  << "\n";
     }
 
     stats.record( t );
 }
 
-template<typename VID, typename EID, typename Hash>
 void mce_variable(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & HG,
+    const HGraphTy & HG,
     MCE_Enumerator & E,
     VID v,
     VID start_pos,
@@ -2225,55 +2227,55 @@ void mce_variable(
 
 typedef void (*mce_func)(
     const GraphCSx &, 
-    const HGraphTy &,
+    const HFGraphTy &,
     MCE_Enumerator &,
     VID,
     const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
     variant_statistics & );
     
 static mce_func mce_dense_func[N_DIM+1] = {
-    &mce_dense_fn<32,HGraphTy,MCE_Enumerator>,  // N=32
-    &mce_dense_fn<64,HGraphTy,MCE_Enumerator>,  // N=64
-    &mce_dense_fn<128,HGraphTy,MCE_Enumerator>, // N=128
-    &mce_dense_fn<256,HGraphTy,MCE_Enumerator>, // N=256
-    &mce_dense_fn<512,HGraphTy,MCE_Enumerator>  // N=512
+    &mce_dense_fn<32,HFGraphTy,MCE_Enumerator>,  // N=32
+    &mce_dense_fn<64,HFGraphTy,MCE_Enumerator>,  // N=64
+    &mce_dense_fn<128,HFGraphTy,MCE_Enumerator>, // N=128
+    &mce_dense_fn<256,HFGraphTy,MCE_Enumerator>, // N=256
+    &mce_dense_fn<512,HFGraphTy,MCE_Enumerator>  // N=512
 };
 
 static mce_func mce_blocked_func[X_DIM+1][P_DIM+1] = {
     // X == 2**5
-    { &mce_blocked_fn<32,32,HGraphTy,MCE_Enumerator>,  // X=32, P=32
-      &mce_blocked_fn<32,64,HGraphTy,MCE_Enumerator>,  // X=32, P=64
-      &mce_blocked_fn<32,128,HGraphTy,MCE_Enumerator>, // X=32, P=128
-      &mce_blocked_fn<32,256,HGraphTy,MCE_Enumerator>, // X=32, P=256
-      &mce_blocked_fn<32,512,HGraphTy,MCE_Enumerator>  // X=32, P=512
+    { &mce_blocked_fn<32,32,HFGraphTy,MCE_Enumerator>,  // X=32, P=32
+      &mce_blocked_fn<32,64,HFGraphTy,MCE_Enumerator>,  // X=32, P=64
+      &mce_blocked_fn<32,128,HFGraphTy,MCE_Enumerator>, // X=32, P=128
+      &mce_blocked_fn<32,256,HFGraphTy,MCE_Enumerator>, // X=32, P=256
+      &mce_blocked_fn<32,512,HFGraphTy,MCE_Enumerator>  // X=32, P=512
     },
     // X == 2**6
-    { &mce_blocked_fn<64,32,HGraphTy,MCE_Enumerator>,  // X=64, P=32
-      &mce_blocked_fn<64,64,HGraphTy,MCE_Enumerator>,  // X=64, P=64
-      &mce_blocked_fn<64,128,HGraphTy,MCE_Enumerator>, // X=64, P=128
-      &mce_blocked_fn<64,256,HGraphTy,MCE_Enumerator>, // X=64, P=256
-      &mce_blocked_fn<64,512,HGraphTy,MCE_Enumerator>  // X=64, P=512
+    { &mce_blocked_fn<64,32,HFGraphTy,MCE_Enumerator>,  // X=64, P=32
+      &mce_blocked_fn<64,64,HFGraphTy,MCE_Enumerator>,  // X=64, P=64
+      &mce_blocked_fn<64,128,HFGraphTy,MCE_Enumerator>, // X=64, P=128
+      &mce_blocked_fn<64,256,HFGraphTy,MCE_Enumerator>, // X=64, P=256
+      &mce_blocked_fn<64,512,HFGraphTy,MCE_Enumerator>  // X=64, P=512
     },
     // X == 2**7
-    { &mce_blocked_fn<128,32,HGraphTy,MCE_Enumerator>,  // X=128, P=32
-      &mce_blocked_fn<128,64,HGraphTy,MCE_Enumerator>,  // X=128, P=64
-      &mce_blocked_fn<128,128,HGraphTy,MCE_Enumerator>, // X=128, P=128
-      &mce_blocked_fn<128,256,HGraphTy,MCE_Enumerator>, // X=128, P=256
-      &mce_blocked_fn<128,512,HGraphTy,MCE_Enumerator>  // X=128, P=512
+    { &mce_blocked_fn<128,32,HFGraphTy,MCE_Enumerator>,  // X=128, P=32
+      &mce_blocked_fn<128,64,HFGraphTy,MCE_Enumerator>,  // X=128, P=64
+      &mce_blocked_fn<128,128,HFGraphTy,MCE_Enumerator>, // X=128, P=128
+      &mce_blocked_fn<128,256,HFGraphTy,MCE_Enumerator>, // X=128, P=256
+      &mce_blocked_fn<128,512,HFGraphTy,MCE_Enumerator>  // X=128, P=512
     },
     // X == 2**8
-    { &mce_blocked_fn<256,32,HGraphTy,MCE_Enumerator>,  // X=256, P=32
-      &mce_blocked_fn<256,64,HGraphTy,MCE_Enumerator>,  // X=256, P=64
-      &mce_blocked_fn<256,128,HGraphTy,MCE_Enumerator>, // X=256, P=128
-      &mce_blocked_fn<256,256,HGraphTy,MCE_Enumerator>, // X=256, P=256
-      &mce_blocked_fn<256,512,HGraphTy,MCE_Enumerator>  // X=256, P=512
+    { &mce_blocked_fn<256,32,HFGraphTy,MCE_Enumerator>,  // X=256, P=32
+      &mce_blocked_fn<256,64,HFGraphTy,MCE_Enumerator>,  // X=256, P=64
+      &mce_blocked_fn<256,128,HFGraphTy,MCE_Enumerator>, // X=256, P=128
+      &mce_blocked_fn<256,256,HFGraphTy,MCE_Enumerator>, // X=256, P=256
+      &mce_blocked_fn<256,512,HFGraphTy,MCE_Enumerator>  // X=256, P=512
     },
     // X == 2**9
-    { &mce_blocked_fn<512,32,HGraphTy,MCE_Enumerator>,  // X=512, P=32
-      &mce_blocked_fn<512,64,HGraphTy,MCE_Enumerator>,  // X=512, P=64
-      &mce_blocked_fn<512,128,HGraphTy,MCE_Enumerator>, // X=512, P=128
-      &mce_blocked_fn<512,256,HGraphTy,MCE_Enumerator>, // X=512, P=256
-      &mce_blocked_fn<512,512,HGraphTy,MCE_Enumerator>  // X=512, P=512
+    { &mce_blocked_fn<512,32,HFGraphTy,MCE_Enumerator>,  // X=512, P=32
+      &mce_blocked_fn<512,64,HFGraphTy,MCE_Enumerator>,  // X=512, P=64
+      &mce_blocked_fn<512,128,HFGraphTy,MCE_Enumerator>, // X=512, P=128
+      &mce_blocked_fn<512,256,HFGraphTy,MCE_Enumerator>, // X=512, P=256
+      &mce_blocked_fn<512,512,HFGraphTy,MCE_Enumerator>  // X=512, P=512
     }
 };
 
@@ -2286,7 +2288,7 @@ size_t get_size_class( uint32_t v ) {
 
 void mce_top_level(
     const GraphCSx & G,
-    const HGraphTy & H,
+    const HFGraphTy & H,
     MCE_Enumerator & E,
     VID v,
     VID degeneracy ) {
@@ -2297,9 +2299,13 @@ void mce_top_level(
     VID num = cut.get_num_vertices();
 
     if( num <= 3 ) {
+	timer tm;
+	tm.start();
 	MCE_Enumerator_stage2 E2( E, 0 );
-	return mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
+	mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
 			 cut.get_num_vertices(), E2 );
+	stats.record_tiny( tm.stop() );
+	return;
     }
     
     VID xnum = cut.get_start_pos();
@@ -2343,22 +2349,17 @@ void mce_top_level(
 	ibuilder( G, H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
-    EID dsum = 0;
-    for( VID i=0; i < num; ++i )
-	dsum += global_coreness[cut.get_vertices()[i]];
-
     stats.record_genbuild( tm.stop() );
 
     tm.start();
     mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
     double t = tm.stop();
-    if( t >= 3.0 ) {
+    if( false && t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
 		  << " xnum=" << xnum << " pnum=" << pnum
 		  << " density=" << HG.density()
 		  << " m=" << HG.numEdges()
 		  << " t=" << t
-		  << " dsum=" << dsum << ' ' << ( float(dsum)/float(num) )
 		  << "\n";
     }
     stats.record_gen( t );
@@ -2538,18 +2539,11 @@ int main( int argc, char *argv[] ) {
     GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
     std::cerr << "Remapping graph: " << tm.next() << "\n";
 
-    graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( n );
+    // graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( R );
+    graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
+	H( R, true, numa_allocation_interleaved() );
     const EID * const index = R.getIndex();
     const VID * const edges = R.getEdges();
-    
-    parallel_loop( (VID)0, n, [&]( VID v ) {
-	auto & adj = H.get_adjacency( v );
-	EID ee = index[v+1];
-	for( EID e=index[v]; e != ee; ++e ) {
-	    VID u = edges[e];
-	    adj.insert( u );
-	}
-    } );
     std::cerr << "Building hashed graph: " << tm.next() << "\n";
 
     MCE_Enumerator E( kcore.getLargestCore() );
@@ -2587,6 +2581,8 @@ int main( int argc, char *argv[] ) {
 	    std::cerr << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
 	    stats.get( x, p ).print( std::cerr );
 	}
+    std::cerr << "tiny: ";
+    stats.m_tiny.print( std::cerr );
     std::cerr << "generic: ";
     stats.m_gen.print( std::cerr );
     std::cerr << "generic build: ";

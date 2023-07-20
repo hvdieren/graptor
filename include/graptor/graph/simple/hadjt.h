@@ -33,6 +33,22 @@ public:
 	m_hashes( new hash_table<VID,Hash>[m_n]() ) {
 	// hashes initialised?
     }
+    GraphHAdjTable( const ::GraphCSx & G ) :
+	m_n( G.numVertices() ),
+	m_m( G.numEdges() ),
+	m_hashes( new hash_table<VID,Hash>[m_n]() ) {
+	const EID * const index = G.getIndex();
+	const VID * const edges = G.getEdges();
+
+	parallel_loop( (VID)0, m_n, [&]( VID v ) {
+	    auto & adj = get_adjacency( v );
+	    EID ee = index[v+1];
+	    for( EID e=index[v]; e != ee; ++e ) {
+		VID u = edges[e];
+		adj.insert( u );
+	    }
+	} );
+    }
     GraphHAdjTable( const GraphHAdjTable & ) = delete;
 
     ~GraphHAdjTable() {

@@ -28,7 +28,8 @@ public:
 			 size_type maximum_elements )
 	: m_elements( num_elements ),
 	  m_size( maximum_elements ),
-	  m_table( space ) {
+	  m_table( space ),
+	  m_hash( maximum_elements ) {
 	assert( ( m_size & ( m_size - 1 ) ) == 0 && "size must be power of 2" );
     }
 
