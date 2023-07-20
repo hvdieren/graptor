@@ -273,15 +273,15 @@ struct hash_scalar {
     size_t intersect_size_exceed( It lb, It le, const HT & htable, size_t exceed ) {
 	size_t d = std::distance( lb, le );
 
-	if( d < exceed )
+	if( d <= exceed )
 	    return 0;
 
 	std::make_signed_t<size_t> options = d - exceed;
 
 	while( lb != le ) {
 	    VID v = *lb;
-	    if( !htable.contains( v ) )
-		if( --options < 0 )
+	    if( !htable.contains( v ) ) [[likely]]
+		if( --options <= 0 ) [[unlikely]]
 		    return 0;
 	    ++lb;
 	}

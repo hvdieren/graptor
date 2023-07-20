@@ -168,11 +168,10 @@ public:
 
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash, typename DID,
-	     typename AddDegree>
-    BinaryMatrix( const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-		  const hVID * XP,
-		  hVID ne, hVID ce,
+    template<typename HGraph, typename DID, typename AddDegree>
+    BinaryMatrix( const HGraph & G,
+		  const sVID * XP,
+		  sVID ne, sVID ce,
 		  DID * m_degree,
 		  AddDegree && ) // correlates with xp vs px matrix
 	: m_row_start( AddDegree::value == false ? 0 : ne ),
@@ -180,8 +179,6 @@ public:
 	  m_col_start( AddDegree::value == false ? ne : 0 ),
 	  m_cols( AddDegree::value == false ? ce-ne : ne ), // P
 	  m_s2g( XP ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
 	assert( AddDegree::value != false || ce-ne <= Bits ); // xp - side col
 	assert( AddDegree::value != true || ne <= Bits ); // px - bottom rows
 
@@ -203,19 +200,19 @@ public:
 	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place edges
-	hVID ni = 0;
+	sVID ni = 0;
 	m_m = 0;
-	for( hVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
-	    hVID u = m_s2g[r]; // or XP[r]
-	    hVID deg = 0;
+	for( sVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
+	    sVID u = m_s2g[r]; // or XP[r]
+	    sVID deg = 0;
 
 	    row_type row_u = tr::setzero();
 	    auto & adj = G.get_adjacency( u );
 
 	    // Intersect XP with adjacency list
 #if 0
-	    for( hVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
-		hVID xp = XP[l];
+	    for( sVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
+		sVID xp = XP[l];
 		// TODO: vectorized lookup (VL values at once) + customise
 		//       the construction of the row_u by inserting blocks
 		//       of VL bits at a time.
@@ -234,13 +231,13 @@ public:
 #else
 	    static constexpr unsigned RVL = 1;
 #endif
-	    if constexpr ( sizeof(hVID)*8 == Bits && RVL >= 4 ) {
-		hVID col_end = m_col_start + m_cols;
-		hVID l = m_col_start;
+	    if constexpr ( sizeof(sVID)*8 == Bits && RVL >= 4 ) {
+		sVID col_end = m_col_start + m_cols;
+		sVID l = m_col_start;
 		if( m_cols >= RVL ) {
 		    // A vertex identifier is not wider than a row of the matrix.
 		    // We can fit multiple row_type into a vector
-		    using itr = vector_type_traits_vl<hVID,RVL>;
+		    using itr = vector_type_traits_vl<sVID,RVL>;
 		    using rtr = vector_type_traits_vl<type,RVL>;
 		    using itype = typename itr::type;
 		    using rtype = typename rtr::type;
@@ -255,12 +252,12 @@ public:
 			rtype c = rtr::sllv( one, off );
 #if __AVX512F__
 			// using bitmask
-			auto b = adj.template multi_contains<hVID,RVL>( v, target::mt_mask() );
+			auto b = adj.template multi_contains<sVID,RVL>( v, target::mt_mask() );
 			rtype d = rtr::blend( b, rtr::setzero(), c );
 			mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
 #elif __AVX2__
-			itype b = adj.template multi_contains<hVID,RVL>( v, target::mt_vmask() );
-			rtype br = conversion_traits<logical<sizeof(hVID)>,logical<sizeof(type)>,RVL>::convert( b );
+			itype b = adj.template multi_contains<sVID,RVL>( v, target::mt_vmask() );
+			rtype br = conversion_traits<logical<sizeof(sVID)>,logical<sizeof(type)>,RVL>::convert( b );
 			rtype d = rtr::bitwise_and( br, c );
 			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) ); // 4-argument add( mdeg, b, ione, mdeg );
 #else
@@ -274,7 +271,7 @@ public:
 		    deg = itr::reduce_add( mdeg );
 		}
 		while( l < col_end ) {
-		    hVID xp = XP[l];
+		    sVID xp = XP[l];
 		    if( adj.contains( xp ) ) {
 			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
 			++deg;
@@ -282,8 +279,8 @@ public:
 		    ++l;
 		}
 	    } else {
-		for( hVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
-		    hVID xp = XP[l];
+		for( sVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
+		    sVID xp = XP[l];
 		    // TODO: vectorized lookup (VL values at once) + customise
 		    //       the construction of the row_u by inserting blocks
 		    //       of VL bits at a time.
@@ -460,14 +457,12 @@ public:
     }
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash>
+    template<typename HGraph>
     BlockedBinaryMatrix(
-	const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-	const hVID * XP,
-	hVID ne, hVID ce )
+	const HGraph & G,
+	const sVID * XP,
+	sVID ne, sVID ce )
 	: m_s2g( XP ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
 
 	// Vertices in X and P are independently already sorted by core order.
 	// We do not reorder, primarily because only the order in P matters

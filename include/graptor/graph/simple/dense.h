@@ -658,14 +658,11 @@ public:
 #endif
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename hVID, typename hEID, typename Hash>
-    DenseMatrix( const graptor::graph::GraphHAdjTable<hVID,hEID,Hash> & G,
-		 const hVID * XP,
-		 hVID ne, hVID ce )
+    template<typename HGraph>
+    DenseMatrix( const HGraph & G,
+		 const sVID * XP,
+		 sVID ne, sVID ce )
 	: m_start_pos( ne ) {
-	static_assert( sizeof(hVID) >= sizeof(sVID) );
-	static_assert( sizeof(hEID) >= sizeof(sEID) );
-
 	// Vertices in X and P are independently already sorted by core order.
 	// We do not reorder, primarily because only the order in P matters
 	// for efficiency of enumeration.

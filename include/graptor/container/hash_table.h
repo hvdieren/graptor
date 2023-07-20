@@ -13,7 +13,8 @@
 /*!=====================================================================*
  * TODO:
  * + ensure that high-degree vertices are closer to their intended position
- *   than low-degree vertices.
+ *   than low-degree vertices; or insert high-degree vertices first.
+ *   The latter is insufficient due to resizing.
  *======================================================================*/
 
 namespace graptor {
@@ -38,6 +39,13 @@ public:
 	  pre_allocated( false ) {
 	clear();
     }
+    explicit hash_table( type * storage, size_type num_elements,
+			 size_type log_size )
+	: m_elements( num_elements ),
+	  m_log_size( log_size ),
+	  m_table( storage ),
+	  m_hash( log_size ),
+	  pre_allocated( true ) { }
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size, const hash_type & hash )
 	: m_elements( num_elements ),

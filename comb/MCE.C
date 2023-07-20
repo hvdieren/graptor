@@ -70,7 +70,9 @@
 using hash_fn = graptor::rand_hash<uint32_t>;
 
 using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
-using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
+// using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,hash_fn>;
+// using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,hash_fn>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
@@ -798,9 +800,8 @@ bool is_member( VID v, VID C_size, const VID * C_set ) {
     return true;
 }
 
-template<typename VID, typename EID, typename Hash>
 std::pair<VID,VID> mc_get_pivot_xp(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     const VID * XP,
     VID ne,
     VID ce ) {
@@ -824,9 +825,9 @@ std::pair<VID,VID> mc_get_pivot_xp(
 	    continue;
 
 	// Abort during intersection_size if size will be less than tv_max
-	size_t tv = hadj.intersect_size( XP+ne, XP+ce, tv_max );
-	// size_t tv = graptor::hash_vector::intersect_size_exceed(
-	// XP+ne, XP+ce, hadj, tv_max ); -- really slow !?
+	// Note: hash_vector is much slower in this instance
+	size_t tv = graptor::hash_scalar::intersect_size_exceed(
+	    XP+ne, XP+ce, hadj, tv_max );
 	    
 	if( tv > tv_max ) {
 	    tv_max = tv;
@@ -1117,10 +1118,9 @@ bool mce_leaf(
     VID ne,
     VID ce );
 
-template<typename VID, typename EID, typename Hash>
 void
 mce_iterate_xp_iterative(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     MCE_Enumerator_stage2 & Ee,
     StackLikeAllocator & alloc,
     VID degeneracy,
@@ -1205,8 +1205,6 @@ mce_iterate_xp_iterative(
 	    VID ne = fr.ne;
 	    VID ce = fr.ce;
 	    VID * XP_new = fr.XP_new;
-	    // VID ne_new = adj.intersect( XP, XP+ne, XP_new ) - XP_new;
-	    // VID ce_new = adj.intersect( XP+ne, XP+ce, XP_new+ne_new ) - XP_new;
 	    VID ne_new = graptor::hash_vector::intersect(
 		XP, XP+ne, adj, XP_new ) - XP_new;
 	    VID ce_new = graptor::hash_vector::intersect(
@@ -1283,85 +1281,15 @@ class GraphBuilderInduced;
 template<typename VID, typename EID, typename Hash>
 class GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>> {
 public:
-    GraphBuilderInduced( const GraphCSx & G,
-			 VID v,
-			 VID num_neighbours,
-			 const VID * neighbours,
-			 const VID * const core_order )
-	: s2g( &neighbours[0], &neighbours[num_neighbours] ),
-	  S( num_neighbours ) {
-	VID n = G.numVertices();
-	EID m = G.numEdges();
-	const EID * const gindex = G.getIndex();
-	const VID * const gedges = G.getEdges();
-
-	// Indices:
-	// global (g): original graph's vertex IDs
-	// short (s): relabeled vertex IDs in induced graph S
-	// neighbours (n): position of vertex in neighbour list, which is
-	//                 sorted by global IDs, facilitating lookup
-	VID ns = num_neighbours;
-	VID * n2s = new VID[ns];
-	std::iota( &s2g[0], &s2g[ns], 0 );
-
-	// Sort by increasing core_order
-	std::sort( &s2g[0], &s2g[ns],
-		   [&]( VID u, VID v ) {
-		       return core_order[neighbours[u]]
-			   < core_order[neighbours[v]];
-		   } );
-	// Invert permutation into n2s and create mapping for m_s2g
-	for( VID su=0; su < ns; ++su ) {
-	    VID x = s2g[su];
-	    s2g[su] = neighbours[x]; // create mapping
-	    n2s[x] = su; // invert permutation
-	}
-
-	// Find first vertex ordered after the reference vertex v.
-	// All preceeding vertices have already been tried and can be skipped.
-	// We include them in the cutout however in order to construct the
-	// excluded set (X) in Bron-Kerbosch. Remains a question if we need
-	// to build the neighbour list for the excluded vertices (probably
-	// only for the purpose of finding a pivot vertex).
-	VID * sp2_pos = std::upper_bound(
-	    &s2g[0], &s2g[ns], v,
-	    [&]( VID a, VID b ) {
-		return core_order[a] < core_order[b];
-	    } );
-	start_pos = sp2_pos - &s2g[0];
-
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su];
-	    VID k = 0;
-	    auto & adj = S.get_adjacency( su );
-	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
-		VID w = gedges[e];
-		while( k != ns && neighbours[k] < w )
-		    ++k;
-		if( k == ns )
-		    break;
-		// If neighbour is selected in cut-out, add to induced graph.
-		// Skip self-edges.
-		// Skip edges between vertices in X.
-		if( neighbours[k] == w && w != u
-		    && ( su >= start_pos || n2s[k] >= start_pos ) )
-		    adj.insert( n2s[k] );
-	    }
-	}
-
-	S.sum_up_edges();
-
-	delete[] n2s;
-    }
     template<typename HGraph>
     GraphBuilderInduced(
 	const GraphCSx & G,
 	const HGraph & H,
 	VID v,
 	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
-	: s2g( cut.get_vertices(), cut.get_vertices()+cut.get_num_vertices() ),
-	  S( cut.get_num_vertices() ),
+	: S( cut.get_num_vertices() ),
 	  start_pos( cut.get_start_pos() ) {
+	const VID * const s2g = cut.get_vertices();
 	VID n = G.numVertices();
 	EID m = G.numEdges();
 	const EID * const gindex = G.getIndex();
@@ -1419,20 +1347,48 @@ public:
 	S.sum_up_edges(); // necessary?
     }
 
-    // const VID * get_s2g() const { return &s2g[0]; }
     const auto & get_graph() const { return S; }
     VID get_start_pos() const { return start_pos; }
 
 private:
     graptor::graph::GraphHAdjTable<VID,EID,Hash> S;
-    std::vector<VID> s2g;
     VID start_pos;
 };
 
 template<typename VID, typename EID, typename Hash>
+class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,Hash>> {
+public:
+    template<typename HGraph>
+    GraphBuilderInduced(
+	const GraphCSx & G,
+	const HGraph & H,
+	VID v,
+	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
+	: S( H, cut.get_vertices(), cut.get_start_pos(), cut.get_num_vertices(),
+	     numa_allocation_interleaved() ),
+	  start_pos( cut.get_start_pos() ) { }
+    template<typename HGraph>
+    GraphBuilderInduced(
+	const HGraph & H,
+	const VID * const XP,
+	VID ne,
+	VID ce )
+	: S( H, XP, ne, ce, numa_allocation_interleaved() ),
+	  start_pos( ne ) { }
+
+    const auto & get_graph() const { return S; }
+    VID get_start_pos() const { return start_pos; }
+
+private:
+    graptor::graph::GraphHAdjPA<VID,EID,Hash> S;
+    std::vector<VID> s2g;
+    VID start_pos;
+};
+
+
 void
 mce_bron_kerbosch_seq_xp(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
     MCE_Enumerator_stage2 & E ) {
@@ -1470,10 +1426,9 @@ mce_bron_kerbosch_seq_xp(
     }
 }
 
-template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_recpar_xp(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
     MCE_Enumerator_stage2 & E,
@@ -1508,9 +1463,8 @@ mce_bron_kerbosch_recpar_xp(
 	    VID ne = start - XP;
 	    VID ce = deg;
 
-	    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
-		builder( G, XP, ne, ce );
-	    const auto & Gc = builder.get_graph();
+	    GraphBuilderInduced<HGraphTy> builder( G, XP, ne, ce );
+	    const HGraphTy & Gc = builder.get_graph();
 
 	    // if( Gc.density() < 0.9 ) {
 	    if( ce - ne <= (1<<P_MAX_SIZE) ) {
@@ -1531,10 +1485,9 @@ mce_bron_kerbosch_recpar_xp(
     } );
 }
 
-template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_recpar_xp2(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     VID degeneracy,
     MCE_Enumerator_stage2 & E,
     const VID * XP,
@@ -1612,7 +1565,7 @@ mce_bron_kerbosch_recpar_xp2(
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
-		    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>>
+		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
 		    StackLikeAllocator alloc;
@@ -1636,10 +1589,9 @@ mce_bron_kerbosch_recpar_xp2(
 }
 
 
-template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_recpar_xp2_top(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
+    const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
     MCE_Enumerator_stage2 & E ) {
@@ -2345,8 +2297,7 @@ void mce_top_level(
 
     timer tm;
     tm.start();
-    GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,hash_fn>>
-	ibuilder( G, H, v, cut );
+    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
     stats.record_genbuild( tm.stop() );
@@ -2357,8 +2308,8 @@ void mce_top_level(
     if( false && t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
 		  << " xnum=" << xnum << " pnum=" << pnum
-		  << " density=" << HG.density()
-		  << " m=" << HG.numEdges()
+	    // << " density=" << HG.density()
+	    // << " m=" << HG.numEdges()
 		  << " t=" << t
 		  << "\n";
     }
@@ -2540,8 +2491,10 @@ int main( int argc, char *argv[] ) {
     std::cerr << "Remapping graph: " << tm.next() << "\n";
 
     // graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( R );
-    graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
-	H( R, true, numa_allocation_interleaved() );
+    // graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
+	// H( R, true, numa_allocation_interleaved() );
+    graptor::graph::GraphHAdjPA<VID,EID,hash_fn>
+	H( R, numa_allocation_interleaved() );
     const EID * const index = R.getIndex();
     const VID * const edges = R.getEdges();
     std::cerr << "Building hashed graph: " << tm.next() << "\n";
