@@ -271,7 +271,7 @@ public:
     GraphCSx() { }
     GraphCSx( const std::string & infile, int allocation = -1,
 	      bool _symmetric = false, const char * wfile = nullptr ) 
-	: symmetric( _symmetric ), weights( nullptr ), flags( 0 ) {
+	: symmetric( _symmetric ), weights( nullptr ) {
 	if( allocation == -1 ) {
 	    numa_allocation_interleaved alloc;
 	    readFromBinaryFile( infile, alloc );
@@ -286,13 +286,13 @@ public:
     }
     GraphCSx( const std::string & infile, const numa_allocation & allocation,
 	      bool _symmetric )
-	: symmetric( _symmetric ), weights( nullptr ), flags( 0 ) {
+	: symmetric( _symmetric ), weights( nullptr ) {
 	readFromBinaryFile( infile, allocation );
     }
     GraphCSx( VID n_, EID m_, int allocation, bool symmetric_ = false,
 	      bool weights_ = false )
 	: n( n_ ), nmaxdeg( ~VID(0) ), m( m_ ), symmetric( symmetric_ ),
-	  weights( nullptr ), flags( 0 ) {
+	  weights( nullptr ) {
 	if( allocation == -1 ) {
 	    allocateInterleaved();
 	    if( weights_ )
@@ -318,7 +318,7 @@ public:
     GraphCSx( const wholeGraph<vertex> & WG, int allocation )
 	: n( WG.n ), m( WG.m ),
 	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr ), flags( 0 ) {
+	  weights( nullptr ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
@@ -360,7 +360,7 @@ public:
 	      std::pair<const VID *, const VID *> remap,
 	      int allocation = -1 )
 	: n( G.n ), m( G.m ), symmetric( G.isSymmetric() ),
-	  weights( nullptr ), flags( 0 ) {
+	  weights( nullptr ) {
 	if( allocation == -1 )
 	    allocateInterleaved();
 	else
