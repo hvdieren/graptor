@@ -78,6 +78,8 @@ public:
 	return m_hashes[v];
     }
 
+    const VID * get_neighbours( VID v ) const { return nullptr; }
+
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
     vertex_iterator vbegin() const { return vertex_iterator( 0 ); }
     vertex_iterator vend() { return vertex_iterator( numVertices() ); }

@@ -1410,81 +1410,27 @@ mce_bron_kerbosch_seq_xp(
 
 	VID deg = adj.size();
 	VID * XP = alloc.template allocate<VID>( deg );
-	auto end = std::copy_if(
-	    adj.begin(), adj.end(), XP,
-	    [&]( VID v ) { return v != adj.invalid_element; } );
-	assert( end - XP == deg );
-	std::sort( XP, XP+deg );
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    const VID * ngh = G.get_neighbours( v );
+	    std::copy( ngh, ngh+deg, XP );
+	} else {
+	    auto end = std::copy_if(
+		adj.begin(), adj.end(), XP,
+		[&]( VID v ) { return v != adj.invalid_element; } );
+	    assert( end - XP == deg );
+	    std::sort( XP, XP+deg );
+	}
 	const VID * const start = std::upper_bound( XP, XP+deg, v );
 	VID ne = start - XP;
 	VID ce = deg;
 
-	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
+	// Following method may modify XP contents, hence need our own copy.
 	MCE_Enumerator_stage2 Ee( E, 1 );
 	mce_iterate_xp_iterative( G, Ee, alloc, degeneracy, XP, ne, ce );
 
 	if( ce > 0 )
 	    alloc.deallocate_to( XP );
     }
-}
-
-void
-mce_bron_kerbosch_recpar_xp(
-    const HGraphTy & G,
-    VID start_pos,
-    VID degeneracy,
-    MCE_Enumerator_stage2 & E,
-    int depth ) {
-    VID n = G.numVertices();
-
-    // start_pos calculate to avoid revisiting vertices ordered before the
-    // reference vertex of this cut-out
-    parallel_loop( start_pos, n, 1, [&]( VID v ) {
-
-	// Not keeping track of R; would need linked data structure or
-	// extensive copying
-	// contract::vertex_set<VID> R_new( R );
-	// R_new.push( v );
-
-	// Consider as candidates only those neighbours of v that are larger
-	// than u to avoid revisiting the vertices unnecessarily.
-	auto & adj = G.get_adjacency( v ); 
-
-	VID deg = adj.size();
-	if( deg == 0 ) { // implies ne == ce == 0
-	    // avoid overheads of copying and cutout
-	    E.record( depth+1 );
-	} else {
-	    VID * XP = new VID[deg]; // alloc.template allocate<VID>( deg );
-	    auto end = std::copy_if(
-		adj.begin(), adj.end(), XP,
-		[&]( VID v ) { return v != adj.invalid_element; } );
-	    assert( end - XP == deg );
-	    std::sort( XP, XP+deg );
-	    const VID * const start = std::upper_bound( XP, XP+deg, v );
-	    VID ne = start - XP;
-	    VID ce = deg;
-
-	    GraphBuilderInduced<HGraphTy> builder( G, XP, ne, ce );
-	    const HGraphTy & Gc = builder.get_graph();
-
-	    // if( Gc.density() < 0.9 ) {
-	    if( ce - ne <= (1<<P_MAX_SIZE) ) {
-		StackLikeAllocator alloc;
-		MCE_Enumerator_stage2 E2( E, depth );
-		VID * XP_new = alloc.template allocate<VID>( ce );
-		std::iota( XP_new, XP_new+ce, 0 );
-		mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
-					  XP_new, ne, ce );
-/*
-		mce_bron_kerbosch_seq_xp( Gc, ne, degeneracy, E2 );
-*/
-	    } else
-		mce_bron_kerbosch_recpar_xp( Gc, ne, degeneracy, E, depth+1 );
-
-	    delete[] XP;
-	}
-    } );
 }
 
 void
@@ -1567,7 +1513,7 @@ mce_bron_kerbosch_recpar_xp2(
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
-		    // Restore sort order of P set.
+		    // Restore sort order of P set to support merge intersect.
 		    // TODO: is this a merge of two sorted sub-arrays?
 		    if constexpr ( HGraphTy::has_dual_rep )
 			std::sort( XP_new+ne_new, XP_new+ce_new );
@@ -1617,12 +1563,18 @@ mce_bron_kerbosch_recpar_xp2_top(
 	auto & adj = G.get_adjacency( v ); 
 
 	VID deg = adj.size();
-	VID * XP = alloc.template allocate<VID>( deg );
-	auto end = std::copy_if(
-	    adj.begin(), adj.end(), XP,
-	    [&]( VID v ) { return v != adj.invalid_element; } );
-	assert( end - XP == deg );
-	std::sort( XP, XP+deg );
+	const VID * XP;
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    XP = G.get_neighbours( v );
+	} else {
+	    VID * XP_prep = alloc.template allocate<VID>( deg );
+	    auto end = std::copy_if(
+		adj.begin(), adj.end(), XP_prep,
+		[&]( VID v ) { return v != adj.invalid_element; } );
+	    assert( end - XP_prep == deg );
+	    std::sort( XP_prep, XP_prep+deg );
+	    XP = XP_prep;
+	}
 	const VID * const start = std::upper_bound( XP, XP+deg, v );
 	VID ne = start - XP;
 	VID ce = deg;
