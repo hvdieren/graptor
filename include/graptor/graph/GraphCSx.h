@@ -2515,6 +2515,10 @@ public:
     VID *getDegree() { return degree.get(); }
     const VID *getDegree() const { return degree.get(); }
 
+    const VID * get_neighbours( VID v ) const {
+	return &getEdges()[getIndex()[v]];
+    }
+
     VID numVertices() const { return n; }
     EID numEdges() const { return m; }
 
