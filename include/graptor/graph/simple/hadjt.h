@@ -26,6 +26,8 @@ public:
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
 
+    static constexpr bool has_dual_rep = false;
+
 public:
     explicit GraphHAdjTable( VID n ) :
 	m_n( n ),

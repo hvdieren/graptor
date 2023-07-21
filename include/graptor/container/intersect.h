@@ -33,7 +33,7 @@ struct merge_scalar {
 	while( l != le && r != re ) {
 	    if( *l == *r ) {
 		if constexpr ( send_lhs_ptr )
-		    o.push_back( l );
+		    o.push_back( l, r );
 		else
 		    *o++ = *l;
 		++l;
@@ -141,7 +141,7 @@ struct merge_jump {
 	while( l != le && r != re ) {
 	    if( *l == *r ) {
 		if constexpr ( send_lhs_ptr )
-		    o.push_back( l );
+		    o.push_back( l, r );
 		else
 		    *o++ = *l;
 		++l;
@@ -457,7 +457,7 @@ private:
 	    mask_type ma = tr::intersect( vl, rb );
 
 	    if constexpr ( send_lhs_ptr )
-		out.template push_back<VL>( ma, vl, lb );
+		out.template push_back<VL>( ma, vl, lb, rb );
 	    else {
 		if constexpr ( store )
 		    tr::cstoreu( out, ma, vl );

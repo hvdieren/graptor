@@ -37,7 +37,7 @@ struct bitmask_output_iterator {
 	return *this;
     }
 
-    void push_back( const lVID * p ) {
+    void push_back( const lVID * p, const lVID * = nullptr ) {
 	lVID v = m_n2s[p - m_start];
 	// no X-X edges
 	if( v >= m_start_pos ) {
@@ -107,7 +107,7 @@ struct bitmask_lhs_sorted_output_iterator {
 	return *this;
     }
 
-    void push_back( const lVID * p ) {
+    void push_back( const lVID * p, const lVID * = nullptr ) {
 	lVID v = p - m_start;
 	lVID vchk = v;
 	bool accept = v >= m_start_pos;
@@ -128,7 +128,8 @@ struct bitmask_lhs_sorted_output_iterator {
     template<unsigned VL>
     void push_back( typename vector_type_traits_vl<lVID,VL>::mask_type m,
 		    typename vector_type_traits_vl<lVID,VL>::type gv,
-		    const lVID * base ) {
+		    const lVID * base,
+		    const lVID * = nullptr ) {
 	using tr = vector_type_traits_vl<lVID,VL>;
 	using mtr = typename tr::mask_traits;
 	using type = typename tr::type;
@@ -691,6 +692,7 @@ public:
 	    for( VID l=(su >= m_start_pos ? 0 : ne); l < ce; ++l ) {
 		VID xp = XP[l];
 		if( adj.contains( xp ) ) {
+		    assert( xp != u );
 		    row_u = tr::bitwise_or( row_u, create_row( l ) );
 		    ++deg;
 		}

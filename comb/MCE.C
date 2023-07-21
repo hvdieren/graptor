@@ -69,10 +69,11 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
+// TODO: using GraphHAdjPA as nested type currently contains errors (sorting?)
 using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
-// using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,hash_fn>;
+// using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 // using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
@@ -1355,8 +1356,8 @@ private:
     VID start_pos;
 };
 
-template<typename VID, typename EID, typename Hash>
-class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,Hash>> {
+template<typename VID, typename EID, bool dual_rep, typename Hash>
+class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash>> {
 public:
     template<typename HGraph>
     GraphBuilderInduced(
@@ -1364,7 +1365,8 @@ public:
 	const HGraph & H,
 	VID v,
 	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
-	: S( H, cut.get_vertices(), cut.get_start_pos(), cut.get_num_vertices(),
+	: S( G, H, cut.get_vertices(), cut.get_start_pos(),
+	     cut.get_num_vertices(),
 	     numa_allocation_interleaved() ),
 	  start_pos( cut.get_start_pos() ) { }
     template<typename HGraph>
@@ -1373,14 +1375,14 @@ public:
 	const VID * const XP,
 	VID ne,
 	VID ce )
-	: S( H, XP, ne, ce, numa_allocation_interleaved() ),
+	: S( H, H, XP, ne, ce, numa_allocation_interleaved() ),
 	  start_pos( ne ) { }
 
     const auto & get_graph() const { return S; }
     VID get_start_pos() const { return start_pos; }
 
 private:
-    graptor::graph::GraphHAdjPA<VID,EID,Hash> S;
+    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash> S;
     std::vector<VID> s2g;
     VID start_pos;
 };
@@ -1530,7 +1532,7 @@ mce_bron_kerbosch_recpar_xp2(
 	XP_piv = XP_prep;
     }
 
-    parallel_loop( ne, pe, 1, [&]( VID i ) {
+    parallel_loop( ne, pe, 1, [&]( VID i ) { // TODO: [=] ?
 	VID v = XP_piv[i];
 
 	// Not keeping track of R
@@ -1565,6 +1567,11 @@ mce_bron_kerbosch_recpar_xp2(
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
+		    // Restore sort order of P set.
+		    // TODO: is this a merge of two sorted sub-arrays?
+		    if constexpr ( HGraphTy::has_dual_rep )
+			std::sort( XP_new+ne_new, XP_new+ce_new );
+		
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
@@ -2493,8 +2500,7 @@ int main( int argc, char *argv[] ) {
     // graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( R );
     // graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
 	// H( R, true, numa_allocation_interleaved() );
-    graptor::graph::GraphHAdjPA<VID,EID,hash_fn>
-	H( R, numa_allocation_interleaved() );
+    HFGraphTy H( R, numa_allocation_interleaved() );
     const EID * const index = R.getIndex();
     const VID * const edges = R.getEdges();
     std::cerr << "Building hashed graph: " << tm.next() << "\n";

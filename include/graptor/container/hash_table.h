@@ -71,6 +71,8 @@ public:
     size_type capacity() const { return size_type(1) << m_log_size; }
     bool empty() const { return size() == 0; }
 
+    const VID * get_table() const { return m_table; }
+
     auto begin() const { return m_table; }
     auto end() const { return m_table+capacity(); }
 
@@ -399,7 +401,7 @@ struct hash_insert_iterator<hash_table<T,Hash>> {
     hash_insert_iterator( hash_table<T,Hash> & table, const T * start )
 	: m_table( table ), m_start( start ) { }
 
-    void push_back( const T * t ) {
+    void push_back( const T * t, const T * = nullptr ) {
 	m_table.insert( t - m_start );
     }
     
