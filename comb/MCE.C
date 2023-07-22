@@ -56,6 +56,10 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/intersect.h"
 
+#ifndef TUNABLE_SMALL_AVOID_CUTOUT
+#define TUNABLE_SMALL_AVOID_CUTOUT 12
+#endif
+
 #define NOBENCH
 #define MD_ORDERING 0
 #define VARIANT 11
@@ -801,8 +805,9 @@ bool is_member( VID v, VID C_size, const VID * C_set ) {
     return true;
 }
 
+template<typename HGraph>
 std::pair<VID,VID> mc_get_pivot_xp(
-    const HGraphTy & G,
+    const HGraph & G,
     const VID * XP,
     VID ne,
     VID ce ) {
@@ -1119,9 +1124,10 @@ bool mce_leaf(
     VID ne,
     VID ce );
 
+template<bool with_leaf = true, typename HGraph = HGraphTy>
 void
 mce_iterate_xp_iterative(
-    const HGraphTy & G,
+    const HGraph & G,
     MCE_Enumerator_stage2 & Ee,
     StackLikeAllocator & alloc,
     VID degeneracy,
@@ -1224,13 +1230,15 @@ mce_iterate_xp_iterative(
 		bool ok = false;
 
 		// Clear min/max size requirements to attempt
-		if( ce_new - ne_new >= 16
-		    && ( ce_new <= (1<<N_MAX_SIZE)
-			 || ( ne_new <= (1<<X_MAX_SIZE)
-			      && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
-		    ) {
-		    ok = mce_leaf<VID,EID>(
-			G, Ee, depth, XP_new, ne_new, ce_new );
+		if constexpr ( with_leaf ) {
+		    if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT
+			&& ( ce_new <= (1<<N_MAX_SIZE)
+			     || ( ne_new <= (1<<X_MAX_SIZE)
+				  && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
+			) {
+			ok = mce_leaf<VID,EID>(
+			    G, Ee, depth, XP_new, ne_new, ce_new );
+		    }
 		}
 
 		if( !ok ) { // Need recursion
@@ -1508,7 +1516,9 @@ mce_bron_kerbosch_recpar_xp2(
 		// Reached leaf of search tree
 		if( ne_new == 0 )
 		    E.record( depth+1 );
-	    } else if( ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
+	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT
+		       // very small -> just keep going
+		       && ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
 		// direct cut-out of dense graph
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
@@ -2218,6 +2228,23 @@ void mce_top_level(
 	stats.record_tiny( tm.stop() );
 	return;
     }
+
+    // Threshold is tunable and depends on cost of creating a cut-out vs the
+    // cost of merge and hash intersections.
+    if( num <= TUNABLE_SMALL_AVOID_CUTOUT ) {
+	timer tm;
+	tm.start();
+	MCE_Enumerator_stage2 E2( E, 1 );
+	StackLikeAllocator alloc;
+	VID ce = cut.get_num_vertices();
+	VID * XP = alloc.template allocate<VID>( ce );
+	const VID * ngh = cut.get_vertices();
+	std::copy( ngh, ngh+ce, XP );
+	VID ne = cut.get_start_pos();
+	mce_iterate_xp_iterative<false>( H, E2, alloc, degeneracy, XP, ne, ce );
+	stats.record_tiny( tm.stop() );
+	return;
+    }
     
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
@@ -2453,28 +2480,22 @@ int main( int argc, char *argv[] ) {
     // graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
 	// H( R, true, numa_allocation_interleaved() );
     HFGraphTy H( R, numa_allocation_interleaved() );
-    const EID * const index = R.getIndex();
-    const VID * const edges = R.getEdges();
     std::cerr << "Building hashed graph: " << tm.next() << "\n";
 
     MCE_Enumerator E( kcore.getLargestCore() );
 
     system( "date" );
+    std::cerr << "Start enumeration: " << tm.next() << "\n";
 
-    parallel_loop( VID(0), n, 1, [&]( VID i ) {
-	VID v = order[i];
-
-/*
-	std::cerr << "Iteration " << i << " with v=" << v
-		  << " deg=" << G.getDegree( v )
-		  << " c=" << coreness[v]
-		  << "\n";
-*/
-	
-	// mce_top_level( G, E, v, rev_order.get(), kcore.getLargestCore() );
-	mce_top_level( R, H, E, v, kcore.getLargestCore() );
-
-	// std::cerr << "  vertex " << v << " complete\n";
+    // Number of partitions is tunable. A fairly large number is helpful
+    // to help load balancing.
+    VID nthreads = graptor_num_threads();
+    VID npart = nthreads * 128;
+    parallel_loop( VID(0), npart, 1, [&]( VID p ) {
+	for( VID i=p; i < n; i += npart ) {
+	    VID v = order[i];
+	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	}
     } );
 
     std::cerr << "Enumeration: " << tm.next() << "\n";
