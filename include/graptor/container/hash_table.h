@@ -39,20 +39,32 @@ public:
 	  pre_allocated( false ) {
 	clear();
     }
+    explicit hash_table( size_t expected_elms )
+	: m_elements( 0 ),
+	  m_log_size( required_log_size( expected_elms ) ),
+	  m_table( new type[1<<m_log_size] ),
+	  m_hash( m_log_size ),
+	  pre_allocated( false ) {
+	clear();
+    }
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size )
 	: m_elements( num_elements ),
 	  m_log_size( log_size ),
 	  m_table( storage ),
 	  m_hash( log_size ),
-	  pre_allocated( true ) { }
+	  pre_allocated( true ) {
+	clear();
+    }
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size, const hash_type & hash )
 	: m_elements( num_elements ),
 	  m_log_size( log_size ),
 	  m_table( storage ),
 	  m_hash( hash ),
-	  pre_allocated( true ) { }
+	  pre_allocated( true ) {
+	clear();
+    }
     hash_table( hash_table && ) = delete;
     hash_table( const hash_table & ) = delete;
     hash_table & operator = ( const hash_table & ) = delete;
