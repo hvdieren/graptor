@@ -2013,6 +2013,17 @@ public:
 
 	file.close();
     }
+    void writeWeightsToBinaryFile( const std::string & ofile ) {
+	if( getWeights() ) {
+	    float * w = getWeights()->get();
+
+	    ofstream file( ofile, ios::out | ios::trunc | ios::binary );
+	
+	    file.write( (const char *)&w[0], sizeof(w[0])*m );
+
+	    file.close();
+	}
+    }
     void writeToTextFile( const std::string & ofile ) {
 	ofstream file( ofile, ios::out | ios::trunc );
 
