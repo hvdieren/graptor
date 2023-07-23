@@ -4,10 +4,6 @@
 // TODO:
 // * online machine learning
 // * MCE_Enumerator thread-local (no sync-fetch-and-add)
-// * create_singleton: compare current implementation to load vector+shift
-//   i.e. create vector of all zero except one lane has one, and ensure
-//   sufficient zeros on either side such that a single load has the 1 in the
-//   right lane and a uniform shift suffices
 // * Look at Blocked and Binary matrix design:
 //   + col_start and row_start redundant to each other
 // * VIDs of 8 or 16 bits
@@ -73,9 +69,8 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
-// TODO: using GraphHAdjPA as nested type currently contains errors (sorting?)
-using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
-// using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
+// using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 // using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
 using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 
