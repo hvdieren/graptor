@@ -69,6 +69,7 @@ int main( int argc, char *argv[] ) {
 		uedge[j++] = v;
 	}
     }
+    uidx[n] = new_index[n];
 
     std::cerr << "Writing graph\n";
     UG.writeToBinaryFile( ofile );
