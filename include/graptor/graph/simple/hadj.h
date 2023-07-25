@@ -312,10 +312,11 @@ public:
 		    const VID * pos = std::lower_bound( XP, XP+ne, *i );
 		    if( *pos != *i )
 			pos = std::lower_bound( XP+ne, XP+ce, *i );
-		    VID v = pos - XP;
-		    if( v >= ne || su >= ne ) {
-			*j++ = v;
-			a.insert( v );
+		    VID sv = pos - XP;
+		    if( sv >= ne || su >= ne ) {
+			assert( sv != su );
+			*j++ = sv;
+			a.insert( sv );
 		    }
 		}
 #else
