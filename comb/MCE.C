@@ -47,6 +47,7 @@
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/dense.h"
 #include "graptor/graph/simple/blocked.h"
+#include "graptor/graph/transform/rmself.h"
 
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
@@ -1513,15 +1514,24 @@ mce_bron_kerbosch_recpar_xp2(
 		    E.record( depth+1 );
 	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT
 		       // very small -> just keep going
-		       && ce_new - ne_new <= (1<<P_MAX_SIZE) ) {
+		       && ( ce_new - ne_new <= (1<<P_MAX_SIZE)
+			    // on way to a clique with deep recursion?
+			    || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
+			   ) ) {
 		// direct cut-out of dense graph
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
 		    // Restore sort order of P set to support merge intersect.
-		    // TODO: is this a merge of two sorted sub-arrays?
-		    if constexpr ( HGraphTy::has_dual_rep )
+		    // P was disrupted by sorting pivot neighbours to the end.
+		    // TODO: is P a merge of two sorted sub-arrays?
+		    // Restore sort order of X set. This may be disrupted as
+		    // vertices are added out of order, specifically
+		    // pivot neighbours.
+		    if constexpr ( HGraphTy::has_dual_rep ) {
+			std::sort( XP_new, XP_new+ne_new );
 			std::sort( XP_new+ne_new, XP_new+ce_new );
+		    }
 		
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
@@ -2444,15 +2454,27 @@ int main( int argc, char *argv[] ) {
     timer tm;
     tm.start();
 
-    GraphCSx G( ifile, -1, symmetric );
+    GraphCSx G0( ifile, -1, symmetric );
 
     std::cerr << "Reading graph: " << tm.next() << "\n";
+
+    GraphCSx G = graptor::graph::remove_self_edges( G0, true );
+    G0.del();
+    std::cerr << "Removed self-edges: " << tm.next() << "\n";
 
     VID n = G.numVertices();
     EID m = G.numEdges();
 
     assert( G.isSymmetric() );
-    std::cerr << "Undirected graph: n=" << n << " m=" << m << std::endl;
+    double density = double(m) / ( double(n) * double(n) );
+    VID dmax_v = G.findHighestDegreeVertex();
+    VID dmax = G.getDegree( max_v );
+    double davg = (double)m / (double)n;
+    std::cerr << "Undirected graph: n=" << n << " m=" << m
+	      << " density=" << density
+	      << " dmax=" << dmax
+	      << " davg=" << davg
+	      << std::endl;
 
     GraphCSRAdaptor GA( G, 256 );
     KCv<GraphCSRAdaptor> kcore( GA, P );
