@@ -37,7 +37,6 @@
 
 #include "graptor/graph/contract/vertex_set.h"
 #include "graptor/graph/GraphCSx.h"
-#include "graptor/graph/GraphPDG.h"
 #include "graptor/graph/partitioning.h"
 
 #include "graptor/graph/simple/csx.h"
@@ -2468,7 +2467,7 @@ int main( int argc, char *argv[] ) {
     assert( G.isSymmetric() );
     double density = double(m) / ( double(n) * double(n) );
     VID dmax_v = G.findHighestDegreeVertex();
-    VID dmax = G.getDegree( max_v );
+    VID dmax = G.getDegree( dmax_v );
     double davg = (double)m / (double)n;
     std::cerr << "Undirected graph: n=" << n << " m=" << m
 	      << " density=" << density
