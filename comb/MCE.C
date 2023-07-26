@@ -19,8 +19,8 @@
 // + Check that 32-bit is faster than 64-bit for same-sized problems;
 //   same for SSE vs AVX
 
-#ifndef ABLATION_BLOCKED_ENABLE_XP_HASH
-#define ABLATION_BLOCKED_ENABLE_XP_HASH 0
+#ifndef ABLATION_BLOCKED_DISABLE_XP_HASH
+#define ABLATION_BLOCKED_DISABLE_XP_HASH 0
 #endif
 
 #ifndef ABLATION_BLOCKED_HASH_MASK
@@ -33,10 +33,6 @@
 
 #ifndef ABLATION_BLOCKED_EXCEED
 #define ABLATION_BLOCKED_EXCEED 0
-#endif
-
-#ifndef ABLATION_DENSE_EXCEED
-#define ABLATION_DENSE_EXCEED 0
 #endif
 
 #ifndef ABLATION_DENSE_EXCEED

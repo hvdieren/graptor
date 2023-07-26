@@ -189,7 +189,7 @@ public:
 	std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place XP in hash table for fast intersection
-#if ABLATION_BLOCKED_ENABLE_XP_HASH
+#if !ABLATION_BLOCKED_DISABLE_XP_HASH
 	typename HGraph::hash_set_type XP_hash( XP, XP+ce );
 #endif
 
@@ -203,7 +203,7 @@ public:
 	    sVID udeg = G.getDegree( u );
 	    const sVID * n = G.get_neighbours( u );
 
-#if ABLATION_BLOCKED_ENABLE_XP_HASH
+#if !ABLATION_BLOCKED_DISABLE_XP_HASH
 	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
 		std::tie( row_u, deg )
 		    = graptor::graph::construct_row_hash_xp<tr>(
