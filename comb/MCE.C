@@ -19,6 +19,34 @@
 // + Check that 32-bit is faster than 64-bit for same-sized problems;
 //   same for SSE vs AVX
 
+#ifndef ABLATION_BLOCKED_ENABLE_XP_HASH
+#define ABLATION_BLOCKED_ENABLE_XP_HASH 0
+#endif
+
+#ifndef ABLATION_BLOCKED_HASH_MASK
+#define ABLATION_BLOCKED_HASH_MASK 0
+#endif
+
+#ifndef ABLATION_DENSE_HASH_MASK
+#define ABLATION_DENSE_HASH_MASK 0
+#endif
+
+#ifndef ABLATION_BLOCKED_EXCEED
+#define ABLATION_BLOCKED_EXCEED 0
+#endif
+
+#ifndef ABLATION_DENSE_EXCEED
+#define ABLATION_DENSE_EXCEED 0
+#endif
+
+#ifndef ABLATION_DENSE_EXCEED
+#define ABLATION_DENSE_EXCEED 0
+#endif
+
+#ifndef ABLATION_GENERIC_EXCEED
+#define ABLATION_GENERIC_EXCEED 0
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
@@ -809,9 +837,11 @@ std::pair<VID,VID> mc_get_pivot_xp(
 
     assert( ce - ne != 0 );
 
+#if !ABLATION_GENERIC_EXCEED
     // Tunable (|P| and selecting vertex from X or P)
     if( ce - ne <= 3 )
 	return std::make_pair( XP[ne], 0 );
+#endif
 
     VID v_max = ~VID(0);
     VID tv_max = std::numeric_limits<VID>::min();
@@ -822,13 +852,20 @@ std::pair<VID,VID> mc_get_pivot_xp(
 	// VID v = XP[(i+ne)%ce]; -- makes no difference
 	auto & hadj = G.get_adjacency( v );
 	VID deg = hadj.size();
+#if !ABLATION_GENERIC_EXCEED
 	if( deg <= tv_max )
 	    continue;
+#endif
 
 	// Abort during intersection_size if size will be less than tv_max
 	// Note: hash_vector is much slower in this instance
+#if ABLATION_GENERIC_EXCEED
+	size_t tv = graptor::hash_scalar::intersect_size(
+	    XP+ne, XP+ce, hadj );
+#else
 	size_t tv = graptor::hash_scalar::intersect_size_exceed(
 	    XP+ne, XP+ce, hadj, tv_max );
+#endif
 	    
 	if( tv > tv_max ) {
 	    tv_max = tv;

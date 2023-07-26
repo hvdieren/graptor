@@ -465,14 +465,11 @@ public:
 	    // Attempting a hash lookup in XP when XP is much longer than the
 	    // neighbour list of the vertex appears not beneficial to
 	    // performance in this location
-	    VID adeg = construct_row_hash_adj<tr>(
-		G, H, &m_matrix[VL * su], XP, ne, ce, su,
-		( su >= ne ? 0 : ne ), ce );
 
+#if ABLATION_DENSE_HASH_MASK
             // The variation on vectorized bitmap construction when
 	    // lanes can hold a full row is less performant here than
 	    // writing bit masks piecemeal to memory.
-/*
 	    row_type row_u;
 	    VID adeg;
 	    std::tie( row_u, adeg )
@@ -480,7 +477,12 @@ public:
 		    G, H, XP, ne, ce, su,
 		    ( su >= ne ? 0 : ne ), ce, (sVID)0 ); 
 	    tr::store( &m_matrix[VL * su], row_u );
-*/
+#else
+	    // Best option
+	    VID adeg = construct_row_hash_adj<tr>(
+		G, H, &m_matrix[VL * su], XP, ne, ce, su,
+		( su >= ne ? 0 : ne ), ce );
+#endif
 
 	    m_degree[su] = adeg;
 	    m_m += adeg;
@@ -680,14 +682,18 @@ private:
 	VID p_best = *b.begin();
 	VID p_ins = 0; // will be overridden
 
+#if !ABLATION_DENSE_EXCEED
 	// Avoid complexities if there is not much choice
 	if( get_size( P ) <= 3 )
 	    return p_best;
+#endif
 	
 	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
 	    VID v = *I;
+#if !ABLATION_DENSE_EXCEED
 	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
 		continue;
+#endif
 	    row_type v_ngh = get_row( v );
 	    row_type pv_ins = tr::bitwise_and( P, v_ngh );
 	    VID ins = get_size( pv_ins );

@@ -189,7 +189,9 @@ public:
 	std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place XP in hash table for fast intersection
+#if ABLATION_BLOCKED_ENABLE_XP_HASH
 	typename HGraph::hash_set_type XP_hash( XP, XP+ce );
+#endif
 
 	// Place edges
 	sVID ni = 0;
@@ -201,19 +203,32 @@ public:
 	    sVID udeg = G.getDegree( u );
 	    const sVID * n = G.get_neighbours( u );
 
+#if ABLATION_BLOCKED_ENABLE_XP_HASH
 	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
 		std::tie( row_u, deg )
 		    = graptor::graph::construct_row_hash_xp<tr>(
 			G, H, XP_hash, XP, ne, ce, r, u, m_col_start,
 			m_col_start + m_cols, m_col_start );
 		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
-	    } else {
+	    } else
+#endif
+#if ABLATION_BLOCKED_HASH_MASK
+	    {
+		deg = graptor::graph::construct_row_hash_adj<tr>(
+		    G, H, &m_matrix[VL * (r - m_row_start)],
+		    XP, ne, ce, r,
+		    // ( su >= ne ? 0 : ne ), ce
+		    m_col_start, m_col_start+m_cols, m_col_start );
+	    }
+#else
+	    {
 		std::tie( row_u, deg )
 		    = graptor::graph::construct_row_hash_adj_vec<tr>(
 			G, H, XP, ne, ce, r, m_col_start, m_col_start+m_cols,
 			m_col_start );
 		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    }
+#endif
 
 	    if constexpr ( !AddDegree::value )
 		m_degree[r] = deg;
@@ -444,8 +459,10 @@ sVID get_pivot(
 
     for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
 	VID v = *I + cs;
+#if !ABLATION_BLOCKED_EXCEED
 	if( (VID)degree[v] < p_ins ) // skip if cannot be best
 	    continue;
+#endif
 	auto v_ngh = xp.get_row( v );
 	auto pv_ins = ptr::bitwise_and( Pp, v_ngh );
 	VID ins = xp.get_size( pv_ins );
@@ -459,8 +476,10 @@ sVID get_pivot(
     assert( px.get_col_start() == 0 && "should always be zero" );
     for( auto I=c.begin(), E=c.end(); I != E; ++I ) {
 	VID v = *I;
+#if !ABLATION_BLOCKED_EXCEED
 	if( (VID)degree[v] < p_ins ) // skip if cannot be best
 	    continue;
+#endif
 	auto v_ngh = xp.get_row( v );
 	auto pv_ins = ptr::bitwise_and( Pp, v_ngh );
 	VID ins = xp.get_size( pv_ins );
