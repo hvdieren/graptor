@@ -8,6 +8,7 @@
 #include "graptor/graph/GraphCSx.h"
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/hadjt.h"
+#include "graptor/graph/simple/bitconstruct.h"
 #include "graptor/target/vector.h"
 #include "graptor/container/intersect.h"
 
@@ -85,99 +86,6 @@ private:
     const lVID m_start_pos;
 };
 
-template<typename BitMaskTy, typename lVID, bool aligned, bool two_sided>
-struct bitmask_lhs_sorted_output_iterator {
-    using bitmask_type = BitMaskTy;
-    static constexpr size_t word_size = 8 * sizeof( bitmask_type );
-    
-    bitmask_lhs_sorted_output_iterator(
-	bitmask_type * bitmask,
-	const lVID * start,
-	lVID deg_start_pos,
-	lVID start_pos,
-	lVID end_pos = std::numeric_limits<lVID>::max() )
-	: m_bitmask( bitmask ), m_start( start ),
-	  m_deg( 0 ), m_deg_start_pos( deg_start_pos ),
-	  m_start_pos( start_pos ), m_end_pos( end_pos ) { }
-
-    const bitmask_lhs_sorted_output_iterator &
-    operator = ( const bitmask_lhs_sorted_output_iterator & it ) {
-	// hmmm....
-	m_deg = it.m_deg;
-	return *this;
-    }
-
-    void push_back( const lVID * p, const lVID * = nullptr ) {
-	lVID v = p - m_start;
-	lVID vchk = v;
-	bool accept = v >= m_start_pos;
-	if constexpr ( two_sided ) {
-	    accept = accept && v < m_end_pos;
-	    v -= m_start_pos;
-	}
-
-	// no X-X edges / slice of matrix
-	if( accept ) {
-	    m_bitmask[v/word_size]
-		|= bitmask_type(1) << ( v & ( word_size-1 ) );
-	    if( vchk >= m_deg_start_pos )
-		m_deg++;
-	}
-    }
-
-    template<unsigned VL>
-    void push_back( typename vector_type_traits_vl<lVID,VL>::mask_type m,
-		    typename vector_type_traits_vl<lVID,VL>::type gv,
-		    const lVID * base,
-		    const lVID * = nullptr ) {
-	using tr = vector_type_traits_vl<lVID,VL>;
-	using mtr = typename tr::mask_traits;
-	using type = typename tr::type;
-	using mask_type = typename tr::mask_type;
-
-	lVID v = base - m_start;
-	type vsp = tr::set1( m_start_pos );
-	type vns = tr::set1inc( v );
-	mask_type mm = tr::cmpge( m, vns, vsp, target::mt_mask() );
-	if constexpr ( two_sided ) {
-	    type vep = tr::set1( m_end_pos );
-	    mm = tr::cmplt( mm, vns, vep, target::mt_mask() );
-	    // vns = tr::sub( vns, vsp ); -- vns unused further down
-	}
-	mask_type * b = reinterpret_cast<mask_type *>( m_bitmask );
-
-	// What if only part of vector is acceptable (blocked + prestudy)???
-	bool perform = true;
-	if constexpr ( two_sided ) {
-	    perform = ( v >= m_start_pos && v < m_end_pos );
-	    v -= m_start_pos;
-	}
-	if( perform ) {
-	    if constexpr ( aligned ) {
-		b[v/VL] = mm;
-	    } else {
-		size_t word = v / VL;
-		size_t off = v % VL;
-		b[word/VL] |= mtr::slli( mm, off );
-		b[1+word/VL] |= mtr::srli( mm, VL - off );
-	    }
-	    type vdsp = tr::set1( m_deg_start_pos );
-	    mm = tr::cmpge( mm, vns, vdsp, target::mt_mask() );
-	    m_deg += mtr::popcnt( mm );
-	}
-    }
-
-    VID get_degree() const { return m_deg; }
-
-private:
-    bitmask_type * m_bitmask;
-    const lVID * m_start;
-    lVID m_deg;
-    const lVID m_deg_start_pos;
-    const lVID m_start_pos;
-    const lVID m_end_pos;
-};
-
 
 template<unsigned Bits, typename sVID, typename sEID>
 class DenseMatrix {
@@ -217,20 +125,6 @@ public:
 	// Set of eligible neighbours
 	VID ns = num_neighbours;
 
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    delete[] n2s;
-	    return;
-	}
-#endif
-
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
@@ -242,7 +136,7 @@ public:
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
+	    VID u = s2g[su];
 	    VID deg = 0;
 
 	    row_type row_u = tr::setzero();
@@ -311,20 +205,6 @@ public:
 	// Set of eligible neighbours
 	VID ns = num_neighbours;
 
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    delete[] n2s;
-	    return;
-	}
-#endif
-
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
 	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
@@ -338,7 +218,7 @@ public:
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
+	    VID u = s2g[su];
 
 	    const VID * q = &gedges[gindex[u]];
 	    const VID * const qe = &gedges[gindex[u+1]];
@@ -412,7 +292,7 @@ public:
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
+	    VID u = s2g[su];
 
 	    bitmask_lhs_sorted_output_iterator<type, VID, true, false>
 		row_u( &m_matrix[m_words * su], s2g,
@@ -494,7 +374,7 @@ public:
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su]; // Note: m_s2g not initialised in this variant
+	    VID u = s2g[su];
 
 	    const VID * q = &gedges[gindex[u]];
 	    const VID * const qe = &gedges[gindex[u+1]];
@@ -553,114 +433,11 @@ public:
 	    }
 	}
     }
-#if 0
-    DenseMatrix( const ::GraphCSx & G, VID v,
-		 VID num_neighbours, const VID * neighbours,
-		 const VID * const core_order )
-	: m_start_pos( 0 ) {
-	VID n = G.numVertices();
-	EID m = G.numEdges();
-	const EID * const gindex = G.getIndex();
-	const VID * const gedges = G.getEdges();
-
-	// Set of eligible neighbours
-	VID ns = num_neighbours;
-	assert( ns <= MAX_VERTICES );
-	std::copy( &neighbours[0], &neighbours[ns], m_s2g );
-
-	sVID * n2s = new sVID[ns];
-	std::iota( &m_s2g[0], &m_s2g[ns], 0 );
-
-	// Sort by increasing core_order
-	std::sort( &m_s2g[0], &m_s2g[ns],
-		   [&]( VID u, VID v ) {
-		       return core_order[neighbours[u]]
-			   < core_order[neighbours[v]];
-		   } );
-	// Invert permutation into n2s and create mapping for m_s2g
-	for( VID su=0; su < ns; ++su ) {
-	    VID x = m_s2g[su];
-	    m_s2g[su] = neighbours[x]; // create mapping
-	    n2s[x] = su; // invert permutation
-	}
-
-	// Determine start position, i.e., vertices less than start_pos
-	// are in X by default
-	VID * sp2_pos = std::upper_bound(
-	    &m_s2g[0], &m_s2g[ns], v,
-	    [&]( VID a, VID b ) {
-		return core_order[a] < core_order[b];
-	    } );
-	m_start_pos = sp2_pos - &m_s2g[0];
-
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    delete[] n2s;
-	    return;
-	}
-#endif
-
-	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
-	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
-
-	// Place edges
-	VID ni = 0;
-	m_m = 0;
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = m_s2g[su];
-	    VID deg = 0;
-
-	    row_type row_u = tr::setzero();
-
-	    const VID * p = &neighbours[0];
-	    const VID * const pe = &neighbours[num_neighbours];
-	    const VID * q = &gedges[gindex[u]];
-	    const VID * const qe = &gedges[gindex[u+1]];
-
-	    while( p != pe && q != qe ) {
-		if( *p == *q ) {
-		    // Common neighbour
-		    if( *p != u ) {
-			VID sw = n2s[p - neighbours];
-			// no X-X edges
-			if( sw >= m_start_pos || su >= m_start_pos ) {
-			    row_u = tr::bitwise_or( row_u, create_row( sw ) );
-			    ++deg;
-			}
-		    }
-		    ++p;
-		    ++q;
-		} else if( *p < *q )
-		    ++p;
-		else
-		    ++q;
-	    }
-
-	    tr::store( &m_matrix[VL * su], row_u );
-	    m_degree[su] = deg;
-	    m_m += deg;
-	}
-
-	m_n = ns;
-
-	delete[] n2s;
-    }
-#endif
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename HGraph>
-    DenseMatrix( const HGraph & G,
+    template<typename GGraph, typename HGraph>
+    DenseMatrix( const GGraph & G,
+		 const HGraph & H,
 		 const sVID * XP,
 		 sVID ne, sVID ce )
 	: m_start_pos( ne ) {
@@ -669,7 +446,6 @@ public:
 	// for efficiency of enumeration.
 	// Do we need to copy, or can we just keep a pointer to XP?
 	VID ns = ce;
-	// std::copy( XP, XP+ce, m_s2g );
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
@@ -678,29 +454,33 @@ public:
 	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 
+	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
+
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = XP[su]; // m_s2g[su]; // or XP[su]
-	    VID deg = 0;
+	    VID u = XP[su];
 
-	    row_type row_u = tr::setzero();
-	    auto & adj = G.get_adjacency( u );
-
-	    // Intersect XP with adjacency list
-	    for( VID l=(su >= m_start_pos ? 0 : ne); l < ce; ++l ) {
-		VID xp = XP[l];
-		if( adj.contains( xp ) ) {
-		    assert( xp != u );
-		    row_u = tr::bitwise_or( row_u, create_row( l ) );
-		    ++deg;
-		}
-	    }
+	    // Attempting a hash lookup in XP when XP is much longer than the
+	    // neighbour list of the vertex appears not beneficial to
+	    // performance in this location
+	    VID adeg = construct_row_hash_adj<tr>(
+		G, H, &m_matrix[VL * su], XP, ne, ce, su,
+		( su >= ne ? 0 : ne ), ce );
+/*
+	    row_type row_u;
+	    VID adeg;
+	    std::tie( row_u, adeg )
+		= graptor::graph::construct_row_hash_adj_vec<tr>(
+		    G, H, XP, ne, ce, su,
+		    ( su >= ne ? 0 : ne ), ce, (sVID)0 ); 
+*/
 
 	    tr::store( &m_matrix[VL * su], row_u );
-	    m_degree[su] = deg;
-	    m_m += deg;
+
+	    m_degree[su] = adeg;
+	    m_m += adeg;
 	}
 
 	m_n = ns;
@@ -825,11 +605,7 @@ public:
     }
 
     VID numVertices() const { return m_n; }
-    EID numEdges() const { return m_m; }
-
-#if 0
-    const VID * get_s2g() const { return &m_s2g[0]; }
-#endif
+    // EID numEdges() const { return m_m; }
 
 private:
     void bk_iterate( row_type R, row_type P, int depth, VID cutoff ) {
@@ -1071,9 +847,6 @@ private:
     row_type m_mc;
     VID m_start_pos;
 
-#if 0
-    VID m_s2g[Bits];
-#endif
     DID m_degree[Bits]; //!< only left-most columns (P part)
 };
 

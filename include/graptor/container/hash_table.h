@@ -47,6 +47,12 @@ public:
 	  pre_allocated( false ) {
 	clear();
     }
+    template<typename It>
+    explicit hash_table( It begin, It end )
+	: hash_table( std::distance( begin, end ) ) {
+	for( It i=begin; i != end; ++i )
+	    insert( *i );
+    }
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size )
 	: m_elements( num_elements ),
@@ -95,21 +101,6 @@ public:
 	// + 1: fill factor not exceeding 50%
 	return rt_ilog2( num_elements ) + 2;
     }
-
-/*
-    auto begin() const {
-	return graptor::graph::make_conditional_iterator(
-	    m_table, [&]( const type * && it ) {
-		return it != m_table+m_size && *it != invalid_element;
-	    } );
-    }
-    auto end() const {
-	return graptor::graph::make_conditional_iterator(
-	    m_table+m_size, [&]( const type * && it ) {
-		return it != m_table+m_size && *it != invalid_element;
-	    } );
-    }
-*/
 
     bool insert( type value ) {
 	size_type index = m_hash( value ) & ( capacity() - 1 );
@@ -175,39 +166,8 @@ public:
 	return O;
     }
 
-#if 0
     template<typename It>
     size_t intersect_size( It I, It E, size_t exceed ) const {
-	size_t sz = 0;
-	size_t todo = std::distance( I, E );
-	while( I != E ) {
-	    if( sz + todo <= exceed )
-		return 0;
-
-	    VID v = *I;
-	    if( contains( v ) )
-		++sz;
-
-	    ++I;
-	    --todo;
-	}
-	return sz;
-    }
-#endif
-
-    template<typename It>
-    size_t intersect_size( It I, It E, size_t exceed ) const {
-	size_t d = std::distance( I, E );
-#if 0
-#if __AVX512F__
-	if( d*sizeof(type) >= 512 )
-	    return intersect_size_vector<16>( I, E, exceed );
-#endif
-#if __AVX2__
-	if( d*sizeof(type) >= 256 )
-	    return intersect_size_vector<8>( I, E, exceed );
-#endif
-#endif
 	return intersect_size_scalar( I, E, exceed );
     }
 

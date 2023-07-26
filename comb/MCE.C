@@ -1234,7 +1234,7 @@ mce_iterate_xp_iterative(
 
 			if constexpr ( HGraphTy::has_dual_rep ) {
 			    std::sort( XP_new, XP_new+ne_new );
-			    std::sort( XP_new+ne, XP_new+ce_new );
+			    std::sort( XP_new+ne_new, XP_new+ce_new );
 			}
 
 			ok = mce_leaf<VID,EID>(
@@ -2087,11 +2087,9 @@ void mce_blocked_fn(
     tm.start();
 
     // Build induced graph
-    // TODO: Make merge method depend on size of neighbour lists
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	// IG( G, H, v, cut, graptor::hash_scalar() );
-	// IG( G, H, v, cut, graptor::merge_scalar() );
-	IG( G, H, v, cut, graptor::hash_vector() );
+	IG( G, H, cut.get_vertices(), cut.get_start_pos(),
+	    cut.get_num_vertices() );
 
     MCE_Enumerator_stage2 E2( E );
     mce_bron_kerbosch( IG, E2 );
@@ -2113,21 +2111,13 @@ void mce_dense_fn(
 
     VID num = cut.get_num_vertices();
 
-    // Make merge method depend on size of neighbour lists
-    // merge_scalar is fastest for pokec, but not for orkut
-    if( num <= 8 ) {
-	// Build induced graph
-	DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::merge_scalar() );
+    // Build induced graph
+    DenseMatrix<Bits,VID,EID>
+	IG( G, H, cut.get_vertices(), cut.get_start_pos(),
+	    cut.get_num_vertices() );
 
-	MCE_Enumerator_stage2 E2( E );
-	IG.mce_bron_kerbosch( E2 );
-    } else {
-	// Build induced graph
-	DenseMatrix<Bits,VID,EID> IG( G, H, v, cut, graptor::hash_vector() );
-
-	MCE_Enumerator_stage2 E2( E );
-	IG.mce_bron_kerbosch( E2 );
-    }
+    MCE_Enumerator_stage2 E2( E );
+    IG.mce_bron_kerbosch( E2 );
 
     double t = tm.stop();
     if( false && t >= 3.0 ) {
@@ -2320,7 +2310,7 @@ void leaf_dense_fn(
     const VID * XP,
     VID ne,
     VID ce ) {
-    DenseMatrix<Bits,VID,EID> D( H, XP, ne, ce );
+    DenseMatrix<Bits,VID,EID> D( H, H, XP, ne, ce );
     D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );
@@ -2334,7 +2324,7 @@ void leaf_blocked_fn(
     const VID * XP,
     VID ne,
     VID ce ) {
-    BlockedBinaryMatrix<XBits,PBits,VID,EID> D( H, XP, ne, ce );
+    BlockedBinaryMatrix<XBits,PBits,VID,EID> D( H, H, XP, ne, ce );
     mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );

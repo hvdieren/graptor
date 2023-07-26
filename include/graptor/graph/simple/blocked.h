@@ -186,12 +186,10 @@ public:
 	assert( AddDegree::value != true
 		|| ( ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
 	allocate();
-	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
+	std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place XP in hash table for fast intersection
-	typename HGraph::hash_table_type XP_hash( ce );
-	for( VID i=0; i < ce; ++i )
-	    XP_hash.insert( XP[i] );
+	typename HGraph::hash_table_type XP_hash( XP, XP+ce );
 
 	// Place edges
 	sVID ni = 0;
@@ -206,12 +204,15 @@ public:
 	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
 		std::tie( row_u, deg )
 		    = construct_row_hash_xp( G, H, XP_hash, XP, ne, ce, r, u );
+		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    } else {
 		std::tie( row_u, deg )
-		    = construct_row_hash_adj( G, H, XP, ne, ce, u );
+		    = graptor::graph::construct_row_hash_adj_vec<tr>(
+			G, H, XP, ne, ce, r, m_col_start, m_col_start+m_cols,
+			m_col_start );
+		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    }
 
-	    tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    if constexpr ( !AddDegree::value )
 		m_degree[r] = deg;
 	    m_m += deg;
@@ -293,7 +294,7 @@ private:
 	const GGraph & G,
 	const HGraph & H,
 	const typename HGraph::hash_table_type & XP_hash,
-	const VID * XP,
+	const sVID * XP,
 	sVID ne,
 	sVID ce,
 	sVID su,
@@ -418,7 +419,7 @@ private:
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>
 class BlockedBinaryMatrix {
     static constexpr unsigned MAX_COL_VERTICES = PBits;
-    using DID = std::conditional_t<XBits+PBits<=256,uint8_t,uint16_t>;
+    using DID = std::conditional_t<PBits<=256,uint8_t,uint16_t>;
 
 public:
     // The neighbours are split up in ineligible neighbours (initial X set)
@@ -442,19 +443,6 @@ public:
 	// Set of eligible neighbours
 	VID ns = num_neighbours;
 	assert( ns - start_pos <= MAX_COL_VERTICES );
-
-#if 0
-	// Short-cut if we have P=empty and all vertices in X
-	// Saves time constructing the matrix.
-	// Doesn't require specific checks in mce_bron_kerbosch()
-	// Doesn't help performance...
-	if( m_start_pos >= ns ) {
-	    m_matrix = m_matrix_alc = nullptr;
-	    m_m = 0;
-	    m_n = ns;
-	    return;
-	}
-#endif
 
 	// Construct two matrices
 	// Rows: X union P; columns: P
@@ -497,9 +485,10 @@ public:
     }
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename HGraph>
+    template<typename GGraph, typename HGraph>
     BlockedBinaryMatrix(
-	const HGraph & G,
+	const GGraph & G,
+	const HGraph & H,
 	const sVID * XP,
 	sVID ne, sVID ce ) {
 
@@ -510,10 +499,10 @@ public:
 	// Construct two matrices
 	// Rows: X union P; columns: P
 	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, G, XP, ne, ce, m_degree, std::false_type() );
+	    G, H, XP, ne, ce, m_degree, std::false_type() );
 	// Rows: P; columns: X
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, G, XP, ne, ce, m_degree, std::true_type() );
+	    G, H, XP, ne, ce, m_degree, std::true_type() );
     }
 
 #if 0
