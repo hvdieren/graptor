@@ -1231,6 +1231,12 @@ mce_iterate_xp_iterative(
 			     || ( ne_new <= (1<<X_MAX_SIZE)
 				  && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
 			) {
+
+			if constexpr ( HGraphTy::has_dual_rep ) {
+			    std::sort( XP_new, XP_new+ne_new );
+			    std::sort( XP_new+ne, XP_new+ce_new );
+			}
+
 			ok = mce_leaf<VID,EID>(
 			    G, Ee, depth, XP_new, ne_new, ce_new );
 		    }
@@ -1518,20 +1524,20 @@ mce_bron_kerbosch_recpar_xp2(
 			    || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
 			   ) ) {
 		// direct cut-out of dense graph
+
+		// Restore sort order of P set to support merge intersect.
+		// P was disrupted by sorting pivot neighbours to the end.
+		// TODO: is P a merge of two sorted sub-arrays?
+		// Restore sort order of X set. This may be disrupted as
+		// vertices are added out of order, specifically
+		// pivot neighbours.
+		if constexpr ( HGraphTy::has_dual_rep ) {
+		    std::sort( XP_new, XP_new+ne_new );
+		    std::sort( XP_new+ne_new, XP_new+ce_new );
+		}
 		bool ok = mce_leaf<VID,EID>(
 		    G, E, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
-		    // Restore sort order of P set to support merge intersect.
-		    // P was disrupted by sorting pivot neighbours to the end.
-		    // TODO: is P a merge of two sorted sub-arrays?
-		    // Restore sort order of X set. This may be disrupted as
-		    // vertices are added out of order, specifically
-		    // pivot neighbours.
-		    if constexpr ( HGraphTy::has_dual_rep ) {
-			std::sort( XP_new, XP_new+ne_new );
-			std::sort( XP_new+ne_new, XP_new+ce_new );
-		    }
-		
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
@@ -2423,7 +2429,7 @@ bool mce_leaf(
     if( plg < P_MIN_SIZE )
 	plg = P_MIN_SIZE;
 
-/*
+/* TODO - enable?
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
 	return true;
