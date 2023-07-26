@@ -51,8 +51,7 @@ public:
 		  DID * m_degree,
 		  AddDegree && )
 	: m_row_start( rs ), m_rows( re-rs ),
-	  m_col_start( cs ), m_cols( ce-cs ),
-	  m_s2g( gID ) {
+	  m_col_start( cs ), m_cols( ce-cs ) {
 	assert( m_cols <= MAX_COL_VERTICES
 		&& "Cap on number of vertices that fit in bitmask" );
 	assert( ( m_cols + bits_per_lane - 1 ) / bits_per_lane <= VL );
@@ -109,10 +108,11 @@ public:
 	}
     }
     // Assumes no relabeling required
-    template<typename utr, typename HGraph, typename DID, typename AddDegree,
+    template<typename utr, typename HGraph,
+	     typename DID, typename AddDegree,
 	     typename gVID = VID, typename gEID = EID>
     BinaryMatrix( const ::GraphCSx & G,
-		 const HGraph & H,
+		  const HGraph & H,
 		  gVID rs, gVID re,
 		  gVID cs, gVID ce,
 		  const gVID * const s2g, // neighbours in natural sort and degeneracy sort order at same time
@@ -120,21 +120,14 @@ public:
 		  AddDegree &&,
 		  utr )
 	: m_row_start( rs ), m_rows( re-rs ),
-	  m_col_start( cs ), m_cols( ce-cs ),
-	  m_s2g( s2g ) {
+	  m_col_start( cs ), m_cols( ce-cs ) {
 	assert( m_cols <= MAX_COL_VERTICES
 		&& "Cap on number of vertices that fit in bitmask" );
 	assert( ( m_cols + bits_per_lane - 1 ) / bits_per_lane <= VL );
 	gVID n = G.numVertices();
 	gEID m = G.numEdges();
-	const gEID * const gindex = G.getIndex();
-	const gVID * const gedges = G.getEdges();
 
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+	allocate();
 	std::fill( m_matrix, m_matrix+VL*m_rows, type(0) );
 
 	// Place edges
@@ -150,11 +143,11 @@ public:
 		row_u = utr::template intersect<true>(
 		    s2g+cs, s2g+re, H.get_adjacency( u ), row_u );
 	    } else {
-		const VID * const q = &gedges[gindex[u]];
-		const VID * const qe = &gedges[gindex[u+1]];
+		const VID * const n = G.get_neighbours( u );
+		VID deg = G.getDegree( u );
 
 		row_u = utr::template intersect<true>(
-		    s2g+cs, s2g+re, q, qe, row_u );
+		    s2g+cs, s2g+re, n, n+deg, row_u );
 	    }
 	    
 	    VID deg = row_u.get_degree();
@@ -168,8 +161,10 @@ public:
 
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
-    template<typename HGraph, typename DID, typename AddDegree>
-    BinaryMatrix( const HGraph & G,
+    template<typename GGraph, typename HGraph,
+	     typename DID, typename AddDegree>
+    BinaryMatrix( const GGraph & G,
+		  const HGraph & H,
 		  const sVID * XP,
 		  sVID ne, sVID ce,
 		  DID * m_degree,
@@ -177,8 +172,7 @@ public:
 	: m_row_start( AddDegree::value == false ? 0 : ne ),
 	  m_rows( AddDegree::value == false ? ce : ce-ne ), // X
 	  m_col_start( AddDegree::value == false ? ne : 0 ),
-	  m_cols( AddDegree::value == false ? ce-ne : ne ), // P
-	  m_s2g( XP ) {
+	  m_cols( AddDegree::value == false ? ce-ne : ne ) { // P
 	assert( AddDegree::value != false || ce-ne <= Bits ); // xp - side col
 	assert( AddDegree::value != true || ne <= Bits ); // px - bottom rows
 
@@ -186,116 +180,39 @@ public:
 	// We do not reorder, primarily because only the order in P matters
 	// for efficiency of enumeration.
 	// Do we need to copy, or can we just keep a pointer to XP?
-	// std::copy( XP, XP+ce, m_s2g );
 
 	assert( AddDegree::value != false
 		|| ( ce-ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
 	assert( AddDegree::value != true
 		|| ( ne + bits_per_lane - 1 ) / bits_per_lane <= VL );
-	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
-	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
-	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
-	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
-	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+	allocate();
 	// std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
+
+	// Place XP in hash table for fast intersection
+	typename HGraph::hash_table_type XP_hash( ce );
+	for( VID i=0; i < ce; ++i )
+	    XP_hash.insert( XP[i] );
 
 	// Place edges
 	sVID ni = 0;
 	m_m = 0;
 	for( sVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
-	    sVID u = m_s2g[r]; // or XP[r]
-	    sVID deg = 0;
+	    sVID u = XP[r];
+	    sVID deg;
+	    row_type row_u;
+	    sVID udeg = G.getDegree( u );
+	    const sVID * n = G.get_neighbours( u );
 
-	    row_type row_u = tr::setzero();
-	    auto & adj = G.get_adjacency( u );
-
-	    // Intersect XP with adjacency list
-#if 0
-	    for( sVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
-		sVID xp = XP[l];
-		// TODO: vectorized lookup (VL values at once) + customise
-		//       the construction of the row_u by inserting blocks
-		//       of VL bits at a time.
-		if( adj.contains( xp ) ) {
-		    row_u = tr::bitwise_or( row_u, create_singleton( l ) );
-		    ++deg;
-		}
-	    }
-#else
-#if __AVX512F__
-	    static constexpr unsigned RVL = 512/Bits;
-#elif __AVX2__
-	    static constexpr unsigned RVL = 256/Bits;
-#elif __SSE42__
-	    static constexpr unsigned RVL = 128/Bits;
-#else
-	    static constexpr unsigned RVL = 1;
-#endif
-	    if constexpr ( sizeof(sVID)*8 == Bits && RVL >= 4 ) {
-		sVID col_end = m_col_start + m_cols;
-		sVID l = m_col_start;
-		if( m_cols >= RVL ) {
-		    // A vertex identifier is not wider than a row of the matrix.
-		    // We can fit multiple row_type into a vector
-		    using itr = vector_type_traits_vl<sVID,RVL>;
-		    using rtr = vector_type_traits_vl<type,RVL>;
-		    using itype = typename itr::type;
-		    using rtype = typename rtr::type;
-		    rtype one = rtr::setoneval();
-		    itype ione = itr::setoneval();
-		    rtype step = rtr::slli( one, ilog2( RVL ) );
-		    rtype off = rtr::set1inc0();
-		    rtype mrow = rtr::setzero();
-		    itype mdeg = itr::setzero();
-		    while( l+RVL <= col_end ) {
-			itype v = itr::loadu( &XP[l] );
-			rtype c = rtr::sllv( one, off );
-#if __AVX512F__
-			// using bitmask
-			auto b = adj.template multi_contains<sVID,RVL>( v, target::mt_mask() );
-			rtype d = rtr::blend( b, rtr::setzero(), c );
-			mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
-#elif __AVX2__
-			itype b = adj.template multi_contains<sVID,RVL>( v, target::mt_vmask() );
-			rtype br = conversion_traits<logical<sizeof(sVID)>,logical<sizeof(type)>,RVL>::convert( b );
-			rtype d = rtr::bitwise_and( br, c );
-			mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) ); // 4-argument add( mdeg, b, ione, mdeg );
-#else
-			assert( 0 && "NYI" );
-#endif
-			mrow = rtr::bitwise_or( mrow, d );
-			off = rtr::add( off, step );
-			l += RVL;
-		    }
-		    row_u = rtr::reduce_bitwiseor( mrow );
-		    deg = itr::reduce_add( mdeg );
-		}
-		while( l < col_end ) {
-		    sVID xp = XP[l];
-		    if( adj.contains( xp ) ) {
-			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
-			++deg;
-		    }
-		    ++l;
-		}
+	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
+		std::tie( row_u, deg )
+		    = construct_row_hash_xp( G, H, XP_hash, XP, ne, ce, r, u );
 	    } else {
-		for( sVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
-		    sVID xp = XP[l];
-		    // TODO: vectorized lookup (VL values at once) + customise
-		    //       the construction of the row_u by inserting blocks
-		    //       of VL bits at a time.
-		    if( adj.contains( xp ) ) {
-			row_u = tr::bitwise_or( row_u, create_singleton( l ) );
-			++deg;
-		    }
-		}
+		std::tie( row_u, deg )
+		    = construct_row_hash_adj( G, H, XP, ne, ce, u );
 	    }
-#endif
 
 	    tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    if constexpr ( !AddDegree::value )
-		// m_degree[r] += deg;
-	    // else
 		m_degree[r] = deg;
 	    m_m += deg;
 	}
@@ -310,7 +227,7 @@ public:
 
     sVID numRows() const { return m_rows; }
     sVID numCols() const { return m_cols; }
-    sEID numEdges() const { return m_m; }
+    // sEID numEdges() const { return m_m; }
 
     row_type get_row( sVID v ) const {
 	// assert( m_row_start <= v && v < m_row_start+m_rows );
@@ -363,6 +280,131 @@ public:
 #endif
 
 private:
+    void allocate() {
+	m_matrix = m_matrix_alc = new type[VL * m_rows + 64];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+    }
+
+    template<typename GGraph, typename HGraph>
+    std::pair<row_type,sVID> construct_row_hash_xp(
+	const GGraph & G,
+	const HGraph & H,
+	const typename HGraph::hash_table_type & XP_hash,
+	const VID * XP,
+	sVID ne,
+	sVID ce,
+	sVID su,
+	sVID u ) {
+	const sVID * n = G.get_neighbours( u );
+	sVID udeg = G.getDegree( u );
+	sVID deg = 0;
+	row_type row = tr::setzero();
+	const sVID * n_start
+	    = su < m_col_start
+	    ? std::lower_bound( n, n+udeg, XP[m_col_start] ) : n;
+	for( const sVID * i=n_start; i != n+udeg; ++i ) {
+	    sVID v = *i;
+	    if( XP_hash.contains( v ) ) {
+		const VID * pos = std::lower_bound( XP, XP+ne, v );
+		if( *pos != v )
+		    pos = std::lower_bound( XP+ne, XP+ce, v );
+		sVID sv = pos - XP;
+		if( sv >= m_col_start && sv < m_col_start + m_cols ) {
+		    row = tr::bitwise_or( row, create_singleton( sv ) );
+		    deg++;
+		}
+	    }
+	}
+	return std::make_pair( row, deg );
+    }
+
+    template<typename GGraph, typename HGraph>
+    std::pair<row_type,sVID> construct_row_hash_adj(
+	const GGraph & G,
+	const HGraph & H,
+	const sVID * XP,
+	sVID ne,
+	sVID ce,
+	sVID u ) {
+	sVID deg = 0;
+
+	row_type row_u = tr::setzero();
+	auto & adj = H.get_adjacency( u );
+
+	// Intersect XP with adjacency list
+#if __AVX512F__
+	static constexpr unsigned RVL = 512/Bits;
+#elif __AVX2__
+	static constexpr unsigned RVL = 256/Bits;
+#elif __SSE42__
+	static constexpr unsigned RVL = 128/Bits;
+#else
+	static constexpr unsigned RVL = 1;
+#endif
+	if constexpr ( sizeof(sVID)*8 == Bits && RVL >= 4 ) {
+	    sVID col_end = m_col_start + m_cols;
+	    sVID l = m_col_start;
+	    if( m_cols >= RVL ) {
+		// A vertex identifier is not wider than a row of the matrix.
+		// We can fit multiple row_type into a vector
+		using itr = vector_type_traits_vl<sVID,RVL>;
+		using rtr = vector_type_traits_vl<type,RVL>;
+		using itype = typename itr::type;
+		using rtype = typename rtr::type;
+		rtype one = rtr::setoneval();
+		itype ione = itr::setoneval();
+		rtype step = rtr::slli( one, ilog2( RVL ) );
+		rtype off = rtr::set1inc0();
+		rtype mrow = rtr::setzero();
+		itype mdeg = itr::setzero();
+		while( l+RVL <= col_end ) {
+		    itype v = itr::loadu( &XP[l] );
+		    rtype c = rtr::sllv( one, off );
+#if __AVX512F__
+		    // using bitmask
+		    auto b = adj.template multi_contains<sVID,RVL>( v, target::mt_mask() );
+		    rtype d = rtr::blend( b, rtr::setzero(), c );
+		    mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
+#elif __AVX2__
+		    itype b = adj.template multi_contains<sVID,RVL>( v, target::mt_vmask() );
+		    rtype br = conversion_traits<logical<sizeof(sVID)>,logical<sizeof(type)>,RVL>::convert( b );
+		    rtype d = rtr::bitwise_and( br, c );
+		    mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) ); // 4-argument add( mdeg, b, ione, mdeg );
+#else
+		    assert( 0 && "NYI" );
+#endif
+		    mrow = rtr::bitwise_or( mrow, d );
+		    off = rtr::add( off, step );
+		    l += RVL;
+		}
+		row_u = rtr::reduce_bitwiseor( mrow );
+		deg = itr::reduce_add( mdeg );
+	    }
+	    while( l < col_end ) {
+		sVID xp = XP[l];
+		if( adj.contains( xp ) ) {
+		    row_u = tr::bitwise_or( row_u, create_singleton( l ) );
+		    ++deg;
+		}
+		++l;
+	    }
+	} else {
+	    for( sVID l=m_col_start; l < m_col_start+m_cols; ++l ) {
+		sVID xp = XP[l];
+		if( adj.contains( xp ) ) {
+		    row_u = tr::bitwise_or( row_u, create_singleton( l ) );
+		    ++deg;
+		}
+	    }
+	}
+
+	return std::make_pair( row_u, deg );
+    }
+
+private:
     const sVID m_rows;
     const sVID m_cols;
     const sVID m_row_start;
@@ -370,7 +412,6 @@ private:
     sEID m_m;
     type * m_matrix;
     type * m_matrix_alc;
-    const sVID * m_s2g;
 };
 
 
@@ -392,8 +433,7 @@ public:
 	const gVID * const s2g,
 	const gVID * const n2s,
 	gVID start_pos,
-	const gVID * const core_order )
-	: m_s2g( s2g ) {
+	const gVID * const core_order ) {
 	gVID n = G.numVertices();
 	gEID m = G.numEdges();
 	const gEID * const gindex = G.getIndex();
@@ -419,11 +459,11 @@ public:
 	// Construct two matrices
 	// Rows: X union P; columns: P
 	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, VID(0), ns, start_pos, ns, neighbours, m_s2g, n2s,
+	    G, VID(0), ns, start_pos, ns, neighbours, neighbours, n2s,
 	    m_degree, std::false_type() );
 	// Rows: P; columns: X
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, start_pos, ns, VID(0), start_pos, neighbours, m_s2g, n2s,
+	    G, start_pos, ns, VID(0), start_pos, neighbours, neighbours, n2s,
 	    m_degree, std::true_type() );
     }
     template<typename utr, typename HGraph,
@@ -433,8 +473,7 @@ public:
 	const HGraph & H,
 	gVID v,
 	const NeighbourCutOutDegeneracyOrder<gVID,gEID> & cut,
-	utr )
-	: m_s2g( cut.get_vertices() ) {
+	utr ) {
 	gVID n = G.numVertices();
 	gEID m = G.numEdges();
 	const gEID * const gindex = G.getIndex();
@@ -442,17 +481,18 @@ public:
 
 	// Set of eligible neighbours
 	gVID ns = cut.get_num_vertices();
+	const gVID * vert = cut.get_vertices();
 	gVID start_pos = cut.get_start_pos();
 	assert( ns - start_pos <= MAX_COL_VERTICES );
 
 	// Construct two matrices
 	// Rows: X union P; columns: P
 	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, H, VID(0), ns, start_pos, ns, m_s2g,
+	    G, H, VID(0), ns, start_pos, ns, vert,
 	    m_degree, std::false_type(), utr() );
 	// Rows: P; columns: X
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, H, start_pos, ns, VID(0), start_pos, m_s2g,
+	    G, H, start_pos, ns, VID(0), start_pos, vert,
 	    m_degree, std::true_type(), utr() );
     }
     // In this variation, hVIDs are already sorted by core_order
@@ -461,8 +501,7 @@ public:
     BlockedBinaryMatrix(
 	const HGraph & G,
 	const sVID * XP,
-	sVID ne, sVID ce )
-	: m_s2g( XP ) {
+	sVID ne, sVID ce ) {
 
 	// Vertices in X and P are independently already sorted by core order.
 	// We do not reorder, primarily because only the order in P matters
@@ -471,10 +510,10 @@ public:
 	// Construct two matrices
 	// Rows: X union P; columns: P
 	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, XP, ne, ce, m_degree, std::false_type() );
+	    G, G, XP, ne, ce, m_degree, std::false_type() );
 	// Rows: P; columns: X
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, XP, ne, ce, m_degree, std::true_type() );
+	    G, G, XP, ne, ce, m_degree, std::true_type() );
     }
 
 #if 0
@@ -494,12 +533,11 @@ public:
 
     sVID numVertices() const { return m_xp.numRows(); }
     sVID numXVertices() const { return m_px.numCols(); }
-    sEID numEdges() const { return m_xp.numEdges() + m_px.numEdges(); }
+    // sEID numEdges() const { return m_xp.numEdges() + m_px.numEdges(); }
 
 private:
     BinaryMatrix<PBits,sVID,sEID> m_xp; //!< rightmost columns, in full
     BinaryMatrix<XBits,sVID,sEID> m_px; //!< bottommost rows, left parts
-    const sVID * m_s2g; //!< list of vertices, on loan
     DID m_degree[XBits+PBits]; //!< degree of vertices in cutout, m_xp only
 };
 
