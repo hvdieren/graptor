@@ -189,7 +189,7 @@ public:
 	std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
 	// Place XP in hash table for fast intersection
-	typename HGraph::hash_table_type XP_hash( XP, XP+ce );
+	typename HGraph::hash_set_type XP_hash( XP, XP+ce );
 
 	// Place edges
 	sVID ni = 0;
@@ -203,7 +203,9 @@ public:
 
 	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
 		std::tie( row_u, deg )
-		    = construct_row_hash_xp( G, H, XP_hash, XP, ne, ce, r, u );
+		    = graptor::graph::construct_row_hash_xp<tr>(
+			G, H, XP_hash, XP, ne, ce, r, u, m_col_start,
+			m_col_start + m_cols, m_col_start );
 		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    } else {
 		std::tie( row_u, deg )
@@ -293,7 +295,7 @@ private:
     std::pair<row_type,sVID> construct_row_hash_xp(
 	const GGraph & G,
 	const HGraph & H,
-	const typename HGraph::hash_table_type & XP_hash,
+	const typename HGraph::hash_set_type & XP_hash,
 	const sVID * XP,
 	sVID ne,
 	sVID ce,

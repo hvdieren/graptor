@@ -4,10 +4,12 @@
 
 #include <type_traits>
 #include <algorithm>
+#include <utility>
 #include <ostream>
 
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
+#include "graptor/container/hash_set.h"
 #include "graptor/container/conditional_iterator.h"
 
 /*!=====================================================================*
@@ -19,16 +21,18 @@
 
 namespace graptor {
 
-template<typename T, typename Hash = rand_hash<T>>
+template<typename K, typename V, typename Hash = rand_hash<K>>
 class hash_table {
 public:
-    typedef T type;
+    typedef K key_type;
+    typedef V value_type;
+    typedef std::pair<key_type,value_type> type;
     typedef Hash hash_type;
     typedef uint32_t size_type;
     typedef type & reference;
     typedef const type & const_reference;
 
-    static constexpr type invalid_element = ~type(0);
+    static constexpr key_type invalid_element = ~key_type(0);
 
 public:
     explicit hash_table()
@@ -46,12 +50,6 @@ public:
 	  m_hash( m_log_size ),
 	  pre_allocated( false ) {
 	clear();
-    }
-    template<typename It>
-    explicit hash_table( It begin, It end )
-	: hash_table( std::distance( begin, end ) ) {
-	for( It i=begin; i != end; ++i )
-	    insert( *i );
     }
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size )
@@ -82,14 +80,15 @@ public:
 
     void clear() {
 	m_elements = 0;
-	std::fill( m_table, m_table+capacity(), invalid_element );
+	std::fill( m_table, m_table+capacity(),
+		   std::make_pair( invalid_element, value_type() ) );
     }
 
     size_type size() const { return m_elements; }
     size_type capacity() const { return size_type(1) << m_log_size; }
     bool empty() const { return size() == 0; }
 
-    const VID * get_table() const { return m_table; }
+    const type * get_table() const { return m_table; }
 
     auto begin() const { return m_table; }
     auto end() const { return m_table+capacity(); }
@@ -102,11 +101,17 @@ public:
 	return rt_ilog2( num_elements ) + 2;
     }
 
-    bool insert( type value ) {
-	size_type index = m_hash( value ) & ( capacity() - 1 );
-	while( m_table[index] != invalid_element && m_table[index] != value )
+    bool insert( type v ) {
+	return insert( v.first, v.second );
+    }
+    
+    bool insert( key_type key, value_type value ) {
+	size_type index = m_hash( key ) & ( capacity() - 1 );
+	while( m_table[index].first != invalid_element
+	       && m_table[index].first != key )
 	    index = ( index + 1 ) & ( capacity() - 1 );
-	if( m_table[index] == value ) {
+	if( m_table[index].first == key ) {
+	    m_table[index].second = value;
 	    return false;
 	} else {
 	    if( (m_elements+1) >= ( capacity() >> 1 ) ) {
@@ -122,61 +127,50 @@ public:
 		size_type old_size = size_type(1) << old_log_size;
 		m_hash.resize( m_log_size );
 		for( size_type i=0; i < old_size; ++i )
-		    if( old_table[i] != invalid_element )
+		    if( old_table[i].first != invalid_element )
 			insert( old_table[i] );
 		delete[] old_table;
-		return insert( value );
+		return insert( key, value );
 	    } else {
 		++m_elements;
-		m_table[index] = value;
+		m_table[index].first = key;
+		m_table[index].second = value;
 		return true;
 	    }
 	}
     }
 
-    template<typename It>
-    void insert( It && I, It && E ) {
-	while( I != E )
-	    insert( *I++ );
-    }
-
-    bool contains( type value ) const {
-	size_type index = m_hash( value ) & ( capacity() - 1 );
-	while( m_table[index] != invalid_element && m_table[index] != value )
+    bool contains( key_type key ) const {
+	size_type index = m_hash( key ) & ( capacity() - 1 );
+	while( m_table[index].first != invalid_element
+	       && m_table[index].first != key )
 	    index = ( index + 1 ) & ( capacity() - 1 );
-	return m_table[index] == value;
+	return m_table[index].first == key;
     }
 
-    template<typename Fn>
-    void for_each( Fn && fn ) const {
-	for( size_type i=0; i < capacity(); ++i )
-	    if( m_table[i] != invalid_element )
-		fn( m_table[i] );
-    }
-
-    template<typename It, typename Ot>
-    Ot intersect( It I, It E, Ot O ) const {
-	while( I != E ) {
-	    VID v = *I;
-	    if( contains( v ) ) {
-		*O++ = v;
-	    }
-	    ++I;
-	}
-	return O;
-    }
-
-    template<typename It>
-    size_t intersect_size( It I, It E, size_t exceed ) const {
-	return intersect_size_scalar( I, E, exceed );
+    bool contains( key_type key, value_type & ret_val ) const {
+	size_type index = m_hash( key ) & ( capacity() - 1 );
+	while( m_table[index].first != invalid_element
+	       && m_table[index].first != key )
+	    index = ( index + 1 ) & ( capacity() - 1 ); 
+	if( m_table[index].first == key ) {
+	    ret_val = m_table[index].second;
+	    return true;
+	} else
+	    return false;
     }
 
     template<typename atype, unsigned short VL, typename MT>
-    std::conditional_t<std::is_same_v<MT,target::mt_mask>,
-	typename vector_type_traits_vl<atype,VL>::mask_type,
-	typename vector_type_traits_vl<atype,VL>::vmask_type>
+    std::pair<
+	// Index found
+	typename vector_type_traits_vl<atype,VL>::type,
+	// presence flag
+	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+			   typename vector_type_traits_vl<atype,VL>::mask_type,
+			   typename vector_type_traits_vl<atype,VL>::vmask_type>
+	>
     multi_contains( typename vector_type_traits_vl<atype,VL>::type
-			 index, MT ) const {
+		    index, MT ) const {
 	using tr = vector_type_traits_vl<atype,VL>;
 	using vtype = typename tr::type;
 #if __AVX512F__
@@ -222,132 +216,9 @@ public:
 	// Return success if found, which equals imv inverted
 	// It just takes one cycle to recompute, same as invert. The code
 	// below is most compact to achieve the correct return type.
-	return tr::cmpeq( e, v, MT() );
+	return std::make_pair( vidx, tr::cmpeq( e, v, MT() ) );
     }
 
-private:
-    // Identify the table cell where we can decide on presence of value
-    size_type locate( type value ) const {
-	return locate_scalar( value );
-    }
-    size_type locate_scalar( type value ) const {
-	size_type index = m_hash( value ) & ( capacity() - 1 );
-	while( m_table[index] != invalid_element && m_table[index] != value )
-	    index = ( index + 1 ) & ( capacity() - 1 );
-	return index;
-    }
-    template<unsigned short VL>
-    size_type locate_vector( type value ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-	size_type index = m_hash( value ) & ( capacity() - 1 );
-	size_type vindex = index & ~size_type( VL - 1 ); // multiple of VL
-
-	vtype vinv = tr::setone(); // invalid_element == -1
-	vtype val = tr::set1( value );
-	size_type VLmsk = size_type( VL - 1 );
-	vtype msk = tr::asvector( ( index & VLmsk ) ^ VLmsk );
-
-	do {
-	    vtype v = tr::loadu( m_table, vindex );
-	    vtype mi = tr::cmpeq( v, vinv, target::mt_vmask() );
-	    vtype mv = tr::cmpeq( v, val, target::mt_vmask() );
-	    vtype mo = tr::bitwise_or( mi, mv );
-	    vtype ma = tr::bitwise_andnot( mo, msk );
-	    if( tr::is_zero( ma ) ) {
-		msk = tr::setone();
-		vindex = ( vindex + VL ) & ( capacity() - 1 );
-	    } else {
-		// Now there is a lane in v that is suitable. Identify it.
-		unsigned lane = _tzcnt_u32( tr::asmask( ma ) );
-		return vindex + lane;
-	    }
-	} while( true );
-    }
-    template<unsigned short VL>
-    size_type
-    intersect_size_vector( const type * I, const type * E, size_t exceed )
-	const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	const vtype vinv = tr::setone(); // invalid_element == -1
-	const vtype hmask = tr::srli( tr::setone(), tr::B - m_log_size );
-	vtype v_ins = tr::setzero();
-
-	size_type s_ins = 0;
-
-	for( ; I+VL <= E; I += VL ) {
-	    vtype v = tr::loadu( I ); // Assuming &*(I+1) == (&*I)+1
-	    vtype h = m_hash.template vectorized<VL>( v );
-	    vtype vidx = tr::bitwise_and( h, hmask );
-	    vtype e = tr::gather( m_table, vidx );
-	    vtype mi = tr::cmpeq( e, vinv, target::mt_vmask() );
-	    vtype mv = tr::cmpeq( e, v, target::mt_vmask() );
-	    vtype miv = tr::bitwise_or( mi, mv );
-	    vtype imiv = tr::bitwise_invert( miv );
-	    auto m = tr::asmask( imiv );
-	    while( m != 0 ) {
-		// TODO: hash table load is targeted below 50%. Due to the
-		// birthday paradox, there will be frequent collisions still
-		// and it may be useful to make multiple vectorized probes
-		// before resorting to scalar execution. We could even count
-		// active lanes to decide.
-		// Some lanes are neither empty nor the requested value and
-		// need further probes.
-/*
-		bitset<VL> probes( m );
-		for( auto PI=probes.begin(), PE=probes.end(); PI != PE; ++PI )
-		    s_ins += contains_2nd( *(I + *PI) ) ? 1 : 0;
-*/
-		vidx = tr::add( vidx, tr::setoneval() );
-		vidx = tr::bitwise_and( vidx, hmask );
-		e = tr::gather( m_table, vidx, imiv );
-		mi = tr::cmpeq( e, vinv, target::mt_vmask() );
-		vtype mv2 = tr::cmpeq( e, v, target::mt_vmask() );
-		mv = tr::blend( imiv, mv, mv2 );
-		miv = tr::bitwise_or( mi, mv2 );
-		imiv = tr::bitwise_andnot( miv, imiv );
-		m = tr::asmask( imiv );
-	    }
-	    v_ins = tr::add( v_ins, tr::srli( mv, tr::B-1 ) ); // +1 if found
-	    if( s_ins + std::distance( I, E ) < exceed + VL )
-		return 0;
-	}
-	s_ins += tr::reduce_add( v_ins );
-	if( I != E )
-	    s_ins += intersect_size_scalar( I, E, exceed - s_ins );
-	return s_ins;
-    }
-    bool contains_2nd( type value ) const {
-	// Skip first element, already probed
-	size_type index = m_hash( value ) & ( capacity() - 1 );
-	index = ( index + 1 ) & ( capacity() - 1 ); // skip
-	while( m_table[index] != invalid_element && m_table[index] != value )
-	    index = ( index + 1 ) & ( capacity() - 1 );
-	return m_table[index] == value;
-    }
-    template<typename It>
-    size_t intersect_size_scalar( It I, It E, size_t exceed ) const {
-	using ty = std::make_signed_t<size_t>;
-	ty d = std::distance( I, E );
-	ty x = exceed;
-	ty options = x - d;
-	if( options >= 0 )
-	    return 0;
-
-	while( I != E ) {
-	    VID v = *I;
-	    if( !contains( v ) ) [[likely]] {
-		if( ++options >= 0 ) [[unlikely]]
-		    return 0;
-	    }
-
-	    ++I;
-	}
-	return x - options;
-    }
-	    
 private:
     size_type m_elements;
     size_type m_log_size;
@@ -360,27 +231,10 @@ template<typename T, typename Hash>
 ostream & operator << ( ostream & os, const hash_table<T,Hash> & s ) {
     os << "{ #" << s.size() << ": ";
     for( auto I=s.begin(), E=s.end(); I != E; ++I )
-	os << ' ' << *I;
+	os << ' ' << I->first << ':' << I->second;
     os << " }";
     return os;
 }
-
-template<typename HashTable>
-struct hash_insert_iterator;
-
-template<typename T, typename Hash>
-struct hash_insert_iterator<hash_table<T,Hash>> {
-    hash_insert_iterator( hash_table<T,Hash> & table, const T * start )
-	: m_table( table ), m_start( start ) { }
-
-    void push_back( const T * t, const T * = nullptr ) {
-	m_table.insert( t - m_start );
-    }
-    
-private:
-    hash_table<T,Hash> & m_table;
-    const T * m_start;
-};
 
 } // namespace graptor
 

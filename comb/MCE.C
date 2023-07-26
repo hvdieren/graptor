@@ -1348,7 +1348,7 @@ public:
 	    VID k = 0;
 	    auto & Hadj = H.get_adjacency( u );
 	    auto & Sadj = S.get_adjacency( su );
-	    graptor::hash_insert_iterator<graptor::hash_table<VID,Hash>>
+	    graptor::hash_insert_iterator<typename HGraph::hash_set_type>
 		out( Sadj, XP );
 	    graptor::hash_scalar::intersect<true>(
 		su < ne ? XP+ne : XP, XP+ce, Hadj, out );

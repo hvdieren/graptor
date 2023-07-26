@@ -468,6 +468,10 @@ public:
 	    VID adeg = construct_row_hash_adj<tr>(
 		G, H, &m_matrix[VL * su], XP, ne, ce, su,
 		( su >= ne ? 0 : ne ), ce );
+
+            // The variation on vectorized bitmap construction when
+	    // lanes can hold a full row is less performant here than
+	    // writing bit masks piecemeal to memory.
 /*
 	    row_type row_u;
 	    VID adeg;
@@ -475,9 +479,8 @@ public:
 		= graptor::graph::construct_row_hash_adj_vec<tr>(
 		    G, H, XP, ne, ce, su,
 		    ( su >= ne ? 0 : ne ), ce, (sVID)0 ); 
-*/
-
 	    tr::store( &m_matrix[VL * su], row_u );
+*/
 
 	    m_degree[su] = adeg;
 	    m_m += adeg;

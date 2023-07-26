@@ -7,6 +7,7 @@
 #include "graptor/mm.h"
 #include "graptor/mm/mm.h"
 
+#include "graptor/container/hash_set.h"
 #include "graptor/container/hash_table.h"
 #include "graptor/container/intersect.h"
 
@@ -38,7 +39,7 @@ public:
     using Hash = lHash;
     using UnderlyingGraphCSx = UGCSx; // GraphCSx or graptor::graph::GraphCSx<>
     using self_type = GraphHAdj<VID,EID,UnderlyingGraphCSx,Hash>;
-    using hash_table_type = graptor::hash_table<VID,Hash>;
+    using hash_set_type = graptor::hash_set<VID,Hash>;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
@@ -66,7 +67,7 @@ public:
 	    VID logs = get_log_hash_slots( deg );
 	    VID s = VID(1) << logs;
 	    new ( &hf[v] ) Hash( logs ); // rand_hash function requires storage
-	    hash_table_type a( &hashes[h], 0, logs, hf( v ) );
+	    hash_set_type a( &hashes[h], 0, logs, hf( v ) );
 	    a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	    index[v] = h;
@@ -100,7 +101,7 @@ public:
 	    VID s = index[v+1] - index[v];
 	    VID logs = rt_ilog2( s );
 	    new ( &hf[v] ) Hash( logs ); // rand_hash function requires storage
-	    hash_table_type a( &hashes[index[v]], 0, logs, hf[v] );
+	    hash_set_type a( &hashes[index[v]], 0, logs, hf[v] );
 	    a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	} );
@@ -131,14 +132,14 @@ public:
     vertex_iterator vend() { return vertex_iterator( numVertices() ); }
     vertex_iterator vend() const { return vertex_iterator( numVertices() ); }
 
-    hash_table_type get_adjacency( VID v ) const {
+    hash_set_type get_adjacency( VID v ) const {
 	return const_cast<self_type *>( this )->get_adjacency( v );
     }
-    hash_table_type get_adjacency( VID v ) {
+    hash_set_type get_adjacency( VID v ) {
 	VID deg = getIndex()[v+1] - getIndex()[v];
 	VID h = rt_ilog2( getHashIndex()[v+1] - getHashIndex()[v] );
 	const Hash * hf = m_hash_fn.get();
-	return hash_table_type(
+	return hash_set_type(
 	    &getHashes()[getHashIndex()[v]], deg, h, hf[v] );
     }
 
@@ -160,10 +161,10 @@ public:
 
 private:
     static VID get_hash_slots( VID deg ) {
-	return VID(1) << hash_table_type::required_log_size( deg );
+	return VID(1) << hash_set_type::required_log_size( deg );
     }
     static VID get_log_hash_slots( VID deg ) {
-	return hash_table_type::required_log_size( deg );
+	return hash_set_type::required_log_size( deg );
     }
     static EID get_hash_slots( const EID * index, VID n ) {
 	EID h = 0;
@@ -182,7 +183,7 @@ private:
 template<bool dual_rep, bool left_base, typename Hash>
 struct hash_pa_insert_iterator {
     hash_pa_insert_iterator(
-	hash_table<VID,Hash> & table, VID * list, const VID * start )
+	hash_set<VID,Hash> & table, VID * list, const VID * start )
 	: m_table( table ), m_list( list ), m_start( start ) { }
 
     void push_back( const VID * lt, const VID * rt = nullptr ) {
@@ -193,7 +194,7 @@ struct hash_pa_insert_iterator {
     }
 
 private:
-    hash_table<VID,Hash> & m_table;
+    hash_set<VID,Hash> & m_table;
     VID * m_list;
     const VID * m_start;
 };
@@ -207,7 +208,8 @@ public:
     using EID = lEID;
     using Hash = lHash;
     using self_type = GraphHAdjPA<VID,EID,dual_rep,Hash>;
-    using hash_table_type = graptor::hash_table<VID,Hash>;
+    using hash_set_type = graptor::hash_set<VID,Hash>;
+    using hash_table_type = graptor::hash_table<VID,VID,Hash>;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
@@ -241,8 +243,8 @@ public:
 	    if constexpr ( dual_rep )
 		s /= 2;
 	    VID logs = rt_ilog2( s );
-	    hash_table_type & a = m_adjacency[v];
-	    new ( &a ) hash_table_type( &hashes[index[v]+(dual_rep?s:0)], 0, logs );
+	    hash_set_type & a = m_adjacency[v];
+	    new ( &a ) hash_set_type( &hashes[index[v]+(dual_rep?s:0)], 0, logs );
 	    a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	    if constexpr ( dual_rep )
@@ -277,9 +279,13 @@ public:
 	}
 
 	// Place XP in hash table for fast intersection
+#if 0
 	hash_table_type XP_hash( ce );
 	for( VID i=0; i < ce; ++i )
-	    XP_hash.insert( XP[i] );
+	    XP_hash.insert( XP[i], i );
+#else
+	hash_set_type XP_hash( XP, XP+ce );
+#endif
 
 	new ( &m_storage ) mm::buffer<VID>( h, alloc );
 
@@ -287,7 +293,7 @@ public:
 	EID s_next = 0;
 	for( VID su=0; su < ce; ++su ) {
 	    VID u = XP[su];
-	    hash_table_type & a = m_adjacency[su];
+	    hash_set_type & a = m_adjacency[su];
 
 	    // Note: ce >> degree( u ). Use dual representation so that the
 	    // main list for iteration can be swapped.
@@ -295,8 +301,31 @@ public:
 	    VID deg = G.getDegree( u );
 	    if( ce > 2*deg && n != nullptr ) [[likely]] {
 #if 1
+#if 0
+		// Alternative: use hash table to translate vertex IDs
+		VID * arr = &hashes[s_next];
+		const VID * n_start
+		    = su < ne ? std::lower_bound( n, n+deg, XP[ne] ) : n;
+		VID sdeg = std::min( deg, ce );
+		VID logs = get_log_hash_slots( sdeg );
+		VID s = 1 << logs;
+		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
+
+		for( const VID * p=n_start; p != n+deg; ++p ) {
+		    VID v = *p;
+		    VID sv;
+		    if( XP_hash.contains( v, sv ) ) {
+			if( sv >= ne || su >= ne ) {
+			    a.insert( sv );
+			    *arr++ = sv;
+			}
+		    }
+		}
+		s_next += 2*s;
+#else
 		// Alternative: first place intersection in sequential storage,
 		// using hash of XP, then translate and insert in adjacency a
+		// Seems best-performing
 		VID * arr = &hashes[s_next];
 		const VID * n_start
 		    = su < ne ? std::lower_bound( n, n+deg, XP[ne] ) : n;
@@ -304,7 +333,7 @@ public:
 		    n_start, n+deg, XP_hash, arr );
 		VID logs = get_log_hash_slots( e - arr );
 		VID s = 1 << logs;
-		new ( &a ) hash_table_type( &hashes[s_next+s], 0, logs );
+		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
 		s_next += 2*s;
 		
 		VID * j = arr;
@@ -319,11 +348,12 @@ public:
 			a.insert( sv );
 		    }
 		}
+#endif
 #else
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
-		new ( &a ) hash_table_type( &hashes[s_next+s], 0, logs );
+		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
 		VID * arr = &hashes[s_next];
 		s_next += 2*s;
 
@@ -356,7 +386,7 @@ public:
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
-		new ( &a ) hash_table_type( &hashes[s_next+s], 0, logs );
+		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
 		hash_pa_insert_iterator<dual_rep,true,Hash>
 		    out( a, &hashes[s_next], XP );
 		graptor::hash_scalar::intersect<true>(
@@ -381,10 +411,10 @@ public:
     vertex_iterator vend() { return vertex_iterator( numVertices() ); }
     vertex_iterator vend() const { return vertex_iterator( numVertices() ); }
 
-    hash_table_type & get_adjacency( VID v ) const {
+    hash_set_type & get_adjacency( VID v ) const {
 	return const_cast<self_type *>( this )->get_adjacency( v );
     }
-    hash_table_type & get_adjacency( VID v ) { return m_adjacency[v]; }
+    hash_set_type & get_adjacency( VID v ) { return m_adjacency[v]; }
 
     const VID * get_neighbours( VID v ) const {
 	if constexpr ( dual_rep )
@@ -410,10 +440,10 @@ public:
 
 private:
     static VID get_hash_slots( VID deg ) {
-	return VID(1) << hash_table_type::required_log_size( deg );
+	return VID(1) << hash_set_type::required_log_size( deg );
     }
     static VID get_log_hash_slots( VID deg ) {
-	return hash_table_type::required_log_size( deg );
+	return hash_set_type::required_log_size( deg );
     }
     static EID get_hash_slots( const EID * index, VID n ) {
 	EID h = 0;
@@ -425,7 +455,7 @@ private:
 private:
     VID m_n;
     mm::buffer<VID> m_storage;
-    mm::buffer<hash_table_type> m_adjacency;
+    mm::buffer<hash_set_type> m_adjacency;
 };
 
 

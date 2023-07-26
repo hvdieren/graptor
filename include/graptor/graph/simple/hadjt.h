@@ -9,7 +9,7 @@
 
 #include "graptor/container/range_iterator.h"
 #include "graptor/container/generic_edge_iterator.h"
-#include "graptor/container/hash_table.h"
+#include "graptor/container/hash_set.h"
 #include "graptor/container/difference_iterator.h"
 
 namespace graptor {
@@ -32,13 +32,13 @@ public:
     explicit GraphHAdjTable( VID n ) :
 	m_n( n ),
 	m_m( 0 ),
-	m_hashes( new hash_table<VID,Hash>[m_n]() ) {
+	m_hashes( new hash_set<VID,Hash>[m_n]() ) {
 	// hashes initialised?
     }
     GraphHAdjTable( const ::GraphCSx & G ) :
 	m_n( G.numVertices() ),
 	m_m( G.numEdges() ),
-	m_hashes( new hash_table<VID,Hash>[m_n]() ) {
+	m_hashes( new hash_set<VID,Hash>[m_n]() ) {
 	const EID * const index = G.getIndex();
 	const VID * const edges = G.getEdges();
 
@@ -73,8 +73,8 @@ public:
     }
 
     VID getDegree( VID v ) { return m_hashes[v].size(); }
-    hash_table<VID,Hash> & get_adjacency( VID v ) { return m_hashes[v]; }
-    const hash_table<VID,Hash> & get_adjacency( VID v ) const {
+    hash_set<VID,Hash> & get_adjacency( VID v ) { return m_hashes[v]; }
+    const hash_set<VID,Hash> & get_adjacency( VID v ) const {
 	return m_hashes[v];
     }
 
@@ -103,7 +103,7 @@ public:
 private:
     VID m_n;
     EID m_m;
-    hash_table<VID,Hash> * m_hashes;
+    hash_set<VID,Hash> * m_hashes;
 };
 
 } // namespace graph
