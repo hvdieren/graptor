@@ -2419,12 +2419,10 @@ bool mce_leaf(
     if( plg < P_MIN_SIZE )
 	plg = P_MIN_SIZE;
 
-/* TODO - enable?
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
 	return true;
     }
-*/
 
     if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
 	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
