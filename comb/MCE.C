@@ -2368,10 +2368,10 @@ void mce_top_level(
 	return;
     }
     
-#if !ABLATION_DISABLE_TOP_DENSE
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
+#if !ABLATION_DISABLE_TOP_DENSE
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
