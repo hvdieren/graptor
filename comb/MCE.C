@@ -925,12 +925,12 @@ std::pair<VID,VID> mc_get_pivot_xp(
 
 	// Abort during intersection_size if size will be less than tv_max
 	// Note: hash_vector is much slower in this instance
-#if ABLATION_GENERIC_EXCEED
-	size_t tv = graptor::hash_scalar::intersect_size(
-	    XP+ne, XP+ce, hadj );
-#else
+#if !ABLATION_GENERIC_EXCEED
 	size_t tv = graptor::hash_scalar::intersect_size_exceed(
 	    XP+ne, XP+ce, hadj, tv_max );
+#else
+	size_t tv = graptor::hash_scalar::intersect_size(
+	    XP+ne, XP+ce, hadj );
 #endif
 	    
 	if( tv > tv_max ) {
@@ -2596,12 +2596,20 @@ int main( int argc, char *argv[] ) {
     GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
     std::cout << "Remapping graph: " << tm.next() << "\n";
 
-    // graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( R );
-    // graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
-	// H( R, true, numa_allocation_interleaved() );
     HFGraphTy H( R, numa_allocation_interleaved() );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
+    std::cout << "Options:"
+	      << "\n\tABLATION_DENSE_EXCEED=" << ABLATION_DENSE_EXCEED
+	      << "\n\tABLATION_GENERIC_EXCEED=" << ABLATION_GENERIC_EXCEED
+	      << "\n\tABLATION_BLOCKED_EXCEED=" << ABLATION_BLOCKED_EXCEED
+	      << "\n\tABLATION_DENSE_HASH_MASK=" << ABLATION_DENSE_HASH_MASK
+	      << "\nABLATION_BLOCKED_DISABLE_XP_HASH="
+	      << ABLATION_BLOCKED_DISABLE_XP_HASH
+	      << "\n\tABLATION_BLOCKED_HASH_MASK="
+	      << ABLATION_BLOCKED_HASH_MASK=" 
+	      << '\n';
+    
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
     MCE_Parallel_Enumerator E( farm );
 
