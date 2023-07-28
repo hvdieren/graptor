@@ -128,6 +128,14 @@ public:
 	__sync_fetch_and_add( &m_histogram[s-1], 1 );
     }
 
+    MCE_Enumerator
+    operator + ( const MCE_Enumerator & e ) const {
+	MCE_Enumerator sum( m_degeneracy );
+	for( size_t n=0; n < m_histogram.size(); ++n )
+	    sum.m_histogram[n] = m_histogram[n] + e.m_histogram[n];
+	return sum;
+    }
+
     std::ostream & report( std::ostream & os ) const {
 	assert( m_histogram.size() >= m_degeneracy+1 );
 
@@ -167,10 +175,72 @@ struct MCE_Enumerator_stage2 {
     }
 
     size_t get_surplus() const { return m_surplus; }
-    
+
 private:
     MCE_Enumerator & E;
     const size_t m_surplus;
+};
+
+class MCE_Enumerator_Farm {
+public:
+    MCE_Enumerator_Farm( size_t d ) : m_degeneracy( d ) { }
+
+    MCE_Enumerator_stage2 get_enumerator( size_t surplus ) {
+	return MCE_Enumerator_stage2( get_enumerator_ref(), surplus );
+    }
+    
+    MCE_Enumerator sum() const {
+	return std::accumulate(
+	    m_enum.begin(), m_enum.end(), MCE_Enumerator( m_degeneracy ),
+	    []( const MCE_Enumerator & s,
+		const std::pair<pthread_t,MCE_Enumerator> & p ) {
+		return s + p.second;
+	    } );
+    }
+
+    MCE_Enumerator & get_enumerator_ref() {
+	const pthread_t tid = pthread_self();
+	std::lock_guard<std::mutex> guard( m_mutex );
+	auto it = m_enum.find( tid );
+	if( it == m_enum.end() ) {
+	    auto it2 = m_enum.emplace(
+		std::make_pair( tid, MCE_Enumerator( m_degeneracy ) ) );
+	    return it2.first->second;
+	}
+	return it->second;
+    }
+
+
+private:
+    size_t m_degeneracy;
+    std::mutex m_mutex;
+    std::map<pthread_t,MCE_Enumerator> m_enum;
+};
+
+class MCE_Parallel_Enumerator {
+public:
+    MCE_Parallel_Enumerator( MCE_Enumerator_Farm & farm, size_t surplus = 0 )
+	: m_farm( farm ), m_surplus( surplus ) { }
+    MCE_Parallel_Enumerator( MCE_Parallel_Enumerator & E, size_t surplus = 0 )
+	: m_farm( E.m_farm ), m_surplus( E.m_surplus + surplus ) { }
+
+    MCE_Enumerator_stage2 get_enumerator( size_t more_surplus = 1 ) {
+	return m_farm.get_enumerator( m_surplus + more_surplus );
+    }
+    
+    MCE_Enumerator & get_enumerator_ref() {
+	assert( m_surplus == 0 );
+	return m_farm.get_enumerator_ref();
+    }
+    
+    // Recod clique of size s
+    void record( size_t s ) {
+	m_farm.get_enumerator_ref().record( m_surplus + s );
+    }
+
+private:
+    MCE_Enumerator_Farm & m_farm;
+    size_t m_surplus;
 };
 
 
@@ -1479,7 +1549,7 @@ void
 mce_bron_kerbosch_recpar_xp2(
     const HGraphTy & G,
     VID degeneracy,
-    MCE_Enumerator_stage2 & E,
+    MCE_Parallel_Enumerator & E,
     const VID * XP,
     VID ne,
     VID ce,
@@ -1568,14 +1638,15 @@ mce_bron_kerbosch_recpar_xp2(
 		    std::sort( XP_new, XP_new+ne_new );
 		    std::sort( XP_new+ne_new, XP_new+ce_new );
 		}
+		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		bool ok = mce_leaf<VID,EID>(
-		    G, E, depth+1, XP_new, ne_new, ce_new );
+		    G, E2, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
 		    StackLikeAllocator alloc;
-		    MCE_Enumerator_stage2 E2( E, depth+1 );
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
 		    std::iota( XP_new, XP_new+ce_new, 0 );
 		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
@@ -1600,7 +1671,7 @@ mce_bron_kerbosch_recpar_xp2_top(
     const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
-    MCE_Enumerator_stage2 & E ) {
+    MCE_Parallel_Enumerator & E ) {
     VID n = G.numVertices();
 
     // start_pos calculated to avoid revisiting vertices ordered before the
@@ -2166,17 +2237,21 @@ void mce_dense_fn(
 
 void mce_variable(
     const HGraphTy & HG,
-    MCE_Enumerator & E,
+    MCE_Parallel_Enumerator & E,
     VID v,
     VID start_pos,
     VID degeneracy
     ) {
-    MCE_Enumerator_stage2 Ee( E, 1 ); // 1 for top-level vertex re: cutout
     VID n = HG.numVertices();
-    if( n - start_pos >= (1<<P_MAX_SIZE) )
+    if( n - start_pos >= (1<<P_MAX_SIZE) ) {
+	// 1 for top-level vertex re: cutout
+	MCE_Parallel_Enumerator Ee( E, 1 );
 	mce_bron_kerbosch_recpar_xp2_top( HG, start_pos, degeneracy, Ee );
-    else
+    } else {
+	// 1 for top-level vertex re: cutout
+	MCE_Enumerator_stage2 Ee = E.get_enumerator( 1 );
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
+    }
 }
 
 typedef void (*mce_func)(
@@ -2243,7 +2318,7 @@ size_t get_size_class( uint32_t v ) {
 void mce_top_level(
     const GraphCSx & G,
     const HFGraphTy & H,
-    MCE_Enumerator & E,
+    MCE_Parallel_Enumerator & E,
     VID v,
     VID degeneracy ) {
     graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> cut( G, v );
@@ -2255,7 +2330,7 @@ void mce_top_level(
     if( num <= 3 ) {
 	timer tm;
 	tm.start();
-	MCE_Enumerator_stage2 E2( E, 0 );
+	MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 	mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
 			 cut.get_num_vertices(), E2 );
 	stats.record_tiny( tm.stop() );
@@ -2267,7 +2342,7 @@ void mce_top_level(
     if( num <= TUNABLE_SMALL_AVOID_CUTOUT ) {
 	timer tm;
 	tm.start();
-	MCE_Enumerator_stage2 E2( E, 1 );
+	MCE_Enumerator_stage2 E2 = E.get_enumerator( 1 );
 	StackLikeAllocator alloc;
 	VID ce = cut.get_num_vertices();
 	VID * XP = alloc.template allocate<VID>( ce );
@@ -2286,9 +2361,11 @@ void mce_top_level(
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
 
+    MCE_Enumerator & E2 = E.get_enumerator_ref();
+
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
 	return mce_dense_func[nlg-N_MIN_SIZE](
-	    G, H, E, v, cut, stats.get( nlg ) );
+	    G, H, E2, v, cut, stats.get( nlg ) );
     }
 
     VID xlg = get_size_class( xnum );
@@ -2301,17 +2378,17 @@ void mce_top_level(
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
 	return mce_dense_func[nlg-N_MIN_SIZE](
-	    G, H, E, v, cut, stats.get( nlg ) );
+	    G, H, E2, v, cut, stats.get( nlg ) );
     }
 
     if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
 	return mce_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
-	    G, H, E, v, cut, stats.get( xlg, plg ) );
+	    G, H, E2, v, cut, stats.get( xlg, plg ) );
     }
 
     if( nlg <= N_MAX_SIZE ) {
 	return mce_dense_func[nlg-N_MIN_SIZE](
-	    G, H, E, v, cut, stats.get( nlg ) );
+	    G, H, E2, v, cut, stats.get( nlg ) );
     }
 
     timer tm;
@@ -2482,11 +2559,11 @@ int main( int argc, char *argv[] ) {
 
     GraphCSx G0( ifile, -1, symmetric );
 
-    std::cerr << "Reading graph: " << tm.next() << "\n";
+    std::cout << "Reading graph: " << tm.next() << "\n";
 
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
-    std::cerr << "Removed self-edges: " << tm.next() << "\n";
+    std::cout << "Removed self-edges: " << tm.next() << "\n";
 
     VID n = G.numVertices();
     EID m = G.numEdges();
@@ -2496,7 +2573,7 @@ int main( int argc, char *argv[] ) {
     VID dmax_v = G.findHighestDegreeVertex();
     VID dmax = G.getDegree( dmax_v );
     double davg = (double)m / (double)n;
-    std::cerr << "Undirected graph: n=" << n << " m=" << m
+    std::cout << "Undirected graph: n=" << n << " m=" << m
 	      << " density=" << density
 	      << " dmax=" << dmax
 	      << " davg=" << davg
@@ -2506,29 +2583,30 @@ int main( int argc, char *argv[] ) {
     KCv<GraphCSRAdaptor> kcore( GA, P );
     kcore.run();
     auto & coreness = kcore.getCoreness();
-    std::cerr << "Calculating coreness: " << tm.next() << "\n";
-    std::cerr << "coreness=" << kcore.getLargestCore() << "\n";
+    std::cout << "Calculating coreness: " << tm.next() << "\n";
+    std::cout << "coreness=" << kcore.getLargestCore() << "\n";
 
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
     global_coreness = coreness.get_ptr();
-    std::cerr << "Determining sort order: " << tm.next() << "\n";
+    std::cout << "Determining sort order: " << tm.next() << "\n";
 
     GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
-    std::cerr << "Remapping graph: " << tm.next() << "\n";
+    std::cout << "Remapping graph: " << tm.next() << "\n";
 
     // graptor::graph::GraphHAdjTable<VID,EID,hash_fn> H( R );
     // graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>
 	// H( R, true, numa_allocation_interleaved() );
     HFGraphTy H( R, numa_allocation_interleaved() );
-    std::cerr << "Building hashed graph: " << tm.next() << "\n";
+    std::cout << "Building hashed graph: " << tm.next() << "\n";
 
-    MCE_Enumerator E( kcore.getLargestCore() );
+    MCE_Enumerator_Farm farm( kcore.getLargestCore() );
+    MCE_Parallel_Enumerator E( farm );
 
     system( "date" );
-    std::cerr << "Start enumeration: " << tm.next() << "\n";
+    std::cout << "Start enumeration: " << tm.next() << "\n";
 
     // Number of partitions is tunable. A fairly large number is helpful
     // to help load balancing.
@@ -2541,29 +2619,29 @@ int main( int argc, char *argv[] ) {
 	}
     } );
 
-    std::cerr << "Enumeration: " << tm.next() << "\n";
+    std::cout << "Enumeration: " << tm.next() << "\n";
 
     all_variant_statistics stats = mce_stats.sum();
 
     double duration = tm.total();
-    std::cerr << "Completed MCE in " << duration << " seconds\n";
+    std::cout << "Completed MCE in " << duration << " seconds\n";
     for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
-	std::cerr << (1<<n) << "-bit dense: ";
-	stats.get( n ).print( std::cerr ); 
+	std::cout << (1<<n) << "-bit dense: ";
+	stats.get( n ).print( std::cout ); 
     }
     for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
 	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
-	    std::cerr << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
-	    stats.get( x, p ).print( std::cerr );
+	    std::cout << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
+	    stats.get( x, p ).print( std::cout );
 	}
-    std::cerr << "tiny: ";
-    stats.m_tiny.print( std::cerr );
-    std::cerr << "generic: ";
-    stats.m_gen.print( std::cerr );
-    std::cerr << "generic build: ";
-    stats.m_genbuild.print( std::cerr );
+    std::cout << "tiny: ";
+    stats.m_tiny.print( std::cout );
+    std::cout << "generic: ";
+    stats.m_gen.print( std::cout );
+    std::cout << "generic build: ";
+    stats.m_genbuild.print( std::cout );
 
-    E.report( std::cerr );
+    farm.sum().report( std::cout );
 
     rev_order.del();
     order.del();
