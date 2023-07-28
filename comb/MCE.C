@@ -43,6 +43,18 @@
 #define ABLATION_GENERIC_EXCEED 0
 #endif
 
+#ifndef ABLATION_DISABLE_LEAF
+#define ABLATION_DISABLE_LEAF 0
+#endif
+
+#ifndef ABLATION_DISABLE_TOP_TINY
+#define ABLATION_DISABLE_TOP_TINY 0
+#endif
+
+#ifndef ABLATION_DISABLE_TOP_DENSE
+#define ABLATION_DISABLE_TOP_DENSE 0
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
@@ -2327,6 +2339,7 @@ void mce_top_level(
 
     VID num = cut.get_num_vertices();
 
+#if !ABLATION_DISABLE_TOP_TINY
     if( num <= 3 ) {
 	timer tm;
 	tm.start();
@@ -2336,6 +2349,7 @@ void mce_top_level(
 	stats.record_tiny( tm.stop() );
 	return;
     }
+#endif
 
     // Threshold is tunable and depends on cost of creating a cut-out vs the
     // cost of merge and hash intersections.
@@ -2354,6 +2368,7 @@ void mce_top_level(
 	return;
     }
     
+#if !ABLATION_DISABLE_TOP_DENSE
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
@@ -2390,6 +2405,7 @@ void mce_top_level(
 	return mce_dense_func[nlg-N_MIN_SIZE](
 	    G, H, E2, v, cut, stats.get( nlg ) );
     }
+#endif
 
     timer tm;
     tm.start();
@@ -2502,6 +2518,9 @@ bool mce_leaf(
     const VID * XP,
     VID ne,
     VID ce ) {
+#if ABLATION_DISABLE_LEAF
+    return false;
+#else
     VID num = ce;
     VID xnum = ne;
     VID pnum = ce - ne;
@@ -2546,6 +2565,7 @@ bool mce_leaf(
     }
 
     return false;
+#endif // ABLATION_DISABLE_LEAF
 }
 
 int main( int argc, char *argv[] ) {
@@ -2603,11 +2623,16 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DENSE_EXCEED=" << ABLATION_DENSE_EXCEED
 	      << "\n\tABLATION_GENERIC_EXCEED=" << ABLATION_GENERIC_EXCEED
 	      << "\n\tABLATION_BLOCKED_EXCEED=" << ABLATION_BLOCKED_EXCEED
+	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
+	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
+	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
 	      << "\n\tABLATION_DENSE_HASH_MASK=" << ABLATION_DENSE_HASH_MASK
 	      << "\nABLATION_BLOCKED_DISABLE_XP_HASH="
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_HASH_MASK="
-	      << ABLATION_BLOCKED_HASH_MASK=" 
+	      << ABLATION_BLOCKED_HASH_MASK
+	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT="
+	      << TUNABLE_SMALL_AVOID_CUTOUT
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
