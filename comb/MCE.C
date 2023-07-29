@@ -1580,12 +1580,15 @@ mce_bron_kerbosch_seq_xp(
     }
 }
 
+//! recursively parallel version of Bron-Kerbosch w/ pivoting
+//
+// XP may be modified by the method. It is not required to be in sort order.
 void
 mce_bron_kerbosch_recpar_xp2(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
-    const VID * XP,
+    VID * XP,
     VID ne,
     VID ce,
     int depth ) {
@@ -1607,26 +1610,33 @@ mce_bron_kerbosch_recpar_xp2(
     const auto & padj = G.get_adjacency( pivot );
 
     // Pre-sort, affects vertex selection order in recursive calls
-    const VID * XP_piv = XP;
+    // We own XP and are entitled to modify it.
     VID pe = ce - sum; // neighbours of pivot moved to end.
     if( sum > 0 ) {
-	VID * XP_prep = new VID[ce];
+	// Semisort P into P\N(pivot) and P\cap N(pivot)
 	VID P_ins = pe;
-	std::copy( XP, XP+ne, XP_prep );
-	VID ne_i = ne;
-	for( VID i=ne; i < ce; ++i ) {
-	    if( padj.contains( XP[i] ) )
-		XP_prep[P_ins++] = XP[i];
-	    else
-		XP_prep[ne_i++] = XP[i];
+	for( VID i=ne; i < pe; ++i ) {
+	    if( padj.contains( XP[i] ) ) {
+		// Find insertion point
+		VID v = XP[i];
+		while( padj.contains( XP[P_ins] ) )
+		    P_ins++;
+
+		assert( P_ins != ce );
+		// swap
+		XP[i] = XP[P_ins];
+		XP[P_ins] = v;
+		P_ins++;
+
+		// All done - no more vertices available to swap
+		if( P_ins == ce )
+		    break;
+	    }
 	}
-	assert( P_ins == ce );
-	assert( ne_i == pe );
-	XP_piv = XP_prep;
     }
 
     parallel_loop( ne, pe, 1, [&]( VID i ) { // TODO: [=] ?
-	VID v = XP_piv[i];
+	VID v = XP[i];
 
 	// Not keeping track of R
 
@@ -1645,11 +1655,12 @@ mce_bron_kerbosch_recpar_xp2(
 	    //   however in parallel execution we cannot.
 
 	    // Now work with modified XP. Could consider intersect in-place.
+	    // Note: skip XP[i] as we know there are no self-loops.
 	    VID * XP_new = new VID[std::min(ce,deg)];
 	    VID ne_new = graptor::hash_vector::intersect(
-		XP_piv, XP_piv+i, adj, XP_new ) - XP_new;
+		XP, XP+i, adj, XP_new ) - XP_new;
 	    VID ce_new = graptor::hash_vector::intersect(
-		XP_piv+i, XP_piv+ce, adj, XP_new+ne_new ) - XP_new;
+		XP+i+1, XP+ce, adj, XP_new+ne_new ) - XP_new;
 
 	    if( ce_new - ne_new == 0 ) {
 		// Reached leaf of search tree
@@ -1668,7 +1679,17 @@ mce_bron_kerbosch_recpar_xp2(
 		// TODO: is P a merge of two sorted sub-arrays?
 		// Restore sort order of X set. This may be disrupted as
 		// vertices are added out of order, specifically
-		// pivot neighbours.
+		// pivot neighbours. An XP list can be constructed at some point
+		// where a vertex v < XP[ne-1] was a neighbour of the pivot
+		// at the time when XP was constructed. As such, growing
+		// the X part to XP...XP+i, with XP[i-1] == v, the X set will
+		// become unsorted.
+		// TODO: does insertion sort of X[i] into X suffice?
+		//       Note: would need to repeat for every j=ne...i
+		//       or sort( XP+ne, XP+i ) (can be done once before loop),
+		//       then merge( XP..XP+ne, XP+ne..XP+i ). In-place merge
+		//       non-trivial. Would be very similar to insertion sort,
+		//       >O(n).
 		if constexpr ( HGraphTy::has_dual_rep ) {
 		    std::sort( XP_new, XP_new+ne_new );
 		    std::sort( XP_new+ne_new, XP_new+ce_new );
@@ -1695,11 +1716,7 @@ mce_bron_kerbosch_recpar_xp2(
 	    delete[] XP_new;
 	}
     } );
-
-    if( sum > 0 )
-	delete[] XP_piv;
 }
-
 
 void
 mce_bron_kerbosch_recpar_xp2_top(
@@ -1712,7 +1729,7 @@ mce_bron_kerbosch_recpar_xp2_top(
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
-	StackLikeAllocator alloc;
+	// StackLikeAllocator alloc;
 	// contract::vertex_set<VID> R;
 
 	// R.push( v );
@@ -1722,23 +1739,24 @@ mce_bron_kerbosch_recpar_xp2_top(
 	auto & adj = G.get_adjacency( v ); 
 
 	VID deg = adj.size();
-	const VID * XP;
+	VID * XP_new = new VID[deg];
 	if constexpr ( HGraphTy::has_dual_rep ) {
-	    XP = G.get_neighbours( v );
+	    const VID * XP = G.get_neighbours( v );
+	    std::copy( XP, XP+deg, XP_new );
 	} else {
-	    VID * XP_prep = alloc.template allocate<VID>( deg );
 	    auto end = std::copy_if(
-		adj.begin(), adj.end(), XP_prep,
+		adj.begin(), adj.end(), XP_new,
 		[&]( VID v ) { return v != adj.invalid_element; } );
-	    assert( end - XP_prep == deg );
-	    std::sort( XP_prep, XP_prep+deg );
-	    XP = XP_prep;
+	    assert( end - XP_new == deg );
+	    std::sort( XP_new, XP_new+deg ); // semisort X/P?
 	}
-	const VID * const start = std::upper_bound( XP, XP+deg, v );
-	VID ne = start - XP;
+	const VID * const start = std::upper_bound( XP_new, XP_new+deg, v );
+	VID ne = start - XP_new;
 	VID ce = deg;
 
-	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP, ne, ce, 1 );
+	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP_new, ne, ce, 1 );
+
+	delete[] XP_new;
     } );
 }
 
