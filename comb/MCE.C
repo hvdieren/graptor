@@ -19,6 +19,20 @@
 // + Check that 32-bit is faster than 64-bit for same-sized problems;
 //   same for SSE vs AVX
 
+// Experiments observations:
+// + sometimes sequentially faster; sometimes does not translate in parallel
+//   efficiency (e.g. wiki-talk, USA)
+// + need to check load balancing in detail (e.g. warwiki)
+// + sometimes sequentially slower (e.g. warwiki, 10x)
+//
+// Consider:
+// + to measure seq version with using seq_xp instead of mce_variable at the
+//   top level, to evaluate cost of recursive code (and its memory allocation,
+//   runtime overhead, ...)
+// + StackLikeAllocator PAGE_SIZE => mmap => high overhead, USAroad not needed
+//   look at retaining chunks in persistent allocator, i.e., insert layer
+//   that hands out pages to the SLAs?
+
 #ifndef ABLATION_BLOCKED_DISABLE_XP_HASH
 #define ABLATION_BLOCKED_DISABLE_XP_HASH 0
 #endif
@@ -211,6 +225,10 @@ public:
     }
 
     MCE_Enumerator & get_enumerator_ref() {
+	static thread_local MCE_Enumerator * local_enum = nullptr;
+	if( local_enum != nullptr )
+	    return *local_enum;
+	
 	const pthread_t tid = pthread_self();
 	std::lock_guard<std::mutex> guard( m_mutex );
 	auto it = m_enum.find( tid );
@@ -219,9 +237,9 @@ public:
 		std::make_pair( tid, MCE_Enumerator( m_degeneracy ) ) );
 	    return it2.first->second;
 	}
+	local_enum = &it->second;
 	return it->second;
     }
-
 
 private:
     size_t m_degeneracy;
@@ -323,6 +341,10 @@ struct all_variant_statistics {
 
 struct per_thread_statistics {
     all_variant_statistics & get_statistics() {
+	static thread_local all_variant_statistics * local_stats = nullptr;
+	if( local_stats != nullptr )
+	    return *local_stats;
+
 	const pthread_t tid = pthread_self();
 	std::lock_guard<std::mutex> guard( m_mutex );
 	auto it = m_stats.find( tid );
@@ -331,6 +353,7 @@ struct per_thread_statistics {
 		std::make_pair( tid, all_variant_statistics() ) );
 	    return it2.first->second;
 	}
+	local_stats = &it->second;
 	return it->second;
     }
     
@@ -1027,18 +1050,18 @@ class StackLikeAllocator {
 public:
     StackLikeAllocator( size_t min_chunk_size = PAGE_SIZE )
 	: m_min_chunk_size( min_chunk_size ), m_current( 0 ) {
-	if( verbose )
-	    std::cerr << "sla " << this << ": constructor\n";
+	// if( verbose )
+	// std::cerr << "sla " << this << ": constructor\n";
     }
     ~StackLikeAllocator() {
 	for( chunk_t * c : m_chunks ) {
-	    if( verbose )
-		std::cerr << "sla " << this << ": delete chunk "
-			  << c << "\n";
+	    // if( verbose )
+	    // std::cerr << "sla " << this << ": delete chunk "
+	    // << c << "\n";
 	    delete[] reinterpret_cast<char *>( c );
 	}
-	if( verbose )
-	    std::cerr << "sla " << this << ": destructor done\n";
+	// if( verbose )
+	// std::cerr << "sla " << this << ": destructor done\n";
     }
 
     template<typename T>
@@ -1087,8 +1110,8 @@ private:
 	chunk_t * c = new ( cc ) chunk_t( sz );
 	m_chunks.push_back( c );
 	m_current = m_chunks.size() - 1;
-	if( verbose )
-	    std::cerr << "sla " << this << ": new chunk " << c << "\n";
+	// if( verbose )
+	// std::cerr << "sla " << this << ": new chunk " << c << "\n";
 	return c->allocate( nbytes );
     }
 
@@ -2627,7 +2650,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
 	      << "\n\tABLATION_DENSE_HASH_MASK=" << ABLATION_DENSE_HASH_MASK
-	      << "\nABLATION_BLOCKED_DISABLE_XP_HASH="
+	      << "\n\tABLATION_BLOCKED_DISABLE_XP_HASH="
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_HASH_MASK="
 	      << ABLATION_BLOCKED_HASH_MASK
