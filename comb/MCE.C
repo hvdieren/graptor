@@ -69,6 +69,10 @@
 #define ABLATION_DISABLE_TOP_DENSE 0
 #endif
 
+#ifndef ABLATION_SORT_ORDER_TIES
+#define ABLATION_SORT_ORDER_TIES 0
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
@@ -1612,7 +1616,7 @@ mce_bron_kerbosch_recpar_xp2(
     // Pre-sort, affects vertex selection order in recursive calls
     // We own XP and are entitled to modify it.
     VID pe = ce - sum; // neighbours of pivot moved to end.
-    if( sum > 0 ) {
+    if( sum > 0 ) { // sum == 0 disables pivoting
 	// Semisort P into P\N(pivot) and P\cap N(pivot)
 	VID P_ins = pe;
 	for( VID i=ne; i < pe; ++i ) {
@@ -2649,8 +2653,14 @@ int main( int argc, char *argv[] ) {
 
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
+#if ABLATION_SORT_ORDER_TIES
     sort_order( order.get(), rev_order.get(),
 		coreness.get_ptr(), n, kcore.getLargestCore() );
+#else
+    sort_order_ties( order.get(), rev_order.get(),
+		     coreness.get_ptr(), n, kcore.getLargestCore(),
+		     GA.getOutDegree() );
+#endif
     global_coreness = coreness.get_ptr();
     std::cout << "Determining sort order: " << tm.next() << "\n";
 
@@ -2674,6 +2684,7 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_BLOCKED_HASH_MASK
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT="
 	      << TUNABLE_SMALL_AVOID_CUTOUT
+	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );

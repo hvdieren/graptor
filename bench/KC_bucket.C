@@ -758,6 +758,47 @@ sort_order( VID * order, VID * rev_order,
     delete[] histo;
 }
 
+//! Auxiliary method for downstream tasks
+void
+sort_order_ties( VID * order, VID * rev_order,
+		 const VID * const coreness,
+		 VID n,
+		 VID K,
+		 const VID * const degree ) {
+    VID * histo = new VID[K+1];
+    std::fill( &histo[0], &histo[K+1], 0 );
+
+    // Histogram
+    for( VID v=0; v < n; ++v ) {
+	VID c = coreness[v];
+	assert( c <= K );
+	histo[K-c]++;
+    }
+
+    // Prefix sum
+    VID sum = sequence::plusScan( histo, histo, K+1 );
+
+    // Place in order
+    for( VID v=0; v < n; ++v ) {
+	VID c = coreness[v];
+	VID pos = histo[K-c]++;
+	order[pos] = v;
+	// rev_order[v] = pos;
+    }
+
+    // Degree sorting (crude)
+    parallel_loop( (VID)0, K+1, [&]( VID c ) {
+	std::sort( &order[c==0?0:histo[c-1]], &order[c==K?n:histo[c]] );
+    } );
+
+    // Construct reverse order
+    parallel_loop( (VID)0, n, [&]( VID pos ) {
+	rev_order[order[pos]] = pos;
+    } );
+
+    delete[] histo;
+}
+
 
 #ifndef NOBENCH
 template <class GraphType>
