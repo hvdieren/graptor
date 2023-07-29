@@ -106,8 +106,12 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/intersect.h"
 
-#ifndef TUNABLE_SMALL_AVOID_CUTOUT
-#define TUNABLE_SMALL_AVOID_CUTOUT 12
+#ifndef TUNABLE_SMALL_AVOID_CUTOUT_TOP
+#define TUNABLE_SMALL_AVOID_CUTOUT_TOP 0
+#endif
+
+#ifndef TUNABLE_SMALL_AVOID_CUTOUT_LEAF
+#define TUNABLE_SMALL_AVOID_CUTOUT_LEAF 0
 #endif
 
 #define NOBENCH
@@ -1368,7 +1372,7 @@ mce_iterate_xp_iterative(
 
 		// Clear min/max size requirements to attempt
 		if constexpr ( with_leaf ) {
-		    if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT
+		    if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 			&& ( ce_new <= (1<<N_MAX_SIZE)
 			     || ( ne_new <= (1<<X_MAX_SIZE)
 				  && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
@@ -1670,7 +1674,7 @@ mce_bron_kerbosch_recpar_xp2(
 		// Reached leaf of search tree
 		if( ne_new == 0 )
 		    E.record( depth+1 );
-	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT
+	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 		       // very small -> just keep going
 		       && ( ce_new - ne_new <= (1<<P_MAX_SIZE)
 			    // on way to a clique with deep recursion?
@@ -1711,6 +1715,21 @@ mce_bron_kerbosch_recpar_xp2(
 		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
 		}
+	    } else if( G.getDegree( XP_new[ne_new] )
+		       > 2 * ( ce_new - ne_new ) ) {
+		// large sub-problem; search recursively, and also construct
+		// cut-out
+		if constexpr ( HGraphTy::has_dual_rep ) {
+		    std::sort( XP_new, XP_new+ne_new );
+		    std::sort( XP_new+ne_new, XP_new+ce_new );
+		}
+
+		GraphBuilderInduced<HGraphTy>
+		    builder( G, XP_new, ne_new, ce_new );
+		const auto & Gc = builder.get_graph();
+		std::iota( XP_new, XP_new+ce_new, 0 );
+		mce_bron_kerbosch_recpar_xp2(
+		    Gc, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
 	    } else {
 		// large sub-problem; search recursively
 		mce_bron_kerbosch_recpar_xp2(
@@ -2300,7 +2319,7 @@ void mce_variable(
     VID degeneracy
     ) {
     VID n = HG.numVertices();
-    if( n - start_pos >= (1<<P_MAX_SIZE) ) {
+    if( n - start_pos > (1<<P_MAX_SIZE) ) {
 	// 1 for top-level vertex re: cutout
 	MCE_Parallel_Enumerator Ee( E, 1 );
 	mce_bron_kerbosch_recpar_xp2_top( HG, start_pos, degeneracy, Ee );
@@ -2398,7 +2417,7 @@ void mce_top_level(
 
     // Threshold is tunable and depends on cost of creating a cut-out vs the
     // cost of merge and hash intersections.
-    if( num <= TUNABLE_SMALL_AVOID_CUTOUT ) {
+    if( num <= TUNABLE_SMALL_AVOID_CUTOUT_TOP ) {
 	timer tm;
 	tm.start();
 	MCE_Enumerator_stage2 E2 = E.get_enumerator( 1 );
@@ -2682,8 +2701,10 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_HASH_MASK="
 	      << ABLATION_BLOCKED_HASH_MASK
-	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT="
-	      << TUNABLE_SMALL_AVOID_CUTOUT
+	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_TOP="
+	      << TUNABLE_SMALL_AVOID_CUTOUT_TOP
+	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
+	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << '\n';
     
