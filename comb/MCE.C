@@ -33,6 +33,10 @@
 //   look at retaining chunks in persistent allocator, i.e., insert layer
 //   that hands out pages to the SLAs?
 
+#ifndef ABLATION_HADJPA_DISABLE_XP_HASH
+#define ABLATION_HADJPA_DISABLE_XP_HASH 0
+#endif
+
 #ifndef ABLATION_BLOCKED_DISABLE_XP_HASH
 #define ABLATION_BLOCKED_DISABLE_XP_HASH 0
 #endif
@@ -71,6 +75,14 @@
 
 #ifndef ABLATION_SORT_ORDER_TIES
 #define ABLATION_SORT_ORDER_TIES 0
+#endif
+
+#ifndef ABLATION_RECPAR_CUTOUT
+#define ABLATION_RECPAR_CUTOUT 0
+#endif
+
+#ifndef ABLATION_NEVER_RECPAR
+#define ABLATION_NEVER_RECPAR 0
 #endif
 
 #include <signal.h>
@@ -127,9 +139,12 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
-// using HGraphTy = graptor::graph::GraphHAdjTable<VID,EID,hash_fn>;
+#if ABLATION_BLOCKED_DISABLE_XP_HASH	\
+    && ABLATION_HADJPA_DISABLE_XP_HASH
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
+#else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
-// using HFGraphTy = graptor::graph::GraphHAdj<VID,EID,GraphCSx,hash_fn>;
+#endif
 using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 
 using graptor::graph::DenseMatrix;
@@ -1715,25 +1730,34 @@ mce_bron_kerbosch_recpar_xp2(
 		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
 		}
-	    } else if( G.getDegree( XP_new[ne_new] )
-		       > 2 * ( ce_new - ne_new ) ) {
-		// large sub-problem; search recursively, and also construct
-		// cut-out
-		if constexpr ( HGraphTy::has_dual_rep ) {
-		    std::sort( XP_new, XP_new+ne_new );
-		    std::sort( XP_new+ne_new, XP_new+ce_new );
-		}
-
-		GraphBuilderInduced<HGraphTy>
-		    builder( G, XP_new, ne_new, ce_new );
-		const auto & Gc = builder.get_graph();
-		std::iota( XP_new, XP_new+ce_new, 0 );
-		mce_bron_kerbosch_recpar_xp2(
-		    Gc, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
 	    } else {
-		// large sub-problem; search recursively
-		mce_bron_kerbosch_recpar_xp2(
-		    G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+#if ABLATION_RECPAR_CUTOUT == 0
+		bool cutout
+		    = G.getDegree( XP_new[ne_new] ) > 2 * ( ce_new - ne_new );
+#elif ABLATION_RECPAR_CUTOUT == 1
+		constexpr bool cutout = false;
+#elif ABLATION_RECPAR_CUTOUT == 2
+		constexpr bool cutout = true;
+#endif
+		if( cutout ) {
+		    // large sub-problem; search recursively, and also construct
+		    // cut-out
+		    if constexpr ( HGraphTy::has_dual_rep ) {
+			std::sort( XP_new, XP_new+ne_new );
+			std::sort( XP_new+ne_new, XP_new+ce_new );
+		    }
+
+		    GraphBuilderInduced<HGraphTy>
+			builder( G, XP_new, ne_new, ce_new );
+		    const auto & Gc = builder.get_graph();
+		    std::iota( XP_new, XP_new+ce_new, 0 );
+		    mce_bron_kerbosch_recpar_xp2(
+			Gc, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+		} else {
+		    // large sub-problem; search recursively
+		    mce_bron_kerbosch_recpar_xp2(
+			G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+		}
 	    }
 
 	    delete[] XP_new;
@@ -2319,6 +2343,11 @@ void mce_variable(
     VID degeneracy
     ) {
     VID n = HG.numVertices();
+#if ABLATION_NEVER_RECPAR
+    // 1 for top-level vertex re: cutout
+    MCE_Enumerator_stage2 Ee = E.get_enumerator( 1 );
+    mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
+#else
     if( n - start_pos > (1<<P_MAX_SIZE) ) {
 	// 1 for top-level vertex re: cutout
 	MCE_Parallel_Enumerator Ee( E, 1 );
@@ -2328,6 +2357,7 @@ void mce_variable(
 	MCE_Enumerator_stage2 Ee = E.get_enumerator( 1 );
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
     }
+#endif
 }
 
 typedef void (*mce_func)(
@@ -2697,6 +2727,8 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
 	      << "\n\tABLATION_DENSE_HASH_MASK=" << ABLATION_DENSE_HASH_MASK
+	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
+	      << ABLATION_HADJPA_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_DISABLE_XP_HASH="
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_HASH_MASK="
@@ -2706,6 +2738,8 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
 	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
+	      << "\n\tABLATION_RECPAR_CUTOUT=" << ABLATION_RECPAR_CUTOUT
+	      << "\n\tABLATION_NEVER_RECPAR=" << ABLATION_NEVER_RECPAR
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );

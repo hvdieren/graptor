@@ -266,8 +266,6 @@ public:
 	m_n( ce ),
 	m_adjacency( ce, alloc ) {
 	// Constructor taking cut-out and remapping vertex IDs
-	assert( has_dual_rep
-		&& "constructor aimed at creating a dual representation" );
 
 	// TODO: allocate using StackLikeAllocator
 	EID h = 0;
@@ -275,16 +273,21 @@ public:
 	    VID u = XP[su];
 	    VID deg = std::min( (VID)G.getDegree( u ), ce );
 	    VID s = get_hash_slots( deg );
-	    h += 2 * s;
+	    if constexpr ( has_dual_rep )
+		h += 2 * s;
+	    else
+		h += s;
 	}
 
 	// Place XP in hash table for fast intersection
+#if !ABLATION_HADJPA_DISABLE_XP_HASH
 #if 0
 	hash_table_type XP_hash( ce );
 	for( VID i=0; i < ce; ++i )
 	    XP_hash.insert( XP[i], i );
 #else
 	hash_set_type XP_hash( XP, XP+ce );
+#endif
 #endif
 
 	new ( &m_storage ) mm::buffer<VID>( h, alloc );
@@ -300,7 +303,7 @@ public:
 	    const VID * n = G.get_neighbours( u );
 	    VID deg = G.getDegree( u );
 	    if( ce > 2*deg && n != nullptr ) [[likely]] {
-#if 1
+#if !ABLATION_HADJPA_DISABLE_XP_HASH
 #if 0
 		// Alternative: use hash table to translate vertex IDs
 		VID * arr = &hashes[s_next];
@@ -317,7 +320,8 @@ public:
 		    if( XP_hash.contains( v, sv ) ) {
 			if( sv >= ne || su >= ne ) {
 			    a.insert( sv );
-			    *arr++ = sv;
+			    if constexpr ( has_dual_rep )
+				*arr++ = sv;
 			}
 		    }
 		}
@@ -326,6 +330,7 @@ public:
 		// Alternative: first place intersection in sequential storage,
 		// using hash of XP, then translate and insert in adjacency a
 		// Seems best-performing
+		assert( has_dual_rep && "otherwise need temporary space" );
 		VID * arr = &hashes[s_next];
 		const VID * n_start
 		    = su < ne ? std::lower_bound( n, n+deg, XP[ne] ) : n;
@@ -333,8 +338,9 @@ public:
 		    n_start, n+deg, XP_hash, arr );
 		VID logs = get_log_hash_slots( e - arr );
 		VID s = 1 << logs;
-		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
-		s_next += 2*s;
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+		s_next += has_dual_rep ? 2*s : s;
 		
 		VID * j = arr;
 		for( VID * i=arr; i != e; ++i ) {
@@ -344,7 +350,8 @@ public:
 		    VID sv = pos - XP;
 		    if( sv >= ne || su >= ne ) {
 			assert( sv != su );
-			*j++ = sv;
+			if( has_dual_rep )
+			    *j++ = sv;
 			a.insert( sv );
 		    }
 		}
@@ -353,9 +360,10 @@ public:
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
-		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
-		VID * arr = &hashes[s_next];
-		s_next += 2*s;
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep ? (s_next+s) : s_next], 0, logs );
+		VID * arr = has_dual_rep ? &hashes[s_next] : nullptr;
+		s_next += has_dual_rep ? 2*s : s;
 
 		// advance n to lower_bound of XP[ne] in n if su < ne,
 		// i.e. when looking at an X vertex, ignore X neighbours of u
@@ -363,36 +371,56 @@ public:
 		if( su < ne )
 		    n_start = std::lower_bound( n, n+deg, XP[ne] );
 
-		// X-P edges: include edges linking to X
-		if( su >= ne ) { // su is a P vertex
+		if constexpr ( has_dual_rep ) {
+		    // X-P edges: include edges linking to X
+		    if( su >= ne ) { // su is a P vertex
+			hash_pa_insert_iterator<dual_rep,false,Hash>
+			    out( a, arr, XP );
+			graptor::merge_scalar::intersect<true>(
+			    n, n+deg,	// X+P; shorter list
+			    XP, XP+ne,	// X
+			    out );
+		    }
+
+		    // P-P edges
+		    // New iterator to count elements already included
 		    hash_pa_insert_iterator<dual_rep,false,Hash>
-			out( a, arr, XP );
+			out( a, arr+a.size(), XP );
 		    graptor::merge_scalar::intersect<true>(
-			n, n+deg,	// X+P; shorter list
-			XP, XP+ne,	// X
+			n_start, n+deg, // P; shorter list
+			XP+ne, XP+ce,   // P
+			out );
+		} else {
+		    // X-P edges: include edges linking to X
+		    if( su >= ne ) { // su is a P vertex
+			hash_insert_iterator<hash_set_type> out( a, XP );
+			graptor::merge_scalar::intersect<true>(
+			    XP, XP+ne,	// X
+			    n, n+deg,	// X+P; shorter list
+			    out );
+		    }
+
+		    // P-P edges
+		    // New iterator to count elements already included
+		    hash_insert_iterator<hash_set_type> out( a, XP );
+		    graptor::merge_scalar::intersect<true>(
+			XP+ne, XP+ce,   // P
+			n_start, n+deg, // P; shorter list
 			out );
 		}
-
-		// P-P edges
-		// New iterator to count elements already included
-		hash_pa_insert_iterator<dual_rep,false,Hash>
-		    out( a, arr+a.size(), XP );
-		graptor::merge_scalar::intersect<true>(
-		    n_start, n+deg, // P; shorter list
-		    XP+ne, XP+ce,   // P
-		    out );
 #endif
 	    } else {
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
-		new ( &a ) hash_set_type( &hashes[s_next+s], 0, logs );
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
 		hash_pa_insert_iterator<dual_rep,true,Hash>
 		    out( a, &hashes[s_next], XP );
 		graptor::hash_scalar::intersect<true>(
 		    su < ne ? XP+ne : XP, XP+ce,
 		    H.get_adjacency( u ), out );
-		s_next += 2*s;
+		s_next += has_dual_rep ? 2*s : s;
 	    }
 	}
     }
