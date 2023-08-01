@@ -50,6 +50,8 @@ struct config {
     static constexpr size_t PAGE_SIZE
     = USE_HUGE_PAGES ? HUGE_PAGE_SIZE : SMALL_PAGE_SIZE;
 
+    static constexpr size_t CACHE_BLOCK_SIZE = 64;
+
     static constexpr size_t roundup_page_size( size_t size ) {
 	return size % PAGE_SIZE
 	    ? (((size + PAGE_SIZE - 1)/ PAGE_SIZE)) * PAGE_SIZE
@@ -208,6 +210,36 @@ struct methods {
 			config::BIND_TO_NODE_FLAGS, numa_node );
 
 	return alc;
+    }
+
+    template<typename T>    // type to allocate
+    static allocation
+    allocate_small( size_t elements,
+		    const char * reason = nullptr ) {
+	size_t size = elements * sizeof(T);
+	void * memp;
+
+#if DMALLOC
+	// DMALLOC currently does not support memalign; cannot mix
+	// posix_memalign with free calls.
+	memp = memalign( config::CACHE_BLOCK_SIZE, size );
+	int ret = memp == nullptr;
+#else
+	int ret = posix_memalign( &memp, config::CACHE_BLOCK_SIZE, size );
+#endif
+	if( ret != 0 ) { // failure
+	    std::cerr << __FILE__ << ':'
+		      << __LINE__ << ':'
+		      << __func__ << ": posix_memalign of size "
+		      << size << " failed: " << strerror( ret )
+		      << std::endl;
+	    abort();
+	}
+
+	// MM_DEBUG_SMALL_ALLOC( elements, sizeof(T), numa_node, alc.ptr(), reason );
+
+	intptr_t mem = reinterpret_cast<intptr_t>( memp );
+	return allocation( mem, size, false, false );
     }
 
     template<typename T>    // type to allocate

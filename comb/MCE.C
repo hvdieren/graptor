@@ -1545,7 +1545,7 @@ public:
 	const VID * const XP,
 	VID ne,
 	VID ce )
-	: S( H, H, XP, ne, ce, numa_allocation_interleaved() ),
+	: S( H, H, XP, ne, ce, numa_allocation_small() ),
 	  start_pos( ne ) { }
 
     const auto & get_graph() const { return S; }

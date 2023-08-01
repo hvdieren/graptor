@@ -201,7 +201,8 @@ enum numa_allocation_kind {
     na_local,
     na_interleaved,
     na_partitioned,
-    na_edge_partitioned
+    na_edge_partitioned,
+    na_small
 };
 
 class numa_allocation {
@@ -245,6 +246,11 @@ public:
     numa_allocation_edge_partitioned( const partitioner & part_ )
 	: numa_allocation( na_edge_partitioned ), part( part_ ) { }
     const partitioner & get_partitioner() const { return part; }
+};
+
+class numa_allocation_small : public numa_allocation {
+public:
+    numa_allocation_small() : numa_allocation( na_small ) { }
 };
 
 #if NUMA

@@ -42,6 +42,11 @@ public:
 		elements,
 		*static_cast<const numa_allocation_edge_partitioned*>( &alloc ) );
 	    break;
+	case na_small:
+	    new (this) buffer(
+		elements,
+		*static_cast<const numa_allocation_small*>( &alloc ) );
+	    break;
 	default:
 	    UNREACHABLE_CASE_STATEMENT;
 	}
@@ -79,6 +84,10 @@ public:
 	    const char * reason = nullptr )
 	: alc( methods::template allocate_local<value_type>(
 		   elements, am.node(), reason ) ) { }
+    buffer( size_t elements, numa_allocation_small am,
+	    const char * reason = nullptr )
+	: alc( methods::template allocate_small<value_type>(
+		   elements, reason ) ) { }
 
     void del( const char * reason = nullptr ) {
 	if( alc.ptr() )
