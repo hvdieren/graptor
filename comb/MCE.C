@@ -1338,21 +1338,23 @@ mce_iterate_xp_iterative(
 	    // Finish off vertex in higher-level frame
 	    if( depth > 0 ) {
 		frame_t & fr = frame[depth-1];
-		VID u = fr.XP[fr.i];
+		if( fr.i+1 < fr.ce ) {
+		    VID u = fr.XP[fr.i];
 		
-		// R.pop();
+		    // R.pop();
 
-		// Move candidate (u) from original position to appropriate
-		// place in X part (maintaining sort order).
-		// Cache tgt for next iteration as next iteration's u
-		// will be strictly larger.
-		VID * tgt = std::upper_bound( fr.prev_tgt, fr.XP+fr.ne, u );
-		if( tgt != &fr.XP[fr.i] ) { // equality when u moves to tgt == XP+ne
-		    std::copy_backward( tgt, &fr.XP[fr.i], &fr.XP[fr.i+1] );
-		    *tgt = u;
+		    // Move candidate (u) from original position to appropriate
+		    // place in X part (maintaining sort order).
+		    // Cache tgt for next iteration as next iteration's u
+		    // will be strictly larger.
+		    VID * tgt = std::upper_bound( fr.prev_tgt, fr.XP+fr.ne, u );
+		    if( tgt != &fr.XP[fr.i] ) { // equality when u moves to tgt == XP+ne
+			std::copy_backward( tgt, &fr.XP[fr.i], &fr.XP[fr.i+1] );
+			*tgt = u;
+		    }
+		    fr.prev_tgt = tgt+1;
+		    ++fr.ne;
 		}
-		fr.prev_tgt = tgt+1;
-		++fr.ne;
 		++fr.i;
 	    }
 	    continue;
@@ -1395,10 +1397,15 @@ mce_iterate_xp_iterative(
 				  && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
 			) {
 
+			/* xp_iterative retains sort order
 			if constexpr ( HGraphTy::has_dual_rep ) {
+			    assert( std::is_sorted( XP_new, XP_new+ne_new ) );
 			    std::sort( XP_new, XP_new+ne_new );
+			    assert( std::is_sorted(
+					XP_new+ne_new, XP_new+ce_new ) );
 			    std::sort( XP_new+ne_new, XP_new+ce_new );
 			}
+			*/
 
 			ok = mce_leaf<VID,EID>(
 			    G, Ee, depth, XP_new, ne_new, ce_new );
