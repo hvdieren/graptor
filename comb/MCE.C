@@ -2442,6 +2442,11 @@ void mce_top_level(
 
     VID num = cut.get_num_vertices();
 
+    // Do not count 1-cliques for isolated vertices
+    // Blanusa's algorithm does sometimes count these, but not always.
+    if( num == 0 )
+	return;
+
 #if !ABLATION_DISABLE_TOP_TINY
     if( num <= 3 ) {
 	timer tm;
@@ -2456,7 +2461,7 @@ void mce_top_level(
 
     // Threshold is tunable and depends on cost of creating a cut-out vs the
     // cost of merge and hash intersections.
-    if( num <= TUNABLE_SMALL_AVOID_CUTOUT_TOP ) {
+    if( num < TUNABLE_SMALL_AVOID_CUTOUT_TOP ) {
 	timer tm;
 	tm.start();
 	MCE_Enumerator_stage2 E2 = E.get_enumerator( 1 );
