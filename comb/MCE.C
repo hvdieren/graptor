@@ -400,7 +400,7 @@ per_thread_statistics mce_stats;
  * HGraph is a graph type that supports a get_adjacency(VID) method that returns
  * a type with contains method.
  */
-template<typename HGraph>
+template<bool at_leaf, typename HGraph>
 void
 mce_tiny(
     const HGraph & H,
@@ -411,6 +411,8 @@ mce_tiny(
     if( num == 0 ) {
 	if( E.get_surplus() > 1 ) // min clique size counted is 2
 	    E.record( 0 );
+	else if constexpr ( !at_leaf )
+	    E.record( 1 ); // v
     } else if( num == 1 ) {
 	if( start_pos == 0 )
 	    E.record( 2 ); // v, 0
@@ -2438,7 +2440,7 @@ void mce_top_level(
 	timer tm;
 	tm.start();
 	MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
-	mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
+	mce_tiny<false>( H, cut.get_vertices(), cut.get_start_pos(),
 			 cut.get_num_vertices(), E2 );
 	stats.record_tiny( tm.stop() );
 	return;
@@ -2621,7 +2623,7 @@ bool mce_leaf(
 
     if( ce <= 3 ) {
 	MCE_Enumerator_stage2 E2( E, r-1 );
-	mce_tiny( H, XP, ne, ce, E2 );
+	mce_tiny<true>( H, XP, ne, ce, E2 );
 	return true;
     }
 
