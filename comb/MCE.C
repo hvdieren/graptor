@@ -400,7 +400,7 @@ per_thread_statistics mce_stats;
  * HGraph is a graph type that supports a get_adjacency(VID) method that returns
  * a type with contains method.
  */
-template<bool at_leaf, typename HGraph>
+template<typename HGraph>
 void
 mce_tiny(
     const HGraph & H,
@@ -411,8 +411,6 @@ mce_tiny(
     if( num == 0 ) {
 	if( E.get_surplus() > 1 ) // min clique size counted is 2
 	    E.record( 0 );
-	else if constexpr ( !at_leaf )
-	    E.record( 1 ); // v
     } else if( num == 1 ) {
 	if( start_pos == 0 )
 	    E.record( 2 ); // v, 0
@@ -1641,6 +1639,7 @@ mce_bron_kerbosch_recpar_xp2(
 
     const auto & padj = G.get_adjacency( pivot );
 
+#if ABLATION_RECPAR_INSU == 0
     // Pre-sort, affects vertex selection order in recursive calls
     // We own XP and are entitled to modify it.
     VID pe = ce - sum; // neighbours of pivot moved to end.
@@ -1666,8 +1665,32 @@ mce_bron_kerbosch_recpar_xp2(
 	    }
 	}
     }
+#elif ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
+    // Pre-calculate which neighbours to process in parallel (avoids
+    // parallel loop iterations with no work to do)
+    // Goal is to avoid sorting in inner loop
+    VID * pe_order = new VID[ce];
+    VID i_ins = ne;
+    for( VID i=ne; i < ce; ++i ) {
+	if( !padj.contains( XP[i] ) )
+	    pe_order[i_ins++] = i;
+    }
+    // Sum == 0 may imply there are a few neighbours to the pivot,
+    // so checking them would be inconsistent with the value of pe.
+    // Hence, recalculating pe.
+    VID pe = i_ins;
+    assert( sum == 0 || pe + sum == ce );
 
-    parallel_loop( ne, pe, 1, [&]( VID i ) { // TODO: [=] ?
+    // assert( std::is_sorted( XP, XP+ne ) );
+    // assert( std::is_sorted( XP+ne, XP+ce ) );
+#endif
+
+    parallel_loop( ne, pe, 1, [=,&E,&G,&padj]( VID ii ) {
+#if ABLATION_RECPAR_INSU == 0
+	VID i = ii;
+#elif ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
+	VID i = pe_order[ii];
+#endif
 	VID v = XP[i];
 
 	// Not keeping track of R
@@ -1686,13 +1709,73 @@ mce_bron_kerbosch_recpar_xp2(
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
 
+#if ABLATION_RECPAR_INSU == 0
+	    VID * XP_new = new VID[std::min(ce,deg)];
+	    VID * XP_upd = XP;
+#elif ABLATION_RECPAR_INSU == 1
+	    // Adjust XP with modifications implied by processed vertices
+	    // prior to i, making distinction between non-/neighbours of
+	    // the pivot.
+	    VID off = std::min(ce,deg);
+	    VID * XP_new = new VID[off+ce]; // extra space for updated XP
+	    VID * XP_upd = XP_new+off;
+	    // XP_upd contains the X+P lists after moving all non-neighbours
+	    // of the pivot that have been processed in prior loop iterations
+	    // from P to X while keeping the list sorted.
+	    std::copy( XP, XP+ne, XP_upd );
+	    VID x_ins = ne;
+	    VID p_ins = ii; // number of vertices moved to X
+	    VID * p_last = XP_upd;
+	    for( VID j=ne; j != i; ++j ) {
+		if( padj.contains( XP[j] ) )
+		    XP_upd[p_ins++] = XP[j];
+		else {
+		    // Put in place using insertion sort
+		    VID * pos = std::upper_bound( p_last, XP_upd+x_ins, XP[j] );
+		    std::copy_backward( pos, XP_upd+x_ins, XP_upd+x_ins+1 );
+		    *pos = XP[j];
+		    x_ins++;
+		    p_last = pos; // +1
+		}
+	    }
+	    // assert( x_ins == ii );
+	    // assert( p_ins == i );
+	    std::copy( XP+i, XP+ce, XP_upd+i );
+	    // assert( std::is_permutation( XP, XP+ce, XP_upd, XP_upd+ce ) );
+	    // assert( XP_upd[i] == v );
+	    // assert( std::is_sorted( XP_upd, XP_upd+ii ) );
+	    // assert( std::is_sorted( XP_upd+ii, XP_upd+ce ) );
+#elif ABLATION_RECPAR_INSU == 2
+	    VID * XP_new = new VID[std::min(ce,deg)];
+	    VID * XP_upd = XP;
+#endif
+
 	    // Now work with modified XP. Could consider intersect in-place.
 	    // Note: skip XP[i] as we know there are no self-loops.
-	    VID * XP_new = new VID[std::min(ce,deg)];
+	    //       (ABLATION_RECPAR_INSU == 0 only as XP_upd[ii] == XP[i])
+#if ABLATION_RECPAR_INSU == 0
 	    VID ne_new = graptor::hash_vector::intersect(
-		XP, XP+i, adj, XP_new ) - XP_new;
+		XP_upd, XP_upd+i, adj, XP_new ) - XP_new;
 	    VID ce_new = graptor::hash_vector::intersect(
-		XP+i+1, XP+ce, adj, XP_new+ne_new ) - XP_new;
+		XP_upd+i+1, XP_upd+ce, adj, XP_new+ne_new ) - XP_new;
+#elif ABLATION_RECPAR_INSU == 1
+	    VID ne_new = graptor::hash_vector::intersect(
+		XP_upd, XP_upd+ii, adj, XP_new ) - XP_new;
+	    VID ce_new = graptor::hash_vector::intersect(
+		XP_upd+ii, XP_upd+ce, adj, XP_new+ne_new ) - XP_new;
+#elif ABLATION_RECPAR_INSU == 2
+	    // Use three-way intersect to retain elements of padj that have
+	    // been skipped over so far in the P set.
+	    VID a_new = graptor::hash_vector::intersect(
+		XP_upd, XP_upd+ne, adj, XP_new ) - XP_new;
+	    // completeness requires this...
+	    // VID ne_new = graptor::hash_vector::intersect3not(
+	    // XP_upd+ne, XP_upd+i, adj, padj, XP_new+a_new ) - XP_new;
+	    VID pe_new = graptor::hash_vector::intersect3(
+		XP_upd+ne, XP_upd+i, adj, padj, XP_new+ne_new ) - XP_new;
+	    VID ce_new = graptor::hash_vector::intersect(
+		XP_upd+i, XP_upd+ce, adj, XP_new+pe_new ) - XP_new;
+#endif
 
 	    if( ce_new - ne_new == 0 ) {
 		// Reached leaf of search tree
@@ -1722,10 +1805,12 @@ mce_bron_kerbosch_recpar_xp2(
 		//       then merge( XP..XP+ne, XP+ne..XP+i ). In-place merge
 		//       non-trivial. Would be very similar to insertion sort,
 		//       >O(n).
+#if ABLATION_RECPAR_INSU == 0
 		if constexpr ( HGraphTy::has_dual_rep ) {
 		    std::sort( XP_new, XP_new+ne_new );
 		    std::sort( XP_new+ne_new, XP_new+ce_new );
 		}
+#endif
 		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		bool ok = mce_leaf<VID,EID>(
 		    G, E2, depth+1, XP_new, ne_new, ce_new );
@@ -1751,10 +1836,12 @@ mce_bron_kerbosch_recpar_xp2(
 		if( cutout ) {
 		    // large sub-problem; search recursively, and also construct
 		    // cut-out
+#if ABLATION_RECPAR_INSU == 0
 		    if constexpr ( HGraphTy::has_dual_rep ) {
 			std::sort( XP_new, XP_new+ne_new );
 			std::sort( XP_new+ne_new, XP_new+ce_new );
 		    }
+#endif
 
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
@@ -1772,6 +1859,10 @@ mce_bron_kerbosch_recpar_xp2(
 	    delete[] XP_new;
 	}
     } );
+
+#if ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
+    delete[] pe_order;
+#endif
 }
 
 void
@@ -2452,8 +2543,8 @@ void mce_top_level(
 	timer tm;
 	tm.start();
 	MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
-	mce_tiny<false>( H, cut.get_vertices(), cut.get_start_pos(),
-			 cut.get_num_vertices(), E2 );
+	mce_tiny( H, cut.get_vertices(), cut.get_start_pos(),
+		  cut.get_num_vertices(), E2 );
 	stats.record_tiny( tm.stop() );
 	return;
     }
@@ -2635,7 +2726,7 @@ bool mce_leaf(
 
     if( ce <= 3 ) {
 	MCE_Enumerator_stage2 E2( E, r-1 );
-	mce_tiny<true>( H, XP, ne, ce, E2 );
+	mce_tiny( H, XP, ne, ce, E2 );
 	return true;
     }
 

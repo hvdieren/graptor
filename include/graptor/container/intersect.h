@@ -255,6 +255,23 @@ struct hash_scalar {
 	return o;
     }
 
+    template<bool send_lhs_ptr, typename It, typename HT, typename Ot>
+    static
+    Ot intersect3( It lb, It le, const HT & htable1, const HT & htable2,
+		   Ot o ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( htable1.contains( v ) && htable2.contains( v ) ) {
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( lb );
+		else
+		    *o++ = v;
+	    }
+	    ++lb;
+	}
+	return o;
+    }
+
     template<typename It, typename HT>
     static
     size_t intersect_size( It lb, It le, const HT & htable ) {
@@ -322,6 +339,37 @@ private:
 	return lb;
     }
 
+    template<bool send_lhs_ptr,
+	     unsigned VL, bool store, typename T, typename HT, typename Ot>
+    static
+    const T *
+    detail_intersect3(
+	const T * lb, const T * le, const HT & htable1,
+	const HT & htable2, Ot & out ) {
+	using tr = vector_type_traits_vl<T,VL>;
+	using mtr = target::mask_type_traits<VL>;
+	using type = typename tr::type;
+
+	while( lb+VL <= le ) {
+	    type v = tr::loadu( lb );
+	    typename mtr::type m
+		= htable1.template multi_contains<T,VL>( v, target::mt_mask() );
+	    m = mtr::logical_and(
+		htable2.template multi_contains<T,VL>( v, target::mt_mask() ),
+		m );
+	    if constexpr ( send_lhs_ptr )
+		out.template push_back<VL>( m, v, lb );
+	    else {
+		if constexpr ( store )
+		    tr::cstoreu( out, m, v );
+		out += _popcnt32( m );
+	    }
+	    lb += VL;
+	}
+
+	return lb;
+    }
+
     template<unsigned VL, typename T, typename HT>
     static
     bool
@@ -360,6 +408,24 @@ public:
     static
     Ot intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
 	return intersect<false>( lb, le, htable, out );
+    } 
+
+    template<typename T, typename HT, typename Ot>
+    static
+    Ot intersect3( const T * lb, const T * le, const HT & htable1,
+		   const HT & htable2, Ot out ) {
+#if __AVX512F__
+	lb = detail_intersect3<false,64/sizeof(T),true>(
+	    lb, le, htable1, htable2, out );
+#endif
+#if __AVX2__
+	lb = detail_intersect3<false,32/sizeof(T),true>(
+	    lb, le, htable1, htable2, out );
+#endif
+	out = graptor::hash_scalar::template intersect3<false>(
+	    lb, le, htable1, htable2, out );
+
+	return out;
     } 
 
     template<bool send_lhs_ptr, typename T, typename HT, typename Ot>
