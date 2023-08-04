@@ -307,8 +307,7 @@ public:
 #if 0
 		// Alternative: use hash table to translate vertex IDs
 		VID * arr = &hashes[s_next];
-		const VID * n_start
-		    = su < ne ? std::lower_bound( n, n+deg, XP[ne] ) : n;
+		const VID * n_start = n;
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
@@ -330,12 +329,18 @@ public:
 		// Alternative: first place intersection in sequential storage,
 		// using hash of XP, then translate and insert in adjacency a
 		// Seems best-performing
+		// Note that this leaves the neighbourhood list in a non-sorted
+		// state: the order of neighbours if originally sorted is
+		// different from the order of remapped vertices due to the
+		// distinction between X and P: X neighbours get lower IDs than
+		// P neighbours, but that may change the order.
+		// As such, need to include the full range of the neighbour
+		// list and starting at lower_bound(n,n+deg,XP[ne]) when
+		// su >= ne is incorrect.
 		assert( has_dual_rep && "otherwise need temporary space" );
 		VID * arr = &hashes[s_next];
-		const VID * n_start
-		    = su < ne ? std::lower_bound( n, n+deg, XP[ne] ) : n;
 		VID * e = graptor::hash_scalar::intersect(
-		    n_start, n+deg, XP_hash, arr );
+		    n, n+deg, XP_hash, arr );
 		VID logs = get_log_hash_slots( e - arr );
 		VID s = 1 << logs;
 		new ( &a ) hash_set_type(
@@ -350,7 +355,7 @@ public:
 		    VID sv = pos - XP;
 		    if( sv >= ne || su >= ne ) {
 			assert( sv != su );
-			if( has_dual_rep )
+			if constexpr ( has_dual_rep )
 			    *j++ = sv;
 			a.insert( sv );
 		    }

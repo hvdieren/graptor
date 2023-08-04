@@ -1671,14 +1671,18 @@ mce_bron_kerbosch_recpar_xp2(
     // Goal is to avoid sorting in inner loop
     VID * pe_order = new VID[ce];
     VID i_ins = ne;
-    for( VID i=ne; i < ce; ++i ) {
-	if( !padj.contains( XP[i] ) )
-	    pe_order[i_ins++] = i;
+    if( sum > 0 ) {
+	for( VID i=ne; i < ce; ++i ) {
+	    if( !padj.contains( XP[i] ) )
+		pe_order[i_ins++] = i;
+	}
+    } else {
+	std::iota( pe_order+ne, pe_order+ce, ne );
     }
     // Sum == 0 may imply there are a few neighbours to the pivot,
     // so checking them would be inconsistent with the value of pe.
     // Hence, recalculating pe.
-    VID pe = i_ins;
+    VID pe = sum > 0 ? i_ins : ce;
     assert( sum == 0 || pe + sum == ce );
 
     // assert( std::is_sorted( XP, XP+ne ) );
@@ -1722,32 +1726,37 @@ mce_bron_kerbosch_recpar_xp2(
 	    // XP_upd contains the X+P lists after moving all non-neighbours
 	    // of the pivot that have been processed in prior loop iterations
 	    // from P to X while keeping the list sorted.
-	    std::copy( XP, XP+ne, XP_upd );
-	    VID x_ins = ne;
-	    VID p_ins = ii; // number of vertices moved to X
-	    VID * p_last = XP_upd;
-	    for( VID j=ne; j != i; ++j ) {
-		if( padj.contains( XP[j] ) )
-		    XP_upd[p_ins++] = XP[j];
-		else {
-		    // Put in place using insertion sort
-		    VID * pos = std::upper_bound( p_last, XP_upd+x_ins, XP[j] );
-		    std::copy_backward( pos, XP_upd+x_ins, XP_upd+x_ins+1 );
-		    *pos = XP[j];
-		    x_ins++;
-		    p_last = pos; // +1
+	    if( sum > 0 ) {
+		std::copy( XP, XP+ne, XP_upd );
+		VID x_ins = ne;
+		VID p_ins = ii; // ii - ne == number of vertices moved to X
+		VID * p_last = XP_upd;
+		for( VID j=ne; j != i; ++j ) {
+		    if( padj.contains( XP[j] ) )
+			XP_upd[p_ins++] = XP[j];
+		    else {
+			// Put in place using insertion sort
+			VID * pos = std::upper_bound( p_last, XP_upd+x_ins, XP[j] );
+			std::copy_backward( pos, XP_upd+x_ins, XP_upd+x_ins+1 );
+			*pos = XP[j];
+			x_ins++;
+			p_last = pos+1;
+		    }
 		}
+		std::copy( XP+i, XP+ce, XP_upd+i );
+		assert( x_ins == ii );
+		assert( p_ins == i );
+	    } else {
+		std::copy( XP, XP+ce, XP_upd );
 	    }
-	    // assert( x_ins == ii );
-	    // assert( p_ins == i );
-	    std::copy( XP+i, XP+ce, XP_upd+i );
 	    // assert( std::is_permutation( XP, XP+ce, XP_upd, XP_upd+ce ) );
-	    // assert( XP_upd[i] == v );
+	    assert( XP_upd[i] == v );
 	    // assert( std::is_sorted( XP_upd, XP_upd+ii ) );
 	    // assert( std::is_sorted( XP_upd+ii, XP_upd+ce ) );
+	    // assert( std::adjacent_find( XP_upd, XP_upd+ce ) == XP_upd+ce );
 #elif ABLATION_RECPAR_INSU == 2
 	    VID * XP_new = new VID[std::min(ce,deg)];
-	    VID * XP_upd = XP;
+	    const VID * XP_upd = XP;
 #endif
 
 	    // Now work with modified XP. Could consider intersect in-place.
@@ -1766,15 +1775,19 @@ mce_bron_kerbosch_recpar_xp2(
 #elif ABLATION_RECPAR_INSU == 2
 	    // Use three-way intersect to retain elements of padj that have
 	    // been skipped over so far in the P set.
+	    assert( 0 && "Wrong..." );
 	    VID a_new = graptor::hash_vector::intersect(
 		XP_upd, XP_upd+ne, adj, XP_new ) - XP_new;
-	    // completeness requires this...
-	    // VID ne_new = graptor::hash_vector::intersect3not(
-	    // XP_upd+ne, XP_upd+i, adj, padj, XP_new+a_new ) - XP_new;
+	    VID ne_new = graptor::hash_vector::intersect3not(
+		XP_upd+ne, XP_upd+i, adj, padj, XP_new+a_new ) - XP_new;
+	    std::sort( XP_new, XP_new+ne_new ); // TODO: merge?
 	    VID pe_new = graptor::hash_vector::intersect3(
 		XP_upd+ne, XP_upd+i, adj, padj, XP_new+ne_new ) - XP_new;
 	    VID ce_new = graptor::hash_vector::intersect(
 		XP_upd+i, XP_upd+ce, adj, XP_new+pe_new ) - XP_new;
+	    // assert( std::is_sorted( XP_new, XP_new+ne_new ) );
+	    assert( std::is_sorted( XP_new+ne_new, XP_new+ce_new ) );
+	    std::sort( XP_new+ne_new, XP_new+ce_new );
 #endif
 
 	    if( ce_new - ne_new == 0 ) {
@@ -1834,8 +1847,8 @@ mce_bron_kerbosch_recpar_xp2(
 		constexpr bool cutout = true;
 #endif
 		if( cutout ) {
-		    // large sub-problem; search recursively, and also construct
-		    // cut-out
+		    // large sub-problem; search recursively, and also
+		    // construct cut-out
 #if ABLATION_RECPAR_INSU == 0
 		    if constexpr ( HGraphTy::has_dual_rep ) {
 			std::sort( XP_new, XP_new+ne_new );
