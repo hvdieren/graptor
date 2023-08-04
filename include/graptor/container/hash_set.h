@@ -36,7 +36,7 @@ public:
 	  m_log_size( 4 ),
 	  m_table( new type[16] ),
 	  m_hash( 4 ),
-	  pre_allocated( false ) {
+	  m_pre_allocated( false ) {
 	clear();
     }
     explicit hash_set( size_t expected_elms )
@@ -44,7 +44,7 @@ public:
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[1<<m_log_size] ),
 	  m_hash( m_log_size ),
-	  pre_allocated( false ) {
+	  m_pre_allocated( false ) {
 	clear();
     }
     template<typename It>
@@ -59,7 +59,7 @@ public:
 	  m_log_size( log_size ),
 	  m_table( storage ),
 	  m_hash( log_size ),
-	  pre_allocated( true ) {
+	  m_pre_allocated( true ) {
 	clear();
     }
     explicit hash_set( type * storage, size_type num_elements,
@@ -68,7 +68,7 @@ public:
 	  m_log_size( log_size ),
 	  m_table( storage ),
 	  m_hash( hash ),
-	  pre_allocated( true ) {
+	  m_pre_allocated( true ) {
 	clear();
     }
     hash_set( hash_set && ) = delete;
@@ -76,7 +76,7 @@ public:
     hash_set & operator = ( const hash_set & ) = delete;
 
     ~hash_set() {
-	if( !pre_allocated )
+	if( !m_pre_allocated )
 	    delete[] m_table;
     }
 
@@ -110,7 +110,7 @@ public:
 	    return false;
 	} else {
 	    if( (m_elements+1) >= ( capacity() >> 1 ) ) {
-		assert( !pre_allocated
+		assert( !m_pre_allocated
 			&& "Cannot resize if not owning the storage" );
 		// Rehash
 		size_type old_log_size = m_log_size + 1;
@@ -353,7 +353,7 @@ private:
     size_type m_log_size;
     type * m_table;
     hash_type m_hash;
-    bool pre_allocated;
+    bool m_pre_allocated;
 };
 
 template<typename T, typename Hash>
