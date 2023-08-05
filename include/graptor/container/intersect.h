@@ -334,6 +334,7 @@ private:
 	     unsigned VL, bool store, typename T, typename HT, typename Ot>
     static
     const T *
+    // __attribute__((noinline))
     detail_intersect(
 	const T * lb, const T * le, const HT & htable, Ot & out ) {
 	using tr = vector_type_traits_vl<T,VL>;
@@ -347,8 +348,9 @@ private:
 		out.template push_back<VL>( m, v, lb );
 	    else {
 		if constexpr ( store )
-		    tr::cstoreu( out, m, v );
-		out += _popcnt32( m );
+		    out = tr::cstoreu_p( out, m, v );
+		else
+		    out += _popcnt32( m );
 	    }
 	    lb += VL;
 	}
@@ -448,7 +450,9 @@ private:
 public:
     template<typename T, typename HT, typename Ot>
     static
-    Ot intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
+    Ot
+    __attribute__((noinline))
+    intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
 	return intersect<false>( lb, le, htable, out );
     } 
 
