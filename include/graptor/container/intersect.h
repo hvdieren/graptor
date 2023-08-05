@@ -325,6 +325,75 @@ struct hash_scalar {
 
 };
 
+struct hash_wide {
+
+    static constexpr bool uses_hash = true;
+
+    template<typename It, typename HT, typename Ot>
+    static
+    Ot intersect( It lb, It le, const HT & htable, Ot o ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( htable.template wide_contains<8>( v ) )
+		*o++ = v;
+	    ++lb;
+	}
+	return o;
+    }
+
+    template<bool send_lhs_ptr, typename It, typename HT, typename Ot>
+    static
+    Ot intersect( It lb, It le, const HT & htable, Ot o ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( htable.template wide_contains<8>( v ) ) {
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( lb );
+		else
+		    *o++ = v;
+	    }
+	    ++lb;
+	}
+	return o;
+    }
+
+    template<typename It, typename HT>
+    static
+    size_t intersect_size( It lb, It le, const HT & htable ) {
+	size_t sz = 0;
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( htable.template wide_contains<8>( v ) )
+		++sz;
+	    ++lb;
+	}
+	return sz;
+    }
+
+    template<typename It, typename HT>
+    static
+    size_t intersect_size_exceed( It lb, It le, const HT & htable, size_t exceed ) {
+	size_t d = std::distance( lb, le );
+
+	if( d <= exceed )
+	    return 0;
+
+	std::make_signed_t<size_t> options = d - exceed;
+
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( !htable.template wide_contains<8>( v ) ) [[likely]]
+		if( --options <= 0 ) [[unlikely]]
+		    return 0;
+	    ++lb;
+	}
+
+	return options + exceed;
+    }
+
+};
+
+
 struct hash_vector {
 
     static constexpr bool uses_hash = true;
