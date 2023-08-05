@@ -287,6 +287,25 @@ alignas(64) const uint32_t avx512_himask_basis_epi32[32] = {
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
 
+alignas(64) const uint32_t mm_cstoreu_select[64] = {
+    0, 0, 0, 0, // 0000
+    0, 0, 0, 0, // 0001
+    1, 0, 0, 0, // 0010
+    0, 1, 0, 0, // 0011
+    2, 0, 0, 0, // 0100
+    0, 2, 0, 0, // 0101
+    1, 2, 0, 0, // 0110
+    0, 1, 2, 0, // 0111
+    3, 0, 0, 0, // 1000
+    0, 3, 0, 0, // 1001
+    1, 3, 0, 0, // 1010
+    0, 1, 3, 0, // 1011
+    2, 3, 0, 0, // 1100
+    0, 2, 3, 0, // 1101
+    1, 2, 3, 0, // 1110
+    0, 1, 2, 3  // 1111
+};
+
 const char * frontier_type_names[
     static_cast<std::underlying_type_t<frontier_type>>(
 	frontier_type::ft_N )+1] = {

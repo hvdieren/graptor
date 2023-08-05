@@ -15,6 +15,7 @@
 #endif
 
 alignas(64) extern const uint8_t sse42_4x4_evenodd_intlv_epi32[16];
+alignas(64) extern const uint32_t mm_cstoreu_select[64];
 
 namespace target {
 
@@ -50,8 +51,8 @@ public:
 
     static member_type lane( type a, int idx ) {
 	switch( idx ) {
-	case 0: return (member_type) _mm_extract_epi32( a, 0 );
-	case 1: return (member_type) _mm_extract_epi32( a, 1 );
+	case 0: return (member_type) _mm_cvtsi128_si64( a );
+	case 1: return (member_type) ( _mm_cvtsi128_si64( a ) >> 32 );
 	case 2: return (member_type) _mm_extract_epi32( a, 2 );
 	case 3: return (member_type) _mm_extract_epi32( a, 3 );
 	default:
@@ -561,6 +562,52 @@ public:
     }
     static void ntstore( member_type *addr, type val ) {
 	_mm_stream_si128( (type *)addr, val );
+    }
+
+    static member_type * cstoreu_p( member_type *addr, mask_type m, type val ) {
+	uint32_t im = ((uint32_t)m) & 0xf;
+	type select = load( &mm_cstoreu_select[4*im] );
+	type compress = _mm_castps_si128(
+	    _mm_permutevar_ps( _mm_castsi128_ps( val ), select ) );
+	storeu( addr, compress );
+	return addr + _popcnt32( im );
+
+#if 0
+	if( mask_traits::is_zero( m ) )
+	    return addr;
+	if( mask_traits::is_ones( m ) ) {
+	    storeu( addr, val );
+	    return addr + 4;
+	}
+	
+	uint32_t i = m;
+	uint64_t l01 = _mm_cvtsi128_si64( val );
+	if( ( i & 3 ) == 3 ) {
+	    *reinterpret_cast<uint64_t*>( addr ) = l01;
+	    addr += 2;
+	} else if( i & 1 )
+	    *addr++ = (member_type)l01;
+	else if( i & 2 )
+	    *addr++ = (member_type)( l01 >> 32 );
+
+	uint64_t l23 = _mm_cvtsi128_si64( _mm_bsrli_si128( val, 8 ) );
+	if( ( i & 12 ) == 12 ) {
+	    *reinterpret_cast<uint64_t*>( addr ) = l23;
+	    addr += 2;
+	} else if( i & 4 )
+	    *addr++ = (member_type)l23;
+	else if( i & 8 )
+	    *addr++ = (member_type)( l23 >> 32 );
+/*
+	if( i & 2 )
+	    *addr++ = lane( val, 1 );
+	if( i & 4 )
+	    *addr++ = lane( val, 2 );
+	if( i & 8 )
+	    *addr++ = lane( val, 3 );
+	    */
+	return addr;
+#endif
     }
 
     template<unsigned short Scale>

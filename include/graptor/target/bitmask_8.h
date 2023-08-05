@@ -47,6 +47,9 @@ struct mask_type_traits<8> {
 	return ( hi << 4 ) | lo;
     }
 
+    static bool is_zero( type a ) { return a == 0; }
+    static bool is_ones( type a ) { return a == 0xff; }
+
     static uint32_t find_first( type a ) {
 	return _tzcnt_u32( ~(uint32_t)a );
     }

@@ -584,7 +584,8 @@ public:
 	type h = _mm256_srli_epi32( g, 23 );
 	type bias = srli( setone(), 8*W-7 ); // 0x7f
 	type raw = _mm256_sub_epi32( h, bias );
-	type cnt = blendm( cmpeq( a, zero, mt_mask() ), raw, zero );
+	// type cnt = blendm( cmpeq( a, zero, mt_mask() ), raw, zero );
+	type cnt = blend( cmpeq( a, zero, mt_vmask() ), raw, zero );
 	if constexpr ( sizeof(ReturnTy) == W )
 	    return cnt;
 	else {
@@ -690,16 +691,47 @@ public:
     static void storeu( member_type *addr, type val ) {
 	_mm256_storeu_si256( (type *)addr, val );
     }
+    static member_type * cstoreu_p( member_type *addr, mask_type m, type val ) {
+#if __AVX512VL__
+	_mm256_mask_compressstoreu_epi32( (type *)addr, m, val );
+	return addr + _popcnt32( m );
+#else
+	// TODO: recursive decomposition
+	if( mask_traits::is_zero( m ) ) {
+	    // nothing
+	    return addr;
+	// } else if( mask_traits::is_ones( m ) ) {
+	} else if( ( uint32_t(m) & (uint32_t(m)+1) ) == 0 ) {
+	    // Only some of the lowest consecutive lanes are valid,
+	    // e.g., m == 0, m == 1, m == 3, m == 7, ...
+	    storeu( addr, val );
+	    return addr + _popcnt32( m );
+	} else {
+	    member_type * a = half_traits::cstoreu_p(
+		addr,
+		mask_traits::lower_half( m ),
+		lower_half( val ) );
+	    a = half_traits::cstoreu_p(
+		a,
+		mask_traits::upper_half( m ),
+		upper_half( val ) );
+	    return a;
+/*
+	    size_t b = m;
+	    while( b != 0 ) {
+		size_t pos = _tzcnt_u64( b );
+		b = b & ( b - 1 );
+		*addr++ = lane( val, pos );
+	    }
+*/
+	}
+#endif
+    }
     static void cstoreu( member_type *addr, mask_type m, type val ) {
 #if __AVX512VL__
 	_mm256_mask_compressstoreu_epi32( (type *)addr, m, val );
 #else
-	size_t b = m;
-	while( b != 0 ) {
-	    size_t pos = _tzcnt_u64( b );
-	    b = b & ( b - 1 );
-	    *addr++ = lane( val, pos );
-	}
+	cstoreu_p( addr, m, val );
 #endif
     }
     static void cstoreu( member_type *addr, vmask_type m, type val ) {

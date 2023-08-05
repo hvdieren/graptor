@@ -24,6 +24,9 @@ struct mask_type_traits<4> {
     static type setzero() { return 0; }
     static type setone() { return 0xf; }
 
+    static bool is_zero( type a ) { return a == 0; }
+    static bool is_ones( type a ) { return a == 0xf; }
+
     static type set1( bool v ) { return v ? setone() : setzero(); }
 
     static bool cmpne( type l, type r, target::mt_bool ) {
