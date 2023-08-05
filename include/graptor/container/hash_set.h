@@ -225,6 +225,59 @@ public:
 	return tr::cmpeq( e, v, MT() );
     }
 
+    template<unsigned short VL>
+    bool
+    wide_contains( type value ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+#if __AVX512F__
+	using mtr = typename tr::mask_traits;
+	using mkind = target::mt_mask;
+#else
+	using mtr = typename tr::vmask_traits;
+	using mkind = target::mt_vmask;
+#endif
+	using mtype = typename mtr::type;
+
+	if( capacity() < VL )
+	    return contains( value );
+
+	size_type index = m_hash( value ) & ( capacity() - 1 );
+	vtype search = tr::set1( value );
+	vtype vabsent = tr::setone();
+
+	// How to deal with reaching over end of array?
+	size_type lane = index & size_type( VL - 1 );
+	index &= ~size_type( VL-1 ); // round down; array is power of 2
+	vtype elm = tr::loadu( m_table+index );
+	size_type above = ( size_type(1) << VL ) - ( size_type(1) << lane );
+	mtype msk = mtr::from_int( above );
+	mtype eq = tr::cmpeq( msk, elm, search, mkind() );
+	if( !mtr::is_zero( eq ) ) {
+	    return true;
+	}
+	mtype abs = tr::cmpeq( msk, elm, vabsent, mkind() );
+	if( !mtr::is_zero( abs ) ) {
+	    return false;
+	}
+
+	index = ( index + VL ) & ( capacity() - 1 );
+
+	while( true ) {
+	    vtype elm = tr::loadu( m_table+index );
+	    mtype eq = tr::cmpeq( elm, search, mkind() );
+	    if( !mtr::is_zero( eq ) ) {
+		return true;
+	    }
+	    mtype abs = tr::cmpeq( elm, vabsent, mkind() );
+	    if( !mtr::is_zero( abs ) ) {
+		return false;
+	    }
+
+	    index = ( index + VL ) & ( capacity() - 1 );
+	}
+    }
+
 private:
     // Identify the table cell where we can decide on presence of value
     size_type locate( type value ) const {
