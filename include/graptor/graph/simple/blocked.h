@@ -203,8 +203,10 @@ public:
 	    sVID udeg = G.getDegree( u );
 	    const sVID * n = G.get_neighbours( u );
 
+	    // XP-hash takes m_cols steps
+	    // adj-hash takes ce steps
 #if !ABLATION_BLOCKED_DISABLE_XP_HASH
-	    if( HGraph::has_dual_rep && ce > 2*udeg ) {
+	    if( HGraph::has_dual_rep && ce > 2*m_cols ) {
 		std::tie( row_u, deg )
 		    = graptor::graph::construct_row_hash_xp<tr>(
 			G, H, XP_hash, XP, ne, ce, r, u, m_col_start,
