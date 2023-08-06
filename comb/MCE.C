@@ -166,6 +166,9 @@ static bool verbose = false;
 
 static VID * global_coreness = nullptr;
 
+static std::mutex io_mux;
+static constexpr bool io_trace = false;
+
 class MCE_Enumerator {
 public:
     MCE_Enumerator( size_t degen = 0 )
@@ -174,6 +177,7 @@ public:
 
     // Recod clique of size s
     void record( size_t s ) {
+	assert( m_degeneracy+1 == m_histogram.size() );
 	assert( s <= m_degeneracy+1 );
 	__sync_fetch_and_add( &m_histogram[s-1], 1 );
     }
@@ -395,6 +399,286 @@ struct per_thread_statistics {
 };
 
 per_thread_statistics mce_stats;
+
+//! Inspired by Fast Arrays
+// Constant-time initialisation
+template<typename _lVID = VID>
+class XPSet {
+public:
+    using lVID = _lVID;
+
+    using iterator = lVID *;
+
+    template<bool present_p>
+    class hash_set_interface {
+    public:
+	hash_set_interface( const XPSet & xp, lVID ne )
+	    : m_xp( xp ), m_ne( ne ) { }
+
+	bool contains( lVID v ) const {
+	    lVID pos = m_xp.m_pos[v];
+	    if( pos >= m_xp.m_fill ) // not a certificate
+		return false;
+	    if( m_xp.m_set[pos] != v ) // not a valid certificate
+		return false;
+	    if constexpr ( present_p )
+		return pos >= m_ne;
+	    else
+		return pos < m_ne;
+	}
+
+	template<typename atype, unsigned short VL, typename MT>
+	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+			   typename vector_type_traits_vl<atype,VL>::mask_type,
+			   typename vector_type_traits_vl<atype,VL>::vmask_type>
+	multi_contains( typename vector_type_traits_vl<atype,VL>::type
+			index, MT ) const {
+	    using tr = vector_type_traits_vl<atype,VL>;
+	    using str = vector_type_traits_vl<std::make_signed_t<atype>,VL>;
+	    using vtype = typename tr::type;
+#if __AVX512F__
+	    using mtr = typename tr::mask_traits;
+	    using mkind = target::mt_mask;
+#else
+	    using mtr = typename tr::vmask_traits;
+	    using mkind = target::mt_vmask;
+#endif
+	    using mtype = typename mtr::type;
+
+	    // we silently assume that all values are >= 0
+	    static_assert( std::is_unsigned_v<atype>,
+			   "arithmetic requires unsigned type" );
+
+	    // load the positions that might be used
+	    vtype pos = tr::gather( m_xp.m_pos, index );
+	    // check if positions are valid
+	    mtype mc = tr::cmplt( pos, tr::set1( m_xp.m_fill ), mkind() );
+	    // load the certificates, if plausible
+	    vtype vc = tr::gather( m_xp.m_set, pos, mc );
+	    // check which certificates are valid
+	    mtype mv = tr::cmpeq( mc, vc, index, mkind() );
+
+	    // determine presence of vertices in either X or P
+	    // in AVX2, unsigned cmplt/gt is cheaper than ge/le
+	    // use signed comparison as only interested in valid positions
+	    // which can be assumed to fit in signed quantities
+	    mtype is_x = str::cmplt( pos, str::set1( m_ne ), mkind() );
+	    mtype ret;
+	    if constexpr ( present_p )
+		ret = mtr::logical_andnot( is_x, mv );
+	    else
+		ret = mtr::logical_and( is_x, mv );
+	    if constexpr ( std::is_same_v<mkind,MT> )
+		return ret;
+	    else if constexpr ( std::is_same_v<MT,target::mt_mask> )
+		return tr::asmask( ret );
+	    else
+		return tr::asvector( ret );
+	}
+
+    private:
+	const XPSet & m_xp;
+	lVID m_ne;
+    };
+
+private:
+    XPSet( VID n, VID ce_max )
+	: m_pos( new lVID[n+ce_max] ), m_set( m_pos+n ), m_fill( 0 ) {
+	// Silent errors occur when allocating zero elements...
+	assert( n > 0 && "require non-empty graph" );
+    }
+    XPSet( XPSet && xp )
+	: m_set( std::forward<lVID*>( xp.m_set ) ),
+	  m_pos( std::forward<lVID*>( xp.m_pos ) ),
+	  m_fill( std::forward<lVID>( xp.m_fill ) ) {
+	xp.m_set = nullptr;
+	xp.m_pos = nullptr;
+	xp.m_fill = 0;
+    }
+    XPSet( const XPSet & ) = delete;
+    XPSet & operator = ( const XPSet & ) = delete;
+
+public:
+    ~XPSet() {
+	if( m_pos )
+	    delete[] m_pos;
+    }
+
+    // A top level iteration for a cut-out graph. v is currently being visited
+    // and we are setting up an XPSet to describe its position
+    // in the search tree.
+    template<typename HGraphTy>
+    static XPSet
+    create_top_level( const HGraphTy & G, lVID v, lVID & ne, lVID & ce ) {
+	lVID n = G.numVertices();
+	const lVID deg = G.getDegree( v );
+
+	// At top level, deg <= n
+	XPSet xp( n, deg );
+
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    const auto * ngh = G.get_neighbours( v );
+	    for( VID i=0; i < deg; ++i ) {
+		assert( ngh[i] < n );
+		xp.m_set[i] = ngh[i];
+		xp.m_pos[ngh[i]] = i;
+	    }
+	    xp.m_fill = deg;
+	} else {
+	    const auto & adj = G.get_adjacency( v ); 
+	    auto end = std::copy_if(
+		adj.begin(), adj.end(), xp.m_set,
+		[&]( VID v ) { return v != adj.invalid_element; } );
+	    assert( end - xp.m_set == deg );
+
+	    // If sorting is required
+	    std::sort( xp.m_set, xp.m_set+deg ); // semisort X/P?
+
+	    // Only now that elements in m_set are in place can we build m_pos
+	    for( lVID i=0; i < deg; ++i ) {
+		assert( xp.m_set[i] < n );
+		xp.m_pos[xp.m_set[i]] = i;
+	    }
+	    xp.m_fill = deg;
+	}
+
+	// v is not a neighbour of itself, hence not a member of this set.
+	// Search for the first larger vertex. Requires that xp.m_set is
+	// sorted. We need at least semisort between X/P anyway, so sorting
+	// is reasonable, especially if we assume that neighbour lists in G
+	// have been pre-sorted.
+	const lVID * pos = std::upper_bound( xp.m_set, xp.m_set+deg, v );
+	ne = pos - xp.m_set;
+	ce = deg;
+
+	return xp;
+    }
+
+    template<typename Adj>
+    void semisort_pivot( lVID ne, lVID pe, lVID ce, const Adj & padj ) {
+	assert( ce == m_fill );
+	
+	// Semisort P into P\N(pivot) and P\cap N(pivot)
+	// Assumption: pe + |intersect(padj,P)| == ce
+	lVID P_ins = pe;
+	for( lVID i=ne; i < pe; ++i ) {
+	    if( padj.contains( m_set[i] ) ) {
+		// Find insertion point
+		lVID v = m_set[i];
+		while( padj.contains( m_set[P_ins] ) )
+		    P_ins++;
+
+		assert( P_ins != ce );
+		// swap
+		lVID u = m_set[P_ins];
+		m_set[i] = u;
+		m_set[P_ins] = v;
+		m_pos[u] = i;
+		m_pos[v] = P_ins;
+		P_ins++;
+
+		assert( m_pos[u] < m_fill && m_set[m_pos[u]] == u );
+		assert( m_pos[v] < m_fill && m_set[m_pos[v]] == v );
+
+		// All done - no more vertices available to swap
+		if( P_ins == ce )
+		    break;
+	    }
+	}
+    }
+
+    // void move_ne( lVID i ) {
+	// note: should not require copy re: parallelism
+	// assert( ne < i && i <= ce );
+	// m_pos is indifferent to ne
+	// TODO: maintain ne, ce outside this structure
+	// ne = i;
+    // }
+
+    // A hash interface supporting contains, multi_contains
+    // that checks for either pos < ne or pos >= ne or pos == ~0
+    // present hash_set-like interface for X set
+    auto X_hash_set( lVID ne ) const {
+	return hash_set_interface<false>( *this, ne );
+    }
+    // present hash_set-like interface for P set
+    auto P_hash_set( lVID ne ) const {
+	return hash_set_interface<true>( *this, ne );
+    }
+
+    template<typename Adj>
+    XPSet intersect( lVID n, lVID i, lVID ce,
+		     const Adj & adj, const lVID * ngh,
+		     lVID & ne_new, lVID & ce_new ) const {
+	assert( i <= ce );
+	assert( ce == m_fill );
+	assert( ce <= n );
+	// Pass in ne here as an argument instead of storing it
+	// Intersect both X and P with adj, resulting in X' and P'
+	lVID deg = adj.size();
+	lVID mx = std::min( deg, ce );
+	XPSet ins( n, mx+8 ); // hash_vector requires extra space
+
+	if( ce > 2*deg ) {
+	    // TODO: find split point for X/P to reduce ranges?
+	    //       or make single traversal and determine X/P on the fly?
+	    //       need to be careful as m_set may not be sorted, and there
+	    //       may exist elements of P that are smaller than some elements
+	    //       of X (due to pivoting)
+	    ne_new = graptor::hash_vector::intersect(
+		ngh, ngh+deg, X_hash_set( i ), ins.m_set ) - ins.m_set;
+	    ce_new = graptor::hash_vector::intersect(
+		ngh, ngh+deg, P_hash_set( i ), ins.m_set+ne_new ) - ins.m_set;
+	} else {
+	    // Note: skip m_set[i] as we know there are no self-loops.
+	    ne_new = graptor::hash_vector::intersect(
+		m_set, m_set+i, adj, ins.m_set ) - ins.m_set;
+	    ce_new = graptor::hash_vector::intersect(
+		m_set+i+1, m_set+ce, adj, ins.m_set+ne_new ) - ins.m_set;
+	}
+
+	// Construct ins.m_pos 
+	for( lVID i=0; i < ce_new; ++i ) {
+	    assert( ins.m_set[i] < n );
+	    ins.m_pos[ins.m_set[i]] = i;
+	}
+
+	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
+    // Move *I from P to X
+    // Invalidates iterator
+    // Requires that X is sorted; if X need not be sorted, insert at position ne
+#if 0
+... only sequential execution?
+    void move_vertex( iterator I ) {
+	VID v = *I;
+	
+	// Easy part
+	assert( m_state[v] == xp_p );
+	m_state[v] = xp_x;
+
+	// More work
+	// If no sorting required, pos = m_set+ne minimises copying
+	const lVID * pos = std::lower_bound( m_set, m_set+ne, v );
+	std::copy_backward( pos, m_set+ne, m_set+ne+1 );
+	// for( const lVID * p=pos+1; p != m_set+ne+1; ++p ) // integrate w/ copy
+	// m_pos[*p] = p - m_set;
+	*pos = v;
+	++ne;
+    }
+#endif
+
+    /*const*/ lVID * get_set() /*const*/ { return m_set; }
+    lVID at( lVID pos ) const { return m_set[pos]; }
+
+private:
+    lVID * m_pos;
+    lVID * m_set;
+    lVID m_fill;
+};
 
 /*! Direct solution for tiny problems.
  *
@@ -1145,7 +1429,7 @@ mce_bron_kerbosch_seq_xp(
 //
 // XP may be modified by the method. It is not required to be in sort order.
 void
-mce_bron_kerbosch_recpar_xp2(
+mce_bron_kerbosch_recpar_xp1(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
@@ -1407,6 +1691,197 @@ mce_bron_kerbosch_recpar_xp2(
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
 		    std::iota( XP_new, XP_new+ce_new, 0 );
+		    mce_bron_kerbosch_recpar_xp1(
+			Gc, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+		} else {
+		    // large sub-problem; search recursively
+		    mce_bron_kerbosch_recpar_xp1(
+			G, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
+		}
+	    }
+
+	    delete[] XP_new;
+	}
+    } );
+
+#if ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
+    delete[] pe_order;
+#endif
+}
+
+//! recursively parallel version of Bron-Kerbosch w/ pivoting
+//
+// XP may be modified by the method. It is not required to be in sort order.
+void
+mce_bron_kerbosch_recpar_xp2(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    VID * XP,
+    VID ne,
+    VID ce,
+    int depth ) {
+    // Termination condition
+    if( ne == ce ) {
+	if( ne == 0 )
+	    E.record( depth );
+	return;
+    }
+    const VID n = G.numVertices();
+
+    std::sort( XP, XP+ne );
+    std::sort( XP+ne, XP+ce );
+
+    // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
+    // The number of neighbours may be zero of it is not considered worthwhile
+    // to apply pivoting (few candidates).
+    const auto pp = mc_get_pivot_xp( G, XP, ne, ce );
+    const VID pivot = pp.first;
+    const VID sum = pp.second;
+
+    const auto & padj = G.get_adjacency( pivot );
+
+    // Pre-sort, affects vertex selection order in recursive calls
+    // We own XP and are entitled to modify it.
+    VID pe = ce - sum; // neighbours of pivot moved to end.
+
+    // Special case, occurs in warwiki: pe == ne, i.e., all vertices
+    // to be postponed to different top-level vertex. This is very strong
+    // filtering as a result of pivoting. This results only when selecting
+    // an X vertex.
+    // however occurs only if
+    // we don't make a cut-out, i.e., it results from selecting an X vertex.
+    // The method will stop immediately (zero iterations in reorderig loop,
+    // zero iterations in main parallel loop); no specific checks are useful.
+    
+    if( sum > 0 ) { // sum == 0 disables pivoting
+	// Semisort P into P\N(pivot) and P\cap N(pivot)
+	VID P_ins = pe;
+	for( VID i=ne; i < pe; ++i ) {
+	    if( padj.contains( XP[i] ) ) {
+		// Find insertion point
+		VID v = XP[i];
+		while( padj.contains( XP[P_ins] ) )
+		    P_ins++;
+
+		assert( P_ins != ce );
+		// swap
+		XP[i] = XP[P_ins];
+		XP[P_ins] = v;
+		P_ins++;
+
+		// All done - no more vertices available to swap
+		if( P_ins == ce )
+		    break;
+	    }
+	}
+    }
+
+    if constexpr ( io_trace ) {
+	std::lock_guard<std::mutex> guard( io_mux );
+	std::cout << "XP2 loop: ne=" << ne << " pe=" << pe
+		  << " ce=" << ce << "\n";
+    }
+
+    parallel_loop( ne, pe, 1, [=,&E,&G,&padj]( VID i ) {
+	VID v = XP[i];
+
+	// Not keeping track of R
+
+	const auto & adj = G.get_adjacency( v ); 
+	VID deg = adj.size();
+
+	if constexpr ( io_trace ) {
+	    std::lock_guard<std::mutex> guard( io_mux );
+	    std::cout << "XP2: X=" << i << " P=" << (ce - (i+1)) << " adj="
+		      << adj.size() << "\n";
+	}
+
+	if( deg == 0 ) { // implies ne == ce == 0
+	    // avoid overheads of copying and cutout
+	    E.record( depth+1 );
+	} else {
+	    // Some complexity:
+	    // + Need to consider all vertices prior to v in XP are now
+	    //   in the X set. Could set ne to i, however:
+	    // + Vertices that are filtered due to pivoting,
+	    //   i.e., neighbours of pivot, are still in P.
+	    // + In sequential execution, we can update XP incrementally,
+	    //   however in parallel execution we cannot.
+
+	    VID * XP_new = new VID[std::min(ce,deg)+8]; // hash_vector
+	    VID * XP_upd = XP;
+
+	    // Now work with modified XP. Could consider intersect in-place.
+	    // Note: skip XP[i] as we know there are no self-loops.
+	    // TODO: there is a case for hashing X/P, but need to update
+	    //       hash set incrementally -> hash table 0=X, 1=P?
+	    //       intersect XP + deposit into separate X and P arrays?
+	    //                 perhaps on condition that is function of i
+	    //                 so hash table stores position in XP array...
+	    VID ne_new = graptor::hash_vector::intersect(
+		XP_upd, XP_upd+i, adj, XP_new ) - XP_new;
+	    VID ce_new = graptor::hash_vector::intersect(
+		XP_upd+i+1, XP_upd+ce, adj, XP_new+ne_new ) - XP_new;
+
+	    if( ce_new - ne_new == 0 ) {
+		// Reached leaf of search tree
+		if( ne_new == 0 )
+		    E.record( depth+1 );
+	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
+		       // very small -> just keep going
+		       && ( ce_new - ne_new <= /*4**/(1<<P_MAX_SIZE)
+			    // on way to a clique with deep recursion?
+			    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
+			       ) ) {
+		// Restore sort order of P set to support merge intersect.
+		// P was disrupted by sorting pivot neighbours to the end.
+		// TODO: is P a merge of two sorted sub-arrays?
+		// Restore sort order of X set. This may be disrupted as
+		// vertices are added out of order, specifically
+		// pivot neighbours. An XP list can be constructed at some point
+		// where a vertex v < XP[ne-1] was a neighbour of the pivot
+		// at the time when XP was constructed. As such, growing
+		// the X part to XP...XP+i, with XP[i-1] == v, the X set will
+		// become unsorted.
+		// TODO: does insertion sort of X[i] into X suffice?
+		//       Note: would need to repeat for every j=ne...i
+		//       or sort( XP+ne, XP+i ) (can be done once before loop),
+		//       then merge( XP..XP+ne, XP+ne..XP+i ). In-place merge
+		//       non-trivial. Would be very similar to insertion sort,
+		//       >O(n).
+		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		bool ok = mce_leaf<VID,EID>(
+		    G, E2, depth+1, XP_new, ne_new, ce_new );
+		if( !ok ) {
+		    StackLikeAllocator alloc;
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
+		    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
+					      XP_new, ne_new, ce_new );
+		}
+	    } else {
+#if ABLATION_RECPAR_CUTOUT == 0
+		bool cutout
+		    = G.getDegree( XP_new[ne_new] ) > 2 * ( ce_new - ne_new );
+#elif ABLATION_RECPAR_CUTOUT == 1
+		constexpr bool cutout = false;
+#elif ABLATION_RECPAR_CUTOUT == 2
+		constexpr bool cutout = true;
+#endif
+		if( cutout ) {
+		    // large sub-problem; search recursively, and also
+		    // construct cut-out
+#if ABLATION_RECPAR_INSU == 0
+		    if constexpr ( HGraphTy::has_dual_rep ) {
+			std::sort( XP_new, XP_new+ne_new );
+			std::sort( XP_new+ne_new, XP_new+ce_new );
+		    }
+#endif
+
+		    GraphBuilderInduced<HGraphTy>
+			builder( G, XP_new, ne_new, ce_new );
+		    const auto & Gc = builder.get_graph();
+		    std::iota( XP_new, XP_new+ce_new, 0 );
 		    mce_bron_kerbosch_recpar_xp2(
 			Gc, degeneracy, E, XP_new, ne_new, ce_new, depth+1 );
 		} else {
@@ -1425,13 +1900,216 @@ mce_bron_kerbosch_recpar_xp2(
 #endif
 }
 
+//! recursively parallel version of Bron-Kerbosch w/ pivoting
+//
+// XP may be modified by the method. It is not required to be in sort order.
 void
-mce_bron_kerbosch_recpar_xp2_top(
+mce_bron_kerbosch_recpar_xps(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    XPSet<VID> & xp,
+    VID ne,
+    VID ce,
+    int depth ) {
+    // Termination condition
+    if( ne == ce ) {
+	if( ne == 0 )
+	    E.record( depth );
+	return;
+    }
+    const VID n = G.numVertices();
+
+    // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
+    // The number of neighbours may be zero of it is not considered worthwhile
+    // to apply pivoting (few candidates).
+    const auto pp = mc_get_pivot_xp( G, xp.get_set(), ne, ce );
+    const VID pivot = pp.first;
+    const VID sum = pp.second;
+
+    const auto & padj = G.get_adjacency( pivot );
+
+    // Pre-sort, affects vertex selection order in recursive calls
+    // We own XP and are entitled to modify it.
+    VID pe = ce - sum; // neighbours of pivot moved to end.
+
+    // Special case, occurs in warwiki: pe == ne, i.e., all vertices
+    // to be postponed to different top-level vertex. This is very strong
+    // filtering as a result of pivoting. This results only when selecting
+    // an X vertex.
+    // however occurs only if
+    // we don't make a cut-out, i.e., it results from selecting an X vertex.
+    // The method will stop immediately (zero iterations in reorderig loop,
+    // zero iterations in main parallel loop); no specific checks are useful.
+    
+    if( sum > 0 ) { // sum == 0 disables pivoting
+	// Semisort P into P\N(pivot) and P\cap N(pivot)
+	xp.semisort_pivot( ne, pe, ce, padj );
+    }
+
+    if constexpr ( io_trace ) {
+	std::lock_guard<std::mutex> guard( io_mux );
+	std::cout << "XPS loop: ne=" << ne << " pe=" << pe
+		  << " ce=" << ce << "\n";
+    }
+
+    parallel_loop( ne, pe, 1, [&,ne,pe,ce]( VID i ) {
+	VID v = xp.at( i );
+
+	// Not keeping track of R
+
+	const auto & adj = G.get_adjacency( v ); 
+	VID deg = adj.size();
+
+	if constexpr ( io_trace ) {
+	    std::lock_guard<std::mutex> guard( io_mux );
+	    std::cout << "XP2: X=" << i << " P=" << (ce - (i+1)) << " adj="
+		      << adj.size() << "\n";
+	}
+
+	if( deg == 0 ) { // implies ne == ce == 0
+	    // avoid overheads of copying and cutout
+	    E.record( depth+1 );
+	} else {
+	    // Some complexity:
+	    // + Need to consider all vertices prior to v in XP are now
+	    //   in the X set. Could set ne to i, however:
+	    // + Vertices that are filtered due to pivoting,
+	    //   i.e., neighbours of pivot, are still in P.
+	    // + In sequential execution, we can update XP incrementally,
+	    //   however in parallel execution we cannot.
+
+	    // Now work with modified XP. Could consider intersect in-place.
+	    // Note: skip XP[i] as we know there are no self-loops.
+	    // TODO: there is a case for hashing X/P, but need to update
+	    //       hash set incrementally -> hash table 0=X, 1=P?
+	    //       intersect XP + deposit into separate X and P arrays?
+	    //                 perhaps on condition that is function of i
+	    //                 so hash table stores position in XP array...
+	    const VID * ngh = G.get_neighbours( v ); 
+	    VID ne_new, ce_new;
+	    XPSet<VID> xp_new
+		= xp.intersect( G.numVertices(),
+				i, ce, adj, ngh, ne_new, ce_new );
+
+	    if( ce_new - ne_new == 0 ) {
+		// Reached leaf of search tree
+		if( ne_new == 0 )
+		    E.record( depth+1 );
+	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
+		       // very small -> just keep going
+		       && ( ce_new - ne_new <= /*4**/(1<<P_MAX_SIZE)
+			    // on way to a clique with deep recursion?
+			    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
+			       ) ) {
+		// Restore sort order of P set to support merge intersect.
+		// P was disrupted by sorting pivot neighbours to the end.
+		// TODO: is P a merge of two sorted sub-arrays?
+		// Restore sort order of X set. This may be disrupted as
+		// vertices are added out of order, specifically
+		// pivot neighbours. An XP list can be constructed at some point
+		// where a vertex v < XP[ne-1] was a neighbour of the pivot
+		// at the time when XP was constructed. As such, growing
+		// the X part to XP...XP+i, with XP[i-1] == v, the X set will
+		// become unsorted.
+		// TODO: does insertion sort of X[i] into X suffice?
+		//       Note: would need to repeat for every j=ne...i
+		//       or sort( XP+ne, XP+i ) (can be done once before loop),
+		//       then merge( XP..XP+ne, XP+ne..XP+i ). In-place merge
+		//       non-trivial. Would be very similar to insertion sort,
+		//       >O(n).
+		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		bool ok = mce_leaf<VID,EID>(
+		    G, E2, depth+1, xp_new.get_set(), ne_new, ce_new );
+		if( !ok ) {
+		    StackLikeAllocator alloc;
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
+		    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
+					      xp_new.get_set(), ne_new, ce_new );
+		}
+	    } else {
+#if ABLATION_RECPAR_CUTOUT == 0
+		bool cutout
+		    = G.getDegree( XP_new[ne_new] ) > 2 * ( ce_new - ne_new );
+#elif ABLATION_RECPAR_CUTOUT == 1
+		constexpr bool cutout = false;
+#elif ABLATION_RECPAR_CUTOUT == 2
+		constexpr bool cutout = true;
+#endif
+		if( cutout ) {
+		    // large sub-problem; search recursively, and also
+		    // construct cut-out
+#if ABLATION_RECPAR_INSU == 0
+		    if constexpr ( HGraphTy::has_dual_rep ) {
+			// std::sort( XP_new, XP_new+ne_new );
+			// std::sort( XP_new+ne_new, XP_new+ce_new );
+		    }
+#endif
+
+		    GraphBuilderInduced<HGraphTy>
+			builder( G, xp_new.get_set(), ne_new, ce_new );
+		    const auto & Gc = builder.get_graph();
+		    std::iota( xp_new.get_set(), xp_new.get_set()+ce_new, 0 );
+		    mce_bron_kerbosch_recpar_xps(
+			Gc, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+		} else {
+		    // large sub-problem; search recursively
+		    mce_bron_kerbosch_recpar_xps(
+			G, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+		}
+	    }
+
+	    // delete[] XP_new;
+	}
+    } );
+
+#if ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
+    delete[] pe_order;
+#endif
+}
+
+
+void
+mce_bron_kerbosch_recpar_top(
     const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
     MCE_Parallel_Enumerator & E ) {
     VID n = G.numVertices();
+
+#if 0
+    VID ne = start_pos;
+    VID ce = n;
+    VID * XP = new VID[ce];
+    std::iota( XP, XP+ce, 0 );
+
+    mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP, ne, ce, 1 );
+
+    delete[] XP;
+#else
+    // Specialised version of pivoting: avoid creating full XP list (0..ce)
+    // and performing intersections to find pivot. Instead look at highest
+    // degree.
+    // TODO: in hadj, keep track of adjacency list size for X vs P neighbours.
+/*
+    VID pivot = 0;
+    VID pivot_degree = 0;
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	VID pdeg = deg;
+	if( v >= start_pos ) {
+	    const VID * n = G.get_neighbours( v );
+	    const VID * pos = std::upper_bound( n, n+deg, start_pos );
+	    pdeg = std::distance( pos, n+deg );
+	}
+	if( pdeg > pivot_degree ) {
+	    pivot_degree = pdeg;
+	    pivot = v;
+	}
+    }
+
+    const auto & padj = G.get_adjacency( pivot );
+*/
 
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
@@ -1441,30 +2119,39 @@ mce_bron_kerbosch_recpar_xp2_top(
 
 	// R.push( v );
 
-	// Consider as candidates only those neighbours of v that are larger
-	// than u to avoid revisiting the vertices unnecessarily.
-	auto & adj = G.get_adjacency( v ); 
+	// if( !padj.contains( v ) )
+	{
+	    // Consider as candidates only those neighbours of v that are larger
+	    // than u to avoid revisiting the vertices unnecessarily.
+#if 0
+	    const auto & adj = G.get_adjacency( v ); 
+	    VID deg = adj.size();
+	    VID * XP_new = new VID[deg/*+padj.size()*/];
+	    if constexpr ( HGraphTy::has_dual_rep ) {
+		const VID * XP = G.get_neighbours( v );
+		std::copy( XP, XP+deg, XP_new );
+	    } else {
+		auto end = std::copy_if(
+		    adj.begin(), adj.end(), XP_new,
+		    [&]( VID v ) { return v != adj.invalid_element; } );
+		assert( end - XP_new == deg );
+		std::sort( XP_new, XP_new+deg ); // semisort X/P?
+	    }
+	    const VID * const start = std::lower_bound( XP_new, XP_new+deg, v );
+	    VID ne = start - XP_new;
+	    VID ce = deg;
 
-	VID deg = adj.size();
-	VID * XP_new = new VID[deg];
-	if constexpr ( HGraphTy::has_dual_rep ) {
-	    const VID * XP = G.get_neighbours( v );
-	    std::copy( XP, XP+deg, XP_new );
-	} else {
-	    auto end = std::copy_if(
-		adj.begin(), adj.end(), XP_new,
-		[&]( VID v ) { return v != adj.invalid_element; } );
-	    assert( end - XP_new == deg );
-	    std::sort( XP_new, XP_new+deg ); // semisort X/P?
+	    mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP_new, ne, ce, 1 );
+
+	    delete[] XP_new;
+#else
+	    VID ne, ce;
+	    XPSet<VID> xp = XPSet<VID>::create_top_level( G, v, ne, ce );
+	    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+#endif
 	}
-	const VID * const start = std::upper_bound( XP_new, XP_new+deg, v );
-	VID ne = start - XP_new;
-	VID ce = deg;
-
-	mce_bron_kerbosch_recpar_xp2( G, degeneracy, E, XP_new, ne, ce, 1 );
-
-	delete[] XP_new;
     } );
+#endif
 }
 
 template<typename VID, typename EID, typename Hash>
@@ -1514,8 +2201,6 @@ void check_clique_edges( EID m, const VID * assigned_clique, EID ce ) {
 	    ++cce;
     assert( cce == ce );
 }
-
-static std::mutex io_mux;
 
 template<unsigned XBits, unsigned PBits, typename HGraph, typename Enumerator>
 void mce_blocked_fn(
@@ -1590,7 +2275,7 @@ void mce_variable(
     if( n - start_pos > (1<<P_MAX_SIZE) ) {
 	// 1 for top-level vertex re: cutout
 	MCE_Parallel_Enumerator Ee( E, 1 );
-	mce_bron_kerbosch_recpar_xp2_top( HG, start_pos, degeneracy, Ee );
+	mce_bron_kerbosch_recpar_top( HG, start_pos, degeneracy, Ee );
     } else {
 	// 1 for top-level vertex re: cutout
 	MCE_Enumerator_stage2 Ee = E.get_enumerator( 1 );
@@ -1721,6 +2406,11 @@ void mce_top_level(
     if( plg < P_MIN_SIZE )
 	plg = P_MIN_SIZE;
 
+    if constexpr ( io_trace ) {
+	std::lock_guard<std::mutex> guard( io_mux );
+	std::cout << "nlg=" << nlg << " xlg=" << xlg << " plg=" << plg << "\n";
+    }
+
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
 	return mce_dense_func[nlg-N_MIN_SIZE](
 	    G, H, E2, v, cut, stats.get( nlg ) );
@@ -1759,24 +2449,38 @@ void mce_top_level(
     
     timer tm;
     tm.start();
-    if( cut.get_num_vertices() <= 8*(degeneracy+1) ) {
+    // if( cut.get_num_vertices() <= 8*(degeneracy+1) ) {
+    /* if( cut.get_num_vertices() <= 4*(1<<P_MAX_SIZE) ) {
 	// MCE_Parallel_Enumerator E2( E, 1 );
 	VID ce = cut.get_num_vertices();
 	VID * XP = new VID[ce];
 	const VID * ngh = cut.get_vertices();
 	std::copy( ngh, ngh+ce, XP );
 	VID ne = cut.get_start_pos();
+
+	if constexpr ( io_trace ) {
+	    std::lock_guard<std::mutex> guard( io_mux );
+	    std::cout << "XP2dir: X=" << ne
+		      << " P=" << (ce-ne) << "\n";
+	}
+
 	mce_bron_kerbosch_recpar_xp2( H, degeneracy, E, XP, ne, ce, 1 );
 	delete[] XP;
-    } else {
+    } else */  {
 	GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
 	const auto & HG = ibuilder.get_graph();
 
 	stats.record_genbuild( tm.stop() );
 
+	if constexpr ( io_trace ) {
+	    std::lock_guard<std::mutex> guard( io_mux );
+	    std::cout << "XP2: X=" << ibuilder.get_start_pos()
+		      << " X+P=" << HG.numVertices() << "\n";
+	}
+
 	tm.start();
 	mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
-    }
+	} /* */
     double t = tm.stop();
     if( false && t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
