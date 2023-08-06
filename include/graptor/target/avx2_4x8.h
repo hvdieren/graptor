@@ -354,6 +354,12 @@ public:
     static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
 	return mask_traits::logical_and( m, cmpne( a, b, mt_mask() ) );
     }
+    static mask_type cmpge( vmask_type m, type a, type b, mt_mask ) {
+	return asmask( cmpge( m, a, b, mt_vmask() ) );
+    }
+    static mask_type cmplt( vmask_type m, type a, type b, mt_mask ) {
+	return asmask( cmplt( m, a, b, mt_vmask() ) );
+    }
 #endif
     static mask_type cmpneg( type a, mt_mask ) {
 	if constexpr ( std::is_signed_v<member_type> )
@@ -411,6 +417,12 @@ public:
     }
     static vmask_type cmpeq( vmask_type m, type a, type b, mt_vmask ) {
 	return vmask_traits::logical_and( m, cmpeq( a, b, mt_vmask() ) );
+    }
+    static vmask_type cmpge( vmask_type m, type a, type b, mt_vmask ) {
+	return vmask_traits::logical_and( m, cmpge( a, b, mt_vmask() ) );
+    }
+    static vmask_type cmplt( vmask_type m, type a, type b, mt_vmask ) {
+	return vmask_traits::logical_and( m, cmplt( a, b, mt_vmask() ) );
     }
 
     static bool cmpeq( type a, type b, mt_bool ) {
