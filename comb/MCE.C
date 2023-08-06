@@ -75,7 +75,7 @@
 #endif
 
 #ifndef ABLATION_RECPAR_CUTOUT
-#define ABLATION_RECPAR_CUTOUT 0
+#define ABLATION_RECPAR_CUTOUT 1
 #endif
 
 #include <signal.h>
