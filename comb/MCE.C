@@ -145,7 +145,8 @@ using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 #endif
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
+// using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
@@ -481,7 +482,9 @@ bool is_member( VID v, VID C_size, const VID * C_set ) {
 }
 
 template<typename HGraph>
-std::pair<VID,VID> mc_get_pivot_xp(
+std::pair<VID,VID>
+__attribute__((noinline))
+mc_get_pivot_xp(
     const HGraph & G,
     const VID * XP,
     VID ne,
@@ -804,7 +807,7 @@ bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
     VID r,
-    const VID * XP,
+    VID * XP,
     VID ne,
     VID ce );
 
@@ -1193,6 +1196,12 @@ mce_bron_kerbosch_recpar_xp2(
 	    }
 	}
     }
+
+    // speculative...
+    // std::sort( XP+ne, XP+pe );
+    // if( ( depth & 1 ) == 0 )
+    // std::reverse( XP+ne, XP+pe );
+    
 #elif ABLATION_RECPAR_INSU == 1 || ABLATION_RECPAR_INSU == 2
     // Pre-calculate which neighbours to process in parallel (avoids
     // parallel loop iterations with no work to do)
@@ -1242,13 +1251,13 @@ mce_bron_kerbosch_recpar_xp2(
 	    //   however in parallel execution we cannot.
 
 #if ABLATION_RECPAR_INSU == 0
-	    VID * XP_new = new VID[std::min(ce,deg)];
+	    VID * XP_new = new VID[std::min(ce,deg)+8]; // hash_vector
 	    VID * XP_upd = XP;
 #elif ABLATION_RECPAR_INSU == 1
 	    // Adjust XP with modifications implied by processed vertices
 	    // prior to i, making distinction between non-/neighbours of
 	    // the pivot.
-	    VID off = std::min(ce,deg);
+	    VID off = std::min(ce,deg)+8; // hash_vector
 	    VID * XP_new = new VID[off+ce]; // extra space for updated XP
 	    VID * XP_upd = XP_new+off;
 	    // XP_upd contains the X+P lists after moving all non-neighbours
@@ -1283,7 +1292,7 @@ mce_bron_kerbosch_recpar_xp2(
 	    // assert( std::is_sorted( XP_upd+ii, XP_upd+ce ) );
 	    // assert( std::adjacent_find( XP_upd, XP_upd+ce ) == XP_upd+ce );
 #elif ABLATION_RECPAR_INSU == 2
-	    VID * XP_new = new VID[std::min(ce,deg)];
+	    VID * XP_new = new VID[std::min(ce,deg)+8]; // hash_vector
 	    const VID * XP_upd = XP;
 #endif
 
@@ -1324,10 +1333,12 @@ mce_bron_kerbosch_recpar_xp2(
 		    E.record( depth+1 );
 	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 		       // very small -> just keep going
-		       && ( ce_new - ne_new <= (1<<P_MAX_SIZE)
+		       && ( ce_new - ne_new <= 16*(1<<P_MAX_SIZE)
+			    // || depth+1 + ce_new - ne_new + (1<<P_MAX_SIZE) > degeneracy+1
+			    // || degeneracy + 1 - depth <= (1<<P_MAX_SIZE)
 			    // on way to a clique with deep recursion?
-			    || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
-			   ) ) {
+			    /* || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
+			       */ ) ) {
 		// direct cut-out of dense graph
 
 		// Restore sort order of P set to support merge intersect.
@@ -1348,14 +1359,16 @@ mce_bron_kerbosch_recpar_xp2(
 		//       >O(n).
 #if ABLATION_RECPAR_INSU == 0
 		if constexpr ( HGraphTy::has_dual_rep ) {
-		    std::sort( XP_new, XP_new+ne_new );
-		    std::sort( XP_new+ne_new, XP_new+ce_new );
+		    // std::sort( XP_new, XP_new+ne_new );
+		    // std::sort( XP_new+ne_new, XP_new+ce_new );
 		}
 #endif
+
 		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		bool ok = mce_leaf<VID,EID>(
 		    G, E2, depth+1, XP_new, ne_new, ce_new );
 		if( !ok ) {
+#if 0
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, XP_new, ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
@@ -1364,6 +1377,12 @@ mce_bron_kerbosch_recpar_xp2(
 		    std::iota( XP_new, XP_new+ce_new, 0 );
 		    mce_iterate_xp_iterative( Gc, E2, alloc, degeneracy,
 					      XP_new, ne_new, ce_new );
+#else
+		    StackLikeAllocator alloc;
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
+		    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
+					      XP_new, ne_new, ce_new );
+#endif
 		}
 	    } else {
 #if ABLATION_RECPAR_CUTOUT == 0
@@ -1576,6 +1595,15 @@ void mce_variable(
 	// 1 for top-level vertex re: cutout
 	MCE_Enumerator_stage2 Ee = E.get_enumerator( 1 );
 	mce_bron_kerbosch_seq_xp( HG, start_pos, degeneracy, Ee );
+/*
+	StackLikeAllocator alloc;
+	VID * XP = alloc.template allocate<VID>( HG.getDegree( v ) );
+	const VID * n = HG.get_neighbours( v );
+	VID ce = HG.getDegree( v );
+	std::copy( n, n+ce, XP );
+	VID ne = start_pos;
+	mce_iterate_xp_iterative( HG, Ee, alloc, degeneracy, XP, ne, ce );
+*/
     }
 #endif
 }
@@ -1670,23 +1698,6 @@ void mce_top_level(
     }
 #endif
 
-    // Threshold is tunable and depends on cost of creating a cut-out vs the
-    // cost of merge and hash intersections.
-    if( num < TUNABLE_SMALL_AVOID_CUTOUT_TOP ) {
-	timer tm;
-	tm.start();
-	MCE_Enumerator_stage2 E2 = E.get_enumerator( 1 );
-	StackLikeAllocator alloc;
-	VID ce = cut.get_num_vertices();
-	VID * XP = alloc.template allocate<VID>( ce );
-	const VID * ngh = cut.get_vertices();
-	std::copy( ngh, ngh+ce, XP );
-	VID ne = cut.get_start_pos();
-	mce_iterate_xp_iterative<false>( H, E2, alloc, degeneracy, XP, ne, ce );
-	stats.record_tiny( tm.stop() );
-	return;
-    }
-    
     VID xnum = cut.get_start_pos();
     VID pnum = num - xnum;
 
@@ -1726,15 +1737,46 @@ void mce_top_level(
     }
 #endif
 
+    // Threshold is tunable and depends on cost of creating a cut-out vs the
+    // cost of merge and hash intersections.
+    // if( num < TUNABLE_SMALL_AVOID_CUTOUT_TOP ) {
+/*
+    if( G.getDegree( v ) < 60 ) {
+	timer tm;
+	tm.start();
+	MCE_Enumerator_stage2 E2 = E.get_enumerator( 1 );
+	StackLikeAllocator alloc;
+	VID ce = cut.get_num_vertices();
+	VID * XP = alloc.template allocate<VID>( ce );
+	const VID * ngh = cut.get_vertices();
+	std::copy( ngh, ngh+ce, XP );
+	VID ne = cut.get_start_pos();
+	mce_iterate_xp_iterative<false>( H, E2, alloc, degeneracy, XP, ne, ce );
+	stats.record_tiny( tm.stop() );
+	return;
+    }
+*/
+    
     timer tm;
     tm.start();
-    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
-    const auto & HG = ibuilder.get_graph();
+    if( cut.get_num_vertices() <= 8*(degeneracy+1) ) {
+	// MCE_Parallel_Enumerator E2( E, 1 );
+	VID ce = cut.get_num_vertices();
+	VID * XP = new VID[ce];
+	const VID * ngh = cut.get_vertices();
+	std::copy( ngh, ngh+ce, XP );
+	VID ne = cut.get_start_pos();
+	mce_bron_kerbosch_recpar_xp2( H, degeneracy, E, XP, ne, ce, 1 );
+	delete[] XP;
+    } else {
+	GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
+	const auto & HG = ibuilder.get_graph();
 
-    stats.record_genbuild( tm.stop() );
+	stats.record_genbuild( tm.stop() );
 
-    tm.start();
-    mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
+	tm.start();
+	mce_variable( HG, E, v, ibuilder.get_start_pos(), degeneracy );
+    }
     double t = tm.stop();
     if( false && t >= 3.0 ) {
 	std::cerr << "generic v=" << v << " num=" << num
@@ -1834,7 +1876,7 @@ bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
     VID r,
-    const VID * XP,
+    VID * XP,
     VID ne,
     VID ce ) {
 #if ABLATION_DISABLE_LEAF
@@ -1855,6 +1897,10 @@ bool mce_leaf(
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    std::sort( XP, XP+ne );
+	    std::sort( XP+ne, XP+ce );
+	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
 	return true;
     }
@@ -1868,17 +1914,29 @@ bool mce_leaf(
 	plg = P_MIN_SIZE;
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    std::sort( XP, XP+ne );
+	    std::sort( XP+ne, XP+ce );
+	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
 	return true;
     }
 
     if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    std::sort( XP, XP+ne );
+	    std::sort( XP+ne, XP+ce );
+	}
 	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
 	    H, E, r, XP, ne, ce );
 	return true;
     }
 
     if( nlg <= N_MAX_SIZE ) {
+	if constexpr ( HGraphTy::has_dual_rep ) {
+	    std::sort( XP, XP+ne );
+	    std::sort( XP+ne, XP+ce );
+	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
 	return true;
     }
