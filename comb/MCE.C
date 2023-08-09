@@ -802,7 +802,7 @@ bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
     VID r,
-    VID * XP,
+    const XPSet<VID> & xp_set,
     VID ne,
     VID ce );
 
@@ -931,8 +931,9 @@ mce_iterate_xp_iterative(
 			}
 			*/
 
-			ok = mce_leaf<VID,EID>(
-			    G, Ee, depth, XP_new, ne_new, ce_new );
+			// ok = mce_leaf<VID,EID>(
+			// G, Ee, depth, XP_new, ne_new, ce_new );
+			ok = false; // tmp
 		    }
 		}
 
@@ -1212,7 +1213,7 @@ mce_bron_kerbosch_recpar_xps(
 		//       >O(n).
 		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		ok = mce_leaf<VID,EID>(
-		    G, E2, depth+1, xp_new.get_set(), ne_new, ce_new );
+		    G, E2, depth+1, xp_new, ne_new, ce_new );
 		if( false && !ok ) {
 		    StackLikeAllocator alloc;
 		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
@@ -1570,10 +1571,10 @@ void leaf_dense_fn(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & Ee,
     VID r,
-    const VID * XP,
+    const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
-    DenseMatrix<Bits,VID,EID> D( H, H, XP, ne, ce );
+    DenseMatrix<Bits,VID,EID> D( H, H, xp_set.get_set(), ne, ce );
     D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );
@@ -1584,10 +1585,11 @@ void leaf_blocked_fn(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & Ee,
     VID r,
-    const VID * XP,
+    const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
-    BlockedBinaryMatrix<XBits,PBits,VID,EID> D( H, H, XP, ne, ce );
+    BlockedBinaryMatrix<XBits,PBits,VID,EID>
+	D( H, H, xp_set.get_set(), ne, ce );
     mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );
@@ -1597,7 +1599,7 @@ typedef void (*mce_leaf_func)(
     const HGraphTy &,
     MCE_Enumerator_stage2 & Ee,
     VID,
-    const VID *,
+    const XPSet<VID> &,
     VID,
     VID );
     
@@ -1652,7 +1654,7 @@ bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
     VID r,
-    VID * XP,
+    const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
 #if ABLATION_DISABLE_LEAF
@@ -1661,6 +1663,7 @@ bool mce_leaf(
     VID num = ce;
     VID xnum = ne;
     VID pnum = ce - ne;
+    VID * XP = xp_set.get_set();
 
     if( ce <= 3 ) {
 	MCE_Enumerator_stage2 E2( E, r-1 );
@@ -1677,7 +1680,7 @@ bool mce_leaf(
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
 
@@ -1694,7 +1697,7 @@ bool mce_leaf(
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
 
@@ -1704,7 +1707,7 @@ bool mce_leaf(
 	    std::sort( XP+ne, XP+ce );
 	}
 	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
-	    H, E, r, XP, ne, ce );
+	    H, E, r, xp_set, ne, ce );
 	return true;
     }
 
@@ -1713,7 +1716,7 @@ bool mce_leaf(
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, XP, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
 
