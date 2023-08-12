@@ -1574,7 +1574,7 @@ void leaf_dense_fn(
     const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
-    DenseMatrix<Bits,VID,EID> D( H, H, xp_set.get_set(), ne, ce );
+    DenseMatrix<Bits,VID,EID> D( H, H, xp_set, ne, ce );
     D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );
@@ -1676,7 +1676,7 @@ bool mce_leaf(
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
-	if constexpr ( HGraphTy::has_dual_rep ) {
+	if constexpr ( HGraphTy::has_dual_rep && false ) {
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
@@ -1693,7 +1693,7 @@ bool mce_leaf(
 	plg = P_MIN_SIZE;
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
-	if constexpr ( HGraphTy::has_dual_rep ) {
+	if constexpr ( HGraphTy::has_dual_rep && false ) {
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
@@ -1712,7 +1712,7 @@ bool mce_leaf(
     }
 
     if( nlg <= N_MAX_SIZE ) {
-	if constexpr ( HGraphTy::has_dual_rep ) {
+	if constexpr ( HGraphTy::has_dual_rep && false ) {
 	    std::sort( XP, XP+ne );
 	    std::sort( XP+ne, XP+ce );
 	}
