@@ -580,16 +580,25 @@ public:
 	return srl( a, _mm_cvtsi64_si128( b ) );
     }
     static type slli( type a, unsigned int s ) {
-	    return _mm256_slli_epi32( a, s );
+	return _mm256_slli_epi32( a, s );
     }
     static type srli( type a, unsigned int s ) {
 	return _mm256_srli_epi32( a, s );
     }
     static type srai( type a, unsigned int s ) {
-	    return _mm256_srai_epi32( a, s );
+	return _mm256_srai_epi32( a, s );
     }
     static type srav( type a, type s ) {
-	    return _mm256_srav_epi32( a, s );
+	return _mm256_srav_epi32( a, s );
+    }
+    template<unsigned int bs>
+    static type bsrli( type a ) {
+	return _mm256_bsrli_epi128( a, bs );
+    }
+
+    template<unsigned int p>
+    static type shuffle( type a ) {
+	return _mm256_shuffle_epi32( a, p );
     }
 
     template<typename ReturnTy = member_type>

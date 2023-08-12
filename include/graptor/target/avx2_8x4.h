@@ -49,6 +49,7 @@ public:
     using mask_traits = mask_type_traits<vlen>;
     using mask_type = typename mask_traits::type;
     using mt_preferred = target::mt_vmask;
+    using vmask_traits = avx2_8x4<uint64_t>;
     
 /*
     static void print( std::ostream & os, type v ) {

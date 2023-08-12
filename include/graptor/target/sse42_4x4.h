@@ -36,6 +36,7 @@ public:
 
     using mask_traits = mask_type_traits<4>;
     using mask_type = typename mask_traits::type;
+    using vmask_traits = sse42_4x4<uint32_t>;
 
     using mt_preferred = target::mt_vmask;
 
@@ -237,6 +238,12 @@ public:
     static vmask_type cmple( type a, type b, mt_vmask ) {
 	return cmpge( b, a, mt_vmask() );
     }
+    static vmask_type cmpeq( vmask_type m, type a, type b, mt_vmask ) {
+	return vmask_traits::logical_and( m, cmpeq( a, b, mt_vmask() ) );
+    }
+    static vmask_type cmplt( vmask_type m, type a, type b, mt_vmask ) {
+	return vmask_traits::logical_and( m, cmplt( a, b, mt_vmask() ) );
+    }
 #if __AVX512VL__
     static mask_type cmpeq( type a, type b, mt_mask ) {
 	if constexpr ( std::is_signed_v<member_type> )
@@ -307,7 +314,7 @@ public:
 
     static type add( type a, type b ) { return _mm_add_epi32( a, b ); }
     static type sub( type a, type b ) { return _mm_sub_epi32( a, b ); }
-    // static type mul( type a, type b ) { return _mm_mul_epi32( a, b ); }
+    static type mul( type a, type b ) { return _mm_mullo_epi32( a, b ); }
 
     static vpair<type,type> divmod3( type a ) {
 	// Based on
@@ -517,6 +524,13 @@ public:
     static type srai( type a, unsigned int s ) {
 	    return _mm_srai_epi32( a, s );
     }
+    static type bsrli( type a, unsigned int bs ) {
+	return _mm_bsrli_si128( a, bs );
+    }
+
+    static type shuffle( type a, unsigned int p ) {
+	return _mm_shuffle_epi32( a, p );
+    }
 
     static auto castfp( type a ) { return _mm_castsi128_ps( a ); }
     static type castint( type a ) { return a; }
@@ -691,6 +705,19 @@ public:
 	    int_traits::lane2(vmask) ? a[int_traits::lane2(b)] : member_type(0),
 	    int_traits::lane1(vmask) ? a[int_traits::lane1(b)] : member_type(0),
 	    int_traits::lane0(vmask) ? a[int_traits::lane0(b)] : member_type(0)
+	    );
+#endif
+    }
+    static type
+    gather( itype z, const member_type *a, itype b, vmask_type vmask ) {
+#if __AVX2__
+	return _mm_mask_i32gather_epi32( z, (const int *)a, b, vmask, W );
+#else
+	return set(
+	    int_traits::lane3(vmask) ? a[int_traits::lane3(b)] : lane3(z),
+	    int_traits::lane2(vmask) ? a[int_traits::lane2(b)] : lane2(z),
+	    int_traits::lane1(vmask) ? a[int_traits::lane1(b)] : lane1(z),
+	    int_traits::lane0(vmask) ? a[int_traits::lane0(b)] : lane0(z)
 	    );
 #endif
     }

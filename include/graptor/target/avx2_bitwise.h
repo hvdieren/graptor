@@ -38,6 +38,14 @@ struct avx2_bitwise {
     static type set_pair( __m128i up, __m128i lo ) {
 	return _mm256_inserti128_si256( _mm256_castsi128_si256( lo ), up, 1 );
     }
+    static __m128i sse_subvector( type a, int idx ) {
+	switch( idx ) {
+	case 0: return _mm256_extracti128_si256( a, 0 );
+	case 1: return _mm256_extracti128_si256( a, 1 );
+	default:
+	    assert( 0 && "should not get here" );
+	};
+    }
     
     static type logical_and( type a, type b ) { return _mm256_and_si256( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm256_andnot_si256( a, b ); }
