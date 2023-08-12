@@ -3,6 +3,7 @@
 #define GRAPHGRIND_GRAPH_SIMPLE_BITCONSTRUCT_H
 
 #include "graptor/target/vector.h"
+#include "graptor/graph/simple/xp_set.h"
 
 namespace graptor {
 
@@ -166,7 +167,7 @@ sVID construct_row_hash_adj(
     VID u = XP[su];
 
     bitmask_lhs_sorted_output_iterator<type, VID, true, false>
-	row_u( bitmask_ptr, XP, ne, su >= ne ? 0 : ne );
+	row_u( bitmask_ptr, XP, su >= ne ? 0 : ne, 0, ce );
 
     // Trim off vertices that will be filtered out, but keep alignment.
     const VID * const XP_start
@@ -238,8 +239,13 @@ std::pair<typename tr::type,sVID> construct_row_hash_adj_vec(
 #else
     static constexpr unsigned RVL = 1;
 #endif
-    if constexpr ( sizeof(sVID)*8 == Bits && RVL >= 4 && false ) {
-	sVID l = col_start;
+    sVID l = col_start;
+    if constexpr ( sizeof(sVID)*8 <= Bits && Bits <= 64
+		   && sizeof(sVID) >= 4 && RVL >= 4 ) {
+	// When vertex IDs are not wider than the bit mask that needs to be
+	// constructed, and the bit masks are at most 64 bits, and the vertex
+	// IDs are 32 or 64 bits, then it is possible to perform either
+	// 32-bit or 64-bit gather operations on the hash set/table.
 	if( col_end - col_start >= RVL ) {
 	    // A vertex identifier is not wider than a row of the matrix.
 	    // We can fit multiple row_type into a vector
@@ -250,54 +256,220 @@ std::pair<typename tr::type,sVID> construct_row_hash_adj_vec(
 	    rtype one = rtr::setoneval();
 	    itype ione = itr::setoneval();
 	    rtype step = rtr::slli( one, ilog2( RVL ) );
-	    rtype off = rtr::set1inc0();
+	    rtype off = rtr::set1inc( l ); // l - off; name confusion
 	    rtype mrow = rtr::setzero();
-	    itype mdeg = itr::setzero();
+	    rtype ine = rtr::set1( su >= ne ? 0 : ne );
 	    while( l+RVL <= col_end ) {
 		itype v = itr::loadu( &XP[l] );
 		rtype c = rtr::sllv( one, off );
-#if __AVX512F__
-		// using bitmask
-		auto b = adj.template multi_contains<sVID,RVL>( v, target::mt_mask() );
-		rtype d = rtr::blend( b, rtr::setzero(), c );
-		mdeg = itr::blend( b, mdeg, itr::add( mdeg, ione ) );
-#elif __AVX2__
-		itype b = adj.template multi_contains<sVID,RVL>( v, target::mt_vmask() );
-		rtype br = conversion_traits<logical<sizeof(sVID)>,logical<sizeof(type)>,RVL>::convert( b );
-		rtype d = rtr::bitwise_and( br, c );
-		mdeg = itr::add( mdeg, itr::bitwise_and( b, ione ) ); // 4-argument add( mdeg, b, ione, mdeg );
-#else
-		assert( 0 && "NYI" );
-#endif
+
+		// TODO: optimise for AVX512F using mask instead of vmask
+		// bb is 0xffffffff if element present, 0x0 if not
+		itype bb = adj.template multi_contains<sVID,RVL>(
+		    v, target::mt_vmask() );
+		// Width conversion (if needed)
+		rtype br = conversion_traits<sVID,type,RVL>::convert( bb );
+		// Remove elements when X-X edges
+		rtype b = rtr::bitwise_andnot(
+		    rtr::cmplt( off, ine, target::mt_vmask() ), br );
+		// Select active lanes (or nullify inactive bitmasks)
+		rtype d = rtr::bitwise_and( b, c );
+
 		mrow = rtr::bitwise_or( mrow, d );
 		off = rtr::add( off, step );
 		l += RVL;
 	    }
 	    row_u = rtr::reduce_bitwiseor( mrow );
-	    deg = itr::reduce_add( mdeg );
+	    deg = _popcnt32( row_u );
 	}
-	while( l < col_end ) {
-	    sVID xp = XP[l];
-	    if( adj.contains( xp ) ) {
-		row_u = tr::bitwise_or(
-		    row_u, tr::setglobaloneval( l - off ) );
-		++deg;
-	    }
-	    ++l;
+    }
+    while( l < col_end ) {
+	sVID xp = XP[l];
+	if( adj.contains( xp ) ) {
+	    row_u = tr::bitwise_or(
+		row_u, tr::setglobaloneval( l - off ) );
+	    ++deg;
 	}
-    } else {
-	for( sVID l=col_start; l < col_end; ++l ) {
-	    sVID xp = XP[l];
-	    if( adj.contains( xp ) ) {
-		row_u = tr::bitwise_or(
-		    row_u, tr::setglobaloneval( l - off ) );
-		++deg;
-	    }
-	}
+	++l;
     }
 
     return std::make_pair( row_u, deg );
 }
+
+template<typename tr, typename GGraph, typename HGraph, typename sVID>
+std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
+    const GGraph & G,
+    const HGraph & H,
+    const XPSet<sVID> & xp_set,
+    sVID ne,
+    sVID ce,
+    sVID su,
+    sVID col_start,
+    sVID col_end,
+    sVID off ) {
+    using type = typename tr::member_type;
+    using row_type = typename tr::type;
+    constexpr size_t Bits = 8 * sizeof(row_type);
+
+    sVID u = xp_set.at( su );
+    
+    row_type row_u = tr::setzero();
+    auto xp_hash = xp_set.hash_table();
+
+    const sVID * ngh = G.get_neighbours( u );
+    const sVID udeg = G.getDegree( u );
+
+    sVID deg = 0;
+
+    // Intersect XP with adjacency list
+#if __AVX512F__
+    static constexpr unsigned RVL = 512/Bits;
+#elif __AVX2__
+    static constexpr unsigned RVL = 256/Bits;
+#elif __SSE42__
+    static constexpr unsigned RVL = 128/Bits;
+#else
+    static constexpr unsigned RVL = 1;
+#endif
+    sVID l = 0;
+    if constexpr ( sizeof(sVID)*8 <= Bits && Bits <= 64
+		   && sizeof(sVID) >= 4 && RVL >= 4 ) {
+	// When vertex IDs are not wider than the bit mask that needs to be
+	// constructed, and the bit masks are at most 64 bits, and the vertex
+	// IDs are 32 or 64 bits, then it is possible to perform either
+	// 32-bit or 64-bit gather operations on the hash set/table.
+	if( udeg >= RVL ) {
+	    // A vertex identifier is not wider than a row of the matrix.
+	    // We can fit multiple row_type into a vector
+	    using itr = vector_type_traits_vl<sVID,RVL>;
+	    using rtr = vector_type_traits_vl<type,RVL>;
+	    using itype = typename itr::type;
+	    using rtype = typename rtr::type;
+	    rtype one = rtr::setoneval();
+	    itype ione = itr::setoneval();
+	    rtype step = rtr::slli( one, ilog2( RVL ) );
+	    rtype mrow = rtr::setzero();
+	    itype ine = itr::set1( su >= ne ? 0 : ne );
+	    while( l+RVL <= udeg ) {
+		itype v = itr::loadu( &ngh[l] );
+		itype bb = xp_hash.template multi_contains<sVID,RVL>( v ); // translate
+		// like blend: if v < ine, then invalidate lane, else use bb
+		itype b = itr::bitwise_or(
+		    itr::cmplt( bb, ine, target::mt_vmask() ), bb );
+		// if lane invalid, then shift results in zero mask
+		rtype d = rtr::sllv( one, b );
+		mrow = rtr::bitwise_or( mrow, d );
+		l += RVL;
+	    }
+	    row_u = rtr::reduce_bitwiseor( mrow );
+	    deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
+	}
+    } else if constexpr ( sizeof(sVID) >= 4 && Bits == 128 ) {
+	// Do vectorized lookup operation, then handle each index one at a time
+	// Bitmask restrict to SSE subset
+	// Lookup vector length matches total vector width of bitmask vector.
+	static constexpr unsigned IVL = sizeof(row_type)*RVL/sizeof(sVID);
+	if( udeg >= IVL ) {
+	    // A vertex identifier is not wider than a row of the matrix.
+	    // We can fit multiple row_type into a vector
+	    using itr = vector_type_traits_vl<sVID,IVL>;
+	    using rtr = vector_type_traits_vl<type,tr::vlen*RVL>;
+	    using itype = typename itr::type;
+	    using rtype = typename rtr::type;
+	    const itype ione = itr::setoneval();
+	    itype step = itr::slli( ione, ilog2( RVL ) );
+	    rtype mrow = rtr::setzero();
+	    const itype ine = itr::set1( su >= ne ? 0 : ne );
+	    //! 4 ... 4 0 ... 0 (if sVID == uint32_t)
+	    const itype lno2 = itr::template shuffle<0>( itr::set1inc0() );
+	    constexpr unsigned lshift = ilog2( itr::B );
+	    // const itype omask = itr::sub( itr::slli( ione, lshift ), ione );
+	    const itype omask = itr::srli( itr::setone(), itr::B - lshift );
+	    const itype selector = itr::sub( itr::set1inc0(), lno2 );
+	    assert( off == 0 );
+	    while( l+IVL <= udeg ) {
+		itype v = itr::loadu( &ngh[l] );
+		itype bb = xp_hash.template multi_contains<sVID,IVL>( v ); // translate
+		// like blend: if v < ine, then invalidate lane, else use bb
+		itype b = itr::bitwise_or(
+		    itr::cmplt( bb, ine, target::mt_vmask() ), bb );
+
+		// To generate bit, split index in lane and offset in lane
+		itype bl = itr::srli( b, lshift );
+		itype bo = itr::bitwise_and( b, omask );
+		itype mo = itr::sllv( ione, bo );
+
+		// handle indices few at a time (one per SSE subvector)
+		// for( unsigned li=0; li < IVL; li += RVL ) {// IVL/RVL iterations
+		static_assert( IVL/RVL == 4, "unrolling assumption" );
+		{
+		    // if lane is invalid, its value is 0xffffffff and the
+		    // lane number in il will be a large value, which will make
+		    // cmpeq fail and ila will be zero across the SSE
+		    // subvector that corresponds to invalid lanes
+
+		    // Replicate lowest lane in SSE subvector to all lanes
+		    itype il = itr::template shuffle<0>( bl );
+		    // Generate relevant 32-bit part of bitmask in each lane
+		    itype spec = itr::template shuffle<0>( mo );
+		    
+		    // only required lane equals _1s
+		    itype ila = itr::cmpeq( selector, il, target::mt_vmask() );
+		    // Select bitmask from required lane
+		    // Following two operations could be one using ternarylogic
+		    itype m = itr::bitwise_and( ila, spec );
+		    // Merge with accumulator
+		    mrow = rtr::bitwise_or( mrow, m );
+
+		    // Shift index to position for next iteration
+		    // When unrolling, could remove this and adjust shuffle
+		    // at the top of the loop to select appropriate lane
+		    // bl = itr::template bsrli<itr::W>( bl );
+		    // mo = itr::template bsrli<itr::W>( mo );
+		}
+		{
+		    itype il = itr::template shuffle<0x55>( bl );
+		    itype spec = itr::template shuffle<0x55>( mo );
+		    itype ila = itr::cmpeq( selector, il, target::mt_vmask() );
+		    itype m = itr::bitwise_and( ila, spec );
+		    mrow = rtr::bitwise_or( mrow, m );
+		}
+		{
+		    itype il = itr::template shuffle<0xaa>( bl );
+		    itype spec = itr::template shuffle<0xaa>( mo );
+		    itype ila = itr::cmpeq( selector, il, target::mt_vmask() );
+		    itype m = itr::bitwise_and( ila, spec );
+		    mrow = rtr::bitwise_or( mrow, m );
+		}
+		{
+		    itype il = itr::template shuffle<0xff>( bl );
+		    itype spec = itr::template shuffle<0xff>( mo );
+		    itype ila = itr::cmpeq( selector, il, target::mt_vmask() );
+		    itype m = itr::bitwise_and( ila, spec );
+		    mrow = rtr::bitwise_or( mrow, m );
+		}
+		
+		l += IVL;
+	    }
+	    for( unsigned ri=0; ri < RVL; ++ri )
+		row_u = tr::bitwise_or( row_u, rtr::sse_subvector( mrow, ri ) );
+	    deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
+	}
+    }
+    while( l < udeg ) {
+	sVID v = ngh[l];
+	sVID sv = xp_hash.contains( v ); // translates ID
+	if( sv >= col_start && sv < col_end ) {
+	    row_u = tr::bitwise_or(
+		row_u, tr::setglobaloneval( sv - off ) );
+	    ++deg;
+	}
+	++l;
+    }
+
+    return std::make_pair( row_u, deg );
+}
+
 
 } // namespace graph
 

@@ -9,6 +9,7 @@
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/graph/simple/bitconstruct.h"
+#include "graptor/graph/simple/xp_set.h"
 #include "graptor/target/vector.h"
 #include "graptor/container/intersect.h"
 
@@ -483,6 +484,63 @@ public:
 		G, H, &m_matrix[VL * su], XP, ne, ce, su,
 		( su >= ne ? 0 : ne ), ce );
 #endif
+
+	    m_degree[su] = adeg;
+	    m_m += adeg;
+	}
+
+	m_n = ns;
+    }
+    // In this variation, hVIDs are already sorted by core_order
+    // and we know the separation between X and P sets.
+    template<typename GGraph, typename HGraph>
+    DenseMatrix( const GGraph & G,
+		 const HGraph & H,
+		 const XPSet<sVID> & xp_set,
+		 sVID ne, sVID ce )
+	: m_start_pos( ne ) {
+	// Vertices in X and P are independently already sorted by core order.
+	// We do not reorder, primarily because only the order in P matters
+	// for efficiency of enumeration.
+	// Do we need to copy, or can we just keep a pointer to XP?
+	VID ns = ce;
+
+	// TODO: avoid use of set directly
+	const sVID * XP = xp_set.get_set();
+
+	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+
+	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
+
+	// Place edges
+	VID ni = 0;
+	m_m = 0;
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = XP[su];
+
+	    // Attempt a hash lookup in XP when XP is much longer than the
+	    // neighbour list of the vertex.
+
+	    VID adeg;
+	    if( ce > 2*G.getDegree( u ) && Bits <= 128 ) {
+		row_type row_u;
+		std::tie( row_u, adeg )
+		    = graptor::graph::construct_row_hash_xp_vec<tr>(
+			G, H, xp_set, ne, ce, su,
+			( su >= ne ? 0 : ne ),
+			ce, (sVID)0 ); 
+		tr::store( &m_matrix[VL * su], row_u );
+	    } else {
+		// Best option for hashing adjacency
+		adeg = construct_row_hash_adj<tr>(
+		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
+		    ( su >= ne ? 0 : ne ), ce );
+	    }
 
 	    m_degree[su] = adeg;
 	    m_m += adeg;
