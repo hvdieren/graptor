@@ -171,13 +171,14 @@ public:
 	return intersect_size_scalar( I, E, exceed );
     }
 
-    template<typename atype, unsigned short VL, typename MT>
+    template<typename U, unsigned short VL, typename MT>
     std::conditional_t<std::is_same_v<MT,target::mt_mask>,
-	typename vector_type_traits_vl<atype,VL>::mask_type,
-	typename vector_type_traits_vl<atype,VL>::vmask_type>
-    multi_contains( typename vector_type_traits_vl<atype,VL>::type
+	typename vector_type_traits_vl<U,VL>::mask_type,
+	typename vector_type_traits_vl<U,VL>::vmask_type>
+    multi_contains( typename vector_type_traits_vl<U,VL>::type
 			 index, MT ) const {
-	using tr = vector_type_traits_vl<atype,VL>;
+	static_assert( sizeof( U ) == sizeof( type ) );
+	using tr = vector_type_traits_vl<type,VL>;
 	using vtype = typename tr::type;
 #if __AVX512F__
 	using mtr = typename tr::mask_traits;
@@ -222,6 +223,16 @@ public:
 	// Return success if found, which equals imv inverted
 	// It just takes one cycle to recompute, same as invert. The code
 	// below is most compact to achieve the correct return type.
+/*
+	{
+	    mtype r = tr::cmpeq( e, v, mkind() );
+	    for( unsigned l=0; l < VL; ++l ) {
+		bool cs = contains( tr::lane( index, l ) );
+		bool cv = tr::lane( r, l ) != 0;
+		assert( cs == cv );
+	    }
+	}
+*/
 	return tr::cmpeq( e, v, MT() );
     }
 

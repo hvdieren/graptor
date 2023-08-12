@@ -33,14 +33,15 @@ public:
 		return pos < m_ne;
 	}
 
-	template<typename atype, unsigned short VL, typename MT>
+	template<typename U, unsigned short VL, typename MT>
 	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
-			   typename vector_type_traits_vl<atype,VL>::mask_type,
-			   typename vector_type_traits_vl<atype,VL>::vmask_type>
-	multi_contains( typename vector_type_traits_vl<atype,VL>::type
+			   typename vector_type_traits_vl<U,VL>::mask_type,
+			   typename vector_type_traits_vl<U,VL>::vmask_type>
+	multi_contains( typename vector_type_traits_vl<U,VL>::type
 			index, MT ) const {
-	    using tr = vector_type_traits_vl<atype,VL>;
-	    using str = vector_type_traits_vl<std::make_signed_t<atype>,VL>;
+	    static_assert( sizeof( U ) >= sizeof( lVID ) );
+	    using tr = vector_type_traits_vl<U,VL>;
+	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
 	    using vtype = typename tr::type;
 #if __AVX512F__
 	    using mtr = typename tr::mask_traits;
@@ -52,7 +53,7 @@ public:
 	    using mtype = typename mtr::type;
 
 	    // we silently assume that all values are >= 0
-	    static_assert( std::is_unsigned_v<atype>,
+	    static_assert( std::is_unsigned_v<lVID>,
 			   "arithmetic requires unsigned type" );
 
 	    // load the positions that might be used
@@ -102,12 +103,21 @@ public:
 	    return pos;
 	}
 
-	template<typename atype, unsigned short VL>
-	typename vector_type_traits_vl<atype,VL>::type
+	template<typename U, unsigned short VL, typename MT>
+	typename vector_type_traits_vl<U,VL>::type
 	multi_contains(
-	    typename vector_type_traits_vl<atype,VL>::type index ) const {
-	    using tr = vector_type_traits_vl<atype,VL>;
-	    using str = vector_type_traits_vl<std::make_signed_t<atype>,VL>;
+	    typename vector_type_traits_vl<U,VL>::type index,
+	    MT ) const {
+	    return multi_contains<U,VL>( index );
+	}
+
+	template<typename U, unsigned short VL>
+	typename vector_type_traits_vl<U,VL>::type
+	multi_contains(
+	    typename vector_type_traits_vl<U,VL>::type index ) const {
+	    static_assert( sizeof( U ) >= sizeof( lVID ) );
+	    using tr = vector_type_traits_vl<U,VL>;
+	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
 	    using vtype = typename tr::type;
 #if __AVX512F__
 	    using mtr = typename tr::mask_traits;
@@ -119,7 +129,7 @@ public:
 	    using mtype = typename mtr::type;
 
 	    // we silently assume that all values are >= 0
-	    static_assert( std::is_unsigned_v<atype>,
+	    static_assert( std::is_unsigned_v<lVID>,
 			   "arithmetic requires unsigned type" );
 
 	    // load the positions that might be used

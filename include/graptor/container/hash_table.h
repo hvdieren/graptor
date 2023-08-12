@@ -160,18 +160,19 @@ public:
 	    return false;
     }
 
-    template<typename atype, unsigned short VL, typename MT>
+    template<typename U, unsigned short VL, typename MT>
     std::pair<
 	// Index found
-	typename vector_type_traits_vl<atype,VL>::type,
+	typename vector_type_traits_vl<U,VL>::type,
 	// presence flag
 	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
-			   typename vector_type_traits_vl<atype,VL>::mask_type,
-			   typename vector_type_traits_vl<atype,VL>::vmask_type>
+			   typename vector_type_traits_vl<U,VL>::mask_type,
+			   typename vector_type_traits_vl<U,VL>::vmask_type>
 	>
-    multi_contains( typename vector_type_traits_vl<atype,VL>::type
+    multi_contains( typename vector_type_traits_vl<U,VL>::type
 		    index, MT ) const {
-	using tr = vector_type_traits_vl<atype,VL>;
+	static_assert( sizeof( U ) >= sizeof( type ) );
+	using tr = vector_type_traits_vl<U,VL>;
 	using vtype = typename tr::type;
 #if __AVX512F__
 	using mtr = typename tr::mask_traits;

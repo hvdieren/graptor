@@ -7,6 +7,7 @@
 #include <immintrin.h>
 
 #include "graptor/target/vector.h"
+#include "graptor/container/builder.h"
 
 /*!=====================================================================*
  * Various intersection algorithms
@@ -227,6 +228,15 @@ struct hash_scalar {
 
     static constexpr bool uses_hash = true;
 
+    template<typename It, typename HT, typename B>
+    static void
+    intersect_xlat( It lb, It le, const HT & htable, B & build ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    build.insert( lb, htable.contains( v ) );
+	    ++lb;
+	}
+    }
     template<typename It, typename HT, typename Ot>
     static
     Ot intersect( It lb, It le, const HT & htable, Ot o ) {
@@ -399,7 +409,26 @@ struct hash_vector {
     static constexpr bool uses_hash = true;
 
 private:
-    template<bool send_lhs_ptr,
+    template<unsigned VL, typename T, typename HT, typename B>
+    static
+    const T *
+    // __attribute__((noinline))
+    detail_intersect_xlat(
+	const T * lb, const T * le, const HT & htable, B & build ) {
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+
+	while( lb+VL <= le ) {
+	    auto x = htable.template multi_contains<T,VL>(
+		tr::loadu( lb ), target::mt_vmask() );
+	    build.multi_insert( lb, x );
+	    lb += VL;
+	}
+
+	return lb;
+    }
+
+   template<bool send_lhs_ptr,
 	     unsigned VL, bool store, typename T, typename HT, typename Ot>
     static
     const T *
@@ -480,7 +509,8 @@ private:
 
 	while( l+VL <= le ) {
 	    type v = tr::loadu( l );
-	    auto m = htable.template multi_contains<T,VL>( v, target::mt_mask() );
+	    auto m = htable.template multi_contains<T,VL>(
+		v, target::mt_mask() );
 	    options -= VL - _popcnt32( m );
 	    if( options < 0 ) {
 		lb = l;
@@ -517,6 +547,19 @@ private:
     } 
 
 public:
+    template<typename T>
+    static const T * adjust_start( const T * start, const T * desired ) {
+	constexpr size_t Bits = sizeof( T ) * 8;
+#if __AVX512F__
+	constexpr unsigned VL = 512/Bits;
+#elif __AVX2__
+	constexpr unsigned VL = 256/Bits;
+#else
+	constexpr unsigned VL = 1;
+#endif
+	return start + ( std::distance( start, desired ) & ~( VL - 1 ) );
+    }
+    
     template<typename T, typename HT, typename Ot>
     static
     Ot
@@ -537,6 +580,25 @@ public:
 		      const HT & htable2, Ot out ) {
 	return detail_intersect3_vec<true>( lb, le, htable1, htable2, out );
     } 
+
+    template<typename T, typename HT, typename B>
+    static
+    std::enable_if_t<is_builder_v<B>>
+    intersect_xlat( const T * lb, const T * le, const HT & htable, B & build ) {
+#if __AVX512F__
+	constexpr size_t VL1 = 64 / sizeof(T);
+	auto proxy1 = build.template get_proxy<VL1>();
+	lb = detail_intersect_xlat<VL1>( lb, le, htable, proxy1 );
+	build.merge_proxy( proxy1 );
+#endif
+#if __AVX2__
+	constexpr size_t VL2 = 32 / sizeof(T);
+	auto proxy2 = build.template get_proxy<VL2>();
+	lb = detail_intersect_xlat<VL2>( lb, le, htable, proxy2 );
+	build.merge_proxy( proxy2 );
+#endif
+	graptor::hash_scalar::intersect_xlat( lb, le, htable, build );
+    }
 
     template<bool send_lhs_ptr, typename T, typename HT, typename Ot>
     static
