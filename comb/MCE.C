@@ -38,12 +38,8 @@
 #define ABLATION_BLOCKED_DISABLE_XP_HASH 0
 #endif
 
-#ifndef ABLATION_BLOCKED_HASH_MASK
-#define ABLATION_BLOCKED_HASH_MASK 0
-#endif
-
-#ifndef ABLATION_DENSE_HASH_MASK
-#define ABLATION_DENSE_HASH_MASK 0
+#ifndef ABLATION_DENSE_DISABLE_XP_HASH
+#define ABLATION_DENSE_DISABLE_XP_HASH 0
 #endif
 
 #ifndef ABLATION_BLOCKED_EXCEED
@@ -1589,7 +1585,7 @@ void leaf_blocked_fn(
     VID ne,
     VID ce ) {
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	D( H, H, xp_set.get_set(), ne, ce );
+	D( H, H, xp_set, ne, ce );
     mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
 	Ee.record( r + sz );
     } );
@@ -1788,13 +1784,12 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
 	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
-	      << "\n\tABLATION_DENSE_HASH_MASK=" << ABLATION_DENSE_HASH_MASK
 	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
 	      << ABLATION_HADJPA_DISABLE_XP_HASH
 	      << "\n\tABLATION_BLOCKED_DISABLE_XP_HASH="
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
-	      << "\n\tABLATION_BLOCKED_HASH_MASK="
-	      << ABLATION_BLOCKED_HASH_MASK
+	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
+	      << ABLATION_DENSE_DISABLE_XP_HASH
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
 	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES

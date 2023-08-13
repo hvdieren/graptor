@@ -162,10 +162,12 @@ public:
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
     template<typename GGraph, typename HGraph,
+	     typename HTable,
 	     typename DID, typename AddDegree>
     BinaryMatrix( const GGraph & G,
 		  const HGraph & H,
-		  const sVID * XP,
+		  const sVID * const XP,
+		  const HTable & xp_hash,
 		  sVID ne, sVID ce,
 		  DID * m_degree,
 		  AddDegree && ) // correlates with xp vs px matrix
@@ -188,49 +190,32 @@ public:
 	allocate();
 	std::fill( &m_matrix[0], &m_matrix[VL * m_rows], 0 );
 
-	// Place XP in hash table for fast intersection
-#if !ABLATION_BLOCKED_DISABLE_XP_HASH
-	typename HGraph::hash_set_type XP_hash( XP, XP+ce );
-#endif
-
 	// Place edges
 	sVID ni = 0;
 	m_m = 0;
 	for( sVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
-	    sVID u = XP[r];
+	    const sVID u = XP[r];
 	    sVID deg;
 	    row_type row_u;
-	    sVID udeg = G.getDegree( u );
-	    const sVID * n = G.get_neighbours( u );
+	    const sVID udeg = G.getDegree( u );
+	    const sVID * const n = G.get_neighbours( u );
 
-	    // XP-hash takes m_cols steps
+	    // XP-hash takes udeg steps
 	    // adj-hash takes ce steps
 #if !ABLATION_BLOCKED_DISABLE_XP_HASH
-	    if( HGraph::has_dual_rep && ce > 2*m_cols ) {
+	    if( ce > 2*udeg ) {
 		std::tie( row_u, deg )
-		    = graptor::graph::construct_row_hash_xp<tr>(
-			G, H, XP_hash, XP, ne, ce, r, u, m_col_start,
-			m_col_start + m_cols, m_col_start );
+		    = graptor::graph::construct_row_hash_xp_vec<tr>(
+			G, H, xp_hash, ne, ce, r, u,
+			m_col_start, m_col_start + m_cols, m_col_start ); 
 		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
 	    } else
 #endif
-#if ABLATION_BLOCKED_HASH_MASK
 	    {
-		deg = graptor::graph::construct_row_hash_adj<tr>(
-		    G, H, &m_matrix[VL * (r - m_row_start)],
-		    XP, ne, ce, r,
-		    // ( su >= ne ? 0 : ne ), ce
-		    m_col_start, m_col_start+m_cols, m_col_start );
+		deg = construct_row_hash_adj<tr>(
+		    G, H, &m_matrix[VL * (r - m_row_start)], XP, ne, ce, r,
+		    m_col_start, m_col_start + m_cols, m_col_start ); 
 	    }
-#else
-	    {
-		std::tie( row_u, deg )
-		    = graptor::graph::construct_row_hash_adj_vec<tr>(
-			G, H, XP, ne, ce, r, m_col_start, m_col_start+m_cols,
-			m_col_start );
-		tr::store( &m_matrix[VL * (r - m_row_start)], row_u );
-	    }
-#endif
 
 	    if constexpr ( !AddDegree::value )
 		m_degree[r] = deg;
@@ -392,7 +377,7 @@ public:
     BlockedBinaryMatrix(
 	const GGraph & G,
 	const HGraph & H,
-	const sVID * XP,
+	const XPSet<sVID> & xp_set,
 	sVID ne, sVID ce ) {
 
 	// Vertices in X and P are independently already sorted by core order.
@@ -402,10 +387,38 @@ public:
 	// Construct two matrices
 	// Rows: X union P; columns: P
 	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
-	    G, H, XP, ne, ce, m_degree, std::false_type() );
+	    G, H, xp_set.get_set(), xp_set.hash_table(),
+	    ne, ce, m_degree, std::false_type() );
 	// Rows: P; columns: X
 	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
-	    G, H, XP, ne, ce, m_degree, std::true_type() );
+	    G, H, xp_set.get_set(), xp_set.hash_table(),
+	    ne, ce, m_degree, std::true_type() );
+    }
+    // In this variation, hVIDs are already sorted by core_order
+    // and we know the separation between X and P sets.
+    template<typename GGraph, typename HGraph>
+    BlockedBinaryMatrix(
+	const GGraph & G,
+	const HGraph & H,
+	const sVID * XP,
+	sVID ne, sVID ce ) {
+
+	// Vertices in X and P are independently already sorted by core order.
+	// We do not reorder, primarily because only the order in P matters
+	// for efficiency of enumeration.
+
+	// Build hash table
+	hash_table<sVID, sVID, typename HGraph::Hash> XP_hash( ce );
+	for( sVID i=0; i < ce; ++i )
+	    XP_hash.insert( XP[i], i );
+
+	// Construct two matrices
+	// Rows: X union P; columns: P
+	new ( &m_xp ) BinaryMatrix<PBits,sVID,sEID>(
+	    G, H, XP, XP_hash, ne, ce, m_degree, std::false_type() );
+	// Rows: P; columns: X
+	new ( &m_px ) BinaryMatrix<XBits,sVID,sEID>(
+	    G, H, XP, XP_hash, ne, ce, m_degree, std::true_type() );
     }
 
 #if 0

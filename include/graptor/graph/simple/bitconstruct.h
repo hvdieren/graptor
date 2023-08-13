@@ -344,19 +344,30 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    using rtr = vector_type_traits_vl<type,RVL>;
 	    using itype = typename itr::type;
 	    using rtype = typename rtr::type;
-	    rtype one = rtr::setoneval();
-	    itype ione = itr::setoneval();
-	    rtype step = rtr::slli( one, ilog2( RVL ) );
+	    const rtype one = rtr::setoneval();
+	    const itype ione = itr::setoneval();
+	    const rtype step = rtr::slli( one, ilog2( RVL ) );
 	    rtype mrow = rtr::setzero();
-	    itype ine = itr::set1( su >= ne ? 0 : ne );
+	    const itype lobnd = itr::set1( col_start );
+	    const itype upbnd = itr::set1( col_end-1 ); // -1 to use gt vs ge
+	    const itype voff = itr::set1( off );
 	    while( l+RVL <= udeg ) {
-		itype v = itr::loadu( &ngh[l] );
-		itype bb = xp_hash.template multi_contains<sVID,RVL>( v ); // translate
-		// like blend: if v < ine, then invalidate lane, else use bb
-		itype b = itr::bitwise_or(
-		    itr::cmplt( bb, ine, target::mt_vmask() ), bb );
+		const itype v = itr::loadu( &ngh[l] );
+		// translate to new ID
+		const itype b0 = xp_hash.template multi_contains<sVID,RVL>( v );
+
+		// like blend: if v < lobnd, then invalidate lane, else use bb
+		const itype b1 = itr::bitwise_or(
+		    itr::cmplt( b0, lobnd, target::mt_vmask() ), b0 );
+		const itype b2 = itr::bitwise_or(
+		    itr::cmpgt( b1, upbnd, target::mt_vmask() ), b1 );
+
+		// offset (for blocked matrices)
+		const itype b3 = itr::sub( b2, voff );
+
 		// if lane invalid, then shift results in zero mask
-		rtype d = rtr::sllv( one, b );
+		// (for all reasonable values of off)
+		rtype d = rtr::sllv( one, b3 );
 		mrow = rtr::bitwise_or( mrow, d );
 		l += RVL;
 	    }
@@ -379,24 +390,32 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    const itype ione = itr::setoneval();
 	    itype step = itr::slli( ione, ilog2( RVL ) );
 	    rtype mrow = rtr::setzero();
-	    const itype ine = itr::set1( su >= ne ? 0 : ne );
 	    //! 4 ... 4 0 ... 0 (if sVID == uint32_t)
 	    const itype lno2 = itr::template shuffle<0>( itr::set1inc0() );
 	    constexpr unsigned lshift = ilog2( itr::B );
 	    // const itype omask = itr::sub( itr::slli( ione, lshift ), ione );
 	    const itype omask = itr::srli( itr::setone(), itr::B - lshift );
 	    const itype selector = itr::sub( itr::set1inc0(), lno2 );
-	    assert( off == 0 );
+	    const itype lobnd = itr::set1( col_start );
+	    const itype upbnd = itr::set1( col_end-1 ); // -1 to use gt vs ge
+	    const itype voff = itr::set1( off );
 	    while( l+IVL <= udeg ) {
-		itype v = itr::loadu( &ngh[l] );
-		itype bb = xp_hash.template multi_contains<sVID,IVL>( v ); // translate
-		// like blend: if v < ine, then invalidate lane, else use bb
-		itype b = itr::bitwise_or(
-		    itr::cmplt( bb, ine, target::mt_vmask() ), bb );
+		const itype v = itr::loadu( &ngh[l] );
+		// translate ID to cutout range
+		const itype b0 = xp_hash.template multi_contains<sVID,IVL>( v );
+
+		// like blend: if b0 < lobnd, then invalidate lane, else use b0
+		const itype b1 = itr::bitwise_or(
+		    itr::cmplt( b0, lobnd, target::mt_vmask() ), b0 );
+		const itype b2 = itr::bitwise_or(
+		    itr::cmpgt( b1, upbnd, target::mt_vmask() ), b1 );
+
+		// offset (for blocked matrices)
+		const itype b3 = itr::sub( b2, voff );
 
 		// To generate bit, split index in lane and offset in lane
-		itype bl = itr::srli( b, lshift );
-		itype bo = itr::bitwise_and( b, omask );
+		itype bl = itr::srli( b3, lshift );
+		const itype bo = itr::bitwise_and( b3, omask );
 		itype mo = itr::sllv( ione, bo );
 
 		// handle indices few at a time (one per SSE subvector)

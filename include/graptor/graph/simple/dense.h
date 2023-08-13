@@ -457,10 +457,13 @@ public:
 
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
 
-	// Build hash table
+#if !ABLATION_DENSE_DISABLE_XP_HASH
+	// Build hash table. Note: comparable hash set already exists in
+	// the graph H, however, not set up to do remapping.
 	hash_table<sVID, sVID, typename HGraph::Hash> XP_hash( ce );
 	for( sVID i=0; i < ce; ++i )
 	    XP_hash.insert( XP[i], i );
+#endif
 
 	// Place edges
 	VID ni = 0;
@@ -472,19 +475,8 @@ public:
 	    // neighbour list of the vertex appears not beneficial to
 	    // performance in this location
 
-#if ABLATION_DENSE_HASH_MASK
-            // The variation on vectorized bitmap construction when
-	    // lanes can hold a full row is less performant here than
-	    // writing bit masks piecemeal to memory.
-	    row_type row_u;
 	    VID adeg;
-	    std::tie( row_u, adeg )
-		= graptor::graph::construct_row_hash_adj_vec<tr>(
-		    G, H, XP, ne, ce, su,
-		    ( su >= ne ? 0 : ne ), ce, (sVID)0 ); 
-	    tr::store( &m_matrix[VL * su], row_u );
-#else
-	    VID adeg;
+#if !ABLATION_DENSE_DISABLE_XP_HASH
 	    if( ce > 2*G.getDegree( u ) ) {
 		row_type row_u;
 		std::tie( row_u, adeg )
@@ -493,13 +485,14 @@ public:
 			( su >= ne ? 0 : ne ),
 			ce, (sVID)0 ); 
 		tr::store( &m_matrix[VL * su], row_u );
-	    } else {
+	    } else
+#endif
+	    {
 		// Best option
 		adeg = construct_row_hash_adj<tr>(
 		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
 		    ( su >= ne ? 0 : ne ), ce );
 	    }
-#endif
 
 	    m_degree[su] = adeg;
 	    m_m += adeg;
@@ -521,8 +514,7 @@ public:
 	// Do we need to copy, or can we just keep a pointer to XP?
 	VID ns = ce;
 
-	// TODO: avoid use of set directly
-	const sVID * XP = xp_set.get_set();
+	const sVID * const XP = xp_set.get_set();
 
 	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
 	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
@@ -537,12 +529,13 @@ public:
 	VID ni = 0;
 	m_m = 0;
 	for( VID su=0; su < ns; ++su ) {
-	    VID u = XP[su];
+	    const VID u = XP[su];
 
 	    // Attempt a hash lookup in XP when XP is much longer than the
 	    // neighbour list of the vertex.
 
 	    VID adeg;
+#if !ABLATION_DENSE_DISABLE_XP_HASH
 	    if( ce > 2*G.getDegree( u ) ) {
 		row_type row_u;
 		std::tie( row_u, adeg )
@@ -551,7 +544,9 @@ public:
 			( su >= ne ? 0 : ne ),
 			ce, (sVID)0 ); 
 		tr::store( &m_matrix[VL * su], row_u );
-	    } else {
+	    } else
+#endif
+	    {
 		// Best option for hashing adjacency
 		adeg = construct_row_hash_adj<tr>(
 		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
