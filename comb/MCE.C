@@ -1672,10 +1672,6 @@ bool mce_leaf(
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
-	if constexpr ( HGraphTy::has_dual_rep && false ) {
-	    std::sort( XP, XP+ne );
-	    std::sort( XP+ne, XP+ce );
-	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
@@ -1689,29 +1685,17 @@ bool mce_leaf(
 	plg = P_MIN_SIZE;
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
-	if constexpr ( HGraphTy::has_dual_rep && false ) {
-	    std::sort( XP, XP+ne );
-	    std::sort( XP+ne, XP+ce );
-	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
 
     if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
-	if constexpr ( HGraphTy::has_dual_rep ) {
-	    std::sort( XP, XP+ne );
-	    std::sort( XP+ne, XP+ce );
-	}
 	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
 	    H, E, r, xp_set, ne, ce );
 	return true;
     }
 
     if( nlg <= N_MAX_SIZE ) {
-	if constexpr ( HGraphTy::has_dual_rep && false ) {
-	    std::sort( XP, XP+ne );
-	    std::sort( XP+ne, XP+ce );
-	}
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
