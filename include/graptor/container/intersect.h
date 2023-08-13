@@ -7,7 +7,6 @@
 #include <immintrin.h>
 
 #include "graptor/target/vector.h"
-#include "graptor/container/builder.h"
 
 /*!=====================================================================*
  * Various intersection algorithms
@@ -580,25 +579,6 @@ public:
 		      const HT & htable2, Ot out ) {
 	return detail_intersect3_vec<true>( lb, le, htable1, htable2, out );
     } 
-
-    template<typename T, typename HT, typename B>
-    static
-    std::enable_if_t<is_builder_v<B>>
-    intersect_xlat( const T * lb, const T * le, const HT & htable, B & build ) {
-#if __AVX512F__
-	constexpr size_t VL1 = 64 / sizeof(T);
-	auto proxy1 = build.template get_proxy<VL1>();
-	lb = detail_intersect_xlat<VL1>( lb, le, htable, proxy1 );
-	build.merge_proxy( proxy1 );
-#endif
-#if __AVX2__
-	constexpr size_t VL2 = 32 / sizeof(T);
-	auto proxy2 = build.template get_proxy<VL2>();
-	lb = detail_intersect_xlat<VL2>( lb, le, htable, proxy2 );
-	build.merge_proxy( proxy2 );
-#endif
-	graptor::hash_scalar::intersect_xlat( lb, le, htable, build );
-    }
 
     template<bool send_lhs_ptr, typename T, typename HT, typename Ot>
     static
