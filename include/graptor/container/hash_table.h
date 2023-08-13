@@ -38,7 +38,8 @@ public:
     explicit hash_table()
 	: m_elements( 0 ),
 	  m_log_size( 4 ),
-	  m_table( new type[16] ),
+	  m_keys( new key_type[16] ),
+	  m_values( new value_type[16] ),
 	  m_hash( 4 ),
 	  pre_allocated( false ) {
 	clear();
@@ -46,11 +47,13 @@ public:
     explicit hash_table( size_t expected_elms )
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
-	  m_table( new type[1<<m_log_size] ),
+	  m_keys( new key_type[1<<m_log_size] ),
+	  m_values( new value_type[1<<m_log_size] ),
 	  m_hash( m_log_size ),
 	  pre_allocated( false ) {
 	clear();
     }
+#if 0
     explicit hash_table( type * storage, size_type num_elements,
 			 size_type log_size )
 	: m_elements( num_elements ),
@@ -69,29 +72,31 @@ public:
 	  pre_allocated( true ) {
 	clear();
     }
+#endif
     hash_table( hash_table && ) = delete;
     hash_table( const hash_table & ) = delete;
     hash_table & operator = ( const hash_table & ) = delete;
 
     ~hash_table() {
-	if( !pre_allocated )
-	    delete[] m_table;
+	if( !pre_allocated ) {
+	    delete[] m_values;
+	    delete[] m_keys;
+	}
     }
 
     void clear() {
 	m_elements = 0;
-	std::fill( m_table, m_table+capacity(),
-		   std::make_pair( invalid_element, value_type() ) );
+	std::fill( m_keys, m_keys+capacity(), invalid_element );
     }
 
     size_type size() const { return m_elements; }
     size_type capacity() const { return size_type(1) << m_log_size; }
     bool empty() const { return size() == 0; }
 
-    const type * get_table() const { return m_table; }
+    const key_type * get_table() const { return m_keys; }
 
-    auto begin() const { return m_table; }
-    auto end() const { return m_table+capacity(); }
+    auto begin() const { return m_keys; }
+    auto end() const { return m_keys+capacity(); }
 
     static size_type required_log_size( size_type num_elements ) {
 	// Maintain fill factor of 50% at most
@@ -107,11 +112,10 @@ public:
     
     bool insert( key_type key, value_type value ) {
 	size_type index = m_hash( key ) & ( capacity() - 1 );
-	while( m_table[index].first != invalid_element
-	       && m_table[index].first != key )
+	while( m_keys[index] != invalid_element && m_keys[index] != key )
 	    index = ( index + 1 ) & ( capacity() - 1 );
-	if( m_table[index].first == key ) {
-	    m_table[index].second = value;
+	if( m_keys[index] == key ) {
+	    m_values[index] = value;
 	    return false;
 	} else {
 	    if( (m_elements+1) >= ( capacity() >> 1 ) ) {
@@ -119,48 +123,56 @@ public:
 			&& "Cannot resize if not owning the storage" );
 		// Rehash
 		size_type old_log_size = m_log_size + 1;
-		type * old_table = new type[size_type(1)<<old_log_size];
+		key_type * old_keys = new key_type[size_type(1)<<old_log_size];
+		value_type * old_values = new value_type[size_type(1)<<old_log_size];
 		using std::swap;
 		swap( old_log_size, m_log_size );
-		swap( old_table, m_table );
+		swap( old_keys, m_keys );
+		swap( old_values, m_values );
 		clear(); // sets m_elements=0; will be reset when rehashing
 		size_type old_size = size_type(1) << old_log_size;
 		m_hash.resize( m_log_size );
 		for( size_type i=0; i < old_size; ++i )
-		    if( old_table[i].first != invalid_element )
-			insert( old_table[i] );
-		delete[] old_table;
+		    if( old_keys[i] != invalid_element )
+			insert( old_keys[i], old_values[i] );
+		delete[] old_keys;
+		delete[] old_values;
 		return insert( key, value );
 	    } else {
 		++m_elements;
-		m_table[index].first = key;
-		m_table[index].second = value;
+		m_keys[index] = key;
+		m_values[index] = value;
 		return true;
 	    }
 	}
     }
 
-    bool contains( key_type key ) const {
+    value_type contains( key_type key ) const {
 	size_type index = m_hash( key ) & ( capacity() - 1 );
-	while( m_table[index].first != invalid_element
-	       && m_table[index].first != key )
+	while( m_keys[index] != invalid_element && m_keys[index] != key )
 	    index = ( index + 1 ) & ( capacity() - 1 );
-	return m_table[index].first == key;
+	return m_keys[index] == key ? m_values[index] : ~value_type(0);
     }
 
     bool contains( key_type key, value_type & ret_val ) const {
 	size_type index = m_hash( key ) & ( capacity() - 1 );
-	while( m_table[index].first != invalid_element
-	       && m_table[index].first != key )
+	while( m_keys[index] != invalid_element && m_keys[index] != key )
 	    index = ( index + 1 ) & ( capacity() - 1 ); 
-	if( m_table[index].first == key ) {
-	    ret_val = m_table[index].second;
+	if( m_keys[index] == key ) {
+	    ret_val = m_values[index];
 	    return true;
 	} else
 	    return false;
     }
 
+    template<typename U, unsigned short VL>
+    auto multi_contains(
+	typename vector_type_traits_vl<U,VL>::type index ) const {
+	return multi_contains<U,VL>( index, target::mt_vmask() );
+    }
+
     template<typename U, unsigned short VL, typename MT>
+    /*
     std::pair<
 	// Index found
 	typename vector_type_traits_vl<U,VL>::type,
@@ -169,9 +181,11 @@ public:
 			   typename vector_type_traits_vl<U,VL>::mask_type,
 			   typename vector_type_traits_vl<U,VL>::vmask_type>
 	>
+    */
+    typename vector_type_traits_vl<U,VL>::type
     multi_contains( typename vector_type_traits_vl<U,VL>::type
 		    index, MT ) const {
-	static_assert( sizeof( U ) >= sizeof( type ) );
+	static_assert( sizeof( U ) >= sizeof( value_type ) );
 	using tr = vector_type_traits_vl<U,VL>;
 	using vtype = typename tr::type;
 #if __AVX512F__
@@ -190,12 +204,12 @@ public:
 
 	size_type s_ins = 0;
 
-	vtype v = index; // Assuming &*(I+1) == (&*I)+1
-	vtype h = m_hash.template vectorized<VL>( v );
+	const vtype v = index; // Assuming &*(I+1) == (&*I)+1
+	const vtype h = m_hash.template vectorized<VL>( v );
 	vtype vidx = tr::bitwise_and( h, hmask );
-	vtype e = tr::gather( m_table, vidx );
-	mtype imi = tr::cmpne( e, vinv, mkind() );
-	mtype imv = tr::cmpne( e, v, mkind() );
+	vtype e = tr::gather( m_keys, vidx );
+	const mtype imi = tr::cmpne( e, vinv, mkind() );
+	const mtype imv = tr::cmpne( e, v, mkind() );
 	mtype imiv = mtr::logical_and( imi, imv );
 	// Some lanes are neither empty nor the requested value and
 	// need further probes.
@@ -205,25 +219,30 @@ public:
 	    // and it may be useful to make multiple vectorized probes
 	    // before resorting to scalar execution. We could even count
 	    // active lanes to decide.
-	    vidx = tr::add( vidx, tr::setoneval() );
-	    vidx = tr::bitwise_and( vidx, hmask );
+	    vtype nvidx = tr::add( vidx, tr::setoneval() );
+	    nvidx = tr::bitwise_and( nvidx, hmask );
+	    vidx = tr::blend( imiv, vidx, nvidx );
 	    // set default value for gather to prior e such that it acts
 	    // as a blend.
-	    e = tr::gather( e, m_table, vidx, imiv );
-	    mtype imi = tr::cmpne( e, vinv, mkind() );
-	    mtype imv = tr::cmpne( e, v, mkind() );
+	    e = tr::gather( e, m_keys, nvidx, imiv ); // use nvidx for ILP
+	    const mtype imi = tr::cmpne( e, vinv, mkind() );
+	    const mtype imv = tr::cmpne( e, v, mkind() );
 	    imiv = mtr::logical_and( imi, imv );
 	}
 	// Return success if found, which equals imv inverted
 	// It just takes one cycle to recompute, same as invert. The code
 	// below is most compact to achieve the correct return type.
-	return std::make_pair( vidx, tr::cmpeq( e, v, MT() ) );
+	// return std::make_pair( vidx, tr::cmpeq( e, v, MT() ) );
+	vtype vals = tr::gather( tr::setone(), m_values, vidx, 
+				 tr::cmpeq( e, v, target::mt_vmask() ) );
+	return vals;
     }
 
 private:
     size_type m_elements;
     size_type m_log_size;
-    type * m_table;
+    key_type * m_keys;
+    value_type * m_values;
     hash_type m_hash;
     bool pre_allocated;
 };

@@ -457,6 +457,11 @@ public:
 
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
 
+	// Build hash table
+	hash_table<sVID, sVID, typename HGraph::Hash> XP_hash( ce );
+	for( sVID i=0; i < ce; ++i )
+	    XP_hash.insert( XP[i], i );
+
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
@@ -479,10 +484,21 @@ public:
 		    ( su >= ne ? 0 : ne ), ce, (sVID)0 ); 
 	    tr::store( &m_matrix[VL * su], row_u );
 #else
-	    // Best option
-	    VID adeg = construct_row_hash_adj<tr>(
-		G, H, &m_matrix[VL * su], XP, ne, ce, su,
-		( su >= ne ? 0 : ne ), ce );
+	    VID adeg;
+	    if( ce > 2*G.getDegree( u ) ) {
+		row_type row_u;
+		std::tie( row_u, adeg )
+		    = graptor::graph::construct_row_hash_xp_vec<tr>(
+			G, H, XP_hash, ne, ce, su, u,
+			( su >= ne ? 0 : ne ),
+			ce, (sVID)0 ); 
+		tr::store( &m_matrix[VL * su], row_u );
+	    } else {
+		// Best option
+		adeg = construct_row_hash_adj<tr>(
+		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
+		    ( su >= ne ? 0 : ne ), ce );
+	    }
 #endif
 
 	    m_degree[su] = adeg;
@@ -527,11 +543,11 @@ public:
 	    // neighbour list of the vertex.
 
 	    VID adeg;
-	    if( ce > 2*G.getDegree( u ) && Bits <= 128 ) {
+	    if( ce > 2*G.getDegree( u ) ) {
 		row_type row_u;
 		std::tie( row_u, adeg )
 		    = graptor::graph::construct_row_hash_xp_vec<tr>(
-			G, H, xp_set, ne, ce, su,
+			G, H, xp_set.hash_table(), ne, ce, su, u,
 			( su >= ne ? 0 : ne ),
 			ce, (sVID)0 ); 
 		tr::store( &m_matrix[VL * su], row_u );

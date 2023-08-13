@@ -296,14 +296,16 @@ std::pair<typename tr::type,sVID> construct_row_hash_adj_vec(
     return std::make_pair( row_u, deg );
 }
 
-template<typename tr, typename GGraph, typename HGraph, typename sVID>
+template<typename tr, typename GGraph, typename HGraph,
+	 typename HTable, typename sVID>
 std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
     const GGraph & G,
     const HGraph & H,
-    const XPSet<sVID> & xp_set,
+    const HTable & xp_hash,
     sVID ne,
     sVID ce,
     sVID su,
+    sVID u,
     sVID col_start,
     sVID col_end,
     sVID off ) {
@@ -311,10 +313,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
     using row_type = typename tr::type;
     constexpr size_t Bits = 8 * sizeof(row_type);
 
-    sVID u = xp_set.at( su );
-    
     row_type row_u = tr::setzero();
-    auto xp_hash = xp_set.hash_table();
 
     const sVID * ngh = G.get_neighbours( u );
     const sVID udeg = G.getDegree( u );
@@ -362,7 +361,8 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 		l += RVL;
 	    }
 	    row_u = rtr::reduce_bitwiseor( mrow );
-	    deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
+	    sVID local_deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
+	    deg = local_deg;
 	}
     } else if constexpr ( sizeof(sVID) >= 4 && Bits == 128 ) {
 	// Do vectorized lookup operation, then handle each index one at a time
