@@ -773,10 +773,10 @@ public:
     intersect_size( const T* lb, const T* le, const T* rb, const T* re ) {
 	size_t sz = 0;
 #if __AVX512F__
-	detail_intersect<64/sizeof(T),false>( lb, le, rb, re, sz );
+	detail_intersect<false,64/sizeof(T),false>( lb, le, rb, re, sz );
 #endif
 #if __AVX2__
-	detail_intersect<32/sizeof(T),false>( lb, le, rb, re, sz );
+	detail_intersect<false,32/sizeof(T),false>( lb, le, rb, re, sz );
 #endif
 	sz += graptor::merge_scalar::intersect_size( lb, le, rb, re );
 

@@ -33,7 +33,7 @@
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
-#include "graptor/container/hash_table.h"
+#include "graptor/container/hash_set.h"
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/container/intersect.h"
 #include "graptor/container/hash_fn.h"
@@ -51,7 +51,8 @@ enum variant {
     var_hash_vector = 4,	/**< hash-based, vector */
     var_merge_partitioned_scalar = 5,	/**< partition pre-study, scalar */
     var_hash_partitioned_vector = 6,	/**< partition pre-study, vector hash */
-    var_N = 7 	 		/**< number of options */
+    var_hash_wide = 7, 	 	/**< hash-based, fetch multiple slots */
+    var_N = 8 	 		/**< number of options */
 };
 
 /*! Enumeration of operation types
@@ -74,6 +75,7 @@ std::ostream & operator << ( ostream & os, variant v ) {
     case var_hash_vector: return os << "hash_vector";
     case var_merge_partitioned_scalar: return os << "merge_partitioned_scalar";
     case var_hash_partitioned_vector: return os << "hash_partitioned_vector";
+    case var_hash_wide: return os << "hash_wide";
     default:
 	return os << "illegal-variant";
     }
@@ -155,6 +157,13 @@ struct intersect_traits<var_hash_partitioned_vector>
     static constexpr bool uses_prestudy = true;
 };
 
+template<>
+struct intersect_traits<var_hash_wide> : public graptor::hash_wide {
+    static constexpr bool uses_hash = true;
+    static constexpr bool uses_prestudy = false;
+};
+
+
 /*! Prestudy data
  */
 static size_t levels;
@@ -169,7 +178,7 @@ template<variant var, operation op>
 auto
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       const graptor::hash_table<VID,hash_fn> & ht,
+       const graptor::hash_set<VID,hash_fn> & ht,
        const VID * lidx, const VID * ridx,
        VID * out,
        VID x ) {
@@ -214,7 +223,7 @@ double
 bench( VID lv, VID rv,
        const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       const graptor::hash_table<VID,hash_fn> & ht,
+       const graptor::hash_set<VID,hash_fn> & ht,
        const VID * lidx, const VID * ridx,
        VID * out,
        int repeat,
@@ -263,7 +272,7 @@ void
 bench( VID lv, VID rv,
        const VID * lb, const VID * le,
        const VID * rb, const VID * re,
-       graptor::hash_table<VID,hash_fn> & ht,
+       graptor::hash_set<VID,hash_fn> & ht,
        const VID * lidx, const VID * ridx,
        int repeat ) {
     size_t len = std::min( le - lb, re - rb );
@@ -299,6 +308,10 @@ bench( VID lv, VID rv,
     tm = bench<var_hash_partitioned_vector,op>(
 	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
     record( le-lb, re-rb, tm, var_hash_partitioned_vector, op );
+
+    tm = bench<var_hash_wide,op>(
+	lv, rv, lb, le, rb, re, ht, lidx, ridx, out, repeat, sz_ref );
+    record( le-lb, re-rb, tm, var_hash_wide, op );
 
     delete[] out;
 }
