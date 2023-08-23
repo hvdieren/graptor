@@ -319,6 +319,11 @@ public:
     /*const*/ lVID * get_set() const { return m_set; }
     lVID at( lVID pos ) const { return m_set[pos]; }
 
+    void sort( lVID ne ) {
+	std::sort( m_set, m_set+ne );
+	std::sort( m_set+ne, m_set+m_fill );
+    }
+
 private:
     lVID * m_pos;
     lVID * m_set;

@@ -138,7 +138,8 @@
 using hash_fn = graptor::rand_hash<uint32_t>;
 
 #if ABLATION_BLOCKED_DISABLE_XP_HASH	\
-    && ABLATION_HADJPA_DISABLE_XP_HASH
+    && ABLATION_HADJPA_DISABLE_XP_HASH	\
+    && ABLATION_PIVOT_DISABLE_XP_HASH
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
@@ -1277,6 +1278,8 @@ mce_bron_kerbosch_recpar_xps(
 		if( cutout ) {
 		    // large sub-problem; search recursively, and also
 		    // construct cut-out
+		    // this cut-out needs sorted XP set...
+		    xp_new.sort( ne_new );
 		    GraphBuilderInduced<HGraphTy>
 			builder( G, xp_new.get_set(), ne_new, ce_new );
 		    const auto & Gc = builder.get_graph();
