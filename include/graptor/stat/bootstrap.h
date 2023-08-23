@@ -19,14 +19,16 @@ std::vector<T> get_sample(
 	pthread_t self = pthread_self();
 	generator = new mt19937( clock() + self );
     }
-    uniform_int_distribution<size_t> distribution( 0, x.size() );
+    uniform_int_distribution<size_t> distribution( 0, x.size()-1 );
     std::vector<T> sample( sample_size );
 
     for( size_t i=0; i < sample_size; ++i ) {
 	size_t item = distribution( *generator );
+	assert( 0 <= item && item < x.size() );
 	sample[i] = x[item];
     }
 
+    assert( sample.size() == sample_size );
     return sample;
 }
 
