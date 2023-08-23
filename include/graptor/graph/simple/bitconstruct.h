@@ -331,6 +331,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
     static constexpr unsigned RVL = 1;
 #endif
     sVID l = 0;
+#if !ABLATION_BITCONSTRUCT_XP_VEC
     if constexpr ( sizeof(sVID)*8 <= Bits && Bits <= 64
 		   && sizeof(sVID) >= 4 && RVL >= 4 ) {
 	// When vertex IDs are not wider than the bit mask that needs to be
@@ -475,6 +476,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
 	}
     }
+#endif // !ABLATION_BITCONSTRUCT_XP_VEC
     while( l < udeg ) {
 	sVID v = ngh[l];
 	sVID sv = xp_hash.contains( v ); // translates ID

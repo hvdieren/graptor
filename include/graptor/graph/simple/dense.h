@@ -167,7 +167,9 @@ public:
 	    }
 
 	    tr::store( &m_matrix[VL * su], row_u );
+#if !ABLATION_PDEG
 	    m_degree[su] = deg;
+#endif
 	    m_m += deg;
 	}
 
@@ -238,7 +240,9 @@ public:
 		    levels, 0, 1<<levels, vidx, uidx, row_u );
 
 	    VID deg = row_u.get_degree();
+#if !ABLATION_PDEG
 	    m_degree[su] = deg;
+#endif
 	    m_m += deg;
 	}
 
@@ -317,7 +321,9 @@ public:
 	    }
 	    
 	    VID deg = row_u.get_degree();
+#if !ABLATION_PDEG
 	    m_degree[su] = deg;
+#endif
 	    m_m += deg;
 	}
 
@@ -400,7 +406,9 @@ public:
 		levels, 0, 1<<levels, vidx, uidx, row_u );
 
 	    VID deg = row_u.get_degree();
+#if !ABLATION_PDEG
 	    m_degree[su] = deg;
+#endif
 	    m_m += deg;
 	}
 
@@ -417,7 +425,9 @@ public:
 	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
 	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
 	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
+#if !ABLATION_PDEG
 	std::fill( m_degree, m_degree+ns, DID(0) );
+#endif
 
 	size_t e = 1;
 	for( VID i=0; i < n-1; ++i ) {
@@ -427,8 +437,10 @@ public:
 		    set( i, j );
 		    set( j, i );
 		    m_m += 2;
+#if !ABLATION_PDEG
 		    m_degree[i]++;
 		    m_degree[j]++;
+#endif
 		}
 		e <<= 1;
 	    }
@@ -494,7 +506,9 @@ public:
 		    ( su >= ne ? 0 : ne ), ce );
 	    }
 
+#if !ABLATION_PDEG
 	    m_degree[su] = adeg;
+#endif
 	    m_m += adeg;
 	}
 
@@ -553,7 +567,9 @@ public:
 		    ( su >= ne ? 0 : ne ), ce );
 	    }
 
+#if !ABLATION_PDEG
 	    m_degree[su] = adeg;
+#endif
 	    m_m += adeg;
 	}
 
@@ -759,7 +775,7 @@ private:
 	
 	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
 	    VID v = *I;
-#if !ABLATION_DENSE_EXCEED
+#if !ABLATION_DENSE_EXCEED && !ABLATION_PDEG
 	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
 		continue;
 #endif
@@ -925,7 +941,9 @@ private:
     row_type m_mc;
     VID m_start_pos;
 
+#if !ABLATION_PDEG
     DID m_degree[Bits]; //!< only left-most columns (P part)
+#endif
 };
 
 } // namespace graph

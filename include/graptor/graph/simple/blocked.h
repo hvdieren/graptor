@@ -15,7 +15,6 @@ namespace graptor {
 
 namespace graph {
 
-// TODO: matrix construction often takes longer than solving the sub-problem
 // Rectangular binary matrix
 template<unsigned Bits, typename sVID, typename sEID>
 class BinaryMatrix {
@@ -100,10 +99,10 @@ public:
 	    // assert( get_size( row_u ) == deg );
 	    // assert( VL * (r-rs) <= VL * m_rows );
 	    tr::store( &m_matrix[VL * (r-rs)], row_u );
+#if !ABLATION_PDEG
 	    if constexpr ( !AddDegree::value )
-		// m_degree[r] += deg;
-	    // else
 		m_degree[r] = deg;
+#endif
 	    m_m += deg;
 	}
     }
@@ -151,10 +150,10 @@ public:
 	    }
 	    
 	    VID deg = row_u.get_degree();
+#if !ABLATION_PDEG
 	    if constexpr ( !AddDegree::value )
-		// m_degree[r] += deg;
-	    // else
 		m_degree[r] = deg;
+#endif
 	    m_m += deg;
 	}
     }
@@ -217,8 +216,10 @@ public:
 		    m_col_start, m_col_start + m_cols, m_col_start ); 
 	    }
 
+#if !ABLATION_PDEG
 	    if constexpr ( !AddDegree::value )
 		m_degree[r] = deg;
+#endif
 	    m_m += deg;
 	}
     }
@@ -443,7 +444,11 @@ public:
 private:
     BinaryMatrix<PBits,sVID,sEID> m_xp; //!< rightmost columns, in full
     BinaryMatrix<XBits,sVID,sEID> m_px; //!< bottommost rows, left parts
+#if !ABLATION_PDEG
     DID m_degree[XBits+PBits]; //!< degree of vertices in cutout, m_xp only
+#else
+    constexpr const DID * const m_degree = nullptr;
+#endif
 };
 
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>
@@ -474,7 +479,7 @@ sVID get_pivot(
 
     for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
 	VID v = *I + cs;
-#if !ABLATION_BLOCKED_EXCEED
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
 	if( (VID)degree[v] < p_ins ) // skip if cannot be best
 	    continue;
 #endif
@@ -491,7 +496,7 @@ sVID get_pivot(
     assert( px.get_col_start() == 0 && "should always be zero" );
     for( auto I=c.begin(), E=c.end(); I != E; ++I ) {
 	VID v = *I;
-#if !ABLATION_BLOCKED_EXCEED
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
 	if( (VID)degree[v] < p_ins ) // skip if cannot be best
 	    continue;
 #endif
