@@ -447,7 +447,7 @@ private:
 #if !ABLATION_PDEG
     DID m_degree[XBits+PBits]; //!< degree of vertices in cutout, m_xp only
 #else
-    constexpr const DID * const m_degree = nullptr;
+    static constexpr const DID * const m_degree = nullptr;
 #endif
 };
 

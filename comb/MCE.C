@@ -1268,7 +1268,7 @@ mce_bron_kerbosch_recpar_xps(
 	    {
 #if ABLATION_RECPAR_CUTOUT == 0
 		bool cutout
-		    = G.getDegree( XP_new[ne_new] ) > 2 * ( ce_new - ne_new );
+		    = G.getDegree( xp_new.at( ne_new ) ) > 2 * ( ce_new - ne_new );
 #elif ABLATION_RECPAR_CUTOUT == 1
 		constexpr bool cutout = false;
 #elif ABLATION_RECPAR_CUTOUT == 2
