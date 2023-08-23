@@ -440,6 +440,11 @@ int main( int argc, char *argv[] ) {
 	}
     } );
 
+    std::cerr << "Binning: bin(list) is ilog2(list length)/2\n";
+    std::cerr << "         E.g.: bin(4)=" << ilog2(4)/2 << "\n";
+    std::cerr << "         E.g.: bin(8)=" << ilog2(8)/2 << "\n";
+    std::cerr << "         E.g.: bin(15)=" << ilog2(15)/2 << "\n";
+    std::cerr << "         E.g.: bin(16)=" << ilog2(16)/2 << "\n";
     std::cerr << "Results:\n";
 
     for( int var=0; var < var_N; ++var ) {
@@ -452,8 +457,8 @@ int main( int argc, char *argv[] ) {
 		    << '\n';
     }
 
-    report_difference( var_hash_vector, var_merge_partitioned_scalar );
-    report_difference( var_hash_vector, var_hash_partitioned_vector );
+    report_difference( var_hash_vector, var_merge_vector );
+    report_difference( var_hash_vector, var_hash_wide );
 
     G.del();
 

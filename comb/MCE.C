@@ -42,6 +42,14 @@
 #define ABLATION_DENSE_DISABLE_XP_HASH 0
 #endif
 
+#ifndef ABLATION_PIVOT_DISABLE_XP_HASH
+#define ABLATION_PIVOT_DISABLE_XP_HASH 0
+#endif
+
+#ifndef ABLATION_BITCONSTRUCT_XP_VEC
+#define ABLATION_BITCONSTRUCT_XP_VEC 0
+#endif
+
 #ifndef ABLATION_BLOCKED_EXCEED
 #define ABLATION_BLOCKED_EXCEED 0
 #endif
@@ -72,6 +80,10 @@
 
 #ifndef ABLATION_RECPAR_CUTOUT
 #define ABLATION_RECPAR_CUTOUT 1
+#endif
+
+#ifndef ABLATION_PDEG
+#define ABLATION_PDEG 0
 #endif
 
 #include <signal.h>
@@ -292,16 +304,20 @@ private:
 struct variant_statistics {
     variant_statistics()
 	: m_tm( 0 ), m_max( std::numeric_limits<double>::min() ),
-	  m_calls( 0 ) { }
-    variant_statistics( double tm, double mx, size_t calls )
-	: m_tm( tm ), m_max( mx ), m_calls( calls ) { }
+	  m_build( 0 ), m_calls( 0 ) { }
+    variant_statistics( double tm, double mx, double bld, size_t calls )
+	: m_tm( tm ), m_max( mx ), m_build( bld ), m_calls( calls ) { }
 
     variant_statistics operator + ( const variant_statistics & s ) const {
 	return variant_statistics( m_tm + s.m_tm,
 				   std::max( m_max, s.m_max ),
+				   m_build + s.m_build,
 				   m_calls + s.m_calls );
     }
 
+    void record_build( double abld ) {
+	m_build += abld;
+    }
     void record( double atm ) {
 	m_tm += atm;
 	if( m_max < atm )
@@ -313,10 +329,12 @@ struct variant_statistics {
 	return os << m_tm << " seconds in "
 		  << m_calls << " calls @ "
 		  << ( m_tm / double(m_calls) )
-		  << " s/call; max " << m_max << "\n";
+		  << " s/call; max " << m_max
+		  << "; build " << ( m_build / double(m_calls) )
+		  << "\n";
     }
     
-    double m_tm, m_max;
+    double m_tm, m_max, m_build;
     size_t m_calls;
 };
 
@@ -331,13 +349,12 @@ struct all_variant_statistics {
 		sum.m_blocked[x][p] = m_blocked[x][p] + s.m_blocked[x][p];
 	sum.m_tiny = m_tiny + s.m_tiny;
 	sum.m_gen = m_gen + s.m_gen;
-	sum.m_genbuild = m_genbuild + s.m_genbuild;
 	return sum;
     }
 
     void record_tiny( double atm ) { m_tiny.record( atm ); }
     void record_gen( double atm ) { m_gen.record( atm ); }
-    void record_genbuild( double atm ) { m_genbuild.record( atm ); }
+    void record_genbuild( double atm ) { m_gen.record_build( atm ); }
 
     variant_statistics & get( size_t n ) {
 	return m_dense[n-N_MIN_SIZE];
@@ -348,7 +365,7 @@ struct all_variant_statistics {
     
     variant_statistics m_dense[N_DIM];
     variant_statistics m_blocked[X_DIM][P_DIM];
-    variant_statistics m_tiny, m_gen, m_genbuild;
+    variant_statistics m_tiny, m_gen;
 
 };
 
@@ -477,11 +494,12 @@ std::pair<VID,VID>
 __attribute__((noinline))
 mc_get_pivot_xp(
     const HGraph & G,
-    const VID * XP,
+    const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
 
     assert( ce - ne != 0 );
+    const VID * const XP = xp_set.get_set();
 
 #if !ABLATION_GENERIC_EXCEED
     // Tunable (|P| and selecting vertex from X or P)
@@ -506,11 +524,35 @@ mc_get_pivot_xp(
 	// Abort during intersection_size if size will be less than tv_max
 	// Note: hash_vector is much slower in this instance
 #if !ABLATION_GENERIC_EXCEED
+#if !ABLATION_DISABLE_PIVOT_XP_HASH
+	size_t tv;
+	if( ce-ne > deg ) {
+	    const VID * n = G.get_neighbours( v );
+	    tv = graptor::hash_scalar::intersect_size_exceed(
+		n, n+deg, xp_set.P_hash_set( ne ), tv_max );
+	} else {
+	    tv = graptor::hash_scalar::intersect_size_exceed(
+		XP+ne, XP+ce, hadj, tv_max );
+	}
+#else
 	size_t tv = graptor::hash_scalar::intersect_size_exceed(
 	    XP+ne, XP+ce, hadj, tv_max );
+#endif
+#else
+#if !ABLATION_DISABLE_PIVOT_XP_HASH
+	size_t tv;
+	if( ce-ne > deg ) {
+	    const VID * n = G.get_neighbours( v );
+	    tv = graptor::hash_scalar::intersect_size(
+		n, n+deg, xp_set.P_hash_set( ne ) );
+	} else {
+	    tv = graptor::hash_scalar::intersect_size(
+		XP+ne, XP+ce, hadj );
+	}
 #else
 	size_t tv = graptor::hash_scalar::intersect_size(
 	    XP+ne, XP+ce, hadj );
+#endif
 #endif
 	    
 	if( tv > tv_max ) {
@@ -802,6 +844,7 @@ bool mce_leaf(
     VID ne,
     VID ce );
 
+#if 0
 template<bool with_leaf = true, typename HGraph = HGraphTy>
 void
 mce_iterate_xp_iterative(
@@ -971,6 +1014,7 @@ mce_iterate_xp_iterative(
     assert( frame[0].XP_new == 0 );
     delete[] frame;
 }
+#endif
 
 
 template<typename GraphType>
@@ -1110,7 +1154,7 @@ mce_bron_kerbosch_recpar_xps(
     // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
     // The number of neighbours may be zero of it is not considered worthwhile
     // to apply pivoting (few candidates).
-    const auto pp = mc_get_pivot_xp( G, xp.get_set(), ne, ce );
+    const auto pp = mc_get_pivot_xp( G, xp, ne, ce );
     const VID pivot = pp.first;
     const VID sum = pp.second;
 
@@ -1210,12 +1254,14 @@ mce_bron_kerbosch_recpar_xps(
 		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		ok = mce_leaf<VID,EID>(
 		    G, E2, depth+1, xp_new, ne_new, ce_new );
+/*
 		if( false && !ok ) {
 		    StackLikeAllocator alloc;
 		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
 		    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
 					      xp_new.get_set(), ne_new, ce_new );
 		}
+*/
 	    }
 	    // else
 	    if( !ok )
@@ -1300,6 +1346,7 @@ mce_bron_kerbosch_recpar_top(
     } );
 }
 
+#if 0
 template<typename VID, typename EID, typename Hash>
 void
 mce_bron_kerbosch_par_xp(
@@ -1338,6 +1385,7 @@ mce_bron_kerbosch_par_xp(
 	mce_iterate_xp_iterative( G, Ee, alloc, degeneracy, XP, ne, ce );
     } );
 }
+#endif
 
 
 void check_clique_edges( EID m, const VID * assigned_clique, EID ce ) {
@@ -1365,6 +1413,8 @@ void mce_blocked_fn(
 	IG( G, H, cut.get_vertices(), cut.get_start_pos(),
 	    cut.get_num_vertices() );
 
+    stats.record_build( tm.next() );
+
     MCE_Enumerator_stage2 E2( E );
     mce_bron_kerbosch( IG, E2 );
 
@@ -1389,6 +1439,8 @@ void mce_dense_fn(
     DenseMatrix<Bits,VID,EID>
 	IG( G, H, cut.get_vertices(), cut.get_start_pos(),
 	    cut.get_num_vertices() );
+
+    stats.record_build( tm.next() );
 
     MCE_Enumerator_stage2 E2( E );
     IG.mce_bron_kerbosch( E2 );
@@ -1762,6 +1814,7 @@ int main( int argc, char *argv[] ) {
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
     std::cout << "Options:"
+	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
 	      << "\n\tABLATION_DENSE_EXCEED=" << ABLATION_DENSE_EXCEED
 	      << "\n\tABLATION_GENERIC_EXCEED=" << ABLATION_GENERIC_EXCEED
 	      << "\n\tABLATION_BLOCKED_EXCEED=" << ABLATION_BLOCKED_EXCEED
@@ -1774,6 +1827,8 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
 	      << ABLATION_DENSE_DISABLE_XP_HASH
+	      << "\n\tABLATION_PIVOT_DISABLE_XP_HASH="
+	      << ABLATION_PIVOT_DISABLE_XP_HASH
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
 	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
@@ -1816,8 +1871,6 @@ int main( int argc, char *argv[] ) {
     stats.m_tiny.print( std::cout );
     std::cout << "generic: ";
     stats.m_gen.print( std::cout );
-    std::cout << "generic build: ";
-    stats.m_genbuild.print( std::cout );
 
     farm.sum().report( std::cout );
 
