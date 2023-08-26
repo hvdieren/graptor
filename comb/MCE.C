@@ -86,6 +86,18 @@
 #define ABLATION_PDEG 0
 #endif
 
+#ifndef PAR_LOOP
+#define PAR_LOOP 1
+#endif
+
+#ifndef PAR_DENSE
+#define PAR_DENSE 0
+#endif
+
+#ifndef PAR_BLOCKED
+#define PAR_BLOCKED 0
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
@@ -1210,14 +1222,6 @@ mce_bron_kerbosch_recpar_xps(
 	    //   i.e., neighbours of pivot, are still in P.
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
-
-	    // Now work with modified XP. Could consider intersect in-place.
-	    // Note: skip XP[i] as we know there are no self-loops.
-	    // TODO: there is a case for hashing X/P, but need to update
-	    //       hash set incrementally -> hash table 0=X, 1=P?
-	    //       intersect XP + deposit into separate X and P arrays?
-	    //                 perhaps on condition that is function of i
-	    //                 so hash table stores position in XP array...
 	    const VID * ngh = G.get_neighbours( v ); 
 	    VID ne_new, ce_new;
 	    XPSet<VID> xp_new
@@ -1236,22 +1240,6 @@ mce_bron_kerbosch_recpar_xps(
 			    // on way to a clique with deep recursion?
 			    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
 			       ) ) {
-		// Restore sort order of P set to support merge intersect.
-		// P was disrupted by sorting pivot neighbours to the end.
-		// TODO: is P a merge of two sorted sub-arrays?
-		// Restore sort order of X set. This may be disrupted as
-		// vertices are added out of order, specifically
-		// pivot neighbours. An XP list can be constructed at some point
-		// where a vertex v < XP[ne-1] was a neighbour of the pivot
-		// at the time when XP was constructed. As such, growing
-		// the X part to XP...XP+i, with XP[i-1] == v, the X set will
-		// become unsorted.
-		// TODO: does insertion sort of X[i] into X suffice?
-		//       Note: would need to repeat for every j=ne...i
-		//       or sort( XP+ne, XP+i ) (can be done once before loop),
-		//       then merge( XP..XP+ne, XP+ne..XP+i ). In-place merge
-		//       non-trivial. Would be very similar to insertion sort,
-		//       >O(n).
 		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
 		ok = mce_leaf<VID,EID>(
 		    G, E2, depth+1, xp_new, ne_new, ce_new );
@@ -1292,8 +1280,6 @@ mce_bron_kerbosch_recpar_xps(
 			G, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
 		}
 	    }
-
-	    // delete[] XP_new;
 	}
     } );
 }
@@ -1836,6 +1822,9 @@ int main( int argc, char *argv[] ) {
 	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << "\n\tABLATION_RECPAR_CUTOUT=" << ABLATION_RECPAR_CUTOUT
+	      << "\n\tPAR_LOOP=" << PAR_LOOP
+	      << "\n\tPAR_DENSE=" << PAR_DENSE
+	      << "\n\tPAR_BLOCKED=" << PAR_BLOCKED
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
@@ -1848,12 +1837,23 @@ int main( int argc, char *argv[] ) {
     // to help load balancing.
     VID nthreads = graptor_num_threads();
     VID npart = nthreads * 128;
+#if PAR_LOOP == 0
+    parallel_loop( VID(0), npart, 1, [&]( VID p ) {
+	VID k = n / npart; // round down as lower-numbered vertices take longer
+	VID to = p == npart-1 ? n : p * k;
+	for( VID i=p; i < to; i++ ) {
+	    VID v = order[i];
+	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	}
+    } );
+#elif PAR_LOOP == 1
     parallel_loop( VID(0), npart, 1, [&]( VID p ) {
 	for( VID i=p; i < n; i += npart ) {
 	    VID v = order[i];
 	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
 	}
     } );
+#endif
 
     std::cout << "Enumeration: " << tm.next() << "\n";
 

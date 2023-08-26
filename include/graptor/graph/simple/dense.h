@@ -619,7 +619,12 @@ public:
     template<typename Enumerate>
     void
     mce_bron_kerbosch( Enumerate && E ) {
-	for( VID v=m_start_pos; v < m_n; ++v ) { // implicit X vertices
+#if PAR_DENSE == 1
+	parallel_for( VID(m_start_pos), VID(m_n), 1, [&]( VID v )
+#else
+	for( VID v=m_start_pos; v < m_n; ++v )
+#endif
+	{ // implicit X vertices
 	    row_type vrow = create_row( v );
 	    row_type R = vrow;
 
@@ -639,6 +644,9 @@ public:
 	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
 	    mce_bk_iterate( E, R, P, X, 1 );
 	}
+#if PAR_DENSE == 1
+	    );
+#endif
     }
     
 private:

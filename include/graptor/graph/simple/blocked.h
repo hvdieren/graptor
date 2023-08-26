@@ -588,12 +588,17 @@ mce_bron_kerbosch(
     sVID cs = xp.get_col_start();
 
     // implicitly skips X vertices; iterate over P vertices
-    for( sVID v=cs; v < n; ++v ) {
+#if PAR_BLOCKED == 1
+    parallel_for( sVID(cs), sVID(n), 1, [&]( sVID v )
+#else
+    for( sVID v=cs; v < n; ++v )
+#endif
+    {
 	prow_type R = xp.create_singleton( v );
 	prow_type r = xp.get_row( v );
 	xrow_type Xx = px.get_row( v );
 
-	// if no neighbours in cut-out, then trivial 2-clique
+	// if no neighbours in cut-out, then trivial (c+1)-clique
 	if( ptr::is_zero( r ) && xtr::is_zero( Xx ) ) {
 	    EE( bitset<PBits>( R ), 1 );
 	    continue;
@@ -608,6 +613,9 @@ mce_bron_kerbosch(
 	// std::cerr << "depth " << 0 << " v=" << v << "\n";
 	mce_bk_iterate( mtx, EE, R, Pp, Xp, Xx, 1 );
     }
+#if PAR_BLOCKED == 1
+	);
+#endif
 }
 
 
