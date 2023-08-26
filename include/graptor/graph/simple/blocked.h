@@ -601,17 +601,16 @@ mce_bron_kerbosch(
 	// if no neighbours in cut-out, then trivial (c+1)-clique
 	if( ptr::is_zero( r ) && xtr::is_zero( Xx ) ) {
 	    EE( bitset<PBits>( R ), 1 );
-	    continue;
+	} else {
+	    // Consider as candidates only those neighbours of u that are
+	    // ordered after v to avoid revisiting the vertices
+	    // unnecessarily.
+	    prow_type h = xp.get_himask( v );
+	    prow_type Pp = ptr::bitwise_and( h, r );
+	    prow_type Xp = ptr::bitwise_andnot( h, r );
+	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
+	    mce_bk_iterate( mtx, EE, R, Pp, Xp, Xx, 1 );
 	}
-
-	// Consider as candidates only those neighbours of u that are
-	// ordered after v to avoid revisiting the vertices
-	// unnecessarily.
-	prow_type h = xp.get_himask( v );
-	prow_type Pp = ptr::bitwise_and( h, r );
-	prow_type Xp = ptr::bitwise_andnot( h, r );
-	// std::cerr << "depth " << 0 << " v=" << v << "\n";
-	mce_bk_iterate( mtx, EE, R, Pp, Xp, Xx, 1 );
     }
 #if PAR_BLOCKED == 1
 	);

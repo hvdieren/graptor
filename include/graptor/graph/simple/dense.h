@@ -631,18 +631,17 @@ public:
 	    // if no neighbours in cut-out, then trivial 2-clique
 	    if( tr::is_zero( get_row( v ) ) ) {
 		E( bitset<Bits>( R ), 1 );
-		continue;
+	    } else {
+		// Consider as candidates only those neighbours of u that are
+		// ordered after v to avoid revisiting the vertices
+		// unnecessarily.
+		row_type h = get_himask( v );
+		row_type r = get_row( v );
+		row_type P = tr::bitwise_and( h, r );
+		row_type X = tr::bitwise_andnot( h, r );
+		// std::cerr << "depth " << 0 << " v=" << v << "\n";
+		mce_bk_iterate( E, R, P, X, 1 );
 	    }
-
-	    // Consider as candidates only those neighbours of u that are
-	    // ordered after v to avoid revisiting the vertices
-	    // unnecessarily.
-	    row_type h = get_himask( v );
-	    row_type r = get_row( v );
-	    row_type P = tr::bitwise_and( h, r );
-	    row_type X = tr::bitwise_andnot( h, r );
-	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
-	    mce_bk_iterate( E, R, P, X, 1 );
 	}
 #if PAR_DENSE == 1
 	    );
