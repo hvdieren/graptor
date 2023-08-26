@@ -589,7 +589,7 @@ mce_bron_kerbosch(
 
     // implicitly skips X vertices; iterate over P vertices
 #if PAR_BLOCKED == 1
-    parallel_for( sVID(cs), sVID(n), 1, [&]( sVID v )
+    parallel_loop( cs, n, 1, [&]( sVID v )
 #else
     for( sVID v=cs; v < n; ++v )
 #endif

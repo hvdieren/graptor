@@ -620,7 +620,7 @@ public:
     void
     mce_bron_kerbosch( Enumerate && E ) {
 #if PAR_DENSE == 1
-	parallel_for( VID(m_start_pos), VID(m_n), 1, [&]( VID v )
+	parallel_loop( VID(m_start_pos), VID(m_n), 1, [&]( VID v )
 #else
 	for( VID v=m_start_pos; v < m_n; ++v )
 #endif
