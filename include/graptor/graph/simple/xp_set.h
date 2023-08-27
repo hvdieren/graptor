@@ -181,7 +181,7 @@ public:
     // in the search tree.
     template<typename HGraphTy>
     static XPSet
-    create_top_level( const HGraphTy & G, lVID v, lVID & ne, lVID & ce ) {
+    create_top_level( const HGraphTy & G, lVID v /*, lVID & ne, lVID & ce */ ) {
 	lVID n = G.numVertices();
 	const lVID deg = G.getDegree( v );
 
@@ -219,9 +219,10 @@ public:
 	// sorted. We need at least semisort between X/P anyway, so sorting
 	// is reasonable, especially if we assume that neighbour lists in G
 	// have been pre-sorted.
-	const lVID * pos = std::upper_bound( xp.m_set, xp.m_set+deg, v );
-	ne = pos - xp.m_set;
-	ce = deg;
+	// Note: now computed outside this function
+	// const lVID * pos = std::upper_bound( xp.m_set, xp.m_set+deg, v );
+	// ne = pos - xp.m_set;
+	// ce = deg;
 
 	return xp;
     }

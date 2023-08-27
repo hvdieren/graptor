@@ -82,20 +82,21 @@
 #define ABLATION_RECPAR_CUTOUT 1
 #endif
 
+// Not effective, so disable by default
 #ifndef ABLATION_PDEG
-#define ABLATION_PDEG 0
+#define ABLATION_PDEG 1
 #endif
 
 #ifndef PAR_LOOP
-#define PAR_LOOP 1
+#define PAR_LOOP 2
 #endif
 
 #ifndef PAR_DENSE
-#define PAR_DENSE 0
+#define PAR_DENSE 1
 #endif
 
 #ifndef PAR_BLOCKED
-#define PAR_BLOCKED 0
+#define PAR_BLOCKED 1
 #endif
 
 #include <signal.h>
@@ -1194,7 +1195,7 @@ mce_bron_kerbosch_recpar_xps(
     if constexpr ( io_trace ) {
 	std::lock_guard<std::mutex> guard( io_mux );
 	std::cout << "XPS loop: ne=" << ne << " pe=" << pe
-		  << " ce=" << ce << "\n";
+		  << " ce=" << ce << " depth=" << depth << "\n";
     }
 
     parallel_loop( ne, pe, 1, [&,ne,pe,ce]( VID i ) {
@@ -1208,7 +1209,7 @@ mce_bron_kerbosch_recpar_xps(
 	if constexpr ( io_trace ) {
 	    std::lock_guard<std::mutex> guard( io_mux );
 	    std::cout << "XP2: X=" << i << " P=" << (ce - (i+1)) << " adj="
-		      << adj.size() << "\n";
+		      << adj.size() << " depth=" << depth << "\n";
 	}
 
 	if( deg == 0 ) { // implies ne == ce == 0
@@ -1237,6 +1238,7 @@ mce_bron_kerbosch_recpar_xps(
 	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 		       // very small -> just keep going
 		       && ( ce_new - ne_new <= /*4**/(1<<P_MAX_SIZE)
+			    && ne_new <= (1<<X_MAX_SIZE)
 			    // on way to a clique with deep recursion?
 			    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
 			       ) ) {
@@ -1320,19 +1322,128 @@ mce_bron_kerbosch_recpar_top(
 
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
+#if 1
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
-	// StackLikeAllocator alloc;
-	// contract::vertex_set<VID> R;
-
-	// R.push( v );
-
-	// if( !padj.contains( v ) )
+	// Note: push v into R
+	VID ce = G.getDegree( v );
+#if !ABLATION_DISABLE_TOP_TINY
+	// Consider this case before construction of XPSet. Note that dense
+	// and blocked leaf tasks require XPSet for cutout construction.
+	if( ce == 0 ) {
+	    // This is a 2-clique (top-level vertex plus our v). mce_tiny
+	    // handles his special case incorrectly for this call site.
+	    E.record( 1 );
+	}  else
+#endif
 	{
-	    VID ne, ce;
-	    XPSet<VID> xp = XPSet<VID>::create_top_level( G, v, ne, ce );
-	    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+	    const VID * const ngh = G.get_neighbours( v );
+	    VID ne = std::upper_bound( ngh, ngh+ce, v ) - ngh;
+
+	    if constexpr ( io_trace ) {
+		std::lock_guard<std::mutex> guard( io_mux );
+		std::cout << "XPTOP loop: ne=" << ne << " ce=" << ce << "\n";
+	    }
+
+#if !ABLATION_DISABLE_TOP_TINY
+	    if( ce <= 3 ) {
+		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		mce_tiny( G, ngh, ne, ce, E2 );
+	    } else
+#endif
+	    {
+		XPSet<VID> xp = XPSet<VID>::create_top_level( G, v );
+
+		bool ok = false;
+		if( ne <= (1<<P_MAX_SIZE) && ne <= (1<<X_MAX_SIZE) ) {
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		    ok = mce_leaf<VID,EID>( G, E2, 1, xp, ne, ce );
+		}
+
+		if( !ok )
+		    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+	    }
 	}
     } );
+#elif 1
+    parallel_loop( start_pos, n, 1, [&]( VID v ) {
+	// Note: push v into R
+	VID ce = G.getDegree( v );
+	const VID * const ngh = G.get_neighbours( v );
+	VID ne = std::upper_bound( ngh, ngh+ce, v ) - ngh;
+
+	if constexpr ( io_trace ) {
+	    std::lock_guard<std::mutex> guard( io_mux );
+	    std::cout << "XPTOP loop: ne=" << ne << " ce=" << ce << "\n";
+	}
+
+	XPSet<VID> xp = XPSet<VID>::create_top_level( G, v );
+	mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+    } );
+#else
+    VID * v_parallel = new VID[n-start_pos];
+    VID n_parallel = 0;
+    
+    for( VID v=start_pos; v < n; ++v ) {
+	VID ce = G.getDegree( v );
+#if !ABLATION_DISABLE_TOP_TINY
+	// Consider this case before construction of XPSet. Note that dense
+	// and blocked leaf tasks require XPSet for cutout construction.
+	if( ce == 0 ) {
+	    // This is a 2-clique (top-level vertex plus our v). mce_tiny
+	    // handles his special case incorrectly for this call site.
+	    E.record( 1 );
+	}  else
+#endif
+	{
+	    const VID * const ngh = G.get_neighbours( v );
+	    VID ne = std::upper_bound( ngh, ngh+ce, v ) - ngh;
+
+	    if constexpr ( io_trace ) {
+		std::lock_guard<std::mutex> guard( io_mux );
+		std::cout << "XPTOP loop: ne=" << ne << " ce=" << ce << "\n";
+	    }
+
+#if !ABLATION_DISABLE_TOP_TINY
+	    if( ce <= 3 ) {
+		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		mce_tiny( G, ngh, ne, ce, E2 );
+	    } else
+#endif
+	    {
+		bool ok = false;
+		if( ce - ne <= (1<<P_MAX_SIZE) && ne <= (1<<X_MAX_SIZE)
+		    && ce < degeneracy / 2 ) {
+		    MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+		    XPSet<VID> xp = XPSet<VID>::create_top_level( G, v );
+		    ok = mce_leaf<VID,EID>( G, E2, 1, xp, ne, ce );
+		}
+
+		if( !ok )
+		    v_parallel[n_parallel++] = v;
+	    }
+	}
+    }
+
+    parallel_loop( VID(0), n_parallel, 1, [&]( VID i ) {
+	VID v = v_parallel[i];
+	VID ce = G.getDegree( v );
+	const VID * const ngh = G.get_neighbours( v );
+	VID ne = std::upper_bound( ngh, ngh+ce, v ) - ngh;
+	XPSet<VID> xp = XPSet<VID>::create_top_level( G, v );
+
+	bool ok = false;
+	if( ce - ne <= (1<<P_MAX_SIZE) && ne <= (1<<X_MAX_SIZE) ) {
+	    MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+	    ok = mce_leaf<VID,EID>( G, E2, 1, xp, ne, ce );
+	}
+
+	if( !ok )
+	    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+    } );
+
+    delete[] v_parallel;
+
+#endif
 }
 
 #if 0
@@ -1592,12 +1703,23 @@ void mce_top_level(
     mce_bron_kerbosch_recpar_top( HG, ibuilder.get_start_pos(),
 				  degeneracy, Ee );
     double t = tm.stop();
-    if( false && t >= 3.0 ) {
+    if( io_trace /* false && t >= 3.0 */ ) {
+	// P-P edges more informative than X-P edges...
+	EID edges = 0, sq = 0;
+	for( VID u=ibuilder.get_start_pos(); u < HG.numVertices(); ++u ) {
+	    EID d = HG.get_adjacency( u ).size();
+	    edges += d;
+	    sq += d * d;
+	}
 	std::cerr << "generic v=" << v << " num=" << num
 		  << " xnum=" << xnum << " pnum=" << pnum
 	    // << " density=" << HG.density()
 	    // << " m=" << HG.numEdges()
 		  << " t=" << t
+		  << " e=" << edges
+		  << " sq=" << sq
+		  << " sq/e=" << float(sq)/float(edges)
+		  << " density=" << float(edges)/(float(HG.numVertices())*float(HG.numVertices()))
 		  << "\n";
     }
     stats.record_gen( t );
@@ -1712,10 +1834,12 @@ bool mce_leaf(
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
 
+#if 0
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
 	return true;
     }
+#endif
 
     VID xlg = get_size_class( xnum );
     if( xlg < X_MIN_SIZE )
@@ -1838,20 +1962,45 @@ int main( int argc, char *argv[] ) {
     VID nthreads = graptor_num_threads();
     VID npart = nthreads * 128;
 #if PAR_LOOP == 0
-    parallel_loop( VID(0), npart, 1, [&]( VID p ) {
+    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
 	VID k = n / npart; // round down as lower-numbered vertices take longer
+	VID from = p == 0 ? 0 : (p-1) * k;
 	VID to = p == npart-1 ? n : p * k;
-	for( VID i=p; i < to; i++ ) {
-	    VID v = order[i];
+	for( VID i=from; i < to; i++ ) {
+	    VID v = i; // order[i];
 	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
 	}
     } );
 #elif PAR_LOOP == 1
-    parallel_loop( VID(0), npart, 1, [&]( VID p ) {
+    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
 	for( VID i=p; i < n; i += npart ) {
-	    VID v = order[i];
+	    VID v = i; // order[i];
 	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
 	}
+    } );
+#elif PAR_LOOP == 2
+    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
+	VID k = ( n + npart - 1 ) / npart;
+	VID degeneracy = kcore.getLargestCore();
+	while( p + k * npart >= n )
+	    --k;
+	// Split out vertices in higher-degree ones and lower-degree ones,
+	// processing the latter sequentially for efficiency reasons
+	VID kpar = k;
+	for( VID v=p; v < n; v += npart ) {
+	    if( R.getDegree( v ) < degeneracy ) {
+		kpar = ( v - p ) / npart;
+		break;
+	    }
+	}
+	// Do sequential part first, because work stealing cannot help to
+	// obtain load balance if we keep this to the end of the computation.
+	for( VID v=p+kpar*npart; v < n; v += npart )
+	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	parallel_loop( VID(0), kpar, 1, [&,p,k]( VID j ) {
+	    VID v = p + j * npart;
+	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	} );
     } );
 #endif
 
