@@ -57,8 +57,8 @@ public:
 
     // Generate a mask where all bits l and above are set, and below l are 0
     static type himask( unsigned l ) {
-	if( l < B )
-	    return ~( ( type(1) << l ) - 1 );
+	if( l <= B )
+	    return ~( ( type(1) << (l-1) ) - 1 );
 	else
 	    return 0;
     }
@@ -216,6 +216,9 @@ public:
     }
     static member_type srli( member_type val, unsigned int sh ) {
 	return val >> sh;
+    }
+    static member_type bsrli( member_type val, unsigned int sh ) {
+	return val >> (8*sh);
     }
     static member_type srav( member_type val, member_type sh ) {
 	return static_cast<std::make_signed_t<member_type>>( val ) >> sh;

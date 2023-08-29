@@ -47,6 +47,10 @@ struct sse42_bitwise {
 	return _mm_insert_epi64( _mm_cvtsi64_si128( lo ), hi, 1 );
     }
 
+    static type bsrli( type a, unsigned int bs ) {
+	return _mm_bsrli_si128( a, bs );
+    }
+
     static type logical_and( type a, type b ) { return _mm_and_si128( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
     static type logical_or( type a, type b ) { return _mm_or_si128( a, b ); }
@@ -77,8 +81,8 @@ struct sse42_bitwise {
 	type d = _mm_sub_epi32( c, k );
 #if __AVX2__
 	type s = _mm_srav_epi32( h, d );
-	type m = _mm_cmpgt_epi32( c, k );
-	type r = _mm_and_si128( s, m );
+	type m = _mm_cmpgt_epi32( k, c );
+	type r = _mm_andnot_si128( m, s );
 	return r;
 #else
 	// _mm_srav_epi32 is in AVX2

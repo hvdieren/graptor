@@ -87,8 +87,8 @@ struct avx2_bitwise {
 	type c = _mm256_set_epi32( 256, 224, 192, 160, 128, 96, 64, 32 );
 	type h = _mm256_slli_epi32( setone(), 31 );
 	type s = _mm256_srav_epi32( h, _mm256_sub_epi32( c, k ) );
-	type m = _mm256_cmpgt_epi32( c, k );
-	type r = _mm256_and_si256( s, m );
+	type m = _mm256_cmpgt_epi32( k, c );
+	type r = _mm256_andnot_si256( m, s );
 	return r;
 #else
 	size_t word = l >> 5;

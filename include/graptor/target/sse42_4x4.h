@@ -524,9 +524,6 @@ public:
     static type srai( type a, unsigned int s ) {
 	    return _mm_srai_epi32( a, s );
     }
-    static type bsrli( type a, unsigned int bs ) {
-	return _mm_bsrli_si128( a, bs );
-    }
 
     static type shuffle( type a, unsigned int p ) {
 	return _mm_shuffle_epi32( a, p );

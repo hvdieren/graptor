@@ -178,6 +178,91 @@ struct confused_convert {
     }
 };
 
+template<typename T, typename V, unsigned short VL>
+struct expand_bitset {
+    using btr = vector_type_traits_vl<T, VL>;
+
+    static V * compute( typename btr::type b, size_t nbits, V * a,
+			V off ) {
+	// TODO: in case of AVX512, operating on 16 bits at a time is possible
+	
+	if constexpr ( btr::size < 16 ) { // scalar bitmask
+	    // same native vector length as btr but accessed using
+	    // byte operations
+	    using ctr = vector_type_traits_vl<uint8_t,btr::size>;
+	    using vtr = vector_type_traits_vl<V, 8>;
+	    using mtr = typename vtr::mask_traits;
+
+	    // Take 8 bits out of b and expand indices
+	    size_t groups = ( nbits + vtr::vlen - 1 ) / vtr::vlen;
+	    typename btr::type brot = b;
+	    typename btr::type bmask = (typename btr::type)0xff;
+	    typename vtr::type v = vtr::set1inc( off );
+	    typename vtr::type vinc
+		= vtr::slli( vtr::setoneval(), 3 ); // splat 8
+	    for( size_t i=0; i < groups; ++i ) {
+		// Take 8 bits and rotate remaining
+		uint8_t m8 = brot & bmask;
+		brot >>= 8;
+
+		// Place values as indicated by bits
+		a = vtr::cstoreu_p( a, m8, v );
+		v = vtr::add( v, vinc );
+	    }
+	    return a;
+	}
+#if 0
+	else if constexpr ( btr::size == 16 ) { // SSE subvector
+	    // same native vector length as btr but accessed using
+	    // byte operations
+	    using ctr = vector_type_traits_vl<uint8_t,btr::size>;
+	    using vtr = vector_type_traits_vl<V, 8>;
+	    using mtr = typename vtr::mask_traits;
+
+	    // Take 8 bits out of b and expand indices
+	    size_t groups = ( nbits + vtr::vlen - 1 ) / vtr::vlen;
+	    typename btr::type brot = b;
+	    typename vtr::type v = vtr::set1inc( off );
+	    typename vtr::type vinc
+		= vtr::slli( vtr::setoneval(), 3 ); // splat 8
+	    for( size_t i=0; i < groups; ++i ) {
+		// Take 8 bits and rotate remaining
+		uint8_t m8 = ctr::lane0( brot );
+		brot = btr::bsrli( brot, 1 );
+
+		// Place values as indicated by bits
+		a = vtr::cstoreu_p( a, m8, v );
+		v = vtr::add( v, vinc );
+	    }
+	    return a;
+	}
+#endif
+	else {
+	    // Multiple SSE words. Recursively decompose and process.
+	    constexpr size_t hbits = 8*btr::size/2;
+	    if( nbits >= hbits ) {
+		a = expand_bitset<T,V,VL/2>::compute(
+		    btr::lower_half( b ), hbits, a, off );
+		a = expand_bitset<T,V,VL/2>::compute(
+		    btr::upper_half( b ), nbits - hbits, a, off + hbits );
+	    } else {
+		a = expand_bitset<T,V,VL/2>::compute(
+		    btr::lower_half( b ), nbits, a, off );
+	    }
+	    return a;
+	}
+    }
+    
+    static V * compute_if( typename btr::type b, size_t nbits,
+			   V * a, V off, size_t length ) {
+	size_t nset = allpopcnt<size_t,T,VL>::compute( b );
+	if( nset < length )
+	    return a;
+
+	return compute( b, nbits, a, off );
+    }
+};
+
 } // namespace target
 
 #endif // GRAPTOR_TARGET_ALGO_H
