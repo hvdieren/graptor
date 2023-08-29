@@ -1949,6 +1949,14 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tPAR_LOOP=" << PAR_LOOP
 	      << "\n\tPAR_DENSE=" << PAR_DENSE
 	      << "\n\tPAR_BLOCKED=" << PAR_BLOCKED
+	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
+	      << DENSE_THRESHOLD_SEQUENTIAL
+	      << "\n\tDENSE_THRESHOLD_DENSITY="
+	      << DENSE_THRESHOLD_DENSITY
+	      << "\n\tBLOCKED_THRESHOLD_SEQUENTIAL="
+	      << BLOCKED_THRESHOLD_SEQUENTIAL
+	      << "\n\tBLOCKED_THRESHOLD_DENSITY="
+	      << BLOCKED_THRESHOLD_DENSITY
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );

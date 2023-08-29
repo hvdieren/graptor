@@ -13,6 +13,15 @@
 #include "graptor/target/vector.h"
 #include "graptor/container/intersect.h"
 
+#ifndef DENSE_THRESHOLD_SEQUENTIAL
+#define DENSE_THRESHOLD_SEQUENTIAL 4.0
+#endif
+
+#ifndef DENSE_THRESHOLD_DENSITY
+#define DENSE_THRESHOLD_DENSITY 0.5
+#endif
+
+
 namespace graptor {
 
 namespace graph {
@@ -748,17 +757,50 @@ private:
 	VID pivot = mce_get_pivot( P, X );
 	row_type pivot_ngh = get_row( pivot );
 	row_type x = tr::bitwise_andnot( pivot_ngh, P );
-	bitset<Bits> bx( x );
-	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
-	    VID u = *I;
-	    row_type u_only = tr::setglobaloneval( u );
+
+	auto task = [=,&EE]( VID u, row_type u_only ) {
+	    // row_type u_only = tr::setglobaloneval( u );
 	    row_type u_ngh = get_row( u );
-	    row_type Pv = tr::bitwise_and( P, u_ngh );
-	    row_type Xv = tr::bitwise_and( X, u_ngh );
+	    row_type h = get_himask( u );
+	    row_type u_done = tr::bitwise_andnot( h, x );
+
+	    row_type P_shrink = tr::bitwise_andnot( u_done, P );
+	    row_type Pv = tr::bitwise_and( P_shrink, u_ngh );
+	    row_type X_grow = tr::bitwise_or( X, u_done );
+	    row_type Xv = tr::bitwise_and( X_grow, u_ngh );
 	    row_type Rv = tr::bitwise_or( R, u_only );
-	    P = tr::bitwise_andnot( u_only, P ); // P == x w/o pivoting
-	    X = tr::bitwise_or( u_only, X );
 	    mce_bk_iterate( EE, Rv, Pv, Xv, depth+1 );
+	};
+	
+	bitset<Bits> bx( x );
+	VID nset = get_size( x );
+	if( float(nset) >= DENSE_THRESHOLD_SEQUENTIAL ) {
+	    if( float(nset)/float(m_n) >= DENSE_THRESHOLD_DENSITY ) {
+		// High number of vertices to process + density
+		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {
+		    row_type u_only = tr::setglobaloneval( u );
+		    if( !tr::is_zero( tr::bitwise_and( u_only, x ) ) )
+			// Vertex needs to be processed
+			task( u, u_only );
+		} );
+	    } else {
+		VID elms[Bits];
+		VID * elms_end = target::expand_bitset<
+		    typename tr::member_type,sVID,tr::vlen>::compute(
+			x, m_n, elms, 0 );
+		size_t nset = elms_end - elms;
+		parallel_loop( (size_t)0, nset, 1, [&]( size_t i ) {
+		    VID u = elms[i];
+		    row_type u_only = tr::setglobaloneval( u );
+		    task( u, u_only );
+		} );
+	    }
+	} else {
+	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+		VID u = *I;
+		row_type u_only = tr::setglobaloneval( u );
+		task( u, u_only );
+	    }
 	}
     }
 

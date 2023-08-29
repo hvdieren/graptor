@@ -10,6 +10,15 @@
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/graph/simple/dense.h" // support iterators
 #include "graptor/target/vector.h"
+#include "graptor/target/algo.h"
+
+#ifndef BLOCKED_THRESHOLD_SEQUENTIAL
+#define BLOCKED_THRESHOLD_SEQUENTIAL 4.0
+#endif
+
+#ifndef BLOCKED_THRESHOLD_DENSITY
+#define BLOCKED_THRESHOLD_DENSITY 0.5
+#endif
 
 namespace graptor {
 
@@ -509,7 +518,7 @@ sVID get_pivot(
 	}
     }
 
-    assert( ~p_best != 0 );
+    assert( p_best < mtx.numVertices() );
     return p_best;
 }
 
@@ -546,24 +555,55 @@ void mce_bk_iterate(
     VID pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
     prow_type pivot_ngh = xp.get_row( pivot );
     prow_type ins = ptr::bitwise_andnot( pivot_ngh, Pp );
-    bitset<PBits> bx( ins );
     VID cs = xp.get_col_start();
-    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
-	sVID u = *I + cs;
-	prow_type u_only = xp.create_singleton_rel( *I );
-	// prow_type xp_new = ptr::bitwise_andnot( u_only, ins );
-	// xrow_type xx_new = xx; // u in P; u not in X
-	// ins = xp_new;
+
+    auto task = [=,&mtx,&EE]( sVID u, prow_type u_only ) {
+	const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
+	const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
+
 	prow_type pu_ngh = xp.get_row( u );
-	prow_type Ppv = ptr::bitwise_and( Pp, pu_ngh );
-	prow_type Xpv = ptr::bitwise_and( Xp, pu_ngh );
+	prow_type h = xp.get_himask( u );
+	prow_type u_done = ptr::bitwise_andnot( h, ins );
+
+	prow_type Pp_shrink = ptr::bitwise_andnot( u_done, Pp );
+	prow_type Ppv = ptr::bitwise_and( Pp_shrink, pu_ngh );
+	prow_type Xp_grow = ptr::bitwise_or( Xp, u_done );
+	prow_type Xpv = ptr::bitwise_and( Xp_grow, pu_ngh );
 	xrow_type xu_ngh = px.get_row( u );
 	xrow_type Xxv = xtr::bitwise_and( Xx, xu_ngh );
 	prow_type Rv = ptr::bitwise_or( R, u_only );
-	Pp = ptr::bitwise_andnot( u_only, Pp ); // Pp == ins w/o pivoting
-	Xp = ptr::bitwise_or( u_only, Xp );
-	// Xx unmodified as u in P
 	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, depth+1 );
+    };
+
+    sVID nset = xp.get_size( ins );
+    if( float(nset) >= BLOCKED_THRESHOLD_SEQUENTIAL ) {
+	if( float(nset)/float(n-cs) >= BLOCKED_THRESHOLD_DENSITY ) {
+	    // High number of vertices to process + density
+	    parallel_loop( cs, n, 1, [&,ins]( sVID v ) {
+		prow_type R = xp.create_singleton( v );
+		if( !ptr::is_zero( ptr::bitwise_and( R, ins ) ) )
+		    // Vertex needs to be processed
+		    task( v, R );
+	    } );
+	} else {
+	    sVID elms[PBits];
+	    sVID * elms_end = target::expand_bitset<
+		typename ptr::member_type,sVID,ptr::vlen>::compute(
+		    ins, n - cs, elms, cs );
+	    size_t nset = elms_end - elms;
+	    parallel_loop( (size_t)0, nset, 1, [&]( size_t i ) {
+		sVID v = elms[i];
+		prow_type R = xp.create_singleton( v );
+		task( v, R );
+	    } );
+	}
+    } else {
+	bitset<PBits> bx( ins );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    sVID v = *I + cs;
+	    prow_type R = xp.create_singleton( v );
+	    task( v, R );
+	}
     }
 }
 
@@ -587,34 +627,10 @@ mce_bron_kerbosch(
     sVID n = mtx.numVertices();
     sVID cs = xp.get_col_start();
 
-    // implicitly skips X vertices; iterate over P vertices
-#if PAR_BLOCKED == 1
-    parallel_loop( cs, n, 1, [&]( sVID v )
-#else
-    for( sVID v=cs; v < n; ++v )
-#endif
-    {
-	prow_type R = xp.create_singleton( v );
-	prow_type r = xp.get_row( v );
-	xrow_type Xx = px.get_row( v );
-
-	// if no neighbours in cut-out, then trivial (c+1)-clique
-	if( ptr::is_zero( r ) && xtr::is_zero( Xx ) ) {
-	    EE( bitset<PBits>( R ), 1 );
-	} else {
-	    // Consider as candidates only those neighbours of u that are
-	    // ordered after v to avoid revisiting the vertices
-	    // unnecessarily.
-	    prow_type h = xp.get_himask( v );
-	    prow_type Pp = ptr::bitwise_and( h, r );
-	    prow_type Xp = ptr::bitwise_andnot( h, r );
-	    // std::cerr << "depth " << 0 << " v=" << v << "\n";
-	    mce_bk_iterate( mtx, EE, R, Pp, Xp, Xx, 1 );
-	}
-    }
-#if PAR_BLOCKED == 1
-	);
-#endif
+    prow_type allPp = ptr::bitwise_invert( xp.get_himask( n ) ); // subtracts cs
+    prow_type allXp = ptr::setzero();
+    xrow_type allXx = xtr::bitwise_invert( px.get_himask( cs ) );
+    mce_bk_iterate( mtx, EE, ptr::setzero(), allPp, allXp, allXx, 0 );
 }
 
 
