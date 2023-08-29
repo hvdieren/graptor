@@ -628,33 +628,11 @@ public:
     template<typename Enumerate>
     void
     mce_bron_kerbosch( Enumerate && E ) {
-#if PAR_DENSE == 1
-	parallel_loop( VID(m_start_pos), VID(m_n), 1, [&]( VID v )
-#else
-	for( VID v=m_start_pos; v < m_n; ++v )
-#endif
-	{ // implicit X vertices
-	    row_type vrow = create_row( v );
-	    row_type R = vrow;
-
-	    // if no neighbours in cut-out, then trivial 2-clique
-	    if( tr::is_zero( get_row( v ) ) ) {
-		E( bitset<Bits>( R ), 1 );
-	    } else {
-		// Consider as candidates only those neighbours of u that are
-		// ordered after v to avoid revisiting the vertices
-		// unnecessarily.
-		row_type h = get_himask( v );
-		row_type r = get_row( v );
-		row_type P = tr::bitwise_and( h, r );
-		row_type X = tr::bitwise_andnot( h, r );
-		// std::cerr << "depth " << 0 << " v=" << v << "\n";
-		mce_bk_iterate( E, R, P, X, 1 );
-	    }
-	}
-#if PAR_DENSE == 1
-	    );
-#endif
+	row_type mn = get_himask( m_n );
+	row_type mx = get_himask( m_start_pos );
+	row_type allX = tr::bitwise_invert( mx );
+	row_type allP = tr::bitwise_xor( mn, mx );
+	mce_bk_iterate( E, tr::setzero(), allP, allX, 0 );
     }
     
 private:

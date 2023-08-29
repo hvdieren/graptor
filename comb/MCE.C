@@ -91,14 +91,6 @@
 #define PAR_LOOP 2
 #endif
 
-#ifndef PAR_DENSE
-#define PAR_DENSE 1
-#endif
-
-#ifndef PAR_BLOCKED
-#define PAR_BLOCKED 1
-#endif
-
 #include <signal.h>
 #include <sys/time.h>
 
@@ -1947,8 +1939,6 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << "\n\tABLATION_RECPAR_CUTOUT=" << ABLATION_RECPAR_CUTOUT
 	      << "\n\tPAR_LOOP=" << PAR_LOOP
-	      << "\n\tPAR_DENSE=" << PAR_DENSE
-	      << "\n\tPAR_BLOCKED=" << PAR_BLOCKED
 	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
 	      << DENSE_THRESHOLD_SEQUENTIAL
 	      << "\n\tDENSE_THRESHOLD_DENSITY="
