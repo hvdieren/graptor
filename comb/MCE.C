@@ -1160,9 +1160,35 @@ mce_bron_kerbosch_recpar_xps(
     // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
     // The number of neighbours may be zero of it is not considered worthwhile
     // to apply pivoting (few candidates).
-    const auto pp = mc_get_pivot_xp( G, xp, ne, ce );
-    const VID pivot = pp.first;
-    const VID sum = pp.second;
+    VID pivot;
+    VID sum;
+    if( depth == 0 ) {
+	pivot = 0;
+	VID pivot_degree = 0;
+	for( VID v=0; v < n; ++v ) {
+	    VID deg = G.getDegree( v );
+	    VID pdeg = deg;
+	    if( v >= ne || true ) { // check no X-X edges
+		const VID * n = G.get_neighbours( v );
+		const VID * pos = std::lower_bound( n, n+deg, ne );
+		pdeg = std::distance( pos, n+deg );
+	    }
+	    if( pdeg > pivot_degree ) {
+		pivot_degree = pdeg;
+		pivot = v;
+	    }
+	}
+	sum = pivot_degree;
+	// const VID * const p_ngh = G.get_neighbours( pivot );
+	// const VID p_deg = G.getDegree( pivot );
+	// const VID * const p_start = std::lower_bound( p_ngh, p_ngh+p_deg, ne );
+	// sum = std::distance( p_start, p_ngh+p_deg );
+	// assert( sum == pivot_degree );
+    } else {
+	const auto pp = mc_get_pivot_xp( G, xp, ne, ce );
+	pivot = pp.first;
+	sum = pp.second;
+    }
 
     const auto & padj = G.get_adjacency( pivot );
 
@@ -1181,7 +1207,10 @@ mce_bron_kerbosch_recpar_xps(
     
     if( sum > 0 ) { // sum == 0 disables pivoting
 	// Semisort P into P\N(pivot) and P\cap N(pivot)
-	xp.semisort_pivot( ne, pe, ce, padj );
+	if( depth == 0 )
+	    xp.semisort_pivot_deposit( ne, pe, ce, padj, n );
+	else
+	    xp.semisort_pivot( ne, pe, ce, padj );
     }
 
     if constexpr ( io_trace ) {
@@ -1310,11 +1339,27 @@ mce_bron_kerbosch_recpar_top(
     }
 
     const auto & padj = G.get_adjacency( pivot );
-*/
+    const VID * const p_ngh = G.get_neighbours( pivot );
+    const VID p_deg = G.getDegree( pivot );
+    const VID * const p_start
+	= std::upper_bound( p_ngh, p_ngh+p_deg, start_pos );
 
+    XPSet<VID> xp = XPSet<VID>::create_full_set( G );
+    VID pe = n - std::distance( p_start, p_ngh+p_deg );
+    VID ce = n;
+    VID ne = start_pos;
+
+    if( pe != ce )
+	xp.semisort_pivot( ne, pe, ce, padj );
+*/
+    
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
 #if 1
+    XPSet<VID> xp( n, n ); // = XPSet<VID>::create_full_set( G );
+    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, start_pos, n, 0 );
+    
+#elif 1
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
 	// Note: push v into R
 	VID ce = G.getDegree( v );
