@@ -386,6 +386,7 @@ public:
 	// * P-set 2: N(v) subtract N(p), above ne
 
 	lVID p_deg = p_adj.size();
+	lVID deg = adj.size();
 	lVID mx = std::min( deg + p_deg, n );
 	XPSet ins( n, mx+8 ); // hash_vector requires extra space
 
