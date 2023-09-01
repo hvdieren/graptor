@@ -409,7 +409,7 @@ public:
 	ins.m_fill = ce_new = pos - ins.m_set;
 
 	// Complete hash info
-	for( lVID i=0; i < ce_new; ++i )
+	for( lVID i=0; i < ins.m_fill; ++i )
 	    ins.m_pos[ins.m_set[i]] = i;
 
 	return ins;
