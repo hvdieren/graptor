@@ -266,6 +266,22 @@ struct hash_scalar {
 
     template<bool send_lhs_ptr, typename It, typename HT, typename Ot>
     static
+    Ot intersect_invert( It lb, It le, const HT & htable, Ot o ) {
+	while( lb != le ) {
+	    VID v = *lb;
+	    if( !htable.contains( v ) ) {
+		if constexpr ( send_lhs_ptr )
+		    o.push_back( lb );
+		else
+		    *o++ = v;
+	    }
+	    ++lb;
+	}
+	return o;
+    }
+
+    template<bool send_lhs_ptr, typename It, typename HT, typename Ot>
+    static
     Ot intersect3( It lb, It le, const HT & htable1, const HT & htable2,
 		   Ot o ) {
 	while( lb != le ) {
@@ -428,7 +444,8 @@ private:
     }
 
    template<bool send_lhs_ptr,
-	     unsigned VL, bool store, typename T, typename HT, typename Ot>
+	    unsigned VL, bool store, bool invert,
+	    typename T, typename HT, typename Ot>
     static
     const T *
     // __attribute__((noinline))
@@ -441,6 +458,8 @@ private:
 	    type v = tr::loadu( lb );
 	    typename target::mask_type_traits<VL>::type m
 		= htable.template multi_contains<T,VL>( v, target::mt_mask() );
+	    if constexpr ( invert )
+		m = target::mask_type_traits<VL>::logical_invert( m );
 	    if constexpr ( send_lhs_ptr )
 		out.template push_back<VL>( m, v, lb );
 	    else {
@@ -584,12 +603,28 @@ public:
     static
     Ot intersect( const T * lb, const T * le, const HT & htable, Ot out ) {
 #if __AVX512F__
-	lb = detail_intersect<send_lhs_ptr,64/sizeof(T),true>( lb, le, htable, out );
+	lb = detail_intersect<send_lhs_ptr,64/sizeof(T),true,false>( lb, le, htable, out );
 #endif
 #if __AVX2__
-	lb = detail_intersect<send_lhs_ptr,32/sizeof(T),true>( lb, le, htable, out );
+	lb = detail_intersect<send_lhs_ptr,32/sizeof(T),true,false>( lb, le, htable, out );
 #endif
 	out = graptor::hash_scalar::template intersect<send_lhs_ptr>(
+	    lb, le, htable, out );
+
+	return out;
+    }
+
+    template<bool send_lhs_ptr, typename T, typename HT, typename Ot>
+    static
+    Ot intersect_invert( const T * lb, const T * le, const HT & htable,
+			 Ot out ) {
+#if __AVX512F__
+	lb = detail_intersect<send_lhs_ptr,64/sizeof(T),true,true>( lb, le, htable, out );
+#endif
+#if __AVX2__
+	lb = detail_intersect<send_lhs_ptr,32/sizeof(T),true,true>( lb, le, htable, out );
+#endif
+	out = graptor::hash_scalar::template intersect_invert<send_lhs_ptr>(
 	    lb, le, htable, out );
 
 	return out;

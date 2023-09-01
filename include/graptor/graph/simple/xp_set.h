@@ -153,12 +153,13 @@ public:
 	const XPSet & m_xp;
     };
 
-private:
+public:
     XPSet( VID n, VID ce_max )
 	: m_pos( new lVID[n+ce_max] ), m_set( m_pos+n ), m_fill( 0 ) {
 	// Silent errors occur when allocating zero elements...
 	assert( n > 0 && "require non-empty graph" );
     }
+private:
     XPSet( XPSet && xp )
 	: m_set( std::forward<lVID*>( xp.m_set ) ),
 	  m_pos( std::forward<lVID*>( xp.m_pos ) ),
@@ -227,10 +228,26 @@ public:
 	return xp;
     }
 
+    template<typename HGraphTy>
+    static XPSet
+    create_full_set( const HGraphTy & G ) {
+	lVID n = G.numVertices();
+
+	XPSet xp( n, n );
+
+	for( lVID i=0; i < n; ++i ) {
+	    xp.m_set[i] = i;
+	    xp.m_pos[i] = i;
+	}
+	xp.m_fill = n;
+
+	return xp;
+    }
+
     template<typename Adj>
     void semisort_pivot( lVID ne, lVID pe, lVID ce, const Adj & padj ) {
 	assert( ce == m_fill );
-	
+
 	// Semisort P into P\N(pivot) and P\cap N(pivot)
 	// Assumption: pe + |intersect(padj,P)| == ce
 	lVID P_ins = pe;
@@ -241,7 +258,7 @@ public:
 		while( padj.contains( m_set[P_ins] ) )
 		    P_ins++;
 
-		assert( P_ins != ce );
+		assert( P_ins < ce );
 		// swap
 		lVID u = m_set[P_ins];
 		m_set[i] = u;
@@ -258,6 +275,30 @@ public:
 		    break;
 	    }
 	}
+    }
+
+    template<typename Adj>
+    void semisort_pivot_deposit(
+	lVID ne, lVID pe, lVID ce, const Adj & padj, lVID n ) {
+
+	lVID p_ins = pe, c_ins = ne;
+	for( lVID i=0; i < ne; ++i ) {
+	    m_set[i] = i;
+	    m_pos[i] = i;
+	}
+	for( lVID i=ne; i < ce; ++i ) {
+	    if( padj.contains( i ) ) {
+		m_set[p_ins] = i;
+		m_pos[i] = p_ins++;
+	    } else {
+		m_set[c_ins] = i;
+		m_pos[i] = c_ins++;
+	    }
+	}
+	assert( c_ins == pe );
+	assert( p_ins == ce );
+
+	m_fill = ce;
     }
 
     // A hash interface supporting contains, multi_contains
@@ -313,6 +354,63 @@ public:
 	}
 
 	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
+    template<typename Adj>
+    static XPSet intersect_top_level(
+	lVID n, lVID ne_strict, lVID ne,
+	const Adj & p_adj, const lVID * p_ngh,
+	const Adj & adj, const lVID * ngh,
+	lVID & ne_new, lVID & ce_new ) {
+
+	// The current XPSet contains all vertices 0..n-1 split in:
+	// * 0..ne-1 subtract p_adj: non-edges (X set)
+	// * 0..ce-1 intersect p_adj: postponed P neighbours of the pivot
+	// * ne..ce-1 subtract p_adj: non-P neighbours currently processed
+	// The intersection between this XPSet and the adjacency list adj
+	// thus comprises:
+	// * X-set  : ( 0..ne-1 subtract p_adj ) intersect adj
+	// * P-set 1: 0..ce-1 intersect p_adj intersect adj
+	// * P-set 2: ( ne..ce-1 subtract p_adj ) intersect adj
+	// OR:
+	// * X-set  : N(v) subtract N(p), all below ne
+	// * P-set 1: N(v) intersect N(p)
+	// * P-set 2: N(v) subtract N(p), above ne
+	// Fix: 0..ne_strict-1 is always part of X, regardless of p_adj
+	// Thus:
+	// * X-set 1: N(v), all below ne_strict
+	// * X-set 2: N(v) subtract N(p), in range ne_strict..ne-1
+	// * P-set 1: N(v) intersect N(p)
+	// * P-set 2: N(v) subtract N(p), above ne
+
+	lVID p_deg = p_adj.size();
+	lVID mx = std::min( deg + p_deg, n );
+	XPSet ins( n, mx+8 ); // hash_vector requires extra space
+
+	// X set 1
+	const lVID * const ne_strict_p
+	    = std::lower_bound( ngh, ngh+deg, ne_strict );
+	lVID * pos = std::copy( ngh, ne_strict_p, ins.m_set );
+	
+	// X set 2
+	const lVID * const ne_p = std::lower_bound( ne_strict_p, ngh+deg, ne );
+	pos = graptor::hash_vector::intersect_invert<false>(
+	    ne_strict_p, ne_p, p_adj, pos );
+
+	ne_new = pos - ins.m_set;
+
+	// P set 1
+	pos = graptor::hash_vector::intersect( ne_strict_p, ne_p, p_adj, pos );
+	// P set 2
+	pos = std::copy( ne_p, ngh+deg, pos );
+
+	ins.m_fill = ce_new = pos - ins.m_set;
+
+	// Complete hash info
+	for( lVID i=0; i < ce_new; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
 
 	return ins;
     }

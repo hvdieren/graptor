@@ -1139,6 +1139,78 @@ private:
 
 //! recursively parallel version of Bron-Kerbosch w/ pivoting
 //
+void
+mce_bron_kerbosch_recpar_xps(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    XPSet<VID> & xp,
+    VID ne,
+    VID ce,
+    int depth );
+
+void
+bk_recursive_call(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    XPSet<VID> & xp_new,
+    VID ne_new,
+    VID ce_new,
+    int depth ) {
+    bool ok = false;
+    if( ce_new - ne_new == 0 ) {
+	// Reached leaf of search tree
+	if( ne_new == 0 )
+	    E.record( 1 );
+	ok = true;
+    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
+	       // very small -> just keep going
+	       && ( ce_new - ne_new <= /*4**/(1<<P_MAX_SIZE)
+		    && ne_new <= (1<<X_MAX_SIZE)
+		    // on way to a clique with deep recursion?
+		    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
+		   ) ) {
+	MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
+	ok = mce_leaf<VID,EID>( G, E2, 1, xp_new, ne_new, ce_new );
+	/*
+	if( false && !ok ) {
+	    StackLikeAllocator alloc;
+	    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
+	    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
+				      xp_new.get_set(), ne_new, ce_new );
+	}
+	*/
+    }
+
+    if( !ok ) {
+#if ABLATION_RECPAR_CUTOUT == 0
+	bool cutout
+	    = G.getDegree( xp_new.at( ne_new ) ) > 2 * ( ce_new - ne_new );
+#elif ABLATION_RECPAR_CUTOUT == 1
+	constexpr bool cutout = false;
+#elif ABLATION_RECPAR_CUTOUT == 2
+	constexpr bool cutout = true;
+#endif
+	if( cutout ) {
+	    // large sub-problem; search recursively, and also
+	    // construct cut-out
+	    // this cut-out needs sorted XP set...
+	    xp_new.sort( ne_new );
+	    GraphBuilderInduced<HGraphTy>
+		builder( G, xp_new.get_set(), ne_new, ce_new );
+	    const auto & Gc = builder.get_graph();
+	    std::iota( xp_new.get_set(), xp_new.get_set()+ce_new, 0 );
+	    mce_bron_kerbosch_recpar_xps(
+		Gc, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+	} else {
+	    // large sub-problem; search recursively
+	    mce_bron_kerbosch_recpar_xps(
+		G, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+	}
+    }
+}
+
 // XP may be modified by the method. It is not required to be in sort order.
 void
 mce_bron_kerbosch_recpar_xps(
@@ -1162,33 +1234,11 @@ mce_bron_kerbosch_recpar_xps(
     // to apply pivoting (few candidates).
     VID pivot;
     VID sum;
-    if( depth == 0 ) {
-	pivot = 0;
-	VID pivot_degree = 0;
-	for( VID v=0; v < n; ++v ) {
-	    VID deg = G.getDegree( v );
-	    VID pdeg = deg;
-	    if( v >= ne || true ) { // check no X-X edges
-		const VID * n = G.get_neighbours( v );
-		const VID * pos = std::lower_bound( n, n+deg, ne );
-		pdeg = std::distance( pos, n+deg );
-	    }
-	    if( pdeg > pivot_degree ) {
-		pivot_degree = pdeg;
-		pivot = v;
-	    }
-	}
-	sum = pivot_degree;
-	// const VID * const p_ngh = G.get_neighbours( pivot );
-	// const VID p_deg = G.getDegree( pivot );
-	// const VID * const p_start = std::lower_bound( p_ngh, p_ngh+p_deg, ne );
-	// sum = std::distance( p_start, p_ngh+p_deg );
-	// assert( sum == pivot_degree );
-    } else {
-	const auto pp = mc_get_pivot_xp( G, xp, ne, ce );
-	pivot = pp.first;
-	sum = pp.second;
-    }
+    VID j_start, j_end;
+
+    const auto pp = mc_get_pivot_xp( G, xp, ne, ce );
+    pivot = pp.first;
+    sum = pp.second;
 
     const auto & padj = G.get_adjacency( pivot );
 
@@ -1207,10 +1257,7 @@ mce_bron_kerbosch_recpar_xps(
     
     if( sum > 0 ) { // sum == 0 disables pivoting
 	// Semisort P into P\N(pivot) and P\cap N(pivot)
-	if( depth == 0 )
-	    xp.semisort_pivot_deposit( ne, pe, ce, padj, n );
-	else
-	    xp.semisort_pivot( ne, pe, ce, padj );
+	xp.semisort_pivot( ne, pe, ce, padj );
     }
 
     if constexpr ( io_trace ) {
@@ -1245,63 +1292,68 @@ mce_bron_kerbosch_recpar_xps(
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
 	    const VID * ngh = G.get_neighbours( v ); 
+	    const VID * pngh = G.get_neighbours( pivot ); 
 	    VID ne_new, ce_new;
 	    XPSet<VID> xp_new
 		= xp.intersect( G.numVertices(),
 				i, ce, adj, ngh, ne_new, ce_new );
 
-	    bool ok = false;
-	    if( ce_new - ne_new == 0 ) {
-		// Reached leaf of search tree
-		if( ne_new == 0 )
-		    E.record( depth+1 );
-		ok = true;
-	    } else if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
-		       // very small -> just keep going
-		       && ( ce_new - ne_new <= /*4**/(1<<P_MAX_SIZE)
-			    && ne_new <= (1<<X_MAX_SIZE)
-			    // on way to a clique with deep recursion?
-			    // || ( ne_new == 0 && ( ce - ce_new < ce_new / 100 ) )
-			       ) ) {
-		MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
-		ok = mce_leaf<VID,EID>(
-		    G, E2, depth+1, xp_new, ne_new, ce_new );
-/*
-		if( false && !ok ) {
-		    StackLikeAllocator alloc;
-		    MCE_Enumerator_stage2 E2 = E.get_enumerator( depth+1 );
-		    mce_iterate_xp_iterative( G, E2, alloc, degeneracy,
-					      xp_new.get_set(), ne_new, ce_new );
-		}
-*/
-	    }
-	    // else
-	    if( !ok )
-	    {
-#if ABLATION_RECPAR_CUTOUT == 0
-		bool cutout
-		    = G.getDegree( xp_new.at( ne_new ) ) > 2 * ( ce_new - ne_new );
-#elif ABLATION_RECPAR_CUTOUT == 1
-		constexpr bool cutout = false;
-#elif ABLATION_RECPAR_CUTOUT == 2
-		constexpr bool cutout = true;
-#endif
-		if( cutout ) {
-		    // large sub-problem; search recursively, and also
-		    // construct cut-out
-		    // this cut-out needs sorted XP set...
-		    xp_new.sort( ne_new );
-		    GraphBuilderInduced<HGraphTy>
-			builder( G, xp_new.get_set(), ne_new, ce_new );
-		    const auto & Gc = builder.get_graph();
-		    std::iota( xp_new.get_set(), xp_new.get_set()+ce_new, 0 );
-		    mce_bron_kerbosch_recpar_xps(
-			Gc, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
-		} else {
-		    // large sub-problem; search recursively
-		    mce_bron_kerbosch_recpar_xps(
-			G, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
-		}
+	    bk_recursive_call( G, degeneracy, E, xp_new,
+			       ne_new, ce_new, depth );
+	}
+    } );
+}
+
+void
+mce_bron_kerbosch_recpar_top_xps(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    VID ne ) {
+    const VID n = G.numVertices();
+
+    // Get pivot and its number of common neighbours with [XP+ne,XP+ce)
+    // The number of neighbours may be zero of it is not considered worthwhile
+    // to apply pivoting (few candidates).
+    VID pivot;
+    VID sum;
+    pivot = 0;
+    VID pivot_degree = 0;
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	VID pdeg = deg;
+	if( v >= ne || true ) { // check no X-X edges
+	    const VID * n = G.get_neighbours( v );
+	    const VID * pos = std::lower_bound( n, n+deg, ne );
+	    pdeg = std::distance( pos, n+deg );
+	}
+	if( pdeg > pivot_degree ) {
+	    pivot_degree = pdeg;
+	    pivot = v;
+	}
+    }
+    sum = pivot_degree;
+    const auto & padj = G.get_adjacency( pivot );
+
+    parallel_loop( ne, n, 1, [&,ne,n]( VID v ) {
+	// Not keeping track of R
+	if( !padj.contains( v ) ) {
+	    const auto & adj = G.get_adjacency( v ); 
+	    VID deg = adj.size();
+
+	    if( deg == 0 ) { // implies ne == ce == 0
+		// avoid overheads of copying and cutout
+		E.record( 1 );
+	    } else {
+		const VID * ngh = G.get_neighbours( v ); 
+		const VID * pngh = G.get_neighbours( pivot ); 
+		VID ne_new, ce_new;
+		XPSet<VID> xp_new
+		    = XPSet<VID>::intersect_top_level(
+			n, ne, v, padj, pngh, adj, ngh, ne_new, ce_new );
+
+		bk_recursive_call( G, degeneracy, E, xp_new,
+				   ne_new, ce_new, 0 );
 	    }
 	}
     } );
@@ -1356,8 +1408,9 @@ mce_bron_kerbosch_recpar_top(
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
 #if 1
-    XPSet<VID> xp( n, n ); // = XPSet<VID>::create_full_set( G );
-    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, start_pos, n, 0 );
+    // XPSet<VID> xp( n, n ); // = XPSet<VID>::create_full_set( G );
+    // mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, start_pos, n, 0 );
+    mce_bron_kerbosch_recpar_top_xps( G, degeneracy, E, start_pos );
     
 #elif 1
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
