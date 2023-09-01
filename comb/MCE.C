@@ -1962,6 +1962,7 @@ bool mce_leaf(
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
+    VID npart = P.getOptionLongValue( "-c", 256 );
     verbose = P.getOptionValue("-v");
     const char * ifile = P.getOptionValue( "-i" );
 
@@ -2055,8 +2056,6 @@ int main( int argc, char *argv[] ) {
 
     // Number of partitions is tunable. A fairly large number is helpful
     // to help load balancing.
-    VID nthreads = graptor_num_threads();
-    VID npart = nthreads * 128;
 #if PAR_LOOP == 0
     parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
 	VID k = n / npart; // round down as lower-numbered vertices take longer
@@ -2076,27 +2075,29 @@ int main( int argc, char *argv[] ) {
     } );
 #elif PAR_LOOP == 2
     parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
-	VID k = ( n + npart - 1 ) / npart;
-	VID degeneracy = kcore.getLargestCore();
-	while( p + k * npart >= n )
-	    --k;
-	// Split out vertices in higher-degree ones and lower-degree ones,
-	// processing the latter sequentially for efficiency reasons
-	VID kpar = k;
-	for( VID v=p; v < n; v += npart ) {
-	    if( R.getDegree( v ) < degeneracy ) {
-		kpar = ( v - p ) / npart;
-		break;
+	if( p < n ) {
+	    VID k = ( n + npart - 1 ) / npart;
+	    VID degeneracy = kcore.getLargestCore();
+	    while( p + k * npart >= n )
+		--k;
+	    // Split out vertices in higher-degree ones and lower-degree ones,
+	    // processing the latter sequentially for efficiency reasons
+	    VID kpar = k;
+	    for( VID v=p; v < n; v += npart ) {
+		if( R.getDegree( v ) < degeneracy ) {
+		    kpar = ( v - p ) / npart;
+		    break;
+		}
 	    }
+	    // Do sequential part first, because work stealing cannot help to
+	    // obtain load balance if we keep this to the end of the computation.
+	    for( VID v=p+kpar*npart; v < n; v += npart )
+		mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	    parallel_loop( VID(0), kpar, 1, [&,p,k]( VID j ) {
+		VID v = p + j * npart;
+		mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	    } );
 	}
-	// Do sequential part first, because work stealing cannot help to
-	// obtain load balance if we keep this to the end of the computation.
-	for( VID v=p+kpar*npart; v < n; v += npart )
-	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
-	parallel_loop( VID(0), kpar, 1, [&,p,k]( VID j ) {
-	    VID v = p + j * npart;
-	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
-	} );
     } );
 #endif
 
