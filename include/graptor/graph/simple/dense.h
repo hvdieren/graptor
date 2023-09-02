@@ -630,9 +630,23 @@ public:
     mce_bron_kerbosch( Enumerate && E ) {
 	row_type mn = get_himask( m_n );
 	row_type mx = get_himask( m_start_pos );
+#if !ABLATION_DENSE_NO_PIVOT_TOP
 	row_type allX = tr::bitwise_invert( mx );
 	row_type allP = tr::bitwise_xor( mn, mx );
 	mce_bk_iterate( E, tr::setzero(), allP, allX, 0 );
+#else	
+	// No pivoting, process all
+	parallel_loop( m_start_pos, m_n, 1, [&]( sVID u ) {
+	    row_type R = tr::setglobaloneval( u );
+
+	    row_type pu_ngh = get_row( u );
+	    row_type h = get_himask( u );
+	    row_type Ppv = tr::bitwise_and( h, pu_ngh );
+	    row_type Xpv = tr::bitwise_andnot( h, pu_ngh );
+	    row_type Rv = R;
+	    mce_bk_iterate( E, Rv, Ppv, Xpv, 1 );
+	} );
+#endif
     }
     
 private:

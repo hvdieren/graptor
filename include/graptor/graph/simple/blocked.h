@@ -627,10 +627,25 @@ mce_bron_kerbosch(
     sVID n = mtx.numVertices();
     sVID cs = xp.get_col_start();
 
+#if !ABLATION_BLOCKED_NO_PIVOT_TOP
     prow_type allPp = ptr::bitwise_invert( xp.get_himask( n ) ); // subtracts cs
     prow_type allXp = ptr::setzero();
     xrow_type allXx = xtr::bitwise_invert( px.get_himask( cs ) );
     mce_bk_iterate( mtx, EE, ptr::setzero(), allPp, allXp, allXx, 0 );
+#else	
+    // No pivoting, process all
+    parallel_loop( cs, n, 1, [&]( sVID u ) {
+	prow_type R = xp.create_singleton( u );
+
+	prow_type pu_ngh = xp.get_row( u );
+	prow_type h = xp.get_himask( u );
+	prow_type Ppv = ptr::bitwise_and( h, pu_ngh );
+	prow_type Xpv = ptr::bitwise_andnot( h, pu_ngh );
+	xrow_type Xxv = px.get_row( u );
+	prow_type Rv = R;
+	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, 1 );
+    } );
+#endif
 }
 
 
