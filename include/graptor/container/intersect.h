@@ -635,10 +635,10 @@ public:
     size_t intersect_size( const T * lb, const T * le, const HT & htable ) {
 	size_t sz = 0;
 #if __AVX512F__
-	lb = detail_intersect<false,64/sizeof(T),false>( lb, le, htable, sz );
+	lb = detail_intersect<false,64/sizeof(T),false,false>( lb, le, htable, sz );
 #endif
 #if __AVX2__
-	lb = detail_intersect<false,32/sizeof(T),false>( lb, le, htable, sz );
+	lb = detail_intersect<false,32/sizeof(T),false,false>( lb, le, htable, sz );
 #endif
 	sz += hash_scalar::intersect_size( lb, le, htable );
 
@@ -723,8 +723,8 @@ private:
 	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
 	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
 
-	    lb += ilog2( ((uint64_t)ladv) + 1 );
-	    rb += ilog2( ((uint64_t)radv) + 1 );
+	    lb += rt_ilog2( ((uint64_t)ladv) + 1 );
+	    rb += rt_ilog2( ((uint64_t)radv) + 1 );
 	}
     }
 
@@ -764,10 +764,10 @@ private:
 	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
 	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
 
-	    size_t la = ilog2( ((uint64_t)ladv) + 1 );
+	    size_t la = rt_ilog2( ((uint64_t)ladv) + 1 );
 	    // options += VL - la; // whichever elements not matched, put back options
 	    lb += la;
-	    rb += ilog2( ((uint64_t)radv) + 1 );
+	    rb += rt_ilog2( ((uint64_t)radv) + 1 );
 
 	    options -= la - _popcnt32( ma );
 	    if( options < 0 )

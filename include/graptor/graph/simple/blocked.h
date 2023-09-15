@@ -13,7 +13,11 @@
 #include "graptor/target/algo.h"
 
 #ifndef BLOCKED_THRESHOLD_SEQUENTIAL
-#define BLOCKED_THRESHOLD_SEQUENTIAL 4.0
+#define BLOCKED_THRESHOLD_SEQUENTIAL 64.0
+#endif
+
+#ifndef BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
+#define BLOCKED_THRESHOLD_SEQUENTIAL_PBITS 256
 #endif
 
 #ifndef BLOCKED_THRESHOLD_DENSITY
@@ -576,7 +580,8 @@ void mce_bk_iterate(
     };
 
     sVID nset = xp.get_size( ins );
-    if( float(nset) >= BLOCKED_THRESHOLD_SEQUENTIAL ) {
+    if( PBits >= BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
+	&& float(xp.get_size(Pp)) >= BLOCKED_THRESHOLD_SEQUENTIAL ) {
 	if( float(nset)/float(n-cs) >= BLOCKED_THRESHOLD_DENSITY ) {
 	    // High number of vertices to process + density
 	    parallel_loop( cs, n, 1, [&,ins]( sVID v ) {
@@ -598,11 +603,24 @@ void mce_bk_iterate(
 	    } );
 	}
     } else {
+	// Incrementally update Pp, Xp
 	bitset<PBits> bx( ins );
 	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
-	    sVID v = *I + cs;
-	    prow_type R = xp.create_singleton( v );
-	    task( v, R );
+	    sVID u = *I + cs;
+	    prow_type u_only = xp.create_singleton( u );
+
+	    prow_type pu_ngh = xp.get_row( u );
+	    prow_type Ppv = ptr::bitwise_and( Pp, pu_ngh );
+	    prow_type Xpv = ptr::bitwise_and( Xp, pu_ngh );
+	    xrow_type xu_ngh = px.get_row( u );
+	    xrow_type Xxv = xtr::bitwise_and( Xx, xu_ngh );
+	    prow_type Rv = ptr::bitwise_or( R, u_only );
+
+	    // Move v from P to X
+	    Pp = ptr::bitwise_andnot( u_only, Pp );
+	    Xp = ptr::bitwise_or( u_only, Xp );
+
+	    mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, depth+1 );
 	}
     }
 }

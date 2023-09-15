@@ -1301,6 +1301,103 @@ mce_bron_kerbosch_recpar_xps(
     } );
 }
 
+auto
+__attribute__((noinline))
+mincost_pivot(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    VID ne ) {
+    const VID n = G.numVertices();
+    VID pivot;
+    VID sum;
+    pivot = 0;
+    VID pivot_degree = 0;
+
+    EID pivot_cost = std::numeric_limits<EID>::max();
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	VID pdeg = deg;
+	EID pcost = 0;
+	if( true /* v >= ne */ ) { // there are no X-X edges
+	    const VID * vn = G.get_neighbours( v );
+	    const VID * vpos = v < ne ? vn : std::lower_bound( vn, vn+deg, ne );
+	    pdeg = std::distance( vpos, vn+deg );
+
+	    // pcost is zero if N(v) ins P is empty
+	    if( pdeg != 0 ) {
+		// All elements in P\N(v)
+		const VID * wnxt = vpos;
+		for( VID w=ne; w < n; ++w ) { // iterate over P
+		    if( wnxt != vn+deg ) {
+			assert( w <= *wnxt );
+			if( w == *wnxt ) { // w in P and w in N(v)
+			    ++wnxt;
+			    continue;
+			}
+		    }
+		    const VID * wn = G.get_neighbours( w );
+		    const VID wdeg = G.getDegree( w );
+/*
+		    const VID wb = std::max( v, ne ); // right neighbours
+		    const VID * wpos = std::lower_bound( wn, wn+wdeg, wb );
+		    EID c = graptor::merge_vector::intersect_size(
+			vpos, vn+deg,  // N(v) intersect P
+			wpos, wn+wdeg ); // N(w) intersect P, right ngh of v
+*/
+		    EID c = graptor::hash_vector::intersect_size(
+			vpos, vn+deg,  // N(v) intersect P
+			G.get_adjacency( w ) ); // N(w)
+		    pcost += c;
+		    if( pcost >= pivot_cost )
+			break;
+		}
+	    }
+	}
+	// std::cerr << "    v=" << v << " deg=" << pdeg
+	// << " cost=" << pcost << "\n";
+	if( pcost < pivot_cost ) {
+	    pivot_cost = pcost;
+	    pivot_degree = pdeg;
+	    pivot = v;
+	}
+	if( pivot_cost == 0 )
+	    break;
+    }
+    // std::cerr << "top pivot: n=" << n << " v=" << pivot << " deg=" << pivot_degree
+    // << " cost=" << pivot_cost << "\n";
+    return std::make_tuple( pivot, pivot_degree );
+}
+
+auto
+// __attribute__((noinline))
+maxngh_pivot(
+    const HGraphTy & G,
+    VID degeneracy,
+    MCE_Parallel_Enumerator & E,
+    VID ne ) {
+    const VID n = G.numVertices();
+    VID pivot;
+    VID sum;
+    pivot = 0;
+    VID pivot_degree = 0;
+
+    for( VID v=0; v < n; ++v ) {
+	VID deg = G.getDegree( v );
+	VID pdeg = deg;
+	if( v >= ne ) { // there are no X-X edges
+	    const VID * n = G.get_neighbours( v );
+	    const VID * pos = std::lower_bound( n, n+deg, ne );
+	    pdeg = std::distance( pos, n+deg );
+	}
+	if( pdeg > pivot_degree ) {
+	    pivot_degree = pdeg;
+	    pivot = v;
+	}
+    }
+    return std::make_tuple( pivot, pivot_degree );
+}
+
 void
 mce_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
@@ -1316,19 +1413,89 @@ mce_bron_kerbosch_recpar_top_xps(
     VID sum;
     pivot = 0;
     VID pivot_degree = 0;
-    for( VID v=0; v < n; ++v ) {
-	VID deg = G.getDegree( v );
-	VID pdeg = deg;
-	if( v >= ne || true ) { // check no X-X edges
-	    const VID * n = G.get_neighbours( v );
-	    const VID * pos = std::lower_bound( n, n+deg, ne );
-	    pdeg = std::distance( pos, n+deg );
+
+#if 0
+    // bool minimum_cost = false;
+    bool minimum_cost = true;
+    // bool minimum_cost = ;
+
+    if( minimum_cost ) {
+	EID pivot_cost = std::numeric_limits<EID>::max();
+	for( VID v=0; v < n; ++v ) {
+	    VID deg = G.getDegree( v );
+	    VID pdeg = deg;
+	    EID pcost = 0;
+	    if( true /* v >= ne */ ) { // there are no X-X edges
+		const VID * vn = G.get_neighbours( v );
+		const VID * vpos = v < ne ? vn : std::lower_bound( vn, vn+deg, ne );
+		pdeg = std::distance( vpos, vn+deg );
+
+		// pcost is zero if N(v) ins P is empty
+		if( pdeg != 0 ) {
+		    // All elements in P\N(v)
+		    const VID * wnxt = vpos;
+		    for( VID w=ne; w < n; ++w ) { // iterate over P
+			if( wnxt != vn+deg ) {
+			    assert( w <= *wnxt );
+			    if( w == *wnxt ) { // w in P and w in N(v)
+				++wnxt;
+				continue;
+			    }
+			}
+			const VID * wn = G.get_neighbours( w );
+			const VID wdeg = G.getDegree( w );
+/*
+			const VID wb = std::max( v, ne ); // right neighbours
+			const VID * wpos = std::lower_bound( wn, wn+wdeg, wb );
+			EID c = graptor::merge_vector::intersect_size(
+			    vpos, vn+deg,  // N(v) intersect P
+			    wpos, wn+wdeg ); // N(w) intersect P, right ngh of v
+*/
+			EID c = graptor::hash_vector::intersect_size(
+			    vpos, vn+deg,  // N(v) intersect P
+			    G.get_adjacency( w ) ); // N(w)
+			pcost += c;
+			if( pcost >= pivot_cost )
+			    break;
+		    }
+		}
+	    }
+	    std::cerr << "    v=" << v << " deg=" << pdeg
+		      << " cost=" << pcost << "\n";
+	    if( pcost < pivot_cost ) {
+		pivot_cost = pcost;
+		pivot_degree = pdeg;
+		pivot = v;
+	    }
+	    if( pivot_cost == 0 )
+		break;
 	}
-	if( pdeg > pivot_degree ) {
-	    pivot_degree = pdeg;
-	    pivot = v;
+	std::cerr << "top pivot: n=" << n << " v=" << pivot << " deg=" << pivot_degree
+		  << " cost=" << pivot_cost << "\n";
+    } else {
+	pivot = 0;
+	pivot_degree = G.getDegree( 0 );
+/*
+	for( VID v=0; v < n; ++v ) {
+	    VID deg = G.getDegree( v );
+	    VID pdeg = deg;
+	    if( v >= ne ) { // there are no X-X edges
+		const VID * n = G.get_neighbours( v );
+		const VID * pos = std::lower_bound( n, n+deg, ne );
+		pdeg = std::distance( pos, n+deg );
+	    }
+	    if( pdeg > pivot_degree ) {
+		pivot_degree = pdeg;
+		pivot = v;
+	    }
 	}
+*/
     }
+#endif
+
+    std::tie( pivot, pivot_degree ) = maxngh_pivot( G, degeneracy, E, ne );
+    // std::tie( pivot, pivot_degree ) = mincost_pivot( G, degeneracy, E, ne );
+
     sum = pivot_degree;
     const auto & padj = G.get_adjacency( pivot );
 

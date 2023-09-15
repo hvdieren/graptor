@@ -14,7 +14,11 @@
 #include "graptor/container/intersect.h"
 
 #ifndef DENSE_THRESHOLD_SEQUENTIAL
-#define DENSE_THRESHOLD_SEQUENTIAL 4.0
+#define DENSE_THRESHOLD_SEQUENTIAL 64.0
+#endif
+
+#ifndef DENSE_THRESHOLD_SEQUENTIAL
+#define DENSE_THRESHOLD_SEQUENTIAL_BITS 256
 #endif
 
 #ifndef DENSE_THRESHOLD_DENSITY
@@ -766,7 +770,8 @@ private:
 	
 	bitset<Bits> bx( x );
 	VID nset = get_size( x );
-	if( float(nset) >= DENSE_THRESHOLD_SEQUENTIAL ) {
+	if( Bits >= DENSE_THRESHOLD_SEQUENTIAL_BITS
+	    && float(get_size(P)) >= DENSE_THRESHOLD_SEQUENTIAL ) {
 	    if( float(nset)/float(m_n) >= DENSE_THRESHOLD_DENSITY ) {
 		// High number of vertices to process + density
 		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {
