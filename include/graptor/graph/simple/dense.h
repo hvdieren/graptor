@@ -634,6 +634,31 @@ public:
     mce_bron_kerbosch( Enumerate && E ) {
 	row_type mn = get_himask( m_n );
 	row_type mx = get_himask( m_start_pos );
+#if !ABLATION_DENSE_FILTER_FULLY_CONNECTED
+	row_type allX = tr::bitwise_invert( mx );
+	row_type allP = tr::bitwise_xor( mn, mx );
+
+	// Special case of vertices connected to all other vertices.
+	// If we select such a vertex as pivot, only the vertex itself is
+	// processed at this level. The remaining vertices remain in P.
+	row_type R = tr::setzero();
+	unsigned depth = 0;
+	for( sVID v=m_start_pos; v != m_n; ++v ) {
+	    row_type v_ngh = get_row( v );
+	    sVID deg = get_size( v_ngh );
+	    if( deg+1 == m_n ) { // connected to all
+		row_type v_row = tr::setglobaloneval( v );
+		// Add v to R, it must be included
+		R = tr::bitwise_or( v_row, R );
+		++depth;
+		// Filter X and P with neighbours of v.
+		// As v_ngh has only one zero (for v), the effect is to remove v
+		allX = tr::bitwise_and( allX, v_ngh );
+		allP = tr::bitwise_and( allP, v_ngh );
+	    }
+	}
+	mce_bk_iterate( E, R, allP, allX, depth );
+#else
 #if !ABLATION_DENSE_NO_PIVOT_TOP
 	row_type allX = tr::bitwise_invert( mx );
 	row_type allP = tr::bitwise_xor( mn, mx );
@@ -650,6 +675,7 @@ public:
 	    row_type Rv = R;
 	    mce_bk_iterate( E, Rv, Ppv, Xpv, 1 );
 	} );
+#endif
 #endif
     }
     
@@ -771,7 +797,8 @@ private:
 	bitset<Bits> bx( x );
 	VID nset = get_size( x );
 	if( Bits >= DENSE_THRESHOLD_SEQUENTIAL_BITS
-	    && float(get_size(P)) >= DENSE_THRESHOLD_SEQUENTIAL ) {
+	    && float(get_size(P)) >= DENSE_THRESHOLD_SEQUENTIAL
+	    && nset > 1 ) {
 	    if( float(nset)/float(m_n) >= DENSE_THRESHOLD_DENSITY ) {
 		// High number of vertices to process + density
 		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {

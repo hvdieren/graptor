@@ -581,7 +581,8 @@ void mce_bk_iterate(
 
     sVID nset = xp.get_size( ins );
     if( PBits >= BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
-	&& float(xp.get_size(Pp)) >= BLOCKED_THRESHOLD_SEQUENTIAL ) {
+	&& float(xp.get_size(Pp)) >= BLOCKED_THRESHOLD_SEQUENTIAL
+	&& nset > 1 ) {
 	if( float(nset)/float(n-cs) >= BLOCKED_THRESHOLD_DENSITY ) {
 	    // High number of vertices to process + density
 	    parallel_loop( cs, n, 1, [&,ins]( sVID v ) {
@@ -645,6 +646,31 @@ mce_bron_kerbosch(
     sVID n = mtx.numVertices();
     sVID cs = xp.get_col_start();
 
+#if !ABLATION_BLOCKED_FILTER_FULLY_CONNECTED
+    prow_type allPp = ptr::bitwise_invert( xp.get_himask( n ) ); // subtracts cs
+    prow_type allXp = ptr::setzero();
+    xrow_type allXx = xtr::bitwise_invert( px.get_himask( cs ) );
+    prow_type R = ptr::setzero();
+    unsigned depth = 0;
+
+    for( sVID v=cs; v != n; ++v ) {
+	prow_type v_ngh = xp.get_row( v );
+	sVID deg = xp.get_size( v_ngh );
+	if( deg+1 == n-cs ) { // connected to all in P
+	    prow_type v_row = xp.create_singleton( v );
+	    // Add v to R, it must be included
+	    R = ptr::bitwise_or( v_row, R );
+	    ++depth;
+	    // Filter X and P with neighbours of v.
+	    // As v_ngh has only one zero (for v), the effect is to remove v
+	    allXp = ptr::bitwise_and( allXp, v_ngh );
+	    allXx = xtr::bitwise_and( allXx, px.get_row( v ) );
+	    allPp = ptr::bitwise_and( allPp, v_ngh );
+	}
+    }
+
+    mce_bk_iterate( mtx, EE, R, allPp, allXp, allXx, depth );
+#else
 #if !ABLATION_BLOCKED_NO_PIVOT_TOP
     prow_type allPp = ptr::bitwise_invert( xp.get_himask( n ) ); // subtracts cs
     prow_type allXp = ptr::setzero();
@@ -663,6 +689,7 @@ mce_bron_kerbosch(
 	prow_type Rv = R;
 	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, 1 );
     } );
+#endif
 #endif
 }
 
