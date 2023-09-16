@@ -205,6 +205,7 @@ public:
 	// Place edges
 	sVID ni = 0;
 	m_m = 0;
+
 	for( sVID r=m_row_start; r < m_row_start+m_rows; ++r ) {
 	    const sVID u = XP[r];
 	    sVID deg;
@@ -653,10 +654,21 @@ mce_bron_kerbosch(
     prow_type R = ptr::setzero();
     unsigned depth = 0;
 
+    prow_type pmatch = allPp;
+    for( sVID v=0; v != cs; ++v ) {
+	prow_type v_ngh = xp.get_row( v );
+	if( ptr::cmpeq( pmatch, v_ngh, target::mt_bool() ) )
+	    return;
+    }
+    
     for( sVID v=cs; v != n; ++v ) {
 	prow_type v_ngh = xp.get_row( v );
-	sVID deg = xp.get_size( v_ngh );
-	if( deg+1 == n-cs ) { // connected to all in P
+	prow_type v_row = xp.create_singleton( v );
+	if( ptr::cmpeq( ptr::bitwise_andnot( v_row, pmatch ), v_ngh,
+			target::mt_bool() ) ) {
+	    // sVID deg = xp.get_size( v_ngh );
+	    // if( deg+1 == n-cs ) {
+	    // connected to all in P
 	    prow_type v_row = xp.create_singleton( v );
 	    // Add v to R, it must be included
 	    R = ptr::bitwise_or( v_row, R );

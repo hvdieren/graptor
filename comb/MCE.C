@@ -108,7 +108,7 @@
 #endif
 
 #ifndef PAR_LOOP
-#define PAR_LOOP 2
+#define PAR_LOOP 1
 #endif
 
 #include <signal.h>
@@ -2226,9 +2226,9 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_BLOCKED_NO_PIVOT_TOP
 	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
 	      << ABLATION_DENSE_NO_PIVOT_TOP
-	      << "\n\t=ABLATION_DENSE_FILTER_FULLY_CONNECTED "
+	      << "\n\tABLATION_DENSE_FILTER_FULLY_CONNECTED= "
 	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
-	      << "\n\t=ABLATION_BLOCKED_FILTER_FULLY_CONNECTED "
+	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED= "
 	      << ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 
 	      << '\n';
     
@@ -2236,56 +2236,115 @@ int main( int argc, char *argv[] ) {
     MCE_Parallel_Enumerator E( farm );
 
     system( "date" );
+
+#if PAPI_CACHE 
+    PAPI_initial();         /*PAPI Event inital*/
+#endif
+
     std::cout << "Start enumeration: " << tm.next() << "\n";
+
+    VID degeneracy = kcore.getLargestCore();
 
     // Number of partitions is tunable. A fairly large number is helpful
     // to help load balancing.
 #if PAR_LOOP == 0
-    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
+    parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
 	VID k = n / npart; // round down as lower-numbered vertices take longer
 	VID from = p == 0 ? 0 : (p-1) * k;
 	VID to = p == npart-1 ? n : p * k;
 	for( VID i=from; i < to; i++ ) {
 	    VID v = i; // order[i];
-	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	    mce_top_level( R, H, E, v, degeneracy );
 	}
     } );
 #elif PAR_LOOP == 1
-    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
+    parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
 	for( VID i=p; i < n; i += npart ) {
 	    VID v = i; // order[i];
-	    mce_top_level( R, H, E, v, kcore.getLargestCore() );
+	    mce_top_level( R, H, E, v, degeneracy );
 	}
     } );
 #elif PAR_LOOP == 2
-    parallel_loop( VID(0), npart, 1, [&,npart]( VID p ) {
-	if( p < n ) {
+    // Low degeneracy graphs include road networks, where locality is more
+    // important than load balance
+    if( degeneracy < 10 ) {
+	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
+	    // round down as lower-numbered vertices take longer
+	    VID k = n / npart;
+	    VID from = p == 0 ? 0 : (p-1) * k;
+	    VID to = p == npart-1 ? n : p * k;
+	    for( VID i=from; i < to; i++ ) {
+		VID v = i; // order[i];
+		mce_top_level( R, H, E, v, degeneracy );
+	    }
+	} );
+    } else {
+	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
+	    if( p >= n )
+		return; // nothing
+
 	    VID k = ( n + npart - 1 ) / npart;
-	    VID degeneracy = kcore.getLargestCore();
 	    while( p + k * npart >= n )
 		--k;
 	    // Split out vertices in higher-degree ones and lower-degree ones,
 	    // processing the latter sequentially for efficiency reasons
 	    VID kpar = k;
-	    for( VID v=p; v < n; v += npart ) {
-		if( R.getDegree( v ) < degeneracy ) {
-		    kpar = ( v - p ) / npart;
-		    break;
+
+	    // Binary search for partition point between parallel and sequential
+	    VID lo = 0;
+	    VID hi = k;
+	    VID vlo = p + lo * npart;
+	    VID vhi = p + hi * npart;
+	    VID dlo = G.getDegree( vlo );
+	    VID dhi = G.getDegree( vhi );
+	    if( degeneracy < 10 ) {
+		// With low degeneracy, there is little need for load balancing.
+		// Do all in parallel and omit the search bit.
+		kpar = hi;
+	    } else if( dlo < degeneracy ) {
+		kpar = lo;
+	    } else if( dhi >= degeneracy ) {
+		kpar = hi;
+	    } else {
+		// Invariant: dlo >= degeneracy && dhi < degeneracy
+		while( hi - lo > 1 ) {
+		    VID mid = ( lo + hi ) / 2;
+		    VID vmid = p + mid * npart;
+		    VID dmid = G.getDegree( vmid );
+		    if( dmid < degeneracy ) {
+			hi = mid;
+			vhi = vmid;
+			dhi = dmid;
+		    } else {
+			lo = mid;
+			vlo = vmid;
+			dlo = dmid;
+		    }
 		}
+		kpar = hi;
 	    }
+
 	    // Do sequential part first, because work stealing cannot help to
-	    // obtain load balance if we keep this to the end of the computation.
+	    // obtain load balance if we keep this to the end of the
+	    // computation.
 	    for( VID v=p+kpar*npart; v < n; v += npart )
-		mce_top_level( R, H, E, v, kcore.getLargestCore() );
+		mce_top_level( R, H, E, v, degeneracy );
 	    parallel_loop( VID(0), kpar, 1, [&,p,k]( VID j ) {
 		VID v = p + j * npart;
-		mce_top_level( R, H, E, v, kcore.getLargestCore() );
+		mce_top_level( R, H, E, v, degeneracy );
 	    } );
-	}
-    } );
+	} );
+    }
 #endif
 
     std::cout << "Enumeration: " << tm.next() << "\n";
+
+#if PAPI_CACHE 
+    PAPI_stop_count();   /*stop PAPI counters*/
+    PAPI_print();   /* PAPI results print*/
+    PAPI_total_print(1);   /* PAPI results print*/
+    PAPI_end();
+#endif
 
     all_variant_statistics stats = mce_stats.sum();
 

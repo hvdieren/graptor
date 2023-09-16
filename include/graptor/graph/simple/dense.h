@@ -118,6 +118,7 @@ public:
     static constexpr size_t MAX_VERTICES = bits_per_lane * VL;
 
 public:
+#if 0
     DenseMatrix( const ::GraphCSx & G, VID v,
 		 const NeighbourCutOutXP<VID,EID> & cut,
 		 const VID * const core_order )
@@ -459,6 +460,7 @@ public:
 	    }
 	}
     }
+#endif
     // In this variation, hVIDs are already sorted by core_order
     // and we know the separation between X and P sets.
     template<typename GGraph, typename HGraph>
@@ -493,6 +495,13 @@ public:
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
+	m_fully_connected = tr::setzero();
+
+	row_type mn = get_himask( ns );
+	row_type mx = get_himask( m_start_pos );
+	row_type allP = tr::bitwise_xor( mn, mx );
+	row_type all = tr::bitwise_invert( mn );
+
 	for( VID su=0; su < ns; ++su ) {
 	    VID u = XP[su];
 
@@ -501,9 +510,9 @@ public:
 	    // performance in this location
 
 	    VID adeg;
+	    row_type row_u;
 #if !ABLATION_DENSE_DISABLE_XP_HASH
 	    if( ce > 2*G.getDegree( u ) ) {
-		row_type row_u;
 		std::tie( row_u, adeg )
 		    = graptor::graph::construct_row_hash_xp_vec<tr>(
 			G, H, XP_hash, ne, ce, su, u,
@@ -517,7 +526,16 @@ public:
 		adeg = construct_row_hash_adj<tr>(
 		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
 		    ( su >= ne ? 0 : ne ), ce );
+		row_u = tr::load( &m_matrix[VL * su] );
 	    }
+
+	    row_type su_only = create_row( su );
+	    row_type eql = allP; // su >= m_start_pos ? allP : all;
+	    if( tr::cmpeq( tr::bitwise_andnot( su_only, eql ),
+			   tr::bitwise_and( row_u, eql ),
+			   target::mt_bool() ) )
+		m_fully_connected = tr::bitwise_or(
+		    m_fully_connected, su_only );
 
 #if !ABLATION_PDEG
 	    m_degree[su] = adeg;
@@ -555,6 +573,13 @@ public:
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
+	m_fully_connected = tr::setzero();
+
+	row_type mn = get_himask( ns );
+	row_type mx = get_himask( m_start_pos );
+	row_type allP = tr::bitwise_xor( mn, mx );
+	row_type all = tr::bitwise_invert( mn );
+
 	for( VID su=0; su < ns; ++su ) {
 	    const VID u = XP[su];
 
@@ -562,9 +587,9 @@ public:
 	    // neighbour list of the vertex.
 
 	    VID adeg;
+	    row_type row_u;
 #if !ABLATION_DENSE_DISABLE_XP_HASH
 	    if( ce > 2*G.getDegree( u ) ) {
-		row_type row_u;
 		std::tie( row_u, adeg )
 		    = graptor::graph::construct_row_hash_xp_vec<tr>(
 			G, H, xp_set.hash_table(), ne, ce, su, u,
@@ -578,7 +603,16 @@ public:
 		adeg = construct_row_hash_adj<tr>(
 		    G, H, &m_matrix[VL * su], XP, ne, ce, su,
 		    ( su >= ne ? 0 : ne ), ce );
+		row_u = tr::load( &m_matrix[VL*su] );
 	    }
+
+	    row_type su_only = create_row( su );
+	    row_type eql = allP; // su >= m_start_pos ? allP : all;
+	    if( tr::cmpeq( tr::bitwise_andnot( su_only, eql ),
+			   tr::bitwise_and( row_u, eql ),
+			   target::mt_bool() ) )
+		m_fully_connected = tr::bitwise_or(
+		    m_fully_connected, su_only );
 
 #if !ABLATION_PDEG
 	    m_degree[su] = adeg;
@@ -641,21 +675,50 @@ public:
 	// Special case of vertices connected to all other vertices.
 	// If we select such a vertex as pivot, only the vertex itself is
 	// processed at this level. The remaining vertices remain in P.
-	row_type R = tr::setzero();
+	// This loops simulates multiple recurisve calls selecting a fully
+	// connected vertex as pivot
 	unsigned depth = 0;
-	for( sVID v=m_start_pos; v != m_n; ++v ) {
-	    row_type v_ngh = get_row( v );
-	    sVID deg = get_size( v_ngh );
-	    if( deg+1 == m_n ) { // connected to all
-		row_type v_row = tr::setglobaloneval( v );
+	row_type R = tr::setzero();
+	if( !tr::is_zero( m_fully_connected ) ) {
+	    // If an X vertex is connected to all P vertices, we're done
+	    if( !tr::is_zero( tr::bitwise_andnot( mx, m_fully_connected ) ) )
+		return;
+
+	    row_type fcP = tr::bitwise_and( mx, m_fully_connected );
+	    bitset<Bits> bx( fcP );
+
+	    // fully connected P vertices
+	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+		sVID v = *I;
+		row_type v_ngh = get_row( v );
+		row_type v_row = create_row( v );
 		// Add v to R, it must be included
 		R = tr::bitwise_or( v_row, R );
 		++depth;
 		// Filter X and P with neighbours of v.
-		// As v_ngh has only one zero (for v), the effect is to remove v
+		// As v_ngh has only one zero (for v), the effect
+		// is to remove v
 		allX = tr::bitwise_and( allX, v_ngh );
 		allP = tr::bitwise_and( allP, v_ngh );
 	    }
+/*
+	    
+	    for( sVID v=m_start_pos; v != m_n; ++v ) {
+		row_type v_ngh = get_row( v );
+		sVID deg = get_size( v_ngh );
+		if( deg+1 == m_n ) { // connected to all
+		    row_type v_row = tr::setglobaloneval( v );
+		    // Add v to R, it must be included
+		    R = tr::bitwise_or( v_row, R );
+		    ++depth;
+		    // Filter X and P with neighbours of v.
+		    // As v_ngh has only one zero (for v), the effect
+		    // is to remove v
+		    allX = tr::bitwise_and( allX, v_ngh );
+		    allP = tr::bitwise_and( allP, v_ngh );
+		}
+	    }
+*/
 	}
 	mce_bk_iterate( E, R, allP, allX, depth );
 #else
@@ -666,7 +729,7 @@ public:
 #else	
 	// No pivoting, process all
 	parallel_loop( m_start_pos, m_n, 1, [&]( sVID u ) {
-	    row_type R = tr::setglobaloneval( u );
+	    row_type R = create_row( u );
 
 	    row_type pu_ngh = get_row( u );
 	    row_type h = get_himask( u );
@@ -1013,6 +1076,8 @@ private:
     VID m_mc_size;
     row_type m_mc;
     VID m_start_pos;
+
+    row_type m_fully_connected;
 
 #if !ABLATION_PDEG
     DID m_degree[Bits]; //!< only left-most columns (P part)
