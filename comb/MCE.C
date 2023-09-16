@@ -108,7 +108,7 @@
 #endif
 
 #ifndef PAR_LOOP
-#define PAR_LOOP 1
+#define PAR_LOOP 2
 #endif
 
 #include <signal.h>
