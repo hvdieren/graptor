@@ -11,20 +11,6 @@
 //   by non-increasing degree within a group of equal degeneracy.
 //   The non-increasing degree means faster reduction of size of P?
 
-// Novelties:
-// + find pivot -> abort intersection if seen to be too small
-// + small sub-problems -> dense matrix; O(1) operations
-
-// Experiments:
-// + Check that 32-bit is faster than 64-bit for same-sized problems;
-//   same for SSE vs AVX
-
-// Experiments observations:
-// + sometimes sequentially faster; sometimes does not translate in parallel
-//   efficiency (e.g. wiki-talk, USA)
-// + need to check load balancing in detail (e.g. warwiki)
-// + sometimes sequentially slower (e.g. warwiki, 10x)
-//
 // Consider:
 // + StackLikeAllocator PAGE_SIZE => mmap => high overhead, USAroad not needed
 //   look at retaining chunks in persistent allocator, i.e., insert layer
@@ -2212,10 +2198,14 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << "\n\tABLATION_RECPAR_CUTOUT=" << ABLATION_RECPAR_CUTOUT
 	      << "\n\tPAR_LOOP=" << PAR_LOOP
+	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL_BITS="
+	      << DENSE_THRESHOLD_SEQUENTIAL_BITS
 	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
 	      << DENSE_THRESHOLD_SEQUENTIAL
 	      << "\n\tDENSE_THRESHOLD_DENSITY="
 	      << DENSE_THRESHOLD_DENSITY
+	      << "\n\tBLOCKED_THRESHOLD_SEQUENTIAL_PBITS="
+	      << BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
 	      << "\n\tBLOCKED_THRESHOLD_SEQUENTIAL="
 	      << BLOCKED_THRESHOLD_SEQUENTIAL
 	      << "\n\tBLOCKED_THRESHOLD_DENSITY="
