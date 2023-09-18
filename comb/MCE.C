@@ -180,6 +180,18 @@ static VID * global_coreness = nullptr;
 static std::mutex io_mux;
 static constexpr bool io_trace = false;
 
+struct MCE_linked_list {
+    MCE_linked_list( VID v = 0, const MCE_linked_list * next = nullptr )
+	: m_v( v ), m_next( next ) { }
+
+    size_t size() const {
+	return m_next != nullptr ? m_next->size() + 1 : 1;
+    }
+
+    const VID m_v;
+    const MCE_linked_list * m_next;
+};
+
 class MCE_Enumerator {
 public:
     MCE_Enumerator( size_t degen = 0 )
@@ -187,7 +199,16 @@ public:
 	  m_histogram( degen+1 ) { }
 
     // Recod clique of size s
-    void record( size_t s ) {
+    void record( size_t s, const MCE_linked_list * contents = nullptr ) {
+	assert( m_degeneracy+1 == m_histogram.size() );
+	assert( s <= m_degeneracy+1 );
+	// assert( !contents || contents->size() == s ); -- slow
+	__sync_fetch_and_add( &m_histogram[s-1], 1 );
+    }
+
+    template<unsigned Bits>
+    void record( size_t s, const MCE_linked_list * contents,
+		 const bitset<Bits> & b ) {
 	assert( m_degeneracy+1 == m_histogram.size() );
 	assert( s <= m_degeneracy+1 );
 	__sync_fetch_and_add( &m_histogram[s-1], 1 );
@@ -232,11 +253,27 @@ struct MCE_Enumerator_stage2 {
 
     template<unsigned Bits>
     void operator() ( const bitset<Bits> & c, size_t sz ) {
+	// assert( c.size() == sz );
 	E.record( m_surplus + sz );
     }
+
+    template<unsigned Bits>
+    void operator() ( size_t sz, const MCE_linked_list * contents,
+		      const bitset<Bits> & b ) {
+	E.record( m_surplus + sz, contents, b );
+    }
     
-    void record( size_t sz ) {
-	E.record( m_surplus + sz );
+    void operator() ( size_t sz, const MCE_linked_list * contents ) {
+	E.record( m_surplus + sz, contents );
+    }
+    
+    void record( size_t sz, const MCE_linked_list * contents = nullptr ) {
+	E.record( m_surplus + sz, contents );
+    }
+    template<unsigned Bits>
+    void record( size_t sz, const MCE_linked_list * contents,
+		 const bitset<Bits> & b ) {
+	E.record( m_surplus + sz, contents, b );
     }
 
     size_t get_surplus() const { return m_surplus; }
@@ -303,8 +340,8 @@ public:
     }
     
     // Recod clique of size s
-    void record( size_t s ) {
-	m_farm.get_enumerator_ref().record( m_surplus + s );
+    void record( size_t s, const MCE_linked_list * contents ) {
+	m_farm.get_enumerator_ref().record( m_surplus + s, contents );
     }
 
 private:
@@ -851,6 +888,7 @@ template<typename VID, typename EID>
 bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
+    const MCE_linked_list * R,
     VID r,
     const XPSet<VID> & xp_set,
     VID ne,
@@ -1150,6 +1188,7 @@ mce_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
+    const MCE_linked_list * R,
     XPSet<VID> & xp,
     VID ne,
     VID ce,
@@ -1160,6 +1199,7 @@ bk_recursive_call(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
+    const MCE_linked_list * R,
     XPSet<VID> & xp_new,
     VID ne_new,
     VID ce_new,
@@ -1167,7 +1207,7 @@ bk_recursive_call(
     if( ce_new - ne_new == 0 ) {
 	// Reached leaf of search tree
 	if( ne_new == 0 )
-	    E.record( depth+1 );
+	    E.record( depth, R );
 	return;
     }
 
@@ -1176,7 +1216,7 @@ bk_recursive_call(
 #endif
     {
 	MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
-	if( mce_leaf<VID,EID>( G, E2, 1, xp_new, ne_new, ce_new ) )
+	if( mce_leaf<VID,EID>( G, E2, R, depth, xp_new, ne_new, ce_new ) )
 	    return;
     }
 
@@ -1198,11 +1238,11 @@ bk_recursive_call(
 	const auto & Gc = builder.get_graph();
 	std::iota( xp_new.get_set(), xp_new.get_set()+ce_new, 0 );
 	mce_bron_kerbosch_recpar_xps(
-	    Gc, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+	    Gc, degeneracy, E, R, xp_new, ne_new, ce_new, depth );
     } else {
 	// large sub-problem; search recursively
 	mce_bron_kerbosch_recpar_xps(
-	    G, degeneracy, E, xp_new, ne_new, ce_new, depth+1 );
+	    G, degeneracy, E, R, xp_new, ne_new, ce_new, depth );
     }
 }
 
@@ -1212,6 +1252,7 @@ mce_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
+    const MCE_linked_list * R,
     XPSet<VID> & xp,
     VID ne,
     VID ce,
@@ -1219,7 +1260,7 @@ mce_bron_kerbosch_recpar_xps(
     // Termination condition
     if( ne == ce ) {
 	if( ne == 0 )
-	    E.record( depth );
+	    E.record( depth, R );
 	return;
     }
     const VID n = G.numVertices();
@@ -1271,9 +1312,11 @@ mce_bron_kerbosch_recpar_xps(
 		      << adj.size() << " depth=" << depth << "\n";
 	}
 
+	MCE_linked_list Rp( v, R );
+
 	if( deg == 0 ) [[unlikely]] { // implies ne == ce == 0
 	    // avoid overheads of copying and cutout
-	    E.record( depth+1 );
+	    E.record( depth+1, &Rp );
 	} else {
 	    // Some complexity:
 	    // + Need to consider all vertices prior to v in XP are now
@@ -1289,8 +1332,8 @@ mce_bron_kerbosch_recpar_xps(
 		= xp.intersect( G.numVertices(),
 				i, ce, adj, ngh, ne_new, ce_new );
 
-	    bk_recursive_call( G, degeneracy, E, xp_new,
-			       ne_new, ce_new, depth );
+	    bk_recursive_call( G, degeneracy, E, &Rp, xp_new,
+			       ne_new, ce_new, depth+1 );
 	}
     } );
 }
@@ -1397,6 +1440,7 @@ mce_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
     VID degeneracy,
     MCE_Parallel_Enumerator & E,
+    const MCE_linked_list * R,
     VID ne ) {
     const VID n = G.numVertices();
 
@@ -1499,9 +1543,11 @@ mce_bron_kerbosch_recpar_top_xps(
 	    const auto & adj = G.get_adjacency( v ); 
 	    VID deg = adj.size();
 
+	    MCE_linked_list Rp( v, R );
+	    
 	    if( deg == 0 ) { // implies ne == ce == 0
 		// avoid overheads of copying and cutout
-		E.record( 1 );
+		E.record( 1, &Rp );
 	    } else {
 		const VID * ngh = G.get_neighbours( v ); 
 		const VID * pngh = G.get_neighbours( pivot ); 
@@ -1510,8 +1556,8 @@ mce_bron_kerbosch_recpar_top_xps(
 		    = XPSet<VID>::intersect_top_level(
 			n, ne, v, padj, pngh, adj, ngh, ne_new, ce_new );
 
-		bk_recursive_call( G, degeneracy, E, xp_new,
-				   ne_new, ce_new, 0 );
+		bk_recursive_call( G, degeneracy, E, &Rp, xp_new,
+				   ne_new, ce_new, 1 );
 	    }
 	}
     } );
@@ -1523,7 +1569,8 @@ mce_bron_kerbosch_recpar_top(
     const HGraphTy & G,
     VID start_pos,
     VID degeneracy,
-    MCE_Parallel_Enumerator & E ) {
+    MCE_Parallel_Enumerator & E,
+    const MCE_linked_list * R ) {
     VID n = G.numVertices();
 
     // Specialised version of pivoting: avoid creating full XP list (0..ce)
@@ -1566,10 +1613,10 @@ mce_bron_kerbosch_recpar_top(
     // start_pos calculated to avoid revisiting vertices ordered before the
     // reference vertex of this cut-out
 #if ABLATION_GENERIC_TOP == 0
-    mce_bron_kerbosch_recpar_top_xps( G, degeneracy, E, start_pos );
+    mce_bron_kerbosch_recpar_top_xps( G, degeneracy, E, R, start_pos );
 #elif ABLATION_GENERIC_TOP == 1
     XPSet<VID> xp = XPSet<VID>::create_full_set( G );
-    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, start_pos, n, 0 );
+    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, R, xp, start_pos, n, 0 );
 #else
     parallel_loop( start_pos, n, 1, [&]( VID v ) {
 	// Note: push v into R
@@ -1580,7 +1627,7 @@ mce_bron_kerbosch_recpar_top(
 	if( ce == 0 ) {
 	    // This is a 2-clique (top-level vertex plus our v). mce_tiny
 	    // handles his special case incorrectly for this call site.
-	    E.record( 1 );
+	    E.record( 1, R );
 	}  else
 #endif
 	{
@@ -1591,6 +1638,8 @@ mce_bron_kerbosch_recpar_top(
 		std::lock_guard<std::mutex> guard( io_mux );
 		std::cout << "XPTOP loop: ne=" << ne << " ce=" << ce << "\n";
 	    }
+
+	    MCE_linked_list Rp( v, R );
 
 #if !ABLATION_DISABLE_TOP_TINY
 	    if( ce <= 3 ) {
@@ -1604,11 +1653,11 @@ mce_bron_kerbosch_recpar_top(
 		bool ok = false;
 		if( ne <= (1<<P_MAX_SIZE) && ne <= (1<<X_MAX_SIZE) ) {
 		    MCE_Enumerator_stage2 E2 = E.get_enumerator( 0 );
-		    ok = mce_leaf<VID,EID>( G, E2, 1, xp, ne, ce );
+		    ok = mce_leaf<VID,EID>( G, E2, &Rp, 1, xp, ne, ce );
 		}
 
 		if( !ok )
-		    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ne, ce, 1 );
+		    mce_bron_kerbosch_recpar_xps( G, degeneracy, E, &Rp, xp, ne, ce, 1 );
 	    }
 	}
     } );
@@ -1950,8 +1999,9 @@ void mce_top_level(
 
     tm.start();
     MCE_Parallel_Enumerator Ee( E, 1 );
+    MCE_linked_list R( v );
     mce_bron_kerbosch_recpar_top( HG, ibuilder.get_start_pos(),
-				  degeneracy, Ee );
+				  degeneracy, Ee, &R );
     double t = tm.stop();
     if( io_trace /* false && t >= 3.0 */ ) {
 	// P-P edges more informative than X-P edges...
@@ -1979,13 +2029,14 @@ template<unsigned Bits, typename VID, typename EID>
 void leaf_dense_fn(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & Ee,
+    const MCE_linked_list * R,
     VID r,
     const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
     DenseMatrix<Bits,VID,EID> D( H, H, xp_set, ne, ce );
     D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
-	Ee.record( r + sz );
+	Ee.record( r + sz, R, c );
     } );
 }
 
@@ -1993,6 +2044,7 @@ template<unsigned XBits, unsigned PBits, typename VID, typename EID>
 void leaf_blocked_fn(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & Ee,
+    const MCE_linked_list * R,
     VID r,
     const XPSet<VID> & xp_set,
     VID ne,
@@ -2000,13 +2052,14 @@ void leaf_blocked_fn(
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
 	D( H, H, xp_set, ne, ce );
     mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
-	Ee.record( r + sz );
+	Ee.record( r + sz, R, c );
     } );
 }
 
 typedef void (*mce_leaf_func)(
     const HGraphTy &,
-    MCE_Enumerator_stage2 & Ee,
+    MCE_Enumerator_stage2 &,
+    const MCE_linked_list *,
     VID,
     const XPSet<VID> &,
     VID,
@@ -2062,6 +2115,7 @@ template<typename VID, typename EID>
 bool mce_leaf(
     const HGraphTy & H,
     MCE_Enumerator_stage2 & E,
+    const MCE_linked_list * R,
     VID r,
     const XPSet<VID> & xp_set,
     VID ne,
@@ -2084,12 +2138,10 @@ bool mce_leaf(
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
 
-#if 0
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
-#endif
 
     VID xlg = get_size_class( xnum );
     if( xlg < X_MIN_SIZE )
@@ -2100,18 +2152,18 @@ bool mce_leaf(
 	plg = P_MIN_SIZE;
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
 
     if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
 	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
-	    H, E, r, xp_set, ne, ce );
+	    H, E, R, r, xp_set, ne, ce );
 	return true;
     }
 
     if( nlg <= N_MAX_SIZE ) {
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, r, xp_set, ne, ce );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
 
