@@ -701,24 +701,6 @@ public:
 		allX = tr::bitwise_and( allX, v_ngh );
 		allP = tr::bitwise_and( allP, v_ngh );
 	    }
-/*
-	    
-	    for( sVID v=m_start_pos; v != m_n; ++v ) {
-		row_type v_ngh = get_row( v );
-		sVID deg = get_size( v_ngh );
-		if( deg+1 == m_n ) { // connected to all
-		    row_type v_row = tr::setglobaloneval( v );
-		    // Add v to R, it must be included
-		    R = tr::bitwise_or( v_row, R );
-		    ++depth;
-		    // Filter X and P with neighbours of v.
-		    // As v_ngh has only one zero (for v), the effect
-		    // is to remove v
-		    allX = tr::bitwise_and( allX, v_ngh );
-		    allP = tr::bitwise_and( allP, v_ngh );
-		}
-	    }
-*/
 	}
 	mce_bk_iterate( E, R, allP, allX, depth );
 #else
@@ -832,7 +814,6 @@ private:
     void mce_bk_iterate(
 	Enumerate && EE,
 	row_type R, row_type P, row_type X, int depth ) {
-	// depth == get_size( R )
 	if( tr::is_zero( P ) ) {
 	    if( tr::is_zero( X ) )
 		EE( bitset<Bits>( R ), depth );

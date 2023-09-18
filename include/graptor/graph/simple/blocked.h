@@ -660,14 +660,12 @@ mce_bron_kerbosch(
 	if( ptr::cmpeq( pmatch, v_ngh, target::mt_bool() ) )
 	    return;
     }
-    
+
     for( sVID v=cs; v != n; ++v ) {
 	prow_type v_ngh = xp.get_row( v );
 	prow_type v_row = xp.create_singleton( v );
 	if( ptr::cmpeq( ptr::bitwise_andnot( v_row, pmatch ), v_ngh,
 			target::mt_bool() ) ) {
-	    // sVID deg = xp.get_size( v_ngh );
-	    // if( deg+1 == n-cs ) {
 	    // connected to all in P
 	    prow_type v_row = xp.create_singleton( v );
 	    // Add v to R, it must be included
@@ -692,14 +690,12 @@ mce_bron_kerbosch(
     // No pivoting, process all
     parallel_loop( cs, n, 1, [&]( sVID u ) {
 	prow_type R = xp.create_singleton( u );
-
 	prow_type pu_ngh = xp.get_row( u );
 	prow_type h = xp.get_himask( u );
 	prow_type Ppv = ptr::bitwise_and( h, pu_ngh );
 	prow_type Xpv = ptr::bitwise_andnot( h, pu_ngh );
 	xrow_type Xxv = px.get_row( u );
-	prow_type Rv = R;
-	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, 1 );
+	mce_bk_iterate( mtx, EE, R, Ppv, Xpv, Xxv, 1 );
     } );
 #endif
 #endif
