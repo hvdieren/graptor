@@ -681,8 +681,10 @@ public:
 	row_type R = tr::setzero();
 	if( !tr::is_zero( m_fully_connected ) ) {
 	    // If an X vertex is connected to all P vertices, we're done
-	    if( !tr::is_zero( tr::bitwise_andnot( mx, m_fully_connected ) ) )
+	    if( !tr::is_zero( tr::bitwise_andnot( mx, m_fully_connected ) ) ) {
+		E.count_fully_connected_X();
 		return;
+	    }
 
 	    row_type fcP = tr::bitwise_and( mx, m_fully_connected );
 	    bitset<Bits> bx( fcP );
@@ -701,6 +703,7 @@ public:
 		allX = tr::bitwise_and( allX, v_ngh );
 		allP = tr::bitwise_and( allP, v_ngh );
 	    }
+	    E.count_fully_connected_P( depth );
 	}
 	mce_bk_iterate( E, R, allP, allX, depth );
 #else

@@ -657,8 +657,10 @@ mce_bron_kerbosch(
     prow_type pmatch = allPp;
     for( sVID v=0; v != cs; ++v ) {
 	prow_type v_ngh = xp.get_row( v );
-	if( ptr::cmpeq( pmatch, v_ngh, target::mt_bool() ) )
+	if( ptr::cmpeq( pmatch, v_ngh, target::mt_bool() ) ) {
+	    EE.count_fully_connected_X();
 	    return;
+	}
     }
 
     for( sVID v=cs; v != n; ++v ) {
@@ -678,6 +680,8 @@ mce_bron_kerbosch(
 	    allPp = ptr::bitwise_and( allPp, v_ngh );
 	}
     }
+    if( depth > 0 )
+	EE.count_fully_connected_P( depth );
 
     mce_bk_iterate( mtx, EE, R, allPp, allXp, allXx, depth );
 #else

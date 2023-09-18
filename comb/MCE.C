@@ -196,7 +196,10 @@ class MCE_Enumerator {
 public:
     MCE_Enumerator( size_t degen = 0 )
 	: m_degeneracy( degen ),
-	  m_histogram( degen+1 ) { }
+	  m_histogram( degen+1 ),
+	  m_nfc_X( 0 ),
+	  m_nfc_P( 0 ),
+	  m_nfc_P_num( 0 ) { }
 
     // Recod clique of size s
     void record( size_t s, const MCE_linked_list * contents = nullptr ) {
@@ -214,11 +217,22 @@ public:
 	__sync_fetch_and_add( &m_histogram[s-1], 1 );
     }
 
+    void count_fully_connected_X() {
+	m_nfc_X++;
+    }
+    void count_fully_connected_P( unsigned nfc ) {
+	m_nfc_P++;
+	m_nfc_P_num += nfc;
+    }
+
     MCE_Enumerator
     operator + ( const MCE_Enumerator & e ) const {
 	MCE_Enumerator sum( m_degeneracy );
 	for( size_t n=0; n < m_histogram.size(); ++n )
 	    sum.m_histogram[n] = m_histogram[n] + e.m_histogram[n];
+	sum.m_nfc_X = m_nfc_X + e.m_nfc_X;
+	sum.m_nfc_P = m_nfc_X + e.m_nfc_P;
+	sum.m_nfc_P_num = m_nfc_X + e.m_nfc_P_num;
 	return sum;
     }
 
@@ -229,7 +243,13 @@ public:
 	for( size_t i=0; i < m_histogram.size(); ++i )
 	    num_maximal_cliques += m_histogram[i];
 	
-	os << "Number of maximal cliques: " << num_maximal_cliques
+	os << "Number of dense/blocked fully connected X subproblems: "
+	   << m_nfc_X
+	   << "\nNumber of dense/blocked fully connected P subproblems: "
+	   << m_nfc_P
+	   << "\nNumber of dense/blocked fully connected P vertices: "
+	   << m_nfc_P_num
+	   << "\nNumber of maximal cliques: " << num_maximal_cliques
 	   << "\n";
 	os << "Clique histogram: clique_size, num_of_cliques\n";
 	for( size_t i=0; i <= m_degeneracy; ++i ) {
@@ -237,15 +257,19 @@ public:
 		os << (i+1) << ", " << m_histogram[i] << "\n";
 	    }
 	}
+	
 	return os;
     }
 
 private:
     size_t m_degeneracy;
     std::vector<size_t> m_histogram;
+    size_t m_nfc_X, m_nfc_P, m_nfc_P_num;
 };
 
 struct MCE_Enumerator_stage2 {
+    friend class MCE_Enumerator_stage3;
+    
     MCE_Enumerator_stage2( MCE_Enumerator & _E, size_t surplus = 1 )
 	: E( _E ), m_surplus( surplus ) { }
     MCE_Enumerator_stage2( MCE_Enumerator_stage2 & _E, size_t surplus = 1 )
@@ -276,11 +300,46 @@ struct MCE_Enumerator_stage2 {
 	E.record( m_surplus + sz, contents, b );
     }
 
+    void count_fully_connected_X() {
+	E.count_fully_connected_X();
+    }
+    void count_fully_connected_P( unsigned nfc ) {
+	E.count_fully_connected_P( nfc );
+    }
+
     size_t get_surplus() const { return m_surplus; }
 
 private:
     MCE_Enumerator & E;
     const size_t m_surplus;
+};
+
+struct MCE_Enumerator_stage3 {
+    MCE_Enumerator_stage3( MCE_Enumerator & _E, size_t surplus,
+			   const MCE_linked_list * R )
+	: E( _E ), m_surplus( surplus ), m_R( R ) { }
+    MCE_Enumerator_stage3( MCE_Enumerator_stage2 & _E, size_t surplus,
+			   const MCE_linked_list * R )
+	: E( _E.E ), m_surplus( _E.m_surplus + surplus ), m_R( R ) { }
+
+    template<unsigned Bits>
+    void operator() ( const bitset<Bits> & c, size_t sz ) {
+	E.record( m_surplus + sz, m_R, c );
+    }
+
+    void count_fully_connected_X() {
+	E.count_fully_connected_X();
+    }
+    void count_fully_connected_P( unsigned nfc ) {
+	E.count_fully_connected_P( nfc );
+    }
+
+    size_t get_surplus() const { return m_surplus; }
+
+private:
+    MCE_Enumerator & E;
+    const size_t m_surplus;
+    const MCE_linked_list * m_R;
 };
 
 class MCE_Enumerator_Farm {
@@ -2035,9 +2094,11 @@ void leaf_dense_fn(
     VID ne,
     VID ce ) {
     DenseMatrix<Bits,VID,EID> D( H, H, xp_set, ne, ce );
-    D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
-	Ee.record( r + sz, R, c );
-    } );
+    MCE_Enumerator_stage3 E3( Ee, r, R );
+    // D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
+	// Ee.record( r + sz, R, c );
+    // } );
+    D.mce_bron_kerbosch( E3 );
 }
 
 template<unsigned XBits, unsigned PBits, typename VID, typename EID>
@@ -2051,9 +2112,11 @@ void leaf_blocked_fn(
     VID ce ) {
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
 	D( H, H, xp_set, ne, ce );
-    mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
-	Ee.record( r + sz, R, c );
-    } );
+    MCE_Enumerator_stage3 E3( Ee, r, R );
+    // mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
+    // Ee.record( r + sz, R, c );
+    // } );
+    mce_bron_kerbosch( D, E3 );
 }
 
 typedef void (*mce_leaf_func)(
