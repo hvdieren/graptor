@@ -108,7 +108,7 @@
 
 #include <pthread.h>
 
-#include <cilk/cilk.h>
+#include <papi.h>
 
 #include "graptor/graptor.h"
 #include "graptor/api.h"
@@ -2331,9 +2331,9 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_BLOCKED_NO_PIVOT_TOP
 	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
 	      << ABLATION_DENSE_NO_PIVOT_TOP
-	      << "\n\tABLATION_DENSE_FILTER_FULLY_CONNECTED= "
+	      << "\n\tABLATION_DENSE_FILTER_FULLY_CONNECTED="
 	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
-	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED= "
+	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED="
 	      << ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 
 	      << '\n';
     
@@ -2342,13 +2342,18 @@ int main( int argc, char *argv[] ) {
 
     system( "date" );
 
-#if PAPI_CACHE 
-    PAPI_initial();         /*PAPI Event inital*/
-#endif
-
     std::cout << "Start enumeration: " << tm.next() << "\n";
 
     VID degeneracy = kcore.getLargestCore();
+
+#if PAPI_REGION 
+    map_workers( [&]( uint32_t t ) {
+	if( PAPI_OK != PAPI_hl_region_begin( "MCE" ) ) {
+	    std::cerr << "Error initialising PAPI\n";
+	    exit(1);
+	}
+    } );
+#endif
 
     // Number of partitions is tunable. A fairly large number is helpful
     // to help load balancing.
@@ -2442,14 +2447,16 @@ int main( int argc, char *argv[] ) {
     }
 #endif
 
-    std::cout << "Enumeration: " << tm.next() << "\n";
-
-#if PAPI_CACHE 
-    PAPI_stop_count();   /*stop PAPI counters*/
-    PAPI_print();   /* PAPI results print*/
-    PAPI_total_print(1);   /* PAPI results print*/
-    PAPI_end();
+#if PAPI_REGION 
+    map_workers( [&]( uint32_t t ) {
+	if( PAPI_OK != PAPI_hl_region_end( "MCE" ) ) {
+	    std::cerr << "Error initialising PAPI\n";
+	    exit(1);
+	}
+    } );
 #endif
+
+    std::cout << "Enumeration: " << tm.next() << "\n";
 
     all_variant_statistics stats = mce_stats.sum();
 
