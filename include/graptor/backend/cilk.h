@@ -209,4 +209,27 @@ void map_edgeL( const partitioner & part, Fn fn ) {
 }
 #endif
 
+template<typename Fn>
+void map_workers( Fn && fn ) {
+    uint32_t num_threads = graptor_num_threads();
+
+    if( num_threads == 1 ) {
+	fn( 0 );
+	return;
+    }
+    
+    volatile uint32_t num_wait = num_threads;
+    
+    parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
+	// Ensure each iteration of this loop is mapped onto a different
+	// worker. Needs some busy waiting to trigger work stealing.
+	__sync_fetch_and_add( &num_wait, -1 );
+	while( num_wait != 0 ); // busy wait
+
+	// Now we are certain that all workers are active on a different
+	// iteration of this loop.
+	fn( t );
+    } );
+}
+
 #endif // GRAPHGRIND_BACKEND_CILK_H
