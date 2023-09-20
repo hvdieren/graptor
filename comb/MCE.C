@@ -164,14 +164,22 @@ using graptor::graph::BlockedBinaryMatrix;
 using graptor::graph::XPSet;
 
 static constexpr size_t X_MIN_SIZE = 5;
-static constexpr size_t X_MAX_SIZE = 8; // 9;
-static constexpr size_t X_DIM = X_MAX_SIZE - X_MIN_SIZE + 1;
+static constexpr size_t X_DIM = 9 - X_MIN_SIZE + 1;
 static constexpr size_t P_MIN_SIZE = 5;
-static constexpr size_t P_MAX_SIZE = 8; // 9;
-static constexpr size_t P_DIM = P_MAX_SIZE - P_MIN_SIZE + 1;
+static constexpr size_t P_DIM = 9 - P_MIN_SIZE + 1;
 static constexpr size_t N_MIN_SIZE = 5;
-static constexpr size_t N_MAX_SIZE = 8; // 9;
-static constexpr size_t N_DIM = N_MAX_SIZE - N_MIN_SIZE + 1;
+static constexpr size_t N_DIM = 9 - N_MIN_SIZE + 1;
+
+#if __AVX512F__
+static constexpr size_t X_MAX_SIZE = 9;
+static constexpr size_t P_MAX_SIZE = 9;
+static constexpr size_t N_MAX_SIZE = 9;
+#else
+static constexpr size_t X_MAX_SIZE = 8;
+static constexpr size_t P_MAX_SIZE = 8;
+static constexpr size_t N_MAX_SIZE = 8;
+#endif
+
 
 static bool verbose = false;
 
