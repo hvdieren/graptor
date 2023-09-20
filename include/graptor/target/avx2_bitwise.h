@@ -6,8 +6,8 @@
 #include <immintrin.h>
 #include <cstdint>
 
-alignas(64) extern const uint32_t avx512_singleton_basis_epi32[32];
-alignas(64) extern const uint32_t avx512_himask_basis_epi32[32];
+alignas(64) extern const uint32_t avx512_singleton_basis_epi32[64];
+alignas(64) extern const uint32_t avx512_himask_basis_epi32[64];
 
 namespace target {
 
@@ -47,12 +47,40 @@ struct avx2_bitwise {
 	};
     }
     
+#if __AVX512VL__
+    static constexpr bool has_ternary = true;
+#else
+    static constexpr bool has_ternary = false;
+#endif
+
+    template<unsigned char imm8>
+    static type ternary( type a, type b, type c ) {
+#if __AVX512VL__
+	return _mm256_ternarylogic_epi32( a, b, c, imm8 );
+#else
+	assert( 0 && "NYI" );
+	return setzero();
+#endif
+    }
+    
     static type logical_and( type a, type b ) { return _mm256_and_si256( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm256_andnot_si256( a, b ); }
     static type logical_or( type a, type b ) { return _mm256_or_si256( a, b ); }
     static type logical_invert( type a ) { return _mm256_xor_si256( a, setone() ); }
     static type bitwise_and( type a, type b ) { return _mm256_and_si256( a, b ); }
     static type bitwise_andnot( type a, type b ) { return _mm256_andnot_si256( a, b ); }
+    static type bitwise_andnot( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0x8>( a, b, c );
+	else
+	    return bitwise_and( bitwise_andnot( a, b ), c );
+    }
+    static type bitwise_or_and( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0xa8>( a, b, c );
+	else
+	    return bitwise_and( bitwise_or( a, b ), c );
+    }
     static type bitwise_or( type a, type b ) { return _mm256_or_si256( a, b ); }
     static type bitwise_xor( type a, type b ) { return _mm256_xor_si256( a, b ); }
     static type bitwise_xnor( type a, type b ) {
@@ -66,15 +94,13 @@ struct avx2_bitwise {
 	type ii = _mm256_set1_epi32(pos);
 	const type off = _mm256_setr_epi32(0,32,64,96,128,160,192,224);
 	type jj = _mm256_sub_epi32( ii, off );
-	// http://agner.org/optimize/optimizing_assembly.pdf
-	type x;
-	x = _mm256_srli_epi32( _mm256_cmpeq_epi32( x, x ), 31 );
+	type x = _mm256_srli_epi32( setone(), 31 );
 	type mask = _mm256_sllv_epi32( x, jj );
 	return mask;
 #else
 	size_t word = pos >> 5;
 	const type * s = reinterpret_cast<const type *>(
-	    &avx512_singleton_basis_epi32[15-word] );
+	    &avx512_singleton_basis_epi32[31-word] );
 	type b = _mm256_loadu_si256( s );
 	return _mm256_slli_epi32( b, pos & 31 );
 #endif
@@ -86,16 +112,26 @@ struct avx2_bitwise {
 	type k = _mm256_broadcastd_epi32( _mm_cvtsi32_si128( l ) );
 	type c = _mm256_set_epi32( 256, 224, 192, 160, 128, 96, 64, 32 );
 	type h = _mm256_slli_epi32( setone(), 31 );
-	type s = _mm256_srav_epi32( h, _mm256_sub_epi32( c, k ) );
+	type n = _mm256_srav_epi32( h, _mm256_sub_epi32( c, k ) );
 	type m = _mm256_cmpgt_epi32( k, c );
-	type r = _mm256_andnot_si256( m, s );
-	return r;
+	type r = _mm256_andnot_si256( m, n );
+	//return r;
 #else
+	// This version is wrong as the top bit in the basis is not erased
+	// in case of l multiple of 5
 	size_t word = l >> 5;
 	const type * s = reinterpret_cast<const type *>(
-	    &avx512_himask_basis_epi32[15-word] );
+	    &avx512_himask_basis_epi32[31-word] );
 	type b = _mm256_loadu_si256( s );
-	return _mm256_srai_epi32( b, 31 - ( l & 31 ) );
+	// return _mm256_srai_epi32( b, 31 - ( l & 31 ) );
+	type x = _mm256_srai_epi32( b, 31 - ( l & 31 ) );
+	type v = bitwise_xor( x, w );
+	type e = _mm256_cmpeq_epi32( r, x );
+	if( true || !_mm256_testc_si256( e, setone() ) ) {
+	    static int yy = 0;
+	    ++yy;
+	}
+	return x;
 #endif
     }
 };

@@ -330,23 +330,31 @@ struct vt_recursive {
 
     static type bitwise_and( type l, type r ) {
 	return type { lo_half_traits::bitwise_and( l.a, r.a ),
-		hi_half_traits::bitwise_and( l.b, r.b ) };
+		      hi_half_traits::bitwise_and( l.b, r.b ) };
     }
     static type bitwise_andnot( type l, type r ) {
 	return type { lo_half_traits::bitwise_andnot( l.a, r.a ),
-		hi_half_traits::bitwise_andnot( l.b, r.b ) };
+		      hi_half_traits::bitwise_andnot( l.b, r.b ) };
+    }
+    static type bitwise_andnot( type l, type r, type c ) {
+	return type { lo_half_traits::bitwise_andnot( l.a, r.a, c.a ),
+		      hi_half_traits::bitwise_andnot( l.b, r.b, c.b ) };
+    }
+    static type bitwise_or_and( type l, type r, type c ) {
+	return type { lo_half_traits::bitwise_or_and( l.a, r.a, c.a ),
+		      hi_half_traits::bitwise_or_and( l.b, r.b, c.b ) };
     }
     static type bitwise_or( type l, type r ) {
 	return type { lo_half_traits::bitwise_or( l.a, r.a ),
-		hi_half_traits::bitwise_or( l.b, r.b ) };
+		      hi_half_traits::bitwise_or( l.b, r.b ) };
     }
     static type bitwise_xor( type l, type r ) {
 	return type { lo_half_traits::bitwise_xor( l.a, r.a ),
-		hi_half_traits::bitwise_xor( l.b, r.b ) };
+		      hi_half_traits::bitwise_xor( l.b, r.b ) };
     }
     static type bitwise_invert( type l ) {
 	return type { lo_half_traits::bitwise_invert( l.a ),
-		hi_half_traits::bitwise_invert( l.b ) };
+		      hi_half_traits::bitwise_invert( l.b ) };
     }
     static type logical_and( type l, type r ) {
 	return type { lo_half_traits::logical_and( l.a, r.a ),

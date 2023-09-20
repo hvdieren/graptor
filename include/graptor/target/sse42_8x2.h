@@ -87,19 +87,6 @@ public:
 	return _mm_blendv_epi8( l, r, m );
     }
 
-    static type logical_and( type a, type b ) { return _mm_and_si128( a, b ); }
-    static type logical_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
-    static type logical_or( type a, type b ) { return _mm_or_si128( a, b ); }
-    static type logical_invert( type a ) { return _mm_xor_si128( a, setone() );}
-    static type bitwise_and( type a, type b ) { return _mm_and_si128( a, b ); }
-    static type bitwise_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
-    static type bitwise_or( type a, type b ) { return _mm_or_si128( a, b ); }
-    static type bitwise_xor( type a, type b ) { return _mm_xor_si128( a, b ); }
-    static type bitwise_xnor( type a, type b ) {
-	return bitwise_xor( bitwise_invert( a ), b );
-    }
-    static type bitwise_invert( type a ) { return bitwise_xor( a, setone() ); }
-
 #if 0
     template<typename VecT2>
     static auto convert( VecT2 a ) {

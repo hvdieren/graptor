@@ -51,6 +51,22 @@ struct sse42_bitwise {
 	return _mm_bsrli_si128( a, bs );
     }
 
+#if __AVX512VL__ && __AVX512F__
+    static constexpr bool has_ternary = true;
+#else
+    static constexpr bool has_ternary = false;
+#endif
+
+    template<unsigned char imm8>
+    static type ternary( type a, type b, type c ) {
+#if __AVX512VL__ && __AVX512F__
+	return _mm_ternarylogic_epi32( a, b, c, imm8 );
+#else
+	assert( 0 && "NYI" );
+	return setzero();
+#endif
+    }
+
     static type logical_and( type a, type b ) { return _mm_and_si128( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
     static type logical_or( type a, type b ) { return _mm_or_si128( a, b ); }
@@ -61,6 +77,18 @@ struct sse42_bitwise {
     static type bitwise_xor( type a, type b ) { return _mm_xor_si128( a, b ); }
     static type bitwise_xnor( type a, type b ) {
 	return bitwise_xor( bitwise_invert( a ), b );
+    }
+    static type bitwise_andnot( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0x8>( a, b, c );
+	else
+	    return bitwise_and( bitwise_andnot( a, b ), c );
+    }
+    static type bitwise_or_and( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0xa8>( a, b, c );
+	else
+	    return bitwise_and( bitwise_or( a, b ), c );
     }
     static type bitwise_invert( type a ) { return bitwise_xor( a, setone() ); }
 

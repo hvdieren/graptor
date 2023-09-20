@@ -500,13 +500,6 @@ public:
 	return p;
     }
 
-    static constexpr bool has_ternary = true;
-
-    template<unsigned char imm8>
-    static type ternary( type a, type b, type c ) {
-	return _mm512_ternarylogic_epi32( a, b, c, imm8 );
-    }
-
     static mask_type intersect( type a, const member_type * b ) {
 	// This code is claimed to be faster than the vp2intersect instruction
 	// https://arxiv.org/pdf/2112.06342.pdf

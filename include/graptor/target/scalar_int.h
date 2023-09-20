@@ -125,7 +125,13 @@ public:
     }
     static type bitwise_and( type a, type b ) { return a & b; }
     static type bitwise_andnot( type a, type b ) { return ~a & b; }
+    static type bitwise_andnot( type a, type b, type c ) {
+	return ~a & ( b & c );
+    }
     static type bitwise_or( type a, type b ) { return a | b; }
+    static type bitwise_or_and( type a, type b, type c ) {
+	return ( a | b ) & c;
+    }
     static type bitwise_xor( type a, type b ) { return a ^ b; }
     static type bitwise_xnor( type a, type b ) { return ~a ^ b; }
     static type bitwise_invert( type a ) { return ~a; }

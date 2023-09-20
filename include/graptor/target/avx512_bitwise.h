@@ -6,8 +6,8 @@
 #include <immintrin.h>
 #include <cstdint>
 
-alignas(64) extern const uint32_t avx512_singleton_basis_epi32[32];
-alignas(64) extern const uint32_t avx512_himask_basis_epi32[32];
+alignas(64) extern const uint32_t avx512_singleton_basis_epi32[64];
+alignas(64) extern const uint32_t avx512_himask_basis_epi32[64];
 
 namespace target {
 
@@ -43,6 +43,13 @@ struct avx512_bitwise {
     static type set_pair( __m256i up, __m256i lo ) {
 	return _mm512_inserti64x4( _mm512_castsi256_si512( lo ), up, 1 );
     }
+
+    static constexpr bool has_ternary = true;
+
+    template<unsigned char imm8>
+    static type ternary( type a, type b, type c ) {
+	return _mm512_ternarylogic_epi64( a, b, c, imm8 );
+    }
     
     static type logical_and( type a, type b ) { return _mm512_and_si512( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm512_andnot_si512( a, b ); }
@@ -50,6 +57,12 @@ struct avx512_bitwise {
     static type logical_invert( type a ) { return _mm512_xor_si512( a, setone() ); }
     static type bitwise_and( type a, type b ) { return _mm512_and_si512( a, b ); }
     static type bitwise_andnot( type a, type b ) { return _mm512_andnot_si512( a, b ); }
+    static type bitwise_andnot( type a, type b, type c ) {
+	return ternary<0x8>( a, b, c );
+    }
+    static type bitwise_or_and( type a, type b, type c ) {
+	return ternary<0xa8>( a, b, c );
+    }
     static type bitwise_or( type a, type b ) { return _mm512_or_si512( a, b ); }
     static type bitwise_xor( type a, type b ) { return _mm512_xor_si512( a, b ); }
     static type bitwise_xnor( type a, type b ) {
@@ -72,7 +85,7 @@ struct avx512_bitwise {
 #else
 	size_t word = pos >> 5;
 	const type * s = reinterpret_cast<const type *>(
-	    &avx512_singleton_basis_epi32[15-word] );
+	    &avx512_singleton_basis_epi32[31-word] );
 	type b = _mm512_loadu_si512( s );
 	return _mm512_slli_epi32( b, pos & 31 );
 #endif
@@ -80,7 +93,7 @@ struct avx512_bitwise {
 
     // Generate a mask where all bits l and above are set, and below l are 0
     static type himask( unsigned l ) {
-#if 0
+#if 1
 	type k = _mm256_broadcastd_epi32( _mm_cvtsi32_si128( l ) );
 	type c = _mm256_set_epi32( 256, 224, 192, 160, 128, 96, 64, 32 );
 	type h = _mm256_slli_epi32( setone(), 31 );
@@ -89,9 +102,10 @@ struct avx512_bitwise {
 	type r = _mm256_and_si256( s, m );
 	return r;
 #else
+	// erroneous
 	size_t word = l >> 5;
 	const type * s = reinterpret_cast<const type *>(
-	    &avx512_himask_basis_epi32[15-word] );
+	    &avx512_himask_basis_epi32[31-word] );
 	type b = _mm512_loadu_si512( s );
 	return _mm512_srai_epi32( b, 31 - ( l & 31 ) );
 #endif

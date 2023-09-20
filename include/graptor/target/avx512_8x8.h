@@ -244,13 +244,6 @@ public:
 	return blend( m, setzero(), a );
     }
 
-    static constexpr bool has_ternary = true;
-
-    template<unsigned char imm8>
-    static type ternary( type a, type b, type c ) {
-	return _mm512_ternarylogic_epi64( a, b, c, imm8 );
-    }
-
     static type castint( type a ) { return a; }
     static __m512d castfp( type a ) { return _mm512_castsi512_pd( a ); }
 

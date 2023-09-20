@@ -333,22 +333,6 @@ public:
 	return blend( m, setzero(), a );
     }
 
-#if __AVX512VL__
-    static constexpr bool has_ternary = true;
-#else
-    static constexpr bool has_ternary = false;
-#endif
-
-    template<unsigned char imm8>
-    static type ternary( type a, type b, type c ) {
-#if __AVX512VL__
-	return _mm256_ternarylogic_epi64( a, b, c, imm8 );
-#else
-	assert( 0 && "NYI" );
-	return setzero();
-#endif
-    }
-
     static uint32_t find_first( type v ) {
 	return mask_traits::find_first( asmask( v ) );
     }

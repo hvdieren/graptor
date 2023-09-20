@@ -662,22 +662,6 @@ public:
 	return setzero();
     }
 
-#if __AVX512VL__
-    static constexpr bool has_ternary = true;
-#else
-    static constexpr bool has_ternary = false;
-#endif
-
-    template<unsigned char imm8>
-    static type ternary( type a, type b, type c ) {
-#if __AVX512VL__
-	return _mm256_ternarylogic_epi32( a, b, c, imm8 );
-#else
-	assert( 0 && "NYI" );
-	return setzero();
-#endif
-    }
-    
     static mask_type intersect( type a, const member_type * b ) {
 	// This code is inspired from:
 	// https://arxiv.org/pdf/2112.06342.pdf

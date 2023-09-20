@@ -539,22 +539,6 @@ public:
 	return _mm_shuffle_epi8( a, _mm_load_si128( shuf ) );
     }
 
-#if __AVX512VL__ && __AVX512F__
-    static constexpr bool has_ternary = true;
-#else
-    static constexpr bool has_ternary = false;
-#endif
-
-    template<unsigned char imm8>
-    static type ternary( type a, type b, type c ) {
-#if __AVX512VL__ && __AVX512F__
-	return _mm_ternarylogic_epi32( a, b, c, imm8 );
-#else
-	assert( 0 && "NYI" );
-	return setzero();
-#endif
-    }
-    
     static type load( const member_type *a ) {
 	return _mm_load_si128( (const type *)a );
     }
