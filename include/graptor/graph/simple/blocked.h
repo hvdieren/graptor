@@ -570,10 +570,12 @@ void mce_bk_iterate(
 	prow_type h = xp.get_himask( u );
 	prow_type u_done = ptr::bitwise_andnot( h, ins );
 
-	prow_type Pp_shrink = ptr::bitwise_andnot( u_done, Pp );
-	prow_type Ppv = ptr::bitwise_and( Pp_shrink, pu_ngh );
-	prow_type Xp_grow = ptr::bitwise_or( Xp, u_done );
-	prow_type Xpv = ptr::bitwise_and( Xp_grow, pu_ngh );
+	// prow_type Pp_shrink = ptr::bitwise_andnot( u_done, Pp );
+	// prow_type Ppv = ptr::bitwise_and( Pp_shrink, pu_ngh );
+	prow_type Ppv = ptr::bitwise_andnot( u_done, Pp, pu_ngh );
+	// prow_type Xp_grow = ptr::bitwise_or( Xp, u_done );
+	// prow_type Xpv = ptr::bitwise_and( Xp_grow, pu_ngh );
+	prow_type Xpv = ptr::bitwise_or_and( Xp, u_done, pu_ngh );
 	xrow_type xu_ngh = px.get_row( u );
 	xrow_type Xxv = xtr::bitwise_and( Xx, xu_ngh );
 	prow_type Rv = ptr::bitwise_or( R, u_only );

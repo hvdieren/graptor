@@ -833,10 +833,12 @@ private:
 	    row_type h = get_himask( u );
 	    row_type u_done = tr::bitwise_andnot( h, x );
 
-	    row_type P_shrink = tr::bitwise_andnot( u_done, P );
-	    row_type Pv = tr::bitwise_and( P_shrink, u_ngh );
-	    row_type X_grow = tr::bitwise_or( X, u_done );
-	    row_type Xv = tr::bitwise_and( X_grow, u_ngh );
+	    // row_type P_shrink = tr::bitwise_andnot( u_done, P );
+	    // row_type Pv = tr::bitwise_and( P_shrink, u_ngh );
+	    row_type Pv = tr::bitwise_andnot( u_done, P, u_ngh );
+	    // row_type X_grow = tr::bitwise_or( X, u_done );
+	    // row_type Xv = tr::bitwise_and( X_grow, u_ngh );
+	    row_type Xv = tr::bitwise_or_and( X, u_done, u_ngh );
 	    row_type Rv = tr::bitwise_or( R, u_only );
 	    mce_bk_iterate( EE, Rv, Pv, Xv, depth+1 );
 	};
