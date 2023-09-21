@@ -30,6 +30,21 @@ namespace graptor {
 
 namespace graph {
 
+#if 0
+std::ostream & operator << ( std::ostream & os, __m512i m ) {
+    using tr = vector_type_traits_vl<uint64_t,8>;
+    return os << "{ " << std::hex
+	      << tr::lane( m, 0 ) << ", "
+	      << tr::lane( m, 1 ) << ", "
+	      << tr::lane( m, 2 ) << ", "
+	      << tr::lane( m, 3 ) << ", "
+	      << tr::lane( m, 4 ) << ", "
+	      << tr::lane( m, 5 ) << ", "
+	      << tr::lane( m, 6 ) << ", "
+	      << tr::lane( m, 7 ) << std::dec << " }";
+}
+#endif
+
 template<typename BitMaskTy, typename lVID>
 struct bitmask_output_iterator {
     using bitmask_type = BitMaskTy;
@@ -679,7 +694,7 @@ public:
 	// connected vertex as pivot
 	unsigned depth = 0;
 	row_type R = tr::setzero();
-	if( !tr::is_zero( m_fully_connected ) ) {
+	if( false && !tr::is_zero( m_fully_connected ) ) {
 	    // If an X vertex is connected to all P vertices, we're done
 	    if( !tr::is_zero( tr::bitwise_andnot( mx, m_fully_connected ) ) ) {
 		E.count_fully_connected_X();
@@ -705,6 +720,7 @@ public:
 	    }
 	    E.count_fully_connected_P( depth );
 	}
+
 	mce_bk_iterate( E, R, allP, allX, depth );
 #else
 #if !ABLATION_DENSE_NO_PIVOT_TOP
@@ -852,7 +868,8 @@ private:
 		// High number of vertices to process + density
 		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {
 		    row_type u_only = tr::setglobaloneval( u );
-		    if( !tr::is_zero( tr::bitwise_and( u_only, x ) ) )
+		    row_type ins = tr::bitwise_and( u_only, x );
+		    if( !tr::is_zero( ins ) )
 			// Vertex needs to be processed
 			task( u, u_only );
 		} );
@@ -909,7 +926,7 @@ private:
 		p_ins = ins;
 	    }
 	}
-	assert( ~p_best != 0 );
+	assert( p_best < m_n );
 	return p_best;
     }
 
