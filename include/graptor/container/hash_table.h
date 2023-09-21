@@ -226,15 +226,14 @@ public:
 	    // as a blend.
 	    e = tr::gather( e, m_keys, nvidx, imiv ); // use nvidx for ILP
 	    const mtype imi = tr::cmpne( e, vinv, mkind() );
-	    const mtype imv = tr::cmpne( e, v, mkind() );
-	    imiv = mtr::logical_and( imi, imv );
+	    imiv = tr::cmpne( imi, e, v, mkind() );
 	}
 	// Return success if found, which equals imv inverted
 	// It just takes one cycle to recompute, same as invert. The code
 	// below is most compact to achieve the correct return type.
 	// return std::make_pair( vidx, tr::cmpeq( e, v, MT() ) );
 	vtype vals = tr::gather( tr::setone(), m_values, vidx, 
-				 tr::cmpeq( e, v, target::mt_vmask() ) );
+				 tr::cmpeq( e, v, mkind() ) );
 	return vals;
     }
 
