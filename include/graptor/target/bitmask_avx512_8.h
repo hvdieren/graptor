@@ -150,6 +150,10 @@ struct mask_type_traits<8> {
 			typename std::enable_if<sizeof(vindex_type) % 16 == 0>::type * = nullptr ) {
 	assert( 0 && "NYI" );
     }
+
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
 };
 
 #endif // __AVX512F__

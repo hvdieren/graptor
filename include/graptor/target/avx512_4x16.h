@@ -298,6 +298,9 @@ public:
     static mask_type cmpeq( type a, type b, mt_mask ) {
 	return _mm512_cmpeq_epi32_mask( a, b );
     }
+    static mask_type cmpeq( mask_type m, type a, type b, mt_mask ) {
+	return _mm512_mask_cmpeq_epi32_mask( m, a, b );
+    }
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return _mm512_cmpneq_epi32_mask( a, b );
     }
@@ -328,6 +331,12 @@ public:
 	else
 	    return _mm512_cmplt_epu32_mask( a, b );
     }
+    static mask_type cmplt( mask_type m, type a, type b, mt_mask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return _mm512_mask_cmplt_epi32_mask( m, a, b );
+	else
+	    return _mm512_mask_cmplt_epu32_mask( m, a, b );
+    }
     static mask_type cmple( type a, type b, mt_mask ) {
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm512_cmple_epi32_mask( a, b );
@@ -354,9 +363,10 @@ public:
 	return asvector( cmple( a, b, mt_mask() ) );
     }
 
-    static bool cmpne( type a, type b, mt_bool ) {
+    static bool cmpne( type a, type b, mt_bool ) { // any lane differs
 	mask_type ne = cmpne( a, b, mt_mask() );
-	return ! _kortestz_mask16_u8( ne, ne );
+	bool all_zero = _kortestz_mask16_u8( ne, ne ); // ne == 0...0 ? 1 : 0
+	return ! all_zero;
     }
 
     static member_type reduce_setif( type val ) {
@@ -433,6 +443,11 @@ public:
     }
     static type srav( type a, type s ) {
 	    return _mm512_srav_epi32( a, s );
+    }
+
+    template<unsigned int p>
+    static type shuffle( type a ) {
+	return _mm512_shuffle_epi32( a, (_MM_PERM_ENUM)p );
     }
 
     template<typename ReturnTy>
@@ -545,6 +560,10 @@ public:
     static void cstoreu( member_type * a, vmask_type m, type val ) {
 	_mm512_mask_compressstoreu_epi32( a, asmask( m ), val );
     }
+    static member_type * cstoreu_p( member_type *a, mask_type m, type val ) {
+	cstoreu( a, m, val );
+	return a + _popcnt32( m );
+    }
 
     static type ntload( const member_type * a ) {
 	return _mm512_stream_load_si512( (__m512i *)a );
@@ -570,6 +589,11 @@ public:
 			  mask_type mask ) {
 	return _mm512_mask_i32gather_epi32( d, mask, b, a, Scale );
     }
+    template<unsigned short Scale>
+    static type gather_w( type d, const member_type *a, type b,
+			  vmask_type mask ) {
+	return gather_w<Scale>( d, a, b, asmask( mask ) );
+    }
     static type gather( const member_type *a, type b ) {
 	return _mm512_i32gather_epi32( b, (const long long *)a, W );
     }
@@ -578,6 +602,10 @@ public:
     }
     static type gather( const member_type *a, type b, vmask_type vmask ) {
 	return gather( a, b, asmask( vmask ) );
+    }
+    static type gather( type d, const member_type *a, type b,
+			vmask_type mask ) {
+	return gather_w<W>( d, a, b, mask );
     }
     static type gather( type d, const member_type *a, type b, mask_type mask ) {
 	return gather_w<W>( d, a, b, mask );

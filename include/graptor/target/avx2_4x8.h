@@ -305,6 +305,9 @@ public:
     static mask_type cmpeq( type a, type b, mt_mask ) {
 	return _mm256_cmpeq_epi32_mask( a, b );
     }
+    static mask_type cmpeq( mask_type m, type a, type b, mt_mask ) {
+	return _mm256_mask_cmpeq_epi32_mask( m, a, b );
+    }
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return _mm256_cmpneq_epi32_mask( a, b );
     }
@@ -379,6 +382,9 @@ public:
     static vmask_type cmpne( type a, type b, mt_vmask ) {
 	return logical_invert( cmpeq( a, b, mt_vmask() ) );
     }
+    static vmask_type cmpne( vmask_type m, type a, type b, mt_vmask ) {
+	return logical_andnot( cmpeq( a, b, mt_vmask() ), m );
+    }
     static vmask_type cmpgt( type a, type b, mt_vmask ) {
 	if constexpr ( std::is_signed_v<member_type> ) {
 	    return _mm256_cmpgt_epi32( a, b );
@@ -425,7 +431,7 @@ public:
 	return vmask_traits::logical_and( m, cmplt( a, b, mt_vmask() ) );
     }
 
-    static bool cmpeq( type a, type b, mt_bool ) {
+    static bool cmpeq( type a, type b, mt_bool ) { // all lanes equal
 	type e = _mm256_cmpeq_epi32( a, b );
 	return _mm256_testc_si256( e, setone() );
     }
@@ -485,7 +491,7 @@ public:
 	auto cmp = cmpgt( a, b, mt_vmask() );
 	return blend( cmp, b, a );
     }
-    static bool cmpne( type a, type b, mt_bool ) {
+    static bool cmpne( type a, type b, mt_bool ) { // any lane differs
 	vmask_type ne = cmpne( a, b, mt_vmask() );
 	return ! is_zero( ne );
     }

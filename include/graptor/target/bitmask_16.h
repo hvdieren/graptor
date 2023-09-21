@@ -73,6 +73,11 @@ struct mask_type_traits<16> {
 			  typename mask_type_traits<8>::type lo ) {
 	return ( type(hi) << 8 ) | type(lo);
     }
+
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
+
 };
 
 } // namespace target

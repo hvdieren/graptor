@@ -222,6 +222,10 @@ public:
 	mask_type ne = cmpne( a, b, target::mt_mask() );
 	return ! _kortestz_mask8_u8( ne, ne );
     }
+    static bool cmpeq( type a, type b, target::mt_bool ) {
+	mask_type ne = cmpne( a, b, target::mt_mask() );
+	return _kortestz_mask8_u8( ne, ne );
+    }
     static type blend( vmask_type m, type l, type r ) {
 	return _mm512_mask_blend_epi64( asmask( m ), l, r );
     }

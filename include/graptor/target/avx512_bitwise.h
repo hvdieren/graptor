@@ -20,8 +20,8 @@ struct avx512_bitwise {
 
     static type setzero() { return _mm512_setzero_si512(); }
     static bool is_zero( type a ) {
-	__mmask8 e = _mm512_cmpeq_epi64_mask( a, setzero() );
-	return _kortestz_mask8_u8( e, e );
+	__mmask16 e = _mm512_cmpneq_epi32_mask( a, setzero() );
+	return _kortestz_mask16_u8( e, e );
     }
 
     static type setone() {
@@ -42,6 +42,16 @@ struct avx512_bitwise {
     }
     static type set_pair( __m256i up, __m256i lo ) {
 	return _mm512_inserti64x4( _mm512_castsi256_si512( lo ), up, 1 );
+    }
+    static __m128i sse_subvector( type a, int idx ) {
+	switch( idx ) {
+	case 0: return _mm512_extracti64x2_epi64( a, 0 );
+	case 1: return _mm512_extracti64x2_epi64( a, 1 );
+	case 2: return _mm512_extracti64x2_epi64( a, 2 );
+	case 3: return _mm512_extracti64x2_epi64( a, 3 );
+	default:
+	    assert( 0 && "should not get here" );
+	};
     }
 
     static constexpr bool has_ternary = true;
@@ -94,12 +104,13 @@ struct avx512_bitwise {
     // Generate a mask where all bits l and above are set, and below l are 0
     static type himask( unsigned l ) {
 #if 1
-	type k = _mm256_broadcastd_epi32( _mm_cvtsi32_si128( l ) );
-	type c = _mm256_set_epi32( 256, 224, 192, 160, 128, 96, 64, 32 );
-	type h = _mm256_slli_epi32( setone(), 31 );
-	type s = _mm256_srav_epi32( h, _mm256_sub_epi32( c, k ) );
-	type m = _mm256_cmpgt_epi32( c, k );
-	type r = _mm256_and_si256( s, m );
+	type k = _mm512_broadcastd_epi32( _mm_cvtsi32_si128( l ) );
+	type c = _mm512_set_epi32( 512, 480, 448, 416, 384, 352, 320, 288,
+				   256, 224, 192, 160, 128, 96, 64, 32 );
+	type h = _mm512_slli_epi32( setone(), 31 );
+	type s = _mm512_srav_epi32( h, _mm512_sub_epi32( c, k ) );
+	__mmask16 m = _mm512_cmpge_epi32_mask( c, k );
+	type r = _mm512_maskz_and_epi32( m, s, s );
 	return r;
 #else
 	// erroneous

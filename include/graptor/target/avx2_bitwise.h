@@ -115,7 +115,7 @@ struct avx2_bitwise {
 	type n = _mm256_srav_epi32( h, _mm256_sub_epi32( c, k ) );
 	type m = _mm256_cmpgt_epi32( k, c );
 	type r = _mm256_andnot_si256( m, n );
-	//return r;
+	return r;
 #else
 	// This version is wrong as the top bit in the basis is not erased
 	// in case of l multiple of 5

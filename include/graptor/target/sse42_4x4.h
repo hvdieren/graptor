@@ -218,6 +218,9 @@ public:
     static vmask_type cmpne( type a, type b, mt_vmask ) {
 	return logical_invert( _mm_cmpeq_epi32( a, b ) );
     }
+    static vmask_type cmpne( vmask_type m, type a, type b, mt_vmask ) {
+	return logical_andnot( _mm_cmpeq_epi32( a, b ), m );
+    }
     static vmask_type cmpgt( type a, type b, mt_vmask ) {
 	if constexpr ( std::is_signed_v<member_type> )
 	    return _mm_cmpgt_epi32( a, b );
