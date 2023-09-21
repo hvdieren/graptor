@@ -31,7 +31,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
     if( verbose )
 	std::cerr << "Finding self-edges\n";
     EID self_edges = 0;
-    parallel_for( VID u=0; u < n; ++u ) {
+    parallel_loop( (VID)0, n, [&]( VID u ) {
 	EID es = index[u];
 	EID ee = index[u+1];
 	EID n_self = 0;
@@ -42,7 +42,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
 	}
 	new_index[u] = n_self;
 	self_edges += n_self;
-    }
+    } );
 
     if( verbose )
 	std::cerr << "Self edges: " << self_edges << "\nRebuilding index\n";
@@ -63,7 +63,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
     if( verbose )
 	std::cerr << "Rebuilding edge list (" << tmp << " edges)\n";
     
-    parallel_for( VID u=0; u < n; ++u ) {
+    parallel_loop( (VID)0, n, [&]( VID u ) {
 	EID es = index[u];
 	EID ee = index[u+1];
 	EID j = new_index[u];
@@ -73,7 +73,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
 	    if( v != u )
 		uedge[j++] = v;
 	}
-    }
+    } );
     uidx[n] = new_index[n];
 
     new_index.del();
