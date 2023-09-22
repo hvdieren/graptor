@@ -694,7 +694,7 @@ public:
 	// connected vertex as pivot
 	unsigned depth = 0;
 	row_type R = tr::setzero();
-	if( false && !tr::is_zero( m_fully_connected ) ) {
+	if( !tr::is_zero( m_fully_connected ) ) {
 	    // If an X vertex is connected to all P vertices, we're done
 	    if( !tr::is_zero( tr::bitwise_andnot( mx, m_fully_connected ) ) ) {
 		E.count_fully_connected_X();
