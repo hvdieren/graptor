@@ -136,7 +136,7 @@ struct alltzcnt {
 	    // taking its tzcnt.
 	    auto h = arg_traits::lower_half( a );
 	    ResultTy c = 0;
-	    if( arg_traits::half_traits::is_zero( h ) ) {
+	    if( arg_traits::lo_half_traits::is_zero( h ) ) {
 		h = arg_traits::upper_half( a );
 		c = arg_traits::size * 8 / 2;
 	    }

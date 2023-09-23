@@ -34,6 +34,8 @@ public:
     using mask_type = typename mask_traits::type;
 
     using half_traits = vector_type_traits<member_type,32>;
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
     using recursive_traits = vt_recursive<member_type,8,64,half_traits>;
     using int_traits = avx512_8x8<int_type>;
     using mt_preferred = target::mt_mask;
