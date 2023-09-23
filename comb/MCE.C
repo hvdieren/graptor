@@ -94,7 +94,7 @@
 #endif
 
 #ifndef PAR_LOOP
-#define PAR_LOOP 2
+#define PAR_LOOP 3
 #endif
 
 #include <signal.h>
@@ -2382,9 +2382,10 @@ int main( int argc, char *argv[] ) {
 	    mce_top_level( R, H, E, v, degeneracy );
 	}
     } );
-#elif PAR_LOOP == 2
+#elif PAR_LOOP == 2 || PAR_LOOP == 3
     // Low degeneracy graphs include road networks, where locality is more
     // important than load balance
+#if PAR_LOOP == 3
     if( degeneracy < 10 ) {
 	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
 	    // round down as lower-numbered vertices take longer
@@ -2396,7 +2397,9 @@ int main( int argc, char *argv[] ) {
 		mce_top_level( R, H, E, v, degeneracy );
 	    }
 	} );
-    } else {
+    } else
+#endif
+    {
 	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
 	    if( p >= n )
 		return; // nothing
