@@ -132,7 +132,7 @@ struct alltzcnt {
 	    // TODO: check correctness on all zero input pattern
 	    using trw = vector_type_traits_vl<uint32_t,arg_traits::size/4>;
 	    auto neq = trw::cmpne( a, trw::setzero(), target::mt_mask() );
-	    uint32_t l = alltzcnt<uint32_t,decltype(eql),1>::compute( neq );
+	    uint32_t l = alltzcnt<uint32_t,decltype(neq),1>::compute( neq );
 	    uint32_t w = trw::lane( a, l );
 	    return _tzcnt_u32( w ) + l * 32;
 	} else if constexpr ( sizeof(T) == 8 && VL > 2 ) {
