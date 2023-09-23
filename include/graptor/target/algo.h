@@ -128,7 +128,7 @@ struct alltzcnt {
     using ret_traits = vector_type_traits_vl<ResultTy,1>;
 
     static typename ret_traits::type compute( typename arg_traits::type a ) {
-	if( sizeof(T) == 8 ) {
+	if constexpr ( sizeof(T) == 8 && VL > 2 ) {
 	    using trw = vector_type_traits_vl<uint32_t,arg_traits::size/4>;
 	    auto eql = trw::cmpeq( a, trw::setzero(), target::mt_mask() );
 	    uint32_t l = alltzcnt<uint32_t,uint32_t,trw::vlen>::compute( eql );
