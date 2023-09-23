@@ -839,9 +839,40 @@ private:
 	    return;
 	}
 
-	VID pivot = mce_get_pivot( P, X );
-	row_type pivot_ngh = get_row( pivot );
-	row_type x = tr::bitwise_andnot( pivot_ngh, P );
+	VID pivot, nset;
+	row_type pivot_ngh, x;
+
+	while( true ) {
+	    pivot = mce_get_pivot( P, X );
+	    pivot_ngh = get_row( pivot );
+	    x = tr::bitwise_andnot( pivot_ngh, P );
+	    nset = get_size( x );
+
+	    if( nset == 0 )
+		// P\N(pivot) is empty. If we were to proceed without
+		// pivoting, the pivot would remain in X as it
+		// is a neighbour of all elements of P.
+		return;
+	    else if( nset == 1 ) {
+		// Only one vertex is iterated over. Simply adopt
+		// and search for next, to reduce depth of recursion
+		sVID u = target::alltzcnt<sVID,type,VL>::compute( x );
+		row_type u_ngh = get_row( u );
+		row_type u_only = x;
+
+		P = tr::bitwise_and( P, u_ngh );
+		X = tr::bitwise_and( X, u_ngh );
+		R = tr::bitwise_or( R, u_only );
+		++depth;
+
+		if( tr::is_zero( P ) ) {
+		    if( tr::is_zero( X ) )
+			EE( bitset<Bits>( R ), depth );
+		    return;
+		}
+	    } else
+		break;
+	};
 
 	auto task = [=,&EE]( VID u, row_type u_only ) {
 	    // row_type u_only = tr::setglobaloneval( u );
@@ -859,8 +890,6 @@ private:
 	    mce_bk_iterate( EE, Rv, Pv, Xv, depth+1 );
 	};
 	
-	bitset<Bits> bx( x );
-	VID nset = get_size( x );
 	if( Bits >= DENSE_THRESHOLD_SEQUENTIAL_BITS
 	    && float(get_size(P)) >= DENSE_THRESHOLD_SEQUENTIAL
 	    && nset > 1 ) {
@@ -886,6 +915,7 @@ private:
 		} );
 	    }
 	} else {
+	    bitset<Bits> bx( x );
 	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 		VID u = *I;
 		row_type u_only = tr::setglobaloneval( u );

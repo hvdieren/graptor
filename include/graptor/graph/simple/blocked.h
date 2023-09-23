@@ -557,10 +557,44 @@ void mce_bk_iterate(
 	return;
     }
 
-    VID pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
-    prow_type pivot_ngh = xp.get_row( pivot );
-    prow_type ins = ptr::bitwise_andnot( pivot_ngh, Pp );
+    VID pivot;
+    prow_type pivot_ngh, ins;
     VID cs = xp.get_col_start();
+    sVID nset;
+
+    while( true ) {
+	pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
+	pivot_ngh = xp.get_row( pivot );
+	ins = ptr::bitwise_andnot( pivot_ngh, Pp );
+	nset = xp.get_size( ins );
+
+	if( nset == 0 ) {
+	    return; // no vertices to try
+	} else if( nset == 1 ) {
+	    // Only pivot or another P vertex is chosen. Simply adopt
+	    // and search for next, to reduce depth of recursion
+	    using type = typename ptr::member_type;
+	    constexpr unsigned short VL = ptr::vlen;
+	    sVID u = target::alltzcnt<sVID,type,VL>::compute( ins ) + cs;
+	    prow_type pu_ngh = xp.get_row( u );
+	    
+	    prow_type u_only = ins; // xp.create_singleton( u );
+	    Pp = ptr::bitwise_and( Pp, pu_ngh );
+	    Xp = ptr::bitwise_and( Xp, pu_ngh );
+	    xrow_type xu_ngh = px.get_row( u );
+	    Xx = xtr::bitwise_and( Xx, xu_ngh );
+	    R = ptr::bitwise_or( R, u_only );
+	    ++depth;
+
+	    if( ptr::is_zero( Pp ) ) {
+		if( ptr::is_zero( Xp ) && xtr::is_zero( Xx ) )
+		    EE( bitset<PBits>( R ), depth );
+		return;
+	    }
+	} else {
+	    break;
+	}
+    }
 
     auto task = [=,&mtx,&EE]( sVID u, prow_type u_only ) {
 	const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
@@ -582,7 +616,6 @@ void mce_bk_iterate(
 	mce_bk_iterate( mtx, EE, Rv, Ppv, Xpv, Xxv, depth+1 );
     };
 
-    sVID nset = xp.get_size( ins );
     if( PBits >= BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
 	&& float(xp.get_size(Pp)) >= BLOCKED_THRESHOLD_SEQUENTIAL
 	&& nset > 1 ) {
