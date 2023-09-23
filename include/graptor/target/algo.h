@@ -128,12 +128,19 @@ struct alltzcnt {
     using ret_traits = vector_type_traits_vl<ResultTy,1>;
 
     static typename ret_traits::type compute( typename arg_traits::type a ) {
-	if constexpr ( sizeof(T) == 8 && VL > 2 ) {
+	if( sizeof(T) == 8 ) {
+	    using trw = vector_type_traits_vl<uint32_t,arg_traits::size/4>;
+	    auto eql = trw::cmpeq( a, trw::setzero(), target::mt_mask() );
+	    uint32_t l = alltzcnt<uint32_t,uint32_t,trw::vlen>::compute( eql );
+	    uint32_t w = trw::lane( a, l );
+	    return _tzcnt_u32( w ) + l * 32;
+	} else if constexpr ( sizeof(T) == 8 && VL > 2 ) {
 	    // Recursively decompose into SSE42 subvector to minimize
 	    // cross-subvector movement in unpacking into 64-bit words.
 	    // Check for zero on a half vector as it is not slower than
 	    // extracting half of the vector for the recursive step, or
 	    // taking its tzcnt.
+#if 0
 	    auto h = arg_traits::lower_half( a );
 	    ResultTy c = 0;
 	    if( arg_traits::lo_half_traits::is_zero( h ) ) {
@@ -142,6 +149,15 @@ struct alltzcnt {
 	    }
 	    c += alltzcnt<ResultTy,T,VL/2>::compute( h );
 	    return c;
+#else
+	    auto lo = arg_traits::lower_half( a );
+	    ResultTy c = alltzcnt<ResultTy,T,VL/2>::compute( lo );
+	    if( c == arg_traits::size * 8 / 2 ) {
+		c += alltzcnt<ResultTy,T,VL/2>::compute(
+		    arg_traits::upper_half( a ) );
+	    }
+	    return c;
+#endif
 	} else if constexpr ( sizeof(T) == 8 && VL > 1 ) {
 	    // Unpack into 64-bit words
 	    for( unsigned i=0; i < VL; ++i ) {

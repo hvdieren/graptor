@@ -1414,7 +1414,7 @@ mce_bron_kerbosch_recpar_xps(
 }
 
 auto
-__attribute__((noinline))
+// __attribute__((noinline))
 mincost_pivot(
     const HGraphTy & G,
     VID degeneracy,
@@ -2351,9 +2351,9 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
 	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED="
 	      << ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 
-	      << "\n\t=ABLATION_DENSE_ITERATE"
+	      << "\n\tABLATION_DENSE_ITERATE="
 	      <<  ABLATION_DENSE_ITERATE
-	      << "\n\t=ABLATION_BLOCKED_ITERATE"
+	      << "\n\tABLATION_BLOCKED_ITERATE="
 	      <<  ABLATION_BLOCKED_ITERATE
 	      << '\n';
     
