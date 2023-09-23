@@ -13,15 +13,16 @@
 #include "graptor/target/algo.h"
 
 #ifndef BLOCKED_THRESHOLD_SEQUENTIAL
-#define BLOCKED_THRESHOLD_SEQUENTIAL 32.0
+#define BLOCKED_THRESHOLD_SEQUENTIAL 32
 #endif
 
 #ifndef BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
 #define BLOCKED_THRESHOLD_SEQUENTIAL_PBITS 32
 #endif
 
+// As a fraction of 1/1000s
 #ifndef BLOCKED_THRESHOLD_DENSITY
-#define BLOCKED_THRESHOLD_DENSITY 0.5
+#define BLOCKED_THRESHOLD_DENSITY 500
 #endif
 
 namespace graptor {
@@ -477,7 +478,9 @@ sVID get_pivot(
 
     const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
     const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
     const auto * degree = mtx.get_degree();
+#endif
 
     auto r = ptr::bitwise_or( Pp, Xp );
     
@@ -486,9 +489,10 @@ sVID get_pivot(
     VID cs = xp.get_col_start();
     VID p_best = *b.begin() + cs;
     VID p_ins = 0; // will be overridden
+    VID Pp_size = xp.get_size( Pp );
 
     // Avoid complexities if there is not much choice
-    if( xp.get_size( Pp ) <= 3 ) // Tunable: 3
+    if( Pp_size <= 3 ) // Tunable: 3
 	return p_best;
 
     for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
@@ -503,6 +507,11 @@ sVID get_pivot(
 	if( ins > p_ins ) {
 	    p_best = v;
 	    p_ins = ins;
+	    // Here, p_ins < Pp_size because v is not in the intersection
+	    // For the reason, we don't check p_ins >= Pp_size.
+	    // Would it be better to check X vertices first for this reason?
+	    if( p_ins+1 >= Pp_size )
+		break; // still check X vertices
 	}
     }
 
@@ -520,10 +529,12 @@ sVID get_pivot(
 	if( ins > p_ins ) {
 	    p_best = v;
 	    p_ins = ins;
+	    if( p_ins >= Pp_size )
+		return p_best;
 	}
     }
 
-    assert( p_best < mtx.numVertices() );
+    // assert( p_best < mtx.numVertices() );
     return p_best;
 }
 
@@ -618,9 +629,9 @@ void mce_bk_iterate(
     };
 
     if( PBits >= BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
-	&& float(xp.get_size(Pp)) >= BLOCKED_THRESHOLD_SEQUENTIAL
+	&& xp.get_size(Pp) >= BLOCKED_THRESHOLD_SEQUENTIAL
 	&& nset > 1 ) {
-	if( float(nset)/float(n-cs) >= BLOCKED_THRESHOLD_DENSITY ) {
+	if( nset*1000 >= BLOCKED_THRESHOLD_DENSITY*(n-cs) ) {
 	    // High number of vertices to process + density
 	    parallel_loop( cs, n, 1, [&,ins]( sVID v ) {
 		prow_type R = xp.create_singleton( v );

@@ -14,15 +14,16 @@
 #include "graptor/container/intersect.h"
 
 #ifndef DENSE_THRESHOLD_SEQUENTIAL
-#define DENSE_THRESHOLD_SEQUENTIAL 32.0
+#define DENSE_THRESHOLD_SEQUENTIAL 32
 #endif
 
 #ifndef DENSE_THRESHOLD_SEQUENTIAL_BITS
 #define DENSE_THRESHOLD_SEQUENTIAL_BITS 32
 #endif
 
+// As a fraction of 1/1000s
 #ifndef DENSE_THRESHOLD_DENSITY
-#define DENSE_THRESHOLD_DENSITY 0.5
+#define DENSE_THRESHOLD_DENSITY 500
 #endif
 
 
@@ -893,9 +894,9 @@ private:
 	};
 	
 	if( Bits >= DENSE_THRESHOLD_SEQUENTIAL_BITS
-	    && float(get_size(P)) >= DENSE_THRESHOLD_SEQUENTIAL
+	    && get_size(P) >= DENSE_THRESHOLD_SEQUENTIAL
 	    && nset > 1 ) {
-	    if( float(nset)/float(m_n) >= DENSE_THRESHOLD_DENSITY ) {
+	    if( nset*1000 >= DENSE_THRESHOLD_DENSITY*m_n ) {
 		// High number of vertices to process + density
 		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {
 		    row_type u_only = tr::setglobaloneval( u );
@@ -937,10 +938,11 @@ private:
 
 	VID p_best = *b.begin();
 	VID p_ins = 0; // will be overridden
+	VID P_size = get_size( P );
 
 #if !ABLATION_DENSE_EXCEED
 	// Avoid complexities if there is not much choice
-	if( get_size( P ) <= 3 )
+	if( P_size <= 3 )
 	    return p_best;
 #endif
 	
@@ -956,9 +958,11 @@ private:
 	    if( ins > p_ins ) {
 		p_best = v;
 		p_ins = ins;
+		if( p_ins >= P_size ) // cannot improve further
+		    break;
 	    }
 	}
-	assert( p_best < m_n );
+	// assert( p_best < m_n );
 	return p_best;
     }
 
