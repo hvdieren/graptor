@@ -848,6 +848,7 @@ private:
 	    x = tr::bitwise_andnot( pivot_ngh, P );
 	    nset = get_size( x );
 
+#if !ABLATION_DENSE_ITERATE
 	    if( nset == 0 )
 		// P\N(pivot) is empty. If we were to proceed without
 		// pivoting, the pivot would remain in X as it
@@ -871,6 +872,7 @@ private:
 		    return;
 		}
 	    } else
+#endif // !ABLATION_DENSE_ITERATE
 		break;
 	};
 

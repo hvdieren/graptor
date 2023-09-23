@@ -568,6 +568,7 @@ void mce_bk_iterate(
 	ins = ptr::bitwise_andnot( pivot_ngh, Pp );
 	nset = xp.get_size( ins );
 
+#if !ABLATION_BLOCKED_ITERATE
 	if( nset == 0 ) {
 	    return; // no vertices to try
 	} else if( nset == 1 ) {
@@ -591,9 +592,9 @@ void mce_bk_iterate(
 		    EE( bitset<PBits>( R ), depth );
 		return;
 	    }
-	} else {
+	} else
+#endif // !ABLATION_BLOCKED_ITERATE
 	    break;
-	}
     }
 
     auto task = [=,&mtx,&EE]( sVID u, prow_type u_only ) {

@@ -93,6 +93,14 @@
 #define ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 0
 #endif
 
+#ifndef ABLATION_DENSE_ITERATE
+#define ABLATION_DENSE_ITERATE 0
+#endif
+
+#ifndef ABLATION_BLOCKED_ITERATE
+#define ABLATION_BLOCKED_ITERATE 0
+#endif
+
 #ifndef PAR_LOOP
 #define PAR_LOOP 3
 #endif
@@ -2343,6 +2351,10 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
 	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED="
 	      << ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 
+	      << "\n\t=ABLATION_DENSE_ITERATE"
+	      <<  ABLATION_DENSE_ITERATE
+	      << "\n\t=ABLATION_BLOCKED_ITERATE"
+	      <<  ABLATION_BLOCKED_ITERATE
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
