@@ -51,7 +51,9 @@ struct mask_type_traits<4> {
     static type logical_and( type l, type r ) { return l & r; }
     static type logical_andnot( type l, type r ) { return ~l & r; }
     static type logical_or( type l, type r ) { return l | r; }
-    static type logical_invert( type a ) { return ~a & ( (type(1) << 2) - 1 ); }
+    static type logical_invert( type a ) {
+	return a ^ ( (type(1) << vlen) - 1 );
+    }
 
     static typename mask_type_traits<2>::type lower_half( type m ) {
 	return m & ( (type(1) << 2) - 1 );

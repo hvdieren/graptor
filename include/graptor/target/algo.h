@@ -128,15 +128,15 @@ struct alltzcnt {
     using ret_traits = vector_type_traits_vl<ResultTy,1>;
 
     static typename ret_traits::type compute( typename arg_traits::type a ) {
-	if constexpr ( sizeof(T) == 8 && VL > 2 ) {
-	    // TODO: check correctness on all zero input pattern
+	if constexpr ( sizeof(T) == 8 && VL >= 2 ) {
 	    using trw = vector_type_traits_vl<uint32_t,arg_traits::size/4>;
 	    auto neq = trw::cmpne( a, trw::setzero(), target::mt_mask() );
-	    if( neq == 0 )
+	    if( neq == 0 ) [[unlikely]]
 		return arg_traits::size * 8;
 	    uint32_t l = alltzcnt<uint32_t,decltype(neq),1>::compute( neq );
 	    uint32_t w = trw::lane( a, l );
 	    return _tzcnt_u32( w ) + l * 32;
+#if 0 // The variants below are slower on AMD EPYC 7702
 	} else if constexpr ( sizeof(T) == 8 && VL > 2 ) {
 	    // Recursively decompose into SSE42 subvector to minimize
 	    // cross-subvector movement in unpacking into 64-bit words.
@@ -161,9 +161,15 @@ struct alltzcnt {
 	    }
 	    return c;
 #endif
+#endif
 	} else if constexpr ( sizeof(T) == 8 && VL > 1 ) {
 	    // Unpack into 64-bit words
-	    for( unsigned i=0; i < VL; ++i ) {
+	    // For some targets, lane0(.) is faster than lane(.,0)
+	    ResultTy cnt = _tzcnt_u64( arg_traits::lane0( a ) );
+	    if( cnt < 64 )
+		return cnt;
+
+	    for( unsigned i=1; i < VL; ++i ) {
 		ResultTy cnt = _tzcnt_u64( arg_traits::lane( a, i ) );
 		if( cnt < 64 )
 		    return cnt + i * 64;

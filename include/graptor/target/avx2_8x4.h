@@ -58,13 +58,21 @@ public:
     }
 */
     
-    static member_type lane( type a, int idx ) {
-	// TODO (4x8 code):
-	// _mm256_cvtsi256_si32(
-	// _mm256_permutevar8x32_epi32(
-	//    a, _mm_cvtsi128_si256( _mm_cvtsi32_si128( idx ) ) ) );
-	// For 64-bit code: (((idx<<1)+1) << 32)|(idx<<1), such that two
-	// consecutive 32-bit words are selected
+    static member_type lane_permute( type a, int idx ) {
+	uint64_t uidx = idx << 1;
+	uint64_t midx = ( (uidx+1) << 32 ) | uidx;
+	type vidx = _mm256_castsi128_si256( _mm_cvtsi64_si128( midx ) );
+	type perm = _mm256_permutevar8x32_epi32( a, vidx );
+	return _mm256_extract_epi64( perm, 0 );
+    }
+    static member_type lane_memory( type a, int idx ) {
+	// Forces argument a in memory, which might be convenient in
+	// the context of the calling code.
+	member_type m[vlen];
+	storeu( m, a );
+	return m[idx];
+    }
+    static member_type lane_switch( type a, int idx ) {
 	// Also consider storing vector to stack and loading requested lane.
 	switch( idx ) {
 	case 0: return (member_type) _mm256_extract_epi64( a, 0 );
@@ -75,7 +83,10 @@ public:
 	    assert( 0 && "should not get here" );
 	}
     }
-    static member_type lane0( type a ) { return lane( a, 0 ); }
+    static member_type lane( type a, int idx ) {
+	return lane_memory( a, idx );
+    }
+    static member_type lane0( type a ) { return _mm256_extract_epi64( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
     static member_type lane2( type a ) { return lane( a, 2 ); }
     static member_type lane3( type a ) { return lane( a, 3 ); }
@@ -279,7 +290,8 @@ public:
 	return asmask( cmpeq( a, b, mt_vmask() ) );
     }
     static mask_type cmpne( type a, type b, mt_mask ) {
-	return asmask( cmpne( a, b, mt_vmask() ) );
+	return mask_traits::logical_invert(
+	    asmask( cmpeq( a, b, mt_vmask() ) ) );
     }
 #endif
 

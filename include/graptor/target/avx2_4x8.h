@@ -49,8 +49,18 @@ public:
     static constexpr unsigned short B = 8 * W;
     static constexpr unsigned short vlen = 8;
     static constexpr unsigned short size = W * vlen;
-    
-    static member_type lane( type a, int idx ) {
+
+    static member_type lane_permute( type a, int idx ) {
+	type vidx = _mm256_castsi128_si256( _mm_cvtsi32_si128( idx ) );
+	type perm = _mm256_permutevar8x32_epi32( a, vidx );
+	return _mm256_extract_epi32( perm, 0 );
+    }
+    static member_type lane_memory( type a, int idx ) {
+	member_type m[vlen];
+	storeu( m, a );
+	return m[idx];
+    }
+    static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
 	case 0: return (member_type) _mm256_extract_epi32( a, 0 );
 	case 1: return (member_type) _mm256_extract_epi32( a, 1 );
@@ -64,7 +74,14 @@ public:
 	    assert( 0 && "should not get here" );
 	}
     }
-    static member_type lane0( type a ) { return lane( a, 0 ); }
+    static member_type lane( type a, int idx ) {
+	// This is the faster variant on AMD EPYC 7702
+	return lane_memory( a, idx );
+    }
+    static member_type lane0( type a ) {
+	// return _mm_cvtsi128_si32( _mm256_castsi256_si128( a ) );
+	return lane_memory( a, 0 );
+    }
     static member_type lane1( type a ) { return lane( a, 1 ); }
     static member_type lane2( type a ) { return lane( a, 2 ); }
     static member_type lane3( type a ) { return lane( a, 3 ); }
@@ -343,7 +360,8 @@ public:
 	return asmask( cmpeq( a, b, mt_vmask() ) );
     }
     static mask_type cmpne( type a, type b, mt_mask ) {
-	return asmask( cmpne( a, b, mt_vmask() ) );
+	return mask_traits::logical_invert(
+	    asmask( cmpeq( a, b, mt_vmask() ) ) );
     }
     static mask_type cmpge( mask_type m, type a, type b, mt_mask ) {
 	return mask_traits::logical_and( m, cmpge( a, b, mt_mask() ) );

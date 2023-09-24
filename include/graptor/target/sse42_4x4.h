@@ -50,7 +50,27 @@ public:
     static constexpr size_t vlen = 4;
     static constexpr size_t size = W * vlen;
 
-    static member_type lane( type a, int idx ) {
+    static member_type lane_permute( type a, int idx ) {
+#if __AVX__
+	type vidx = _mm_cvtsi32_si128( idx );
+	__m128 af = _mm_castsi128_ps( a );
+	__m128 pf = _mm_permutevar_ps( af, vidx );
+	type perm = _mm_castps_si128( pf );
+	return _mm_extract_epi32( perm, 0 );
+#else
+	assert( 0 && "NYI" );
+	return 0;
+#endif
+    }
+    static member_type lane_memory( type a, int idx ) {
+	// This shorthand results in compilation errors
+	// (observed with gcc 10.3.0)
+	// return ((member_type*)(&a))[idx];
+	member_type m[vlen];
+	storeu( m, a );
+	return m[idx];
+    }
+    static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
 	case 0: return (member_type) _mm_cvtsi128_si64( a );
 	case 1: return (member_type) ( _mm_cvtsi128_si64( a ) >> 32 );
@@ -60,7 +80,10 @@ public:
 	    assert( 0 && "should not get here" );
 	}
     }
-    static member_type lane0( type a ) { return lane( a, 0 ); }
+    static member_type lane( type a, int idx ) {
+	return lane_memory( a, idx );
+    }
+    static member_type lane0( type a ) { return _mm_cvtsi128_si64( a ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
     static member_type lane2( type a ) { return lane( a, 2 ); }
     static member_type lane3( type a ) { return lane( a, 3 ); }
@@ -289,7 +312,8 @@ public:
 	return asmask( cmpeq( a, b, mt_vmask() ) );
     }
     static mask_type cmpne( type a, type b, mt_mask ) {
-	return asmask( cmpne( a, b, mt_vmask() ) );
+	return mask_traits::logical_invert(
+	    asmask( cmpeq( a, b, mt_vmask() ) ) );
     }
     static mask_type cmpgt( type a, type b, mt_mask ) {
 	return asmask( cmpgt( a, b, mt_vmask() ) );

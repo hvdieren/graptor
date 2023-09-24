@@ -38,7 +38,24 @@ public:
     static constexpr unsigned short vlen = 2;
     static constexpr unsigned short size = W * vlen;
 
-    static member_type lane( type a, int idx ) {
+    static member_type lane_permute( type a, int idx ) {
+#if __AVX__
+	type vidx = _mm_cvtsi32_si128( idx<<1 );
+	__m128d ad = _mm_castsi128_pd( a );
+	__m128d pd = _mm_permutevar_pd( ad, vidx );
+	type perm = _mm_castpd_si128( pd );
+	return _mm_extract_epi64( perm, 0 );
+#else
+	assert( 0 && "NYI" );
+	return 0;
+#endif
+    }
+    static member_type lane_memory( type a, int idx ) {
+	member_type m[vlen];
+	storeu( m, a );
+	return m[idx];
+    }
+    static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
 	case 0: return (member_type) _mm_extract_epi64( a, 0 );
 	case 1: return (member_type) _mm_extract_epi64( a, 1 );
@@ -46,7 +63,14 @@ public:
 	    assert( 0 && "should not get here" );
 	}
     }
-    static member_type lane0( type a ) { return lane( a, 0 ); }
+    static member_type lane( type a, int idx ) {
+	// With only two lanes, the switch variant is marginally faster
+	// than the others on AMD EPYC 7702.
+	return lane_switch( a, idx );
+    }
+    static member_type lane0( type a ) {
+	return _mm_cvtsi128_si64( a );
+    }
     static member_type lane1( type a ) { return lane( a, 1 ); }
 
     static type setzero() { return _mm_setzero_si128(); }
