@@ -56,6 +56,12 @@ struct vt_recursive {
 	return lo_half_traits::is_zero( lower_half( v ) )
 	    && hi_half_traits::is_zero( upper_half( v ) );
     }
+    static bool is_bitwise_and_zero( type a, type b ) {
+	return lo_half_traits::is_bitwise_and_zero( lower_half( a ),
+						    lower_half( b ) )
+	    && hi_half_traits::is_bitwise_and_zero( upper_half( a ),
+						    upper_half( b ) );
+    }
     
     static type setzero() {
 	auto l = lo_half_traits::setzero();

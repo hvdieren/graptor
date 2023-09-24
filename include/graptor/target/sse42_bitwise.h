@@ -17,6 +17,9 @@ struct sse42_bitwise {
 
     static type setzero() { return _mm_setzero_si128(); }
     static bool is_zero( type a ) { return _mm_test_all_zeros( a, a ); }
+    static bool is_bitwise_and_zero( type a, type b ) {
+	return _mm_testz_si128( a, b );
+    }
 
     static type setone() {
 	type x;

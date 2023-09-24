@@ -64,6 +64,7 @@ public:
     }
 
     static bool is_zero( type a ) { return a == 0; }
+    static bool is_bitwise_and_zero( type a, type b ) { return ( a & b ) == 0; }
     
     static type create( member_type a0_ ) { return a0_; }
     static type set1( member_type a ) { return a; }

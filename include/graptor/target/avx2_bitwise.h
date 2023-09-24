@@ -20,6 +20,9 @@ struct avx2_bitwise {
 
     static type setzero() { return _mm256_setzero_si256(); }
     static bool is_zero( type a ) { return _mm256_testz_si256( a, a ); }
+    static bool is_bitwise_and_zero( type a, type b ) {
+	return _mm256_testz_si256( a, b );
+    }
 
     static type setone() {
 	type x;

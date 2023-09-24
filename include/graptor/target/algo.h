@@ -79,6 +79,9 @@ struct allpopcnt {
 
     // The lane width doesn't really matter. So use width 8 always.
     static typename ret_traits::type compute( typename arg_traits::type a ) {
+	// TODO:
+	// * consider scalar variant: store vector in memory; perform scalar
+	//   popcnt on each lane as fetched from memory/array and add up.
 	if constexpr ( sizeof(T) == 8 && VL == 8 ) {
 	    return arg_traits::reduce_add( arg_traits::popcnt( a ) );
 	} else if constexpr ( sizeof(T) == 8 && VL == 4 ) {
