@@ -16,6 +16,20 @@
  *   operations. For a 256-bit vector, this would be 16 compress operations.
  *   This would be more efficient than tzcnt only if ~16 bits or more are
  *   set. (AVX512F+VL only)
+ *
+ * + consider iteration over all elements, then identify in/out. Could
+ *   iterate over all vectors with a single bit set by:
+ *   - keep vector inc = vector with 1 in active lane
+ *   - add inc to current
+ *   - if relevant lane overflows (compare to set of ones), then move one
+ *     to next lane, reset current lane, move current lane index up, redo
+ *   -> Require to replicate overflow status of the current lane onto the
+ *      next lane. If we have a bitmask, multiply by 3.
+ *   - sketch:
+ *     add inc to current mask
+ *     compare to overflow bit pattern, producing mask
+ *     multiply mask by 3 (AVX512 may be better with shift and or)
+ *     blend between (current mask+inc) and (1 in next lane, 0 in others)
  *======================================================================*/
 
 template<unsigned Bits, typename Enable = void>
@@ -38,8 +52,10 @@ public:
     explicit bitset_iterator()
 	: m_subset( 0 ), m_lane( VL ), m_off( 0 ) { }
     explicit bitset_iterator( bitset_type bitset )
-	: m_bitset( bitset ), m_subset( tr::lane0( bitset ) ),
-	  m_lane( 0 ), m_off( 0 ) {
+	: m_lane( 0 ), m_off( 0 ) {
+	tr::storeu( m_bitset, bitset );
+	tr::storeu( m_mask, tr::setzero() );
+	m_subset = m_bitset[0];
 	// The invariant is that the bit at (m_lane,m_off) was originally set
 	// but has now been erased in the subset. Note that we never modify
 	// the bitset itself.
@@ -49,18 +65,23 @@ public:
 	unsigned off = tzcnt( m_subset );
 	while( off == bits_per_lane ) {
 	    // pop next lane and recalculate off
+	    m_mask[m_lane] = 0;
 	    ++m_lane;
 	    if( m_lane == VL ) { // reached end iterator
 		m_off = 0;
 		return *this;
 	    }
-	    m_subset = tr::lane( m_bitset, m_lane );
+	    m_subset = m_bitset[m_lane];
 	    off = tzcnt( m_subset );
 	}
 	assert( off != bits_per_lane );
 
 	// Erase bit from subset
+	type old_subset = m_subset;
 	m_subset &= m_subset - 1;
+
+	// Set bit in mask
+	m_mask[m_lane] = m_subset ^ old_subset;
 
 	// Record position of erased bit.
 	m_off = off;
@@ -82,6 +103,10 @@ public:
 	return m_lane * bits_per_lane + m_off;
     }
 
+    bitset_type get_mask() const {
+	return tr::loadu( m_mask );
+    }
+
 private:
     static unsigned tzcnt( type s ) {
 	if constexpr ( bits_per_lane == 64 )
@@ -91,7 +116,8 @@ private:
     }
     
 private:
-    bitset_type m_bitset;
+    type m_bitset[VL];
+    type m_mask[VL];
     type m_subset;
     // Might be useful to recode (m_lane,m_off) in an unsigned m_pos
     // and use shift and mask to recover m_lane and m_off when necessary.
@@ -148,6 +174,10 @@ public:
     }
     typename bitset_iterator::value_type operator*() const {
 	return m_off;
+    }
+
+    bitset_type get_mask() const {
+	return bitset_type(1) << m_off;
     }
 
 private:
