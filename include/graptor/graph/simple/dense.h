@@ -693,6 +693,10 @@ public:
 	// processed at this level. The remaining vertices remain in P.
 	// This loops simulates multiple recurisve calls selecting a fully
 	// connected vertex as pivot
+	//
+	// TODO: Also look at all vertices without P neighbours. These
+	//       give immediately rise to 1 maximal clique and can be further
+	//       discarded from the P set.
 	unsigned depth = 0;
 	row_type R = tr::setzero();
 	if( !tr::is_zero( m_fully_connected ) ) {
@@ -709,7 +713,7 @@ public:
 	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 		sVID v = *I;
 		row_type v_ngh = get_row( v );
-		row_type v_row = create_row( v );
+		row_type v_row = I.get_mask(); // create_row( v );
 		// Add v to R, it must be included
 		R = tr::bitwise_or( v_row, R );
 		++depth;
@@ -721,6 +725,10 @@ public:
 	    }
 	    E.count_fully_connected_P( depth );
 	}
+
+#if 0
+	mce_filter_P( E, R, allP, allX, depth );
+#endif
 
 	mce_bk_iterate( E, R, allP, allX, depth );
 #else
@@ -833,18 +841,34 @@ private:
     template<typename Enumerate>
     void mce_bk_iterate(
 	Enumerate && EE,
-	row_type R, row_type P, row_type X, int depth ) {
+	row_type R, row_type P, row_type X, unsigned int depth ) {
 	if( tr::is_zero( P ) ) {
 	    if( tr::is_zero( X ) )
 		EE( bitset<Bits>( R ), depth );
 	    return;
 	}
 
+#if 0
+	// Apply filtering rules on vertices in P, removing vertices from P
+	// or moving them from P to R.
+	mce_filter_P( EE, R, P, X, depth );
+
+	if( tr::is_zero( P ) ) {
+	    if( tr::is_zero( X ) )
+		EE( bitset<Bits>( R ), depth );
+	    return;
+	}
+#endif
+
 	VID pivot, nset;
 	row_type pivot_ngh, x;
 
 	while( true ) {
+#if !ABLATION_DENSE_PIVOT_FILTER
 	    pivot = mce_get_pivot( P, X );
+#else
+	    pivot = mce_get_pivot_and_filter( EE, R, P, X, depth );
+#endif
 	    pivot_ngh = get_row( pivot );
 	    x = tr::bitwise_andnot( pivot_ngh, P );
 	    nset = get_size( x );
@@ -878,7 +902,6 @@ private:
 	};
 
 	auto task = [=,&EE]( VID u, row_type u_only ) {
-	    // row_type u_only = tr::setglobaloneval( u );
 	    row_type u_ngh = get_row( u );
 	    row_type h = get_himask( u );
 	    row_type u_done = tr::bitwise_andnot( h, x );
@@ -921,10 +944,134 @@ private:
 	    bitset<Bits> bx( x );
 	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 		VID u = *I;
-		row_type u_only = tr::setglobaloneval( u );
+		row_type u_only = I.get_mask();
 		task( u, u_only );
 	    }
 	}
+    }
+
+    template<typename Enumerate>
+    void mce_filter_P( Enumerate && EE, row_type & R, row_type & P,
+		       row_type & X, unsigned int & depth ) {
+	// Any vertex v in P where P intersect N(v) is empty can be enumerated
+	// and removed from P. It is as if we select this vertex first, then
+	// consider the remainder of P as right siblings.
+	bitset<Bits> b( P );
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+
+	    row_type v_ngh = get_row( v );
+	    if( tr::is_bitwise_and_zero( P, v_ngh ) ) {
+		row_type v_only = I.get_mask();
+		if( tr::is_bitwise_and_zero( X, v_ngh ) ) {
+		    row_type Rv = tr::bitwise_or( R, v_only );
+		    EE( bitset<Bits>( Rv ), depth+1 );
+		}
+
+		// Move v from P to X. All other elements of P will be
+		// processed as if they are right siblings of v.
+		P = tr::bitwise_andnot( v_only, P );
+		X = tr::bitwise_or( v_only, X );
+	    }
+	}
+
+	// Any vertex v in P where P is subset of N(v) is connected to all
+	// remaining candidates and must be a member of any maximal clique.
+	// It is as if we select these vertices as pivot, which makes them
+	// the only vertex at this level, and the remainder of P is processed
+	// at the next recursion level.
+	b = bitset<Bits>( P ); // P may have changed
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+
+	    row_type v_ngh = get_row( v );
+	    row_type diff = tr::bitwise_xor( P, v_ngh );
+	    if( tr::is_bitwise_and_zero( P, diff ) ) {
+		row_type v_only = I.get_mask();
+		// P = tr::bitwise_and( P, v_ngh ) redundant due to condition
+		X = tr::bitwise_and( X, v_ngh );
+		R = tr::bitwise_or( R, v_only );
+		++depth;
+
+		// Remove v
+		P = tr::bitwise_andnot( v_only, P );
+	    }
+	}
+    }
+
+    template<typename Enumerate>
+    VID mce_get_pivot_and_filter(
+	Enumerate && EE, row_type & R, row_type & P,
+	row_type & X, unsigned int & depth ) {
+	row_type r = tr::bitwise_or( P, X );
+	bitset<Bits> b( r );
+
+	VID p_best = *b.begin();
+	VID p_ins = 0; // will be overridden
+
+#if !ABLATION_DENSE_EXCEED
+	// Avoid complexities if there is not much choice
+	if( get_size( P ) <= 3 )
+	    return p_best;
+#endif
+	
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type v_only = I.get_mask();
+	    row_type v_ngh = get_row( v );
+	    row_type pv_ins = tr::bitwise_and( P, v_ngh );
+
+	    bool in_P = !tr::is_bitwise_and_zero( P, v_only );
+
+	    // Any vertex v in P where P intersect N(v) is empty can be
+	    // enumerated and removed from P. It is as if we select this
+	    // vertex first, then consider the remainder of P as right siblings.
+	    if( in_P && tr::is_zero( pv_ins ) ) {
+		if( tr::is_bitwise_and_zero( X, v_ngh ) ) {
+		    row_type Rv = tr::bitwise_or( R, v_only );
+		    EE( bitset<Bits>( Rv ), depth+1 );
+		}
+
+		// Move v from P to X. All other elements of P will be
+		// processed as if they are right siblings of v.
+		P = tr::bitwise_andnot( v_only, P );
+		X = tr::bitwise_or( v_only, X );
+
+		continue; // vertex has been processed
+	    }
+
+#if !ABLATION_DENSE_EXCEED && !ABLATION_PDEG
+	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
+		continue;
+#endif
+
+	    // Any vertex v in P where P is subset of N(v) is connected to all
+	    // remaining candidates and must be a member of any maximal clique.
+	    // It is as if we select these vertices as pivot, which makes them
+	    // the only vertex at this level, and the remainder of P is
+	    // processed at the next recursion level.
+	    row_type diff = tr::bitwise_xor( P, v_ngh );
+	    if( in_P && tr::is_bitwise_and_zero( P, diff ) ) {
+		row_type v_only = I.get_mask();
+		// P = tr::bitwise_and( P, v_ngh ) redundant due to condition
+		X = tr::bitwise_and( X, v_ngh );
+		R = tr::bitwise_or( R, v_only );
+		++depth;
+
+		// Remove v
+		P = tr::bitwise_andnot( v_only, P );
+
+		continue; // vertex has been processed
+	    }
+
+	    // Now search for pivot
+	    VID ins = get_size( pv_ins );
+	    if( ins > p_ins ) {
+		p_best = v;
+		p_ins = ins;
+	    }
+	}
+	return p_best;
     }
 
     // Could potentially vectorise small matrices by placing

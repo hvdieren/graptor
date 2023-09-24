@@ -86,11 +86,11 @@
 #endif
 
 #ifndef ABLATION_DENSE_FILTER_FULLY_CONNECTED
-#define ABLATION_DENSE_FILTER_FULLY_CONNECTED 0
+#define ABLATION_DENSE_FILTER_FULLY_CONNECTED 1
 #endif
 
 #ifndef ABLATION_BLOCKED_FILTER_FULLY_CONNECTED
-#define ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 0
+#define ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 1
 #endif
 
 #ifndef ABLATION_DENSE_ITERATE
@@ -99,6 +99,14 @@
 
 #ifndef ABLATION_BLOCKED_ITERATE
 #define ABLATION_BLOCKED_ITERATE 0
+#endif
+
+#ifndef ABLATION_DENSE_PIVOT_FILTER
+#define ABLATION_DENSE_PIVOT_FILTER 0
+#endif
+
+#ifndef ABLATION_BLOCKED_PIVOT_FILTER
+#define ABLATION_BLOCKED_PIVOT_FILTER 0
 #endif
 
 #ifndef PAR_LOOP
@@ -2355,11 +2363,16 @@ int main( int argc, char *argv[] ) {
 	      <<  ABLATION_DENSE_ITERATE
 	      << "\n\tABLATION_BLOCKED_ITERATE="
 	      <<  ABLATION_BLOCKED_ITERATE
+	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
+	      <<  ABLATION_DENSE_PIVOT_FILTER
+	      << "\n\tABLATION_BLOCKED_PIVOT_FILTER="
+	      <<  ABLATION_BLOCKED_PIVOT_FILTER
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
     MCE_Parallel_Enumerator E( farm );
 
+    system( "hostname" );
     system( "date" );
 
     std::cout << "Start enumeration: " << tm.next() << "\n";

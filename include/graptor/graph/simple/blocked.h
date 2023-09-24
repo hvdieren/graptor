@@ -466,6 +466,122 @@ private:
 #endif
 };
 
+template<unsigned XBits, unsigned PBits, typename sVID, typename sEID,
+	 typename Enumerate>
+sVID get_pivot_and_filter(
+    const BlockedBinaryMatrix<XBits,PBits,sVID,sEID> & mtx,
+    Enumerate && EE,
+    typename BinaryMatrix<PBits,sVID,sEID>::row_type & R,
+    typename BinaryMatrix<PBits,sVID,sEID>::row_type & Pp,
+    typename BinaryMatrix<PBits,sVID,sEID>::row_type & Xp,
+    typename BinaryMatrix<XBits,sVID,sEID>::row_type & Xx,
+    unsigned int & depth ) {
+
+    using ptr = typename BinaryMatrix<PBits,sVID,sEID>::tr;
+    using prow_type = typename BinaryMatrix<PBits,sVID,sEID>::row_type;
+    using xtr = typename BinaryMatrix<XBits,sVID,sEID>::tr;
+    using xrow_type = typename BinaryMatrix<XBits,sVID,sEID>::row_type;
+
+    const BinaryMatrix<PBits,sVID,sEID> & xp = mtx.get_xp();
+    const BinaryMatrix<XBits,sVID,sEID> & px = mtx.get_px();
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
+    const auto * degree = mtx.get_degree();
+#endif
+
+    auto r = ptr::bitwise_or( Pp, Xp );
+    
+    bitset<PBits> b( r );
+
+    VID cs = xp.get_col_start();
+    VID p_best = *b.begin() + cs;
+    VID p_ins = 0; // will be overridden
+    VID Pp_size = xp.get_size( Pp );
+
+    // Avoid complexities if there is not much choice
+    if( Pp_size <= 3 ) // Tunable: 3
+	return p_best;
+
+    for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	VID v = *I + cs;
+	prow_type v_ngh = xp.get_row( v );
+	prow_type pv_ins = ptr::bitwise_and( Pp, v_ngh );
+	prow_type v_only = I.get_mask();
+
+	// Any vertex v in P where P intersect N(v) is empty can be
+	// enumerated and removed from P. It is as if we select this
+	// vertex first, then consider the remainder of P as right siblings.
+	if( ptr::is_zero( pv_ins ) ) {
+	    if( ptr::is_bitwise_and_zero( Xp, v_ngh )
+		&& xtr::is_bitwise_and_zero( Xx, px.get_row( v ) ) ) {
+		prow_type Rv = ptr::bitwise_or( R, v_only );
+		EE( bitset<PBits>( Rv ), depth+1 );
+	    }
+
+	    // Move v from P to X. All other elements of P will be
+	    // processed as if they are right siblings of v.
+	    Pp = ptr::bitwise_andnot( v_only, Pp );
+	    Xp = ptr::bitwise_or( v_only, Xp );
+	    // Xx unmodified
+
+	    continue; // vertex has been processed
+	}
+	
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
+	if( (VID)degree[v] < p_ins ) // skip if cannot be best
+	    continue;
+#endif
+
+	// Any vertex v in P where P is subset of N(v) is connected to all
+	// remaining candidates and must be a member of any maximal clique.
+	// It is as if we select these vertices as pivot, which makes them
+	// the only vertex at this level, and the remainder of P is
+	// processed at the next recursion level.
+	prow_type diff = ptr::bitwise_xor( Pp, v_ngh );
+	if( ptr::is_bitwise_and_zero( Pp, diff ) ) {
+	    prow_type v_only = I.get_mask();
+	    // Pp = tr::bitwise_and( Pp, v_ngh ) redundant due to condition
+	    Xp = ptr::bitwise_and( Xp, v_ngh );
+	    xrow_type xv_ngh = px.get_row( v );
+	    Xx = xtr::bitwise_and( Xx, xv_ngh );
+	    R = ptr::bitwise_or( R, v_only );
+	    ++depth;
+
+	    // Remove v
+	    Pp = ptr::bitwise_andnot( v_only, Pp );
+
+	    continue; // vertex has been processed
+	}
+	
+	VID ins = xp.get_size( pv_ins );
+	if( ins > p_ins ) {
+	    p_best = v;
+	    p_ins = ins;
+	}
+    }
+
+    bitset<XBits> c( Xx );
+    assert( px.get_col_start() == 0 && "should always be zero" );
+    for( auto I=c.begin(), E=c.end(); I != E; ++I ) {
+	VID v = *I;
+#if !ABLATION_BLOCKED_EXCEED && !ABLATION_PDEG
+	if( (VID)degree[v] < p_ins ) // skip if cannot be best
+	    continue;
+#endif
+	auto v_ngh = xp.get_row( v );
+	auto pv_ins = ptr::bitwise_and( Pp, v_ngh );
+	VID ins = xp.get_size( pv_ins );
+	if( ins > p_ins ) {
+	    p_best = v;
+	    p_ins = ins;
+	    if( p_ins >= Pp_size )
+		return p_best;
+	}
+    }
+
+    // assert( p_best < mtx.numVertices() );
+    return p_best;
+}
+    
 template<unsigned XBits, unsigned PBits, typename sVID, typename sEID>
 sVID get_pivot(
     const BlockedBinaryMatrix<XBits,PBits,sVID,sEID> & mtx,
@@ -548,7 +664,7 @@ void mce_bk_iterate(
     typename BinaryMatrix<PBits,sVID,sEID>::row_type Pp,
     typename BinaryMatrix<PBits,sVID,sEID>::row_type Xp,
     typename BinaryMatrix<XBits,sVID,sEID>::row_type Xx,
-    int depth ) {
+    unsigned int depth ) {
 	
     using ptr = typename BinaryMatrix<PBits,sVID,sEID>::tr;
     using prow_type = typename BinaryMatrix<PBits,sVID,sEID>::row_type;
@@ -574,7 +690,12 @@ void mce_bk_iterate(
     sVID nset;
 
     while( true ) {
+#if !ABLATION_BLOCKED_PIVOT_FILTER
 	pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
+#else
+	pivot = get_pivot_and_filter<XBits,PBits,sVID,sEID>(
+	    mtx, EE, R, Pp, Xp, Xx, R, depth );
+#endif
 	pivot_ngh = xp.get_row( pivot );
 	ins = ptr::bitwise_andnot( pivot_ngh, Pp );
 	nset = xp.get_size( ins );
@@ -656,7 +777,7 @@ void mce_bk_iterate(
 	bitset<PBits> bx( ins );
 	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 	    sVID u = *I + cs;
-	    prow_type u_only = xp.create_singleton( u );
+	    prow_type u_only = I.get_mask();
 
 	    prow_type pu_ngh = xp.get_row( u );
 	    prow_type Ppv = ptr::bitwise_and( Pp, pu_ngh );
@@ -716,7 +837,6 @@ mce_bron_kerbosch(
 	if( ptr::cmpeq( ptr::bitwise_andnot( v_row, pmatch ), v_ngh,
 			target::mt_bool() ) ) {
 	    // connected to all in P
-	    prow_type v_row = xp.create_singleton( v );
 	    // Add v to R, it must be included
 	    R = ptr::bitwise_or( v_row, R );
 	    ++depth;
