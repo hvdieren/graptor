@@ -59,6 +59,13 @@ public:
 */
     
     static member_type lane( type a, int idx ) {
+	// TODO (4x8 code):
+	// _mm256_cvtsi256_si32(
+	// _mm256_permutevar8x32_epi32(
+	//    a, _mm_cvtsi128_si256( _mm_cvtsi32_si128( idx ) ) ) );
+	// For 64-bit code: (((idx<<1)+1) << 32)|(idx<<1), such that two
+	// consecutive 32-bit words are selected
+	// Also consider storing vector to stack and loading requested lane.
 	switch( idx ) {
 	case 0: return (member_type) _mm256_extract_epi64( a, 0 );
 	case 1: return (member_type) _mm256_extract_epi64( a, 1 );
