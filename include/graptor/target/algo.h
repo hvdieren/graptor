@@ -104,14 +104,14 @@ struct allpopcnt {
 	    return tr::half_traits::lane0( rd );
 	} else if constexpr ( sizeof(T) == 8 && VL == 2 ) {
 	    // TODO: similar implementation to Mula's?
-	    return _popcnt64( arg_traits::lane( a, 0 ) )
+	    return _popcnt64( arg_traits::lane0( a ) )
 		+ _popcnt64( arg_traits::lane( a, 1 ) );
 	} else if constexpr ( sizeof(T) == 8 && VL == 1 ) {
-	    return _popcnt64( arg_traits::lane( a, 0 ) );
+	    return _popcnt64( a );
 	} else if constexpr ( sizeof(T) == 8 ) {
 	    assert( 0 && "NYI" );
 	} else if constexpr ( sizeof(T) == 4 && VL == 1 ) {
-	    return _popcnt32( arg_traits::lane( a, 0 ) );
+	    return _popcnt32( a );
 	} else {
 	    return allpopcnt<ResultTy, uint64_t, arg_traits::size/8>
 		::compute( a );
