@@ -2475,7 +2475,7 @@ int main( int argc, char *argv[] ) {
 	    // Do sequential part first, because work stealing cannot help to
 	    // obtain load balance if we keep this to the end of the
 	    // computation.
-	    parallel_loop( (VID)0, 2, 1, [&,p,k,kpar,npart,n,degeneracy]( VID s ) {
+	    parallel_loop( 0, 2, 1, [&,p,k,kpar,npart,n,degeneracy]( int s ) {
 		if( s == 0 ) {
 		    for( VID v=p+kpar*npart; v < n; v += npart )
 			mce_top_level( R, H, E, v, degeneracy );
