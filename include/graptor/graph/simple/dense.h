@@ -14,7 +14,7 @@
 #include "graptor/container/intersect.h"
 
 #ifndef DENSE_THRESHOLD_SEQUENTIAL
-#define DENSE_THRESHOLD_SEQUENTIAL 32
+#define DENSE_THRESHOLD_SEQUENTIAL 64
 #endif
 
 #ifndef DENSE_THRESHOLD_SEQUENTIAL_BITS

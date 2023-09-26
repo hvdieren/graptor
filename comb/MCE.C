@@ -124,7 +124,9 @@
 
 #include <pthread.h>
 
+#if PAPI_REGION == 1
 #include <papi.h>
+#endif
 
 #include "graptor/graptor.h"
 #include "graptor/api.h"
@@ -2379,7 +2381,7 @@ int main( int argc, char *argv[] ) {
 
     VID degeneracy = kcore.getLargestCore();
 
-#if PAPI_REGION 
+#if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
 	if( PAPI_OK != PAPI_hl_region_begin( "MCE" ) ) {
 	    std::cerr << "Error initialising PAPI\n";
@@ -2473,17 +2475,23 @@ int main( int argc, char *argv[] ) {
 	    // Do sequential part first, because work stealing cannot help to
 	    // obtain load balance if we keep this to the end of the
 	    // computation.
-	    for( VID v=p+kpar*npart; v < n; v += npart )
-		mce_top_level( R, H, E, v, degeneracy );
-	    parallel_loop( VID(0), kpar, 1, [&,p,k]( VID j ) {
-		VID v = p + j * npart;
-		mce_top_level( R, H, E, v, degeneracy );
+	    parallel_loop( (VID)0, 2, 1, [&,p,k,kpar,npart,n,degeneracy]( VID s ) {
+		if( s == 0 ) {
+		    for( VID v=p+kpar*npart; v < n; v += npart )
+			mce_top_level( R, H, E, v, degeneracy );
+		} else {
+		    parallel_loop(
+			VID(0), kpar, 1, [&,p,k,npart,degeneracy]( VID j ) {
+			    VID v = p + j * npart;
+			    mce_top_level( R, H, E, v, degeneracy );
+			} );
+		}
 	    } );
 	} );
     }
 #endif
 
-#if PAPI_REGION 
+#if PAPI_REGION == 1
     map_workers( [&]( uint32_t t ) {
 	if( PAPI_OK != PAPI_hl_region_end( "MCE" ) ) {
 	    std::cerr << "Error initialising PAPI\n";
