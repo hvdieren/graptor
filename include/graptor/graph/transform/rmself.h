@@ -41,7 +41,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
 		++n_self;
 	}
 	new_index[u] = n_self;
-	self_edges += n_self;
+	__sync_fetch_and_add( &self_edges, n_self );
     } );
 
     if( verbose )
