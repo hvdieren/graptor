@@ -2434,6 +2434,16 @@ int main( int argc, char *argv[] ) {
 	    mce_top_level( R, H, E, v, degeneracy );
 	}
     } );
+#elif PAR_LOOP == 4
+    parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
+	// round down as lower-numbered vertices take longer
+	VID k = n / npart;
+	VID from = p == 0 ? 0 : (p-1) * k;
+	VID to = p == npart-1 ? n : p * k;
+	parallel_loop( from, to, 1, [&,degeneracy]( VID v ) {
+	    mce_top_level( R, H, E, v, degeneracy );
+	} );
+    } );
 #elif PAR_LOOP == 2 || PAR_LOOP == 3
     // Low degeneracy graphs include road networks, where locality is more
     // important than load balance
@@ -2468,23 +2478,24 @@ int main( int argc, char *argv[] ) {
 	    VID hi = k;
 	    VID vlo = p + lo * npart;
 	    VID vhi = p + hi * npart;
-	    VID dlo = G.getDegree( vlo );
-	    VID dhi = G.getDegree( vhi );
+	    VID dlo = coreness[order[vlo]];
+	    VID dhi = coreness[order[vhi]];
+	    VID target = 100; // 3 * degeneracy / 4;
 	    if( degeneracy < 10 ) {
 		// With low degeneracy, there is little need for load balancing.
 		// Do all in parallel and omit the search bit.
 		kpar = hi;
-	    } else if( dlo < degeneracy ) {
+	    } else if( dlo < target ) {
 		kpar = lo;
-	    } else if( dhi >= degeneracy ) {
+	    } else if( dhi >= target ) {
 		kpar = hi;
 	    } else {
 		// Invariant: dlo >= degeneracy && dhi < degeneracy
 		while( hi - lo > 1 ) {
 		    VID mid = ( lo + hi ) / 2;
 		    VID vmid = p + mid * npart;
-		    VID dmid = G.getDegree( vmid );
-		    if( dmid < degeneracy ) {
+		    VID dmid = coreness[order[vmid]];
+		    if( dmid < target ) {
 			hi = mid;
 			vhi = vmid;
 			dhi = dmid;
@@ -2496,6 +2507,17 @@ int main( int argc, char *argv[] ) {
 		}
 		kpar = hi;
 	    }
+
+/*
+	    {
+		VID vv = p+kpar*npart;
+		if( vv >= n ) vv = n;
+		std::lock_guard<std::mutex> guard( io_mux );
+		std::cout << "p=" << p << " kpar=" << kpar
+			  << " deg[kpar]=" << R.getDegree( vv )
+			  << " degeneracy=" << degeneracy << "\n";
+	    }
+*/
 
 	    // Do sequential part first, because work stealing cannot help to
 	    // obtain load balance if we keep this to the end of the
