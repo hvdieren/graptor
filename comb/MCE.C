@@ -476,11 +476,16 @@ struct all_variant_statistics {
     all_variant_statistics
     operator + ( const all_variant_statistics & s ) const {
 	all_variant_statistics sum;
-	for( size_t n=0; n < N_DIM; ++n )
+	for( size_t n=0; n < N_DIM; ++n ) {
 	    sum.m_dense[n] = m_dense[n] + s.m_dense[n];
+	    sum.m_leaf_dense[n] = m_leaf_dense[n] + s.m_leaf_dense[n];
+	}
 	for( size_t x=0; x < X_DIM; ++x )
-	    for( size_t p=0; p < P_DIM; ++p )
+	    for( size_t p=0; p < P_DIM; ++p ) {
 		sum.m_blocked[x][p] = m_blocked[x][p] + s.m_blocked[x][p];
+		sum.m_leaf_blocked[x][p]
+		    = m_leaf_blocked[x][p] + s.m_leaf_blocked[x][p];
+	    }
 	sum.m_tiny = m_tiny + s.m_tiny;
 	sum.m_gen = m_gen + s.m_gen;
 	return sum;
@@ -493,12 +498,20 @@ struct all_variant_statistics {
     variant_statistics & get( size_t n ) {
 	return m_dense[n-N_MIN_SIZE];
     }
+    variant_statistics & get_leaf( size_t n ) {
+	return m_leaf_dense[n-N_MIN_SIZE];
+    }
     variant_statistics & get( size_t x, size_t p ) {
 	return m_blocked[x-X_MIN_SIZE][p-P_MIN_SIZE];
+    }
+    variant_statistics & get_leaf( size_t x, size_t p ) {
+	return m_leaf_blocked[x-X_MIN_SIZE][p-P_MIN_SIZE];
     }
     
     variant_statistics m_dense[N_DIM];
     variant_statistics m_blocked[X_DIM][P_DIM];
+    variant_statistics m_leaf_dense[N_DIM];
+    variant_statistics m_leaf_blocked[X_DIM][P_DIM];
     variant_statistics m_tiny, m_gen;
 
 };
@@ -2119,12 +2132,18 @@ void leaf_dense_fn(
     const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
+    variant_statistics & stats
+	= mce_stats.get_statistics().get_leaf( ilog2( Bits ) );
+    timer tm;
+    tm.start();
     DenseMatrix<Bits,VID,EID> D( H, H, xp_set, ne, ce );
+    stats.record_build( tm.next() );
     MCE_Enumerator_stage3 E3( Ee, r, R );
     // D.mce_bron_kerbosch( [&]( const bitset<Bits> & c, size_t sz ) {
 	// Ee.record( r + sz, R, c );
     // } );
     D.mce_bron_kerbosch( E3 );
+    stats.record( tm.next() );
 }
 
 template<unsigned XBits, unsigned PBits, typename VID, typename EID>
@@ -2136,13 +2155,19 @@ void leaf_blocked_fn(
     const XPSet<VID> & xp_set,
     VID ne,
     VID ce ) {
+    variant_statistics & stats
+	= mce_stats.get_statistics().get_leaf( ilog2( XBits ), ilog2( PBits ) );
+    timer tm;
+    tm.start();
     BlockedBinaryMatrix<XBits,PBits,VID,EID>
 	D( H, H, xp_set, ne, ce );
+    stats.record_build( tm.next() );
     MCE_Enumerator_stage3 E3( Ee, r, R );
     // mce_bron_kerbosch( D, [&]( const bitset<PBits> & c, size_t sz ) {
     // Ee.record( r + sz, R, c );
     // } );
     mce_bron_kerbosch( D, E3 );
+    stats.record( tm.next() );
 }
 
 typedef void (*mce_leaf_func)(
@@ -2514,6 +2539,15 @@ int main( int argc, char *argv[] ) {
 	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
 	    std::cout << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
 	    stats.get( x, p ).print( std::cout );
+	}
+    for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
+	std::cout << "leaf-" << (1<<n) << "-bit dense: ";
+	stats.get_leaf( n ).print( std::cout ); 
+    }
+    for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
+	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
+	    std::cout << "leaf-" << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
+	    stats.get_leaf( x, p ).print( std::cout );
 	}
     std::cout << "tiny: ";
     stats.m_tiny.print( std::cout );
