@@ -184,7 +184,7 @@ struct alltzcnt {
 	} else if constexpr ( sizeof(T) <= 4 && VL == 1 ) {
 	    // Scalar, short
 	    return _tzcnt_u32( a );
-	} else if constexpr ( sizeof(T) == 4 && VL > 1 ) {
+	} else if constexpr ( sizeof(T) == 4 && VL > 1  && ( VL % 2 ) == 0 ) {
 	    // Recast 4-byte lanes into 8-byte lanes
 	    return alltzcnt<ResultTy,uint64_t,VL/2>::compute( a );
 	}
