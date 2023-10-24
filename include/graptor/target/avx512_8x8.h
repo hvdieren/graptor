@@ -54,7 +54,14 @@ public:
     }
 */
     
-    static member_type lane( type a, int idx ) {
+    static member_type lane_memory( type a, int idx ) {
+	// Forces argument a in memory, which might be convenient in
+	// the context of the calling code.
+	member_type m[vlen];
+	storeu( m, a );
+	return m[idx];
+    }
+    static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
 	case 0: return (member_type) _mm_extract_epi64( _mm256_extracti128_si256( _mm512_extracti64x4_epi64( a, 0 ), 0 ), 0 );
 	case 1: return (member_type) _mm_extract_epi64( _mm256_extracti128_si256( _mm512_extracti64x4_epi64( a, 0 ), 0 ), 1 );
@@ -66,6 +73,13 @@ public:
 	case 7: return (member_type) _mm_extract_epi64( _mm256_extracti128_si256( _mm512_extracti64x4_epi64( a, 1 ), 1 ), 1 );
 	default: UNREACHABLE_CASE_STATEMENT;
 	}
+    }
+    static member_type lane( type a, int idx ) {
+#if FURTHER_OPTIMIZATION
+	return lane_memory( a, idx );
+#else
+	return lane_switch( a, idx );
+#endif
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
