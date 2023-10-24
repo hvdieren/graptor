@@ -113,6 +113,14 @@
 #define PAR_LOOP 3
 #endif
 
+#ifndef USE_512_VECTOR
+#if __AVX512F__
+#define USE_512_VECTOR 1
+#else
+#define USE_512_VECTOR 0
+#endif
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
@@ -188,7 +196,7 @@ static constexpr size_t P_DIM = 9 - P_MIN_SIZE + 1;
 static constexpr size_t N_MIN_SIZE = 5;
 static constexpr size_t N_DIM = 9 - N_MIN_SIZE + 1;
 
-#if __AVX512F__
+#if USE_512_VECTOR
 static constexpr size_t X_MAX_SIZE = 9;
 static constexpr size_t P_MAX_SIZE = 9;
 static constexpr size_t N_MAX_SIZE = 9;
@@ -2317,7 +2325,7 @@ int main( int argc, char *argv[] ) {
 	      << " davg=" << davg
 	      << std::endl;
 
-    GraphCSRAdaptor GA( G, 256 );
+    GraphCSRAdaptor GA( G, npart );
     KCv<GraphCSRAdaptor> kcore( GA, P );
     kcore.run();
     auto & coreness = kcore.getCoreness();
@@ -2394,6 +2402,8 @@ int main( int argc, char *argv[] ) {
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tABLATION_BLOCKED_PIVOT_FILTER="
 	      <<  ABLATION_BLOCKED_PIVOT_FILTER
+	      << "\n\tUSE_512_VECTOR="
+	      <<  USE_512_VECTOR
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
@@ -2402,7 +2412,7 @@ int main( int argc, char *argv[] ) {
     system( "hostname" );
     system( "date" );
 
-    std::cout << "Start enumeration: " << tm.next() << "\n";
+    std::cout << "Start enumeration: " << tm.next() << std::endl;
 
     VID degeneracy = kcore.getLargestCore();
 
