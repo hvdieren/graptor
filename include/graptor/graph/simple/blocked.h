@@ -694,7 +694,7 @@ void mce_bk_iterate(
 	pivot = get_pivot<XBits,PBits,sVID,sEID>( mtx, Pp, Xp, Xx );
 #else
 	pivot = get_pivot_and_filter<XBits,PBits,sVID,sEID>(
-	    mtx, EE, R, Pp, Xp, Xx, R, depth );
+	    mtx, EE, R, Pp, Xp, Xx, depth );
 #endif
 	pivot_ngh = xp.get_row( pivot );
 	ins = ptr::bitwise_andnot( pivot_ngh, Pp );
