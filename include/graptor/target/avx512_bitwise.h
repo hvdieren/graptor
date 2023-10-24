@@ -22,11 +22,11 @@ struct avx512_bitwise {
     static bool is_zero( type a ) {
 	// __mmask16 e = _mm512_cmpneq_epi32_mask( a, setzero() );
 	// return _kortestz_mask16_u8( e, e );
-	_mmask8 e = _mm512_test_epi64_mask( a, a );
+	__mmask8 e = _mm512_test_epi64_mask( a, a );
 	return _ktestz_mask8_u8( e, e );
     }
     static bool is_bitwise_and_zero( type a, type b ) {
-	_mmask8 e = _mm512_test_epi64_mask( a, b );
+	__mmask8 e = _mm512_test_epi64_mask( a, b );
 	return _ktestz_mask8_u8( e, e );
     }
 
