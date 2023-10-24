@@ -1065,11 +1065,18 @@ private:
 	    }
 
 	    // Now search for pivot
+#if FURTHER_OPTIMIZATION
+	    // Only compute allpopcnt if pv_ins is not subset of p_ins
+	    if( !tr::is_zero( tr::bitwise_andnot( p_ins, pv_ins ) ) ) {
+#endif
 	    VID ins = get_size( pv_ins );
 	    if( ins > p_ins ) {
 		p_best = v;
 		p_ins = ins;
 	    }
+#if FURTHER_OPTIMIZATION
+	    }
+#endif
 	}
 	return p_best;
     }
@@ -1083,17 +1090,20 @@ private:
 	row_type r = tr::bitwise_or( P, X );
 	bitset<Bits> b( r );
 
-	VID p_best = *b.begin();
-	VID p_ins = 0; // will be overridden
-	VID P_size = get_size( P );
+	auto I = b.begin();
+	VID p_best = *I;
 
 #if !ABLATION_DENSE_EXCEED
 	// Avoid complexities if there is not much choice
-	if( P_size <= 3 )
+	if( get_size( P ) <= 3 )
 	    return p_best;
 #endif
+
+	++I;
+	row_type p_row = tr::bitwise_and( P, get_row( p_best ) );
+	VID p_ins = get_size( p_row );
 	
-	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	for( auto E=b.end(); I != E; ++I ) {
 	    VID v = *I;
 #if !ABLATION_DENSE_EXCEED && !ABLATION_PDEG
 	    if( (VID)m_degree[v] < p_ins ) // skip if cannot be best
@@ -1101,13 +1111,21 @@ private:
 #endif
 	    row_type v_ngh = get_row( v );
 	    row_type pv_ins = tr::bitwise_and( P, v_ngh );
+#if FURTHER_OPTIMIZATION
+	    // Only compute allpopcnt if pv_ins is not subset of p_ins
+	    if( !tr::is_zero( tr::bitwise_andnot( p_row, pv_ins ) ) ) {
+#endif
 	    VID ins = get_size( pv_ins );
 	    if( ins > p_ins ) {
 		p_best = v;
 		p_ins = ins;
-		if( p_ins >= P_size ) // cannot improve further
-		    break;
+		p_row = pv_ins;
+		// if( p_ins >= P_size ) // cannot improve further
+		// break;
 	    }
+#if FURTHER_OPTIMIZATION
+	    }
+#endif
 	}
 	// assert( p_best < m_n );
 	return p_best;
