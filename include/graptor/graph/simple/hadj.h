@@ -362,6 +362,7 @@ public:
 		}
 #endif
 #else
+#if ABLATION_HADJPA_DISABLE_XP_HASH == 1
 		VID sdeg = std::min( deg, ce );
 		VID logs = get_log_hash_slots( sdeg );
 		VID s = 1 << logs;
@@ -413,6 +414,20 @@ public:
 			n_start, n+deg, // P; shorter list
 			out );
 		}
+#else
+		// Same code as adjacency hashed
+		VID sdeg = std::min( deg, ce );
+		VID logs = get_log_hash_slots( sdeg );
+		VID s = 1 << logs;
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+		hash_pa_insert_iterator<dual_rep,true,Hash>
+		    out( a, &hashes[s_next], XP );
+		graptor::hash_scalar::intersect<true>(
+		    su < ne ? XP+ne : XP, XP+ce,
+		    H.get_adjacency( u ), out );
+		s_next += has_dual_rep ? 2*s : s;
+#endif
 #endif
 	    } else {
 		VID sdeg = std::min( deg, ce );
