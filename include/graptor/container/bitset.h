@@ -61,20 +61,23 @@ public:
 	// the bitset itself.
 	++*this;
     }
+    // We have 'optimized' the code to keep the vector in memory and to
+    // load scalar elements through memory. It seems the compiler 'undoes'
+    // this optimization.
     bitset_iterator& operator++() {
-	unsigned off = tzcnt( m_subset );
-	while( off == bits_per_lane ) {
+	while( m_subset == 0 ) [[unlikely]] {
 	    // pop next lane and recalculate off
 	    m_mask[m_lane] = 0;
 	    ++m_lane;
-	    if( m_lane == VL ) { // reached end iterator
+	    if( m_lane == VL ) [[unlikely]] { // reached end iterator
 		m_off = 0;
 		return *this;
 	    }
 	    m_subset = m_bitset[m_lane];
-	    off = tzcnt( m_subset );
 	}
-	assert( off != bits_per_lane );
+
+	// Record position of erased bit.
+	m_off = tzcnt( m_subset );
 
 	// Erase bit from subset
 	type old_subset = m_subset;
@@ -82,9 +85,6 @@ public:
 
 	// Set bit in mask
 	m_mask[m_lane] = m_subset ^ old_subset;
-
-	// Record position of erased bit.
-	m_off = off;
 
 	return *this;
     }
