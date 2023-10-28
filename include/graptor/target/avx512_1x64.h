@@ -40,8 +40,12 @@ public:
     using itype = __m512i;
     using int_type = uint8_t;
 
-    using int_traits = avx512_1x64<int_type>;
     using half_traits = avx2_1x32<member_type>;
+    using lo_half_traits = half_traits;
+    using hi_half_traits = half_traits;
+    using recursive_traits = vt_recursive<member_type,1,64,half_traits>;
+    using int_traits = avx512_1x64<int_type>;
+    using mt_preferred = target::mt_mask;
 
     static member_type lane( type a, int idx ) {
 	if( idx < 32 )

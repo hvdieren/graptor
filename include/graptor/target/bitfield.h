@@ -271,16 +271,20 @@ public:
 
     static auto lower_half( type a ) {
 	auto b = base_traits::lower_half( a );
+#if GRAPTOR_USE_MMX
 	if constexpr ( half_traits::size <= 8 )
 	    return _mm_cvtm64_si64( b );
 	else
+#endif
 	    return b;
     }
     static auto upper_half( type a ) {
 	auto b = base_traits::upper_half( a );
+#if GRAPTOR_USE_MMX
 	if constexpr ( half_traits::size <= 8 )
 	    return _mm_cvtm64_si64( b );
 	else
+#endif
 	    return b;
     }
     static type set_pair( typename half_traits::type hi,

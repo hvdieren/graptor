@@ -26,6 +26,7 @@
 #endif
 
 alignas(64) extern const uint8_t movemask_lut_epi8[16*4];
+alignas(64) extern const uint8_t increasing_sequence_epi8[64];
 
 namespace target {
 

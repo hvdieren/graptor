@@ -22,7 +22,8 @@ struct mask_type_traits<128> {
     
     static bool lane( type m, unsigned short l ) {
 	unsigned short ll = l / width;
-	pointer_type w = _mm_extract_epi64( m, ll );
+	pointer_type w = ll == 0
+	    ? _mm_extract_epi64( m, 0 ) : _mm_extract_epi64( m, 1 );
 	uint64_t mm = uint64_t(1) << ( l % width );
 	return ( w & mm ) != 0;
     }

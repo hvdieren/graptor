@@ -16,6 +16,7 @@
 
 alignas(64) extern const uint8_t sse42_4x4_evenodd_intlv_epi32[16];
 alignas(64) extern const uint32_t mm_cstoreu_select[64];
+alignas(64) extern const uint32_t increasing_sequence_epi32[16];
 
 namespace target {
 

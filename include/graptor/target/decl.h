@@ -106,6 +106,16 @@ struct select_mask_type<64> {
     using type = __mmask64;
 };
 
+template<>
+struct select_mask_type<128> {
+    using type = __m128i;
+};
+
+template<>
+struct select_mask_type<256> {
+    using type = __m256i;
+};
+
 template<unsigned short VL>
 using mask_type_t = typename select_mask_type<VL>::type;
 }
@@ -143,8 +153,12 @@ inline mask_type_t<VL1+VL2> combine_mask(
 	    mask_type_t<VL1+VL2> wc( traits::set_pair( hi, lo ) );
 	    return wc;
 	} else if constexpr ( VL1 == VL2 ) {
-	    mask_type_t<VL1+VL2> wc( traits::set_pair( hi.get(), lo.get() ) );
-	    return wc;
+	    if constexpr ( !is_longint_v<mask_type_t<VL1>> ) {
+		return mask_type_t<VL1+VL2>( traits::set_pair( hi, lo ) );
+	    } else {
+		return mask_type_t<VL1+VL2>(
+		    traits::set_pair( hi.get(), lo.get() ) );
+	    }
 	} else {
 	    mask_type_t<VL1+VL2> wlo( lo );
 	    mask_type_t<VL1+VL2> whi( hi );

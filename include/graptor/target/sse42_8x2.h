@@ -10,6 +10,9 @@
 
 #include "graptor/target/mmx_4x2.h"
 #include "graptor/target/sse42_bitwise.h"
+#include "graptor/target/scalar_int.h"
+
+alignas(64) extern const uint64_t increasing_sequence_epi64[16];
 
 namespace target {
 

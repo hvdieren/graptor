@@ -21,8 +21,10 @@ struct mask_type_traits<256> {
     static constexpr unsigned short vlen = 256;
     
     static bool lane( type m, unsigned short l ) {
+	pointer_type st[vlen];
+	_mm256_storeu_si256( (type*)st, m );
 	unsigned short ll = l / width;
-	pointer_type w = _mm256_extract_epi64( m, ll );
+	pointer_type w = st[ll];
 	uint64_t mm = uint64_t(1) << ( l % width );
 	return ( w & mm ) != 0;
     }

@@ -23,6 +23,7 @@
 
 alignas(64) extern const uint8_t conversion_4fx8_cfp16x8_shuffle[32];
 alignas(64) extern const uint8_t conversion_2x8_1x8_shuffle[32];
+alignas(64) extern const uint16_t increasing_sequence_epi16[16];
 
 namespace target {
 
