@@ -75,11 +75,7 @@ public:
 	}
     }
     static member_type lane( type a, int idx ) {
-#if FURTHER_OPTIMIZATION
 	return lane_memory( a, idx );
-#else
-	return lane_switch( a, idx );
-#endif
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
