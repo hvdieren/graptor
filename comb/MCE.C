@@ -121,6 +121,10 @@
 #endif
 #endif
 
+#ifndef PAPI_REGION
+#define PAPI_REGION 0
+#endif
+
 #include <signal.h>
 #include <sys/time.h>
 
