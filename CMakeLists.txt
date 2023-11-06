@@ -16,8 +16,9 @@ configure_file(include/graptor/config.h.in config.h)
 include_directories("${PROJECT_BINARY_DIR}" "include")
 
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
-set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
-#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=1")
+set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=native -DLONG -DMAX_VL=16")
+#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
+#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=8")
 set(EXTRA_LIBS)
 
 ## choice of parallel backend
@@ -96,7 +97,7 @@ if(GRAPTOR_TEST)
 endif(GRAPTOR_TEST)
 
 # bench
-add_subdirectory(bench)
+#add_subdirectory(bench)
 
 # tools
-#add_subdirectory(tools)
+add_subdirectory(tools)
