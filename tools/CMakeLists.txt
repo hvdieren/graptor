@@ -19,3 +19,11 @@ graptor_create_tool(CvtTwitter)
 #graptor_create_tool(IsEqual)
 graptor_create_tool(IsUndir)
 graptor_create_tool(RmDupEdges)
+
+# interposer library
+add_executable(interposer.so interposer.c)
+set_target_properties(interposer.so
+	PROPERTIES
+	COMPILE_FLAGS "${graptor_cflags} -fPIC -pthread"
+	LINK_FLAGS "-shared -fPIC -pthread")
+target_link_libraries(interposer.so ${EXTRA_LIBS} -lrt -ldl)
