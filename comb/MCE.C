@@ -2458,6 +2458,29 @@ int main( int argc, char *argv[] ) {
 	    mce_top_level( R, H, E, v, degeneracy );
 	} );
     } );
+#elif PAR_LOOP == 5
+    if( degeneracy < 180 ) {
+	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
+	    // round down as lower-numbered vertices take longer
+	    VID k = n / npart;
+	    VID from = p == 0 ? 0 : (p-1) * k;
+	    VID to = p == npart-1 ? n : p * k;
+	    for( VID i=from; i < to; i++ ) {
+		VID v = i; // order[i];
+		mce_top_level( R, H, E, v, degeneracy );
+	    }
+	} );
+    } else {
+	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
+	    // round down as lower-numbered vertices take longer
+	    VID k = n / npart;
+	    VID from = p == 0 ? 0 : (p-1) * k;
+	    VID to = p == npart-1 ? n : p * k;
+	    parallel_loop( from, to, 1, [&,degeneracy]( VID v ) {
+		mce_top_level( R, H, E, v, degeneracy );
+	    } );
+	} );
+    }
 #elif PAR_LOOP == 2 || PAR_LOOP == 3
     // Low degeneracy graphs include road networks, where locality is more
     // important than load balance
