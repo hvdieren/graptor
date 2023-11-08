@@ -2112,7 +2112,7 @@ struct array_encoding_intlv2_ifc {
     template<typename index_type>
     static stored_type
     get( const storage_type * base, index_type idx ) {
-	return base_encoding::get<A>( idx );
+	return base_encoding::template get<A>( idx );
     }
 
     template<typename Tr, typename index_type>
