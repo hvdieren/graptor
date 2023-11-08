@@ -1,6 +1,6 @@
 function(graptor_create_tool tool)
     add_executable(${tool} ${tool}.C)
-    set_target_properties(${tool} PROPERTIES COMPILE_FLAGS ${graptor_cflags})
+    set_target_properties(${tool} PROPERTIES COMPILE_FLAGS ${graptor_cxxflags})
     target_link_libraries(${tool} ${EXTRA_LIBS} graptorlib)
 endfunction()
 
@@ -26,4 +26,4 @@ set_target_properties(interposer.so
 	PROPERTIES
 	COMPILE_FLAGS "${graptor_cflags} -fPIC -pthread"
 	LINK_FLAGS "-shared -fPIC -pthread")
-target_link_libraries(interposer.so ${EXTRA_LIBS} -lrt -ldl)
+target_link_libraries(interposer.so -lrt -ldl)

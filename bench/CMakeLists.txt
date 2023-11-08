@@ -9,13 +9,13 @@ list(APPEND benchmarks CCv BFSv PRv APRv BFv MISv FMv BFSLVLv)
 list(APPEND graphtypes GGVEBO VEBOGraptorPullDataParCached)
 
 # Add include directory
-string(APPEND graptor_cflags " -I${CMAKE_SOURCE_DIR}/bench")
+string(APPEND graptor_cxxflags " -I${CMAKE_SOURCE_DIR}/bench")
 
 # set executable files
 foreach(bb ${benchmarks})
     foreach(g ${graphtypes})
 	add_executable(${bb}_${g} ${CMAKE_SOURCE_DIR}/bench/${bb}.C)
-	set_target_properties(${bb}_${g} PROPERTIES COMPILE_FLAGS "-DGRAPHTYPE=${g} ${graptor_cflags}")
+	set_target_properties(${bb}_${g} PROPERTIES COMPILE_FLAGS "-DGRAPHTYPE=${g} ${graptor_cxxflags}")
 
 	# link options
 	target_link_libraries(${bb}_${g} ${EXTRA_LIBS} graptorlib)

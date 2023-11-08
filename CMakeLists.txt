@@ -8,6 +8,17 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# where to install external projects
+set_directory_properties(PROPERTIES EP_BASE "./external")
+
+# init to minimal necessary arguments
+set(graptor_cflags "-Wno-ignored-attributes -g -DLONG")
+set(graptor_cxxflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG")
+
+# architectures
+string(APPEND graptor_cflags " -march=sapphirerapids -DMAX_VL=16")
+string(APPEND graptor_cxxflags " -march=sapphirerapids -DMAX_VL=16")
+
 # set configuration file
 configure_file(include/graptor/config.h.in config.h)
 
@@ -16,48 +27,85 @@ configure_file(include/graptor/config.h.in config.h)
 include_directories("${PROJECT_BINARY_DIR}" "include")
 
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
-set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=native -DLONG -DMAX_VL=16")
+string(APPEND graptor_cflags " -O4 -march=native -DMAX_VL=16")
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=8")
 set(EXTRA_LIBS)
+
+# Cilk-enabled C/C++ compiler
+# only used to build Cilk runtime; it is ok if this is an older compiler
+# C compiler to build Cilk runtime
+set(var GRAPTOR_CILK_C_COMPILER "${CMAKE_C_COMPILER}" CACHE FILEPATH "C compiler")
+
+# C++ compiler to build Cilk runtime
+set(var GRAPTOR_CILK_CXX_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "C++ compiler")
 
 ## choice of parallel backend
 set(GRAPTOR_PARALLEL cilk_numa CACHE STRING "Parallel backend chosen by user at configure time")
 set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa)
 
-set(CILK_ROOT "." CACHE STRING "Cilk root directory, containing include directory")
+# Dependent projects for Cilk; built-in compiler support OpenMP
+include(ExternalProject)
 
-if(GRAPTOR_PARALLEL STREQUAL "cilk" OR GRAPTOR_PARALLEL STREQUAL "cilk_numa")
-    add_library(CILKRTS SHARED IMPORTED)
-    target_include_directories(CILKRTS
-	      INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
-	      )
-    # -fcilkplus now removed
-    string(APPEND graptor_cflags " -DCILK=1 -I${CILK_ROOT}/include")
-    if(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
-	string(APPEND graptor_cflags " -DNUMA=1")
+if(GRAPTOR_PARALLEL STREQUAL "cilk")
+    ExternalProject_Add(
+	    cilkrts_project
+	    GIT_REPOSITORY "https://github.com/OpenCilk/cilkrts"
+	    GIT_TAG "main"
+	    CMAKE_ARGS -DCMAKE_C_COMPILER=${GRAPTOR_CILK_C_COMPILER}
+	    	       -DCMAKE_CXX_COMPILER=${GRAPTOR_CILK_CXX_COMPILER}
+		       -DCMAKE_INSTALL_PREFIX=.
+    )
+
+    add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
+    ExternalProject_Get_Property(cilkrts_project BINARY_DIR)
+    target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
+    add_dependencies(GRAPTOR_BACKEND cilkrts_project)
+
+    find_library(LIBDL NAMES dl)
+    if(LIBDL)
+	list(APPEND EXTRA_LIBS ${LIBDL})
     endif()
 
-    # dependencies
-    find_library(LIBNUMA NAMES numa)
-    find_library(LIBDL NAMES dl)
+    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so)
+    set(graptor_ld_preload LD_PRELOAD=${BINARY_DIR}/lib/libcilkrts.so)
 
-    # libraries
-    set(graptor_cilkrts ${CMAKE_CURRENT_SOURCE_DIR}/reproduce/lib/libcilkrts.so)
-    set(graptor_ld_preload LD_PRELOAD=${graptor_cilkrts})
+elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
+    ExternalProject_Add(
+	    cilkrts_numa_project
+	    GIT_REPOSITORY "git@hpdc-gitlab.eeecs.qub.ac.uk:hvandierendonck/intel-cilk-runtime.git"
+	    GIT_TAG "static"
+	    CMAKE_ARGS -DCMAKE_C_COMPILER=${GRAPTOR_CILK_C_COMPILER}
+	    	       -DCMAKE_CXX_COMPILER=${GRAPTOR_CILK_CXX_COMPILER}
+		       -DCMAKE_INSTALL_PREFIX=.
+    )
+
+    add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
+    ExternalProject_Get_Property(cilkrts_numa_project BINARY_DIR)
+    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so)
+    set(graptor_ld_preload LD_PRELOAD=${BINARY_DIR}/lib/libcilkrts.so)
+    target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
+    add_dependencies(GRAPTOR_BACKEND cilkrts_numa_project)
+
+    find_library(LIBNUMA NAMES numa)
     if(LIBNUMA)
-	list(APPEND EXTRA_LIBS ${graptor_cilkrts} ${LIBNUMA} ${LIBDL})
+	list(APPEND EXTRA_LIBS ${LIBNUMA})
+    endif()
+
+    find_library(LIBDL NAMES dl)
+    if(LIBDL)
+	list(APPEND EXTRA_LIBS ${LIBDL})
     endif()
 elseif(GRAPTOR_PARALLEL STREQUAL "openmp" OR GRAPTOR_PARALLEL STREQUAL "openmp_numa")
     find_package(OpenMP REQUIRED)
     string(APPEND graptor_cflags " -fopenmp")
     list(APPEND EXTRA_LIBS "-fopenmp")
+
     if(GRAPTOR_PARALLEL STREQUAL "openmp_numa")
-	string(APPEND graptor_cflags " -DNUMA=1")
-    endif()
-    find_library(LIBNUMA NAMES numa)
-    if(LIBNUMA)
-	list(APPEND EXTRA_LIBS ${LIBNUMA})
+	find_library(LIBNUMA NAMES numa)
+	if(LIBNUMA)
+	    list(APPEND EXTRA_LIBS ${LIBNUMA})
+	endif()
     endif()
 endif()
 
@@ -85,9 +133,14 @@ if(GRAPTOR_BUILD_DOC)
     endif(DOXYGEN_FOUND)
 endif(GRAPTOR_BUILD_DOC)
 
+get_target_property(parallel_include GRAPTOR_BACKEND INTERFACE_INCLUDE_DIRECTORIES)
+string(APPEND graptor_cflags " -I${parallel_include}")
+string(APPEND graptor_cxxflags " -I${parallel_include}")
+
 # our object file(s)
 add_library(graptorlib STATIC src/constants.C)
-set_target_properties(graptorlib PROPERTIES COMPILE_FLAGS "${graptor_cflags}")
+set_target_properties(graptorlib PROPERTIES COMPILE_FLAGS "${graptor_cxxflags}")
+add_dependencies(graptorlib GRAPTOR_BACKEND)
 
 # testing
 option(GRAPTOR_TEST "Build and run test cases" OFF)
