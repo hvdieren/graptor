@@ -2458,24 +2458,54 @@ int main( int argc, char *argv[] ) {
 	    mce_top_level( R, H, E, v, degeneracy );
 	} );
     } );
-#elif PAR_LOOP == 5
-    if( degeneracy < 180 ) {
-	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
-	    // round down as lower-numbered vertices take longer
-	    VID k = n / npart;
-	    VID from = p == 0 ? 0 : (p-1) * k;
-	    VID to = p == npart-1 ? n : p * k;
-	    for( VID i=from; i < to; i++ ) {
-		VID v = i; // order[i];
-		mce_top_level( R, H, E, v, degeneracy );
-	    }
+#elif PAR_LOOP >= 5 
+    {
+	std::vector<VID> sep( npart+1 );
+	sep.resize( npart+1 );
+	mm::buffer<EID> metric( n+1, numa_allocation_interleaved() );
+	parallel_loop( VID(0), n, [&]( VID v ) {
+	    metric[v] = coreness[rev_order[v]];
+#if PAR_LOOP == 6
+	    metric[v] = metric[v] * metric[v];
+#elif PAR_LOOP == 7
+	    metric[v] = metric[v] * metric[v] * metric[v];
+#elif PAR_LOOP == 8
+	    metric[v] = R.getDegree( v );
+#endif
 	} );
-    } else {
+	EID accum = metric[0];
+	for( VID v=1; v < n; ++v ) {
+	    EID h = metric[v];
+	    metric[v] = accum;
+	    accum += h;
+	}
+	metric[n] = accum;
+
+	EID m_total = accum;
+	EID m_done = 0;
+	VID v_done = 0;
+	sep[0] = 0;
+	for( unsigned p=0; p < npart; ++p ) {
+	    EID avgdeg = ( m_total - m_done ) / EID(npart - p);
+	    const EID * bnd = std::upper_bound( &metric[v_done], &metric[n],
+						m_done + avgdeg );
+	    VID num_v = bnd - &metric[v_done];
+
+	    v_done += num_v;
+	    sep[p+1] = v_done;
+	    m_done = *bnd;
+	    // std::cerr << "sep[" << p << "]=" << sep[p] << "\n";
+	}
+	// std::cerr << "sep[" << npart << "]=" << sep[npart] << "\n";
+
+	assert( m_done == m_total );
+	assert( v_done == n );
+
+	metric.del();
+	
 	parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
-	    // round down as lower-numbered vertices take longer
-	    VID k = n / npart;
-	    VID from = p == 0 ? 0 : (p-1) * k;
-	    VID to = p == npart-1 ? n : p * k;
+	    VID from = sep[p];
+	    VID to = sep[p+1];
 	    parallel_loop( from, to, 1, [&,degeneracy]( VID v ) {
 		mce_top_level( R, H, E, v, degeneracy );
 	    } );
