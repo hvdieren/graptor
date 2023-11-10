@@ -108,6 +108,11 @@ elseif(GRAPTOR_PARALLEL STREQUAL "openmp" OR GRAPTOR_PARALLEL STREQUAL "openmp_n
 	    list(APPEND EXTRA_LIBS ${LIBNUMA})
 	endif()
     endif()
+    # just need to mention some target to make this work
+    add_custom_target(GRAPTOR_BACKEND)
+elseif(GRAPTOR_PARALLEL STREQUAL "seq")
+    # just need to mention some target to make this work
+    add_custom_target(GRAPTOR_BACKEND)
 endif()
 
 # Building documentation?
@@ -123,8 +128,9 @@ if(GRAPTOR_BUILD_DOC)
 	execute_process(COMMAND bash "-c" "find ${CMAKE_CURRENT_SOURCE_DIR}/include -name '*.h' | sed -e 's/^/INPUT += /g'" OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/header-list)
 	configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
 
-	# note the option ALL which allows to build the docs together with the application
-	add_custom_target(doc_doxygen ALL
+	# note the option ALL which allows to build the docs together
+	# with the application
+	add_custom_target(doc_doxygen
 	    COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
 	    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 	    COMMENT "Generating API documentation with Doxygen"
