@@ -28,9 +28,9 @@ configure_file(include/graptor/config.h.in config.h)
 include_directories("${PROJECT_BINARY_DIR}" "include")
 
 #set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake-avx512 -DLONG -DMAX_VL=16")
-string(APPEND graptor_cflags " -O4 -march=native -DMAX_VL=16")
-#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
-#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=8")
+#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=skylake -DLONG -DMAX_VL=16")
+set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -g -march=znver2 -DLONG -DMAX_VL=8")
+#set(graptor_cflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O0 -g -march=native -DLONG -DMAX_VL=1")
 set(EXTRA_LIBS)
 
 # Cilk-enabled C/C++ compiler
@@ -86,7 +86,9 @@ elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
     target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
     add_dependencies(GRAPTOR_BACKEND cilkrts_numa_project)
 
-    find_library(LIBNUMA NAMES numa)
+    # libraries
+    set(graptor_cilkrts $ENV{HOME}/graptor/lib/libcilkrts.so)
+    set(graptor_ld_preload LD_PRELOAD=${graptor_cilkrts})
     if(LIBNUMA)
 	list(APPEND EXTRA_LIBS ${LIBNUMA})
     endif()
