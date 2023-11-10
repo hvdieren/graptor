@@ -16,8 +16,9 @@ set(graptor_cflags "-Wno-ignored-attributes -g -DLONG")
 set(graptor_cxxflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG")
 
 # architectures
-string(APPEND graptor_cflags " -march=sapphirerapids -DMAX_VL=16")
-string(APPEND graptor_cxxflags " -march=sapphirerapids -DMAX_VL=16")
+set(var GRAPTOR_ARCH "native" CACHE STRING "target processor architecture")
+string(APPEND graptor_cflags " -march=${GRAPTOR_ARCH} -DMAX_VL=16")
+string(APPEND graptor_cxxflags " -march=${GRAPTOR_ARCH} -DMAX_VL=16")
 
 # set configuration file
 configure_file(include/graptor/config.h.in config.h)
@@ -59,6 +60,8 @@ if(GRAPTOR_PARALLEL STREQUAL "cilk")
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
     ExternalProject_Get_Property(cilkrts_project BINARY_DIR)
+    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so.5)
+    set(graptor_ld_preload ${BINARY_DIR}/lib/libcilkrts.so.5)
     target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
     add_dependencies(GRAPTOR_BACKEND cilkrts_project)
 
@@ -66,10 +69,6 @@ if(GRAPTOR_PARALLEL STREQUAL "cilk")
     if(LIBDL)
 	list(APPEND EXTRA_LIBS ${LIBDL})
     endif()
-
-    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so)
-    set(graptor_ld_preload LD_PRELOAD=${BINARY_DIR}/lib/libcilkrts.so)
-
 elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
     ExternalProject_Add(
 	    cilkrts_numa_project
@@ -82,8 +81,8 @@ elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
     ExternalProject_Get_Property(cilkrts_numa_project BINARY_DIR)
-    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so)
-    set(graptor_ld_preload LD_PRELOAD=${BINARY_DIR}/lib/libcilkrts.so)
+    list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so.5)
+    set(graptor_ld_preload ${BINARY_DIR}/lib/libcilkrts.so.5)
     target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
     add_dependencies(GRAPTOR_BACKEND cilkrts_numa_project)
 
@@ -154,3 +153,6 @@ endif(GRAPTOR_TEST)
 
 # tools
 add_subdirectory(tools)
+
+# comb
+add_subdirectory(comb)

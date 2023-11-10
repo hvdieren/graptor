@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# For custom gcc build
+. $HOME/tools/gcc-13-install/bin/load.sh
+
+# Kelvin build
+#module load compilers/gcc/10.3.0
+#module load papi/7.0.1/gcc-10.3.0
+
+TREE_ROOT=/var/shared/projects/asap/graphs/adj/realworld/recent
+
+TOOLSPATH=@CMAKE_BINARY_DIR@/tools
+CILK_LIB=@graptor_ld_preload@
+
+WEIGHTS=none
+
+hostname
+
+# args 1:prog_graph_layout 2:graph-file 3:graph-name 4:start-vertex 5:threads 6:partitions 7:vlen 8:delta 9:commit
+function run()
+{
+    local prog=$1
+    local graph_path=$2
+    local graph_name=$3
+    local threads=$4
+    local commit=$5
+    local round=$6
+    local part=$7
+
+    bindir=bin_avx512_$commit
+    arg=""
+
+    local outdir=./graptor_avx512/$commit
+    [ -d $outdir ] || mkdir -p $outdir
+    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.${prog}.${graph_name} 
+
+    if [ ! -f $file ] ; then
+	local papi_out=$file.papi
+	echo $1 $2
+	echo "CILK_NWORKERS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$CILK_LIB $TOOLSPATH/interposer.so\" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file"
+	CILK_NWORKERS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_PRELOAD="$CILK_LIB $TOOLSPATH/interposer.so" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file 2>&1
+    fi
+}
+
+# one 1:bench 2:graph-path 3:graph-name 4:threads 5:commit 6:round 7:part
+function one() {
+    run ${1}_${2}_${3} $4 $5 $6 $7 $8 $9
+}
+
+# args: graph start-vertex
+function for_gg()
+{
+    local graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise graptor $1 $2 $WEIGHTS`
+
+    echo "graph path: $graph_path"
+
+    local g="${1}_${2}"
+    local start=$3
+    local commit=$4
+
+    for r in `seq 0 19` ; do
+	for threads in 128; do # 1 4 8 16 32 ; do
+	    one $b MCE "" vl16 $graph_path $g $threads $commit $r 512
+	done
+	#for threads in 1 ; do
+	    #one $b MCE "" vl16_papi $graph_path $g $threads $commit $r 512
+	    #one $b MCE "" vl16_no512_noavx512f $graph_path $g $threads $commit $r 512
+	    #one $b MCE "" vl16_yes512_noavx512f $graph_path $g $threads $commit $r 512
+	    #one $b MCE "" vl16_no512 $graph_path $g $threads $commit $r 512
+	#done
+    done
+
+    for threads in 128 ; do
+	for r in `seq 0 9` ; do
+	    #one $b MCE _par2 vl16 $graph_path $g $threads $commit $r 512
+	    one $b MCE _par4 vl16 $graph_path $g $threads $commit $r 512
+	    one $b MCE _Dq32_Bq32 vl16 $graph_path $g $threads $commit $r 512
+	    one $b MCE _Dq40_Bq40 vl16 $graph_path $g $threads $commit $r 512
+	    one $b MCE _Dq64_Bq64 vl16 $graph_path $g $threads $commit $r 512
+	    #one $b MCE _par5 vl16 $graph_path $g $threads $commit $r 512
+	    #one $b MCE _par6 vl16 $graph_path $g $threads $commit $r 512
+	    #one $b MCE _par7 vl16 $graph_path $g $threads $commit $r 512
+	    #one $b MCE _par8 vl16 $graph_path $g $threads $commit $r 512
+	done
+    done
+}
+
+true
