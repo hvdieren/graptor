@@ -335,7 +335,7 @@ public:
 	__m512i raw = _mm512_sub_epi64( h, bias );
 	__m512i cnt = blendm( cmpeq( a, zero, mt_mask() ), raw, zero );
 
-#if 1
+#if 0
 	__m512i chk = bitwise_and(
 	    a, sub( sllv( setoneval(), cnt ), setoneval() ) );
 	__mmask8 allz = cmpeq( chk, setzero(), mt_mask() );
