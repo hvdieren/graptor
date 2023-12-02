@@ -12,7 +12,7 @@ int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = false;
     bool weighted = false;
-    size_t vdown = P.getOptionLongValue( "-vdown", 0 );
+    size_t vdown = P.getOptionLongValue( "-vdown", 1 );
     const char * ofile = P.getOptionValue( "-o" );
     const char * ifile = P.getOptionValue( "-i" );
     const char * wfile = P.getOptionValue("-w"); // file for weights
@@ -56,20 +56,21 @@ int main( int argc, char *argv[] ) {
     }
 
     size_t nr = 0, nc = 0, m = 0;
+
+    // Skip comments
     do {
 	if( fgets( buf, SIZE, fp ) == nullptr ) {
 	    std::cerr << "Error reading file\n";
 	    return 1;
 	}
-	if( buf[0] != '%' )
-	    break;
-	if( isdigit( buf[1] ) || isdigit( buf[2] ) ) {
-	    if( sscanf( buf+1, "%ld %ld %ld\n", &nr, &nc, &m ) != 3 ) {
-		std::cerr << "error reading dimensions\n";
-		return 1;
-	    }
-	}
-    } while( true );
+    } while( buf[0] == '%' );
+
+    // Read dimensions
+    if( sscanf( buf, "%ld %ld %ld\n", &nr, &nc, &m ) != 3 ) {
+	std::cerr << "error reading dimensions\n";
+	std::cerr << buf << "\n";
+	return 1;
+    }
 
     assert( nr != 0 && nc != 0 );
 
@@ -98,6 +99,7 @@ int main( int argc, char *argv[] ) {
 	assert( *q == ' ' || *q == '\t' );
 	++q;
 	dst[enxt] = strtoull( q, &qq, 10 ) - vdown;
+	assert( dst[enxt] < n );
 	assert( q != qq );
 	assert( *qq == ' ' || *qq == '\t' );
 	++qq;
@@ -167,7 +169,10 @@ int main( int argc, char *argv[] ) {
     // Write graph to file.
     std::cerr << "Write graph to file " << ofile << "\n";
     GG.writeToBinaryFile( ofile );
-    GG.writeWeightsToBinaryFile( wfile );
+    if( wfile != nullptr )
+	GG.writeWeightsToBinaryFile( wfile );
+    else
+	std::cerr << "Ignoring weights from file\n";
 
     return 0;
 }

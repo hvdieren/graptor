@@ -4,6 +4,7 @@ function(graptor_create_tool tool)
     target_link_libraries(${tool} ${EXTRA_LIBS} graptorlib)
 endfunction()
 
+graptor_create_tool(CvtMtxToBin)
 graptor_create_tool(CvtBinToEdgeList)
 graptor_create_tool(CvtBinToGrazelle)
 graptor_create_tool(CvtBinToText)
