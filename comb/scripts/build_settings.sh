@@ -21,7 +21,7 @@ function build() {
     #local LIB="${GRAPTOR}/build/libgraptorlib.a ${CILKLDPATH}/libcilkrts.so"
     local LIB=${LD_FLAGS}
     #local CXXFLAGS="-g -I${GRAPTOR}/build -I${GRAPTOR}/include -I${CILK_INC}/include -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -DLONG -ldl -std=c++17 -march=$arch ${LIB}"
-    local cxxflags=${CXXFLAGS}
+    local cxxflags="${CXXFLAGS} -O4 -std=c++17"
     local PAPIFLAGS=
     if echo $flags | grep PAPI_REGION=1 > /dev/null 2>&1 ; then
 	PAPI_FLAGS=-lpapi

@@ -21,7 +21,7 @@ read -r -d '' script <<EOT
 #SBATCH -p $prio
 #SBATCH --time=${hours}:00:00
 
-. @CMAKE_CURRENT_BINARY_DIR@/mce_avx512_lib.sh
+. @CMAKE_CURRENT_BINARY_DIR@/mce_blanusa_avx512_lib.sh
 
 case $1 in
 ork*) for_gg orkut undir 100 $2

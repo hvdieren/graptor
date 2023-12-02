@@ -3,12 +3,15 @@
 INC=`echo "$include_dirs" \
  | perl -ne 'chomp; print join(" ", map { "-I$_" } split/ / ) . "\n";' `
 
-GRAPTOR=@CMAKE_SOURCE_DIR@
-CC=@CMAKE_C_COMPILER@
-CFLAGS="$INC @graptor_cflags@"
-CXX=@CMAKE_CXX_COMPILER@
-CXXFLAGS="$INC @graptor_cxxflags@"
-LD_FLAGS=`echo "$link_libs" | sed -e 's,graptorlib,@CMAKE_BINARY_DIR@/libgraptorlib.a,'`
+echo "include_dirs=$include_dirs"
+echo "INC=$INC"
+
+export GRAPTOR=@CMAKE_SOURCE_DIR@
+export CC=@CMAKE_C_COMPILER@
+export CFLAGS="$INC @graptor_cflags@"
+export CXX=@CMAKE_CXX_COMPILER@
+export CXXFLAGS="$INC @graptor_cxxflags@"
+export LD_FLAGS=`echo "$link_libs" | sed -e 's,graptorlib,@CMAKE_BINARY_DIR@/libgraptorlib.a,'`
 
 . @CMAKE_CURRENT_SOURCE_DIR@/build_settings.sh
 
@@ -58,21 +61,20 @@ function one() {
 #one blocked _hash_scalar_vl8 &
 
 one MCE _vl16 ${arch} &
-one MCE _vl16_papi ${arch} 
+#one MCE _vl16_papi ${arch} 
 one MCE _vl16_no512_noavx512f ${arch} &
+
 #one MCE _vl16_no512_noavx512f_papi ${arch} &
 #one MCE _vl16_no512_noavx512f_par0_papi ${arch} &
 #one MCE _vl16_no512_noavx512f_par1_papi ${arch} &
-one MCE _par2_vl16 ${arch} &
-one MCE _par4_vl16 ${arch} &
-one MCE _par5_vl16 ${arch} &
-one MCE _par6_vl16 ${arch} &
-one MCE _par7_vl16 ${arch} &
-one MCE _par8_vl16 ${arch} &
 
 
-#one MCE _vl16_no512 ${arch} &
-#one MCE _vl16_yes512_noavx512f ${arch} &
+one MCE _vl16_no512 ${arch} &
+one MCE _vl16_yes512_noavx512f ${arch} 
+
+one MCE _vl8 ${arch} &
+one MCE _vl8_no512 ${arch} &
+one MCE _vl8_no512_noavx512f ${arch} &
 
 #one MCE _vl16_papi ${arch} &
 
@@ -98,9 +100,9 @@ one MCE _par8_vl16 ${arch} &
 #one MCE _DQ64_BQ64_vl8 &
 #one MCE _DQ64_BQ64_Dq32_Bq32_vl8 &
 #one MCE _DQ32_BQ32_Dq32_Bq32_vl8 &
-one MCE _Dq32_Bq32_vl16 &
-one MCE _Dq40_Bq40_vl16 &
-one MCE _Dq64_Bq64_vl16 &
+#one MCE _Dq32_Bq32_vl16 &
+#one MCE _Dq40_Bq40_vl16 &
+#one MCE _Dq64_Bq64_vl16 &
 
 #one MCE _Dq3_Bq3_vl8 &
 #one MCE _Dq10_Bq10_vl8 &

@@ -58,31 +58,35 @@ function for_gg()
     local start=$3
     local commit=$4
 
-    for r in `seq 0 19` ; do
-	for threads in 128; do # 1 4 8 16 32 ; do
-	    one $b MCE "" vl16 $graph_path $g $threads $commit $r 512
+    for r in `seq 0 9` ; do
+	for threads in 128 ; do # 1 4 8 16 32 64 128 ; do
+	    one $b MCE "" vl8 $graph_path $g $threads $commit $r 1024
+	    one $b MCE "" vl8_no512 $graph_path $g $threads $commit $r 1024
+	    one $b MCE "" vl8_no512_noavx512f $graph_path $g $threads $commit $r 1024
+
+	    one $b MCE "" vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE "" vl16_no512_noavx512f $graph_path $g $threads $commit $r 1024
+	    one $b MCE "" vl16_yes512_noavx512f $graph_path $g $threads $commit $r 1024
+	    one $b MCE "" vl16_no512 $graph_path $g $threads $commit $r 1024
 	done
 	#for threads in 1 ; do
-	    #one $b MCE "" vl16_papi $graph_path $g $threads $commit $r 512
-	    #one $b MCE "" vl16_no512_noavx512f $graph_path $g $threads $commit $r 512
-	    #one $b MCE "" vl16_yes512_noavx512f $graph_path $g $threads $commit $r 512
-	    #one $b MCE "" vl16_no512 $graph_path $g $threads $commit $r 512
+	    #one $b MCE "" vl16_papi $graph_path $g $threads $commit $r 1024
 	#done
     done
 
-    for threads in 128 ; do
-	for r in `seq 0 9` ; do
-	    #one $b MCE _par2 vl16 $graph_path $g $threads $commit $r 512
-	    one $b MCE _par4 vl16 $graph_path $g $threads $commit $r 512
-	    one $b MCE _Dq32_Bq32 vl16 $graph_path $g $threads $commit $r 512
-	    one $b MCE _Dq40_Bq40 vl16 $graph_path $g $threads $commit $r 512
-	    one $b MCE _Dq64_Bq64 vl16 $graph_path $g $threads $commit $r 512
-	    #one $b MCE _par5 vl16 $graph_path $g $threads $commit $r 512
-	    #one $b MCE _par6 vl16 $graph_path $g $threads $commit $r 512
-	    #one $b MCE _par7 vl16 $graph_path $g $threads $commit $r 512
-	    #one $b MCE _par8 vl16 $graph_path $g $threads $commit $r 512
-	done
-    done
+#    for threads in 128 ; do
+#	for r in `seq 0 9` ; do
+	    #one $b MCE _par2 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _par4 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _Dq32_Bq32 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _Dq40_Bq40 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _Dq64_Bq64 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _par5 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _par6 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _par7 vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _par8 vl16 $graph_path $g $threads $commit $r 1024
+#	done
+#    done
 }
 
 true

@@ -1,27 +1,49 @@
 #!/bin/bash
 
-graph=$1
 commit=$2
-mode=$3
 
-hours=24
-node=persia
-prio=persia
+if [ x$3 != x ] ; then
+    prio=$3
+else
+    prio=k2-himem
+fi
 
-read -r -d '' script <<EOT
+if [ x"$prio" == xk2-himem ] ; then
+    mem=15
+    #hours=24
+    hours=1
+else
+    mem=1
+    if [ x"$prio" == xk2-lowpri ] ; then
+	hours=72
+    elif [ x"$prio" == xk2-medpri ] ; then
+	hours=24
+    else
+	#hours=3
+	hours=1
+    fi
+fi
+
+if [[ "$commit" == *_numa8 ]] ; then
+    exclude_list="node[134,161-209]"
+else
+    exclude_list="node[101-133,135-160,301-302]"
+fi
+
+sbatch <<EOT
 #!/bin/bash
-#SBATCH --job-name sr:$1
+#SBATCH --job-name bl:$1
 #PBS -r 1
-#xxSBATCH --mem-per-cpu=23G
+#SBATCH --mem-per-cpu=${mem}G
+#xxSBATCH --mem-per-cpu=1G
 #SBATCH --exclusive
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=128
 #SBATCH --nodes=1
-#SBATCH --nodelist=${node}
 #SBATCH -p $prio
 #SBATCH --time=${hours}:00:00
 
-. @CMAKE_CURRENT_BINARY_DIR@/mce_avx512_lib.sh
+. ./mce_blanusa_lib.sh
 
 case $1 in
 ork*) for_gg orkut undir 100 $2
@@ -96,7 +118,7 @@ worm*) for_gg bio-WormNet-v3 undir 1 $2
 	;;
 talk*) for_gg wiki-talk undir 1 $2
 	;;
-topc*) for_gg wiki-topcats undir 1 $2
+topcats*) for_gg wiki-topcats undir 1 $2
 	;;
 patents*) for_gg cit-patents undir 1 $2
 	;;
@@ -108,17 +130,3 @@ esac
 
 true
 EOT
-
-if [ x$mode = xshell ] ; then
-    /bin/bash -c "$script"
-elif [ x$mode = xsbatch ] ; then
-    echo "$script" | sbatch 
-elif [ x$mode = xsrun ] ; then
-    file=`mktemp $HOME/tmp/tmp.XXXXXXXX`
-    echo "$script" > $file
-    chmod u+x $file
-    srun -n 1 -c 128 -p $prio -w $node -t 0 $file
-    rm $file
-else
-    echo "unknown mode '$mode', use (shell|sbatch|srun)"
-fi
