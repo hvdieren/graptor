@@ -24,6 +24,7 @@
 alignas(64) extern const uint8_t conversion_4fx8_cfp16x8_shuffle[32];
 alignas(64) extern const uint8_t conversion_2x8_1x8_shuffle[32];
 alignas(64) extern const uint16_t increasing_sequence_epi16[16];
+alignas(64) extern const uint16_t movemask_lut_epi16[16*4];
 
 namespace target {
 
@@ -206,11 +207,20 @@ public:
 	return _mm_mask_blend_epi16( mask, setzero(), setone() );
 	// return _mm_movm_epi16( mask );
 #else
+/* _mm_sllv_epi16 is also __AVX512VL__ && __AVX512BW__, but _mm_srai_epi16 is
+   SSE2
 	// In AVX etc, blend requires a constant mask, so does not apply
 	type vmask = _mm_set1_epi16( (int)mask );
 	const __m128i cnt = _mm_set_epi16( 8, 9, 10, 11, 12, 13, 14, 15 );
 	type vmask2 = _mm_sllv_epi16( vmask, cnt );
 	return _mm_srai_epi16( vmask2, 15 );
+*/
+	static_assert( vlen == 8, "specialised code" );
+	mask_type lomask = mask & 15;
+	mask_type himask = ( mask >> 4 ) & 15;
+	type lo = loadu( (const member_type *)&movemask_lut_epi16[4 * lomask] );
+	type hi = loadu( (const member_type *)&movemask_lut_epi16[4 * himask] );
+	return set_pair( hi, lo );
 #endif
     }
     template<typename T2>
