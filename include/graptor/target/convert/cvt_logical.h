@@ -59,18 +59,25 @@ struct int_conversion_traits<logical<B>, logical<C>, VL> {
 	    return int_conversion_traits<typename src_traits::int_type,
 					 typename dst_traits::int_type,
 					 VL>::convert( b );
-	} else {
+	} else if constexpr ( B == C ) {
+	    return a;
+	} else if constexpr (
 #if __AVX512F__
+	    true
+#else
+	    ( B == 4 || B == 2 ) && ( C == 4 || C == 8 )
+#endif
+	    ) {
 	    // Do a widening signed integer conversion to replicate the
-	    // most significant bit of the logical
+	    // most significant bit of the logical. This is generally supported
+	    // with 2, 4 and 8 byte lanes.
 	    return int_conversion_traits<
 		std::make_signed_t<typename src_traits::int_type>,
 		std::make_signed_t<typename dst_traits::int_type>,
 		VL>::convert( a );
-#else
+	} else {
 	    // Extract mask and re-distribute
 	    return dst_traits::asvector( src_traits::asmask( a ) );
-#endif
 	}
     }
 };
