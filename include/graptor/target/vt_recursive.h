@@ -166,8 +166,8 @@ struct vt_recursive {
 
     static mask_type asmask( vmask_type a ) {
 	return mask_traits::set_pair(
-	    lo_half_traits::asmask( lower_half( a ) ),
-	    hi_half_traits::asmask( upper_half( a ) ) );
+	    hi_half_traits::asmask( upper_half( a ) ),
+	    lo_half_traits::asmask( lower_half( a ) ) );
     }
     static vmask_type asvector( mask_type m ) {
 	return type {
