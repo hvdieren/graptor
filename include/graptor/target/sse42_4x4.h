@@ -207,6 +207,7 @@ public:
 	return _mm_srai_epi32( vmask2, 31 );
 #else
 	// Use lookup table
+	assert( 0 && "Looks like LUT is wrong - 16-bit fields recorded" );
 	return _mm_load_si128(
 	    (const type*)&movemask_lut_epi32[4*(0xf & (int)mask)] );
 #endif
