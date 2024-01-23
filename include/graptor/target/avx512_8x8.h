@@ -382,7 +382,7 @@ public:
     }
 
     static auto popcnt( type v ) {
-#if __AVX512VPOPCNTDQ__ && __AVX512VL__
+#if __AVX512VPOPCNTDQ__ && __AVX512VL__ && !DISABLE_POPCNT
 	return _mm512_popcnt_epi64( v );
 #else
 	// source: https://arxiv.org/pdf/1611.07612.pdf
