@@ -747,7 +747,7 @@ struct evaluator {
 	    if constexpr ( expr::cache_get_accum_aid<cid,Accum>::valid
 			   && expr::cache_get_accum_aid<cid,Accum>::aid
 			   == expr::aid_frontier_nacte
-&& false ) {
+			   /* && false */ ) { // was disabled for fusion...
 		auto cst = E2::unop_type::evaluate_confuse_lanes(
 		    dis.uvalue() );
 
