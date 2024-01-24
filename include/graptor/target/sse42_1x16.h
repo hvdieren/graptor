@@ -48,6 +48,8 @@ public:
     using itype = __m128i;
     using vmask_type = __m128i;
 
+    using mt_preferred = target::mt_vmask;
+
     using mask_traits = mask_type_traits<VL>;
     using mask_type = typename mask_traits::type;
 
@@ -207,6 +209,15 @@ public:
 	return _mm_blend_epi32( z, s, VL == 16 ? 0b0011 : 0b0001 );
     }
 #endif // GRAPTOR_USE_MMX
+
+    // Logical mask - only test msb
+    static bool is_all_false( type a ) {
+	if constexpr ( VL == 8 ) {
+	    uint64_t b = _mm_extract_epi64( a, 0 );
+	    return ( b & 0x8080808080808080ull ) == 0;
+	} else
+	    assert( 0 && "NYI" );
+    }
 
     static type blendm( vmask_type m, type l, type r ) {
 	// see also https://stackoverflow.com/questions/40746656/howto-vblend
