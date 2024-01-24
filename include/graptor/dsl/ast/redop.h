@@ -1534,12 +1534,17 @@ struct redop_setif {
 		       "atomic operations apply only to scalars" );
 
 	auto rval = r.value();
-	auto mask = mpack.get_mask_for( rval );
-	if( mask.get() ) {
+	if constexpr ( mpack.is_empty() ) {
 	    auto oval = l.value().atomic_setif( r.value() );
 	    return make_rvalue( oval, mpack );
-	} else
-	    return make_rvalue( mask, mpack );
+	} else {
+	    auto mask = mpack.get_mask_for( rval );
+	    if( mask.get() ) {
+		auto oval = l.value().atomic_setif( r.value() );
+		return make_rvalue( oval, mpack );
+	    } else
+		return make_rvalue( mask, mpack );
+	}
     }
 };
 
