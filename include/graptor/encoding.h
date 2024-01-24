@@ -105,9 +105,20 @@ struct array_encoding {
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
 	    Tr::VL>::convert( raw );
-	auto old = load<Tr>( base, idx );
-	auto upd = stored_traits<Tr::VL>::blend( mask, old, value );
-	stored_traits<Tr::VL>::store( &base[idx], upd );
+	if constexpr ( simd::detail::is_mask_logical_traits_v<MTr> ) {
+	    auto vmask = conversion_traits<
+		typename MTr::member_type,
+		logical<stored_traits<MTr::VL>::W>,
+		MTr::VL>::convert( mask );
+	    auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	    auto upd = stored_traits<Tr::VL>::blend( vmask, old, value );
+	    stored_traits<Tr::VL>::store( &base[idx], upd );
+	} else {
+	    // Perhaps needs further specialisation
+	    auto old = stored_traits<Tr::VL>::load( &base[idx] );
+	    auto upd = stored_traits<Tr::VL>::blend( mask, old, value );
+	    stored_traits<Tr::VL>::store( &base[idx], upd );
+	}
     }
 
     template<typename Tr, typename index_type>
@@ -1004,6 +1015,18 @@ struct array_encoding_wide {
 
     template<typename Tr, typename index_type>
     static typename Tr::type
+    ldcas( storage_type * base, index_type idx ) {
+	return load<Tr>( base, idx );
+    }
+
+    template<typename Tr>
+    static typename Tr::type
+    extract( typename Tr::type val ) {
+	return val;
+    }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
     load( storage_type * base, index_type idx ) {
 	auto raw = stored_traits<Tr::VL>::load( &base[idx] );
 	return conversion_traits<
@@ -1074,11 +1097,6 @@ struct array_encoding_wide {
     template<typename Tr, typename index_type>
     static typename Tr::type
     gather( storage_type * base, index_type idx ) {
-	if constexpr ( Tr::VL == 1 ) { // scalar operations
-	    // Default code
-	    return array_encoding<stored_type>::template load<Tr>(
-		base, idx );
-	}
 	using st = stored_traits<Tr::VL>;
 
 	if constexpr ( Tr::VL == 1 ) { // scalar operations
@@ -1134,13 +1152,14 @@ struct array_encoding_wide {
 	// Perform aligned gather. Use native scale factor.
 	using xt = vector_type_traits_vl<
 	    int_type_of_size_t<sizeof(idx_ty)/it::vlen>,it::vlen>;
-	constexpr unsigned short lg = ilog2(it::W) - ilog2(st::W);
+	constexpr unsigned short slg = ilog2(st::W);
+	constexpr unsigned short lg = ilog2(it::W) - slg;
 	const auto m = xt::slli( xt::setone(), lg );
 	auto algn = xt::srli( idx, lg );
 	auto raw = it::gather(
 	    reinterpret_cast<const typename it::member_type *>( base ),
 	    algn, mask );
-	auto sh = xt::slli( xt::bitwise_andnot( m, idx ), 3+lg );
+	auto sh = xt::slli( xt::bitwise_andnot( m, idx ), 3+slg );
 	auto a = it::srlv( raw, sh );
 #endif
 	
@@ -1160,13 +1179,14 @@ struct array_encoding_wide {
 	// Perform aligned gather. Use native scale factor.
 	using xt = vector_type_traits_vl<
 	    int_type_of_size_t<sizeof(idx_ty)/it::vlen>,it::vlen>;
-	constexpr unsigned short lg = ilog2(it::W) - ilog2(st::W);
+	constexpr unsigned short slg = ilog2(st::W);
+	constexpr unsigned short lg = ilog2(it::W) - slg;
 	const auto m = xt::slli( xt::setone(), lg );
 	auto algn = xt::srli( idx, lg );
 	auto raw = it::gather(
 	    reinterpret_cast<const typename it::member_type *>( base ),
 	    algn );
-	auto sh = xt::slli( xt::bitwise_andnot( m, idx ), 3+lg );
+	auto sh = xt::slli( xt::bitwise_andnot( m, idx ), 3+slg );
 	auto a = it::srlv( raw, sh );
 #endif
 	
