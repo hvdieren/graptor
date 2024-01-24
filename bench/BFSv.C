@@ -15,7 +15,7 @@
 #endif
 
 #ifndef UNCOND_EXEC
-#define UNCOND_EXEC 1
+#define UNCOND_EXEC 0
 #endif
 
 #ifdef LEVEL_ASYNC
@@ -27,6 +27,10 @@
 #undef MEMO
 #endif
 #define MEMO 0
+
+using expr::_0;
+using expr::_1;
+using expr::_1s;
 
 template <class GraphType>
 class BFSv {
@@ -64,10 +68,14 @@ public:
 	double delay;
 	float density;
 	float active;
+	EID nacte;
+	VID nactv;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
 		      << " density: " << density
+		      << " nacte: " << nacte
+		      << " nactv: " << nactv
 		      << " active: " << active << "\n";
 	}
     };
@@ -81,17 +89,14 @@ public:
 
 	// Assign initial labels
 	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-			     return parent[v] = expr::allones_val( v ); } )
+	    .vertex_map( [&]( auto v ) { return parent[v] = _1s; } )
+#if DEFERRED_UPDATE
+	    .vertex_map( [&]( auto v ) { return prev_parent[v] = _1s; } )
+#endif
 	    .materialize();
 	
 	parent.get_ptr()[start] = start;
-
 #if DEFERRED_UPDATE
-	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-			     return prev_parent[v] = expr::allones_val( v ); } )
-	    .materialize();
 	prev_parent.get_ptr()[start] = start;
 #endif
 
@@ -101,7 +106,7 @@ public:
 	iter = 0;
 	active = 1;
 
-#if BFS_DEBUG && 0
+#if BFS_DEBUG
 	frontier all = frontier::dense( n, part );
 	all.toDense(part);
 	all.getDenseB()[start] = true;
@@ -131,15 +136,17 @@ public:
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
-			     [&] ( auto d ) {
-				 return parent[d] == expr::allones_val(d);
-			     } ),
+			     [&] ( auto d ) { return parent[d] == _1s; }
+		    ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if UNCOND_EXEC
 			// If we call relax while frontier says not included,
 			// then we need to check here, but luckily we know the
 			// frontier from parent[]
+			// Actually, this is WRONG as parent gets overwritten
+		        // during the edgemap and does not accurately reflect
+		        // the previous frontier.
 			return parent[d].setif(
 			    expr::add_predicate( s,
 						 parent[s] != expr::allones_val(d) )
@@ -155,11 +162,11 @@ public:
 #endif
 
 
-#if BFS_DEBUG && 0
+#if BFS_DEBUG
 	    // Correctness check
-	    output.toDense<logical<8>>(part);
+	    output.template toDense<frontier_type::ft_bool>(part);
 	    {
-		logical<8> *nf=output.template getDenseL<8>();
+		bool *nf=output.template getDense<frontier_type::ft_bool>();
 		bool *af = all.getDenseB();
 		for( VID v=0; v < n; ++v ) {
 		    if( af[v] && nf[v] )
@@ -170,7 +177,7 @@ public:
 			std::cerr << v << " active but no parent recorded\n";
 		}
 	    }
-	    output.dump( std::cout );
+	    // output.dump( std::cout );
 #endif
 
 	    active += output.nActiveVertices();
@@ -186,6 +193,8 @@ public:
 		info_buf[iter].density = F.density( GA.numEdges() );
 		info_buf[iter].delay = tm_iter.next();
 		info_buf[iter].active = float(active)/float(n);
+		info_buf[iter].nacte = F.nActiveEdges();
+		info_buf[iter].nactv = F.nActiveVertices();
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
@@ -215,6 +224,23 @@ public:
 	std::cout << "Longest path from " << start
 		  << " (original: " << GA.originalID( start ) << ") : "
 		  << longest << "\n";
+
+	VID longer = 0;
+	map_vertexL( GA.get_partitioner(),
+		     [&]( VID v ) {
+			 VID p = v;
+			 VID steps = 0;
+			 while( ~parent[p] != 0 && parent[p] != p ) {
+			     p = parent[p];
+			     ++steps;
+			 }
+			 if( steps > longest )
+			     __sync_fetch_and_add( &longer, 1 );
+		     } );
+	std::cout << "Number of vertices with longer chains: "
+		  << longer
+		  << ( longer == 0 ? " PASS" : " FAIL" )
+		  << "\n";
 
 	std::cout << "Number of activated vertices: " << active << "\n";
 	std::cout << "Number of vertices: " << n << "\n";

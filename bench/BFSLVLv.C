@@ -4,6 +4,7 @@
 using expr::_0;
 using expr::_1;
 using expr::_1s;
+using expr::_c;
 
 // By default set options for highest performance
 #ifndef DEFERRED_UPDATE
@@ -26,6 +27,26 @@ using expr::_1s;
 #undef MEMO
 #endif
 #define MEMO 0
+
+// TODO: FUSION works well for road networks: estimate network type and select at runtime
+#ifndef FUSION
+#define FUSION 0
+#endif
+
+enum var {
+    var_current = 0,
+    var_previous = 1
+};
+
+// Ensure signed comparisons between levels as ordered comparators in AVX2
+// are more efficient on signed than unsigned.
+using sVID = std::make_signed_t<VID>;
+
+using bVID = sVID;
+using Enc = array_encoding<sVID>;
+
+// using bVID = int8_t;
+// using Enc = array_encoding_wide<bVID>;
 
 template <class GraphType>
 class BFSLVLv {
@@ -66,9 +87,11 @@ public:
 	float active;
 	EID nacte;
 	VID nactv;
+	frontier_type ftype;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
+		      << ' ' << ftype
 		      << " density: " << density
 		      << " nacte: " << nacte
 		      << " nactv: " << nactv
@@ -80,23 +103,20 @@ public:
 
     void run() {
 	const partitioner &part = GA.get_partitioner();
-	VID n = GA.numVertices();
+	sVID n = GA.numVertices();
 	EID m = GA.numEdges();
 
+	sVID ilvl = n+1; // std::numeric_limits<bVID>::max(); // can only store bVID
 	// Assign initial labels
 	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-		return a_level[v]
-		    = expr::constant_val( a_level[v], n+1 ); } )
-	    .materialize();
-	a_level.get_ptr()[start] = 0;
-
+	    .vertex_map( [&]( auto v ) { return a_level[v] = _c( ilvl ); } )
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) {
-		return a_prev_level[v]
-		    = expr::constant_val( a_prev_level[v], n+1 ); } )
+	    .vertex_map( [&]( auto v ) { return a_prev_level[v] = _c( ilvl ); } )
+#endif
 	    .materialize();
+
+	a_level.get_ptr()[start] = 0;
+#if DEFERRED_UPDATE || !LEVEL_ASYNC
 	a_prev_level.get_ptr()[start] = 0;
 #endif
 
@@ -116,7 +136,9 @@ public:
 	// degrees (e.g., road network). Otherwise, wait until a dense
 	// iteration has occured (in which case further dense iterations
 	// will still take precedence over sparse/fusion iterations).
+#if FUSION
 	bool enable_fusion = isLowDegreeGraph( GA );
+#endif
 
 	while( !F.isEmpty() ) {  // iterate until all vertices visited
 	    timer tm_iter;
@@ -141,12 +163,27 @@ public:
 			     }, api::strong ),
 #else
 		api::record( output, api::reduction, api::strong ),
+/*
+ * This frontier rule is correct, and does not require a_prev_level, however
+ * it is slower due to enabling too many vertices, in particular those whose
+ * level has been updated in a chain due to asynchronous and unconditional
+ * execution, but whose level is still too large to be final. It is more
+ * efficient to wake those up later. Selecting a_level[d] == _c( iter+1 )
+ * proves insufficient.
+		api::record( output,
+			     [&]( auto d ) {
+				 // A vertex is active if its level has
+				 // grown to at least the current iteration:
+				 // a_level[d] >= iter+1
+				 return a_level[d] > _c( iter );
+			     }, api::strong ),
+*/
 #endif
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst, [&]( auto d ) {
-		    auto cIt = expr::constant_val( d, iter+1 );
-		    return a_level[d] > cIt;
+		    // Use > comparison as it is faster than >= on AVX2
+		    return a_level[d] > _c( iter );
 		} ),
 #endif
 #if FUSION
@@ -160,27 +197,10 @@ public:
 		} ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    // TODO: alternative formulation
-		    // Will avoid an add in critical path
-		    // (no fusion only)
-		    // doesn't help performance due to broadcast...
-		    // The check a_level[s] == cur_level amounts to
-		    // strong filtering on api::src.
-		    /*
-		    auto cur_level = expr::constant_val( a_level[s], iter );
-		    auto high_level = expr::constant_val( a_level[s], iter+1 );
-		    return expr::let<3>(
-			a_level[d],
-			[&]( auto old ) {
-			    return a_level[d] = expr::add_predicate(
-				high_level,
-				a_level[s] == cur_level && old > high_level );
-			} );
-		    */
 #if LEVEL_ASYNC
-		    return a_level[d].min( a_level[s]+expr::constant_val_one(s) );
+		    return a_level[d].min( a_level[s] + _1 );
 #else
-		    return a_level[d].min( a_prev_level[s]+expr::constant_val_one(s) );
+		    return a_level[d].min( a_prev_level[s] + _1 );
 #endif
 		} )
 		)
@@ -189,35 +209,13 @@ public:
 	    maintain_copies( part, /*output,*/ prev_level, level );
 #endif
 
-#if BFS_DEBUG
-	    // Correctness check
-	    // output.toDense<logical<4>>(part);
-	    output.template toDense<frontier_type::ft_bool>(part);
-	    std::cout << "output: ";
-	    output.dump( std::cout );
-	    std::cout << "all   : ";
-	    all.dump( std::cout );
-	    {
-		bool *nf=output.template getDense<frontier_type::ft_bool>();
-		bool *af = all.getDenseB();
-		for( VID v=0; v < n; ++v ) {
-		    if( af[v] && nf[v] )
-			std::cerr << v << " activated again\n";
-		    if( nf[v] )
-			af[v] = true;
-		    if( af[v] && level[v] == n+1 )
-			std::cerr << v << " active but no level recorded\n";
-		}
-	    }
-#endif
-
-	    active += output.nActiveVertices();
-
+	    print( std::cerr, part, a_level );
+	    
 	    if( itimes ) {
 		VID active = 0;
 		if( calculate_active ) { // Warning: expensive, included in time
 		    for( VID v=0; v < n; ++v )
-			if( a_level[v] == ~VID(0) )
+			if( a_level[v] == n+1 )
 			    active++;
 		}
 		info_buf.resize( iter+1 );
@@ -226,6 +224,7 @@ public:
 		info_buf[iter].active = float(active)/float(n);
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].nactv = F.nActiveVertices();
+		info_buf[iter].ftype = F.getType();
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
@@ -236,8 +235,10 @@ public:
 
 	    ++iter;
 
+#if FUSION
 	    if( !api::default_threshold().is_sparse( F, m ) )
 		enable_fusion = true;
+#endif
 	}
 
 	F.del();
@@ -255,14 +256,52 @@ public:
     void validate( stat & stat_buf ) {
 	VID n = GA.numVertices();
 	// VID longest = iter - 1;
-	VID longest = 0;
+	sVID longest = 0;
+	VID longest_v = start;
 	for( VID v=0; v < n; ++v )
-	    if( longest < a_level[v] && a_level[v] < n ) 
+	    if( longest < a_level[v] && a_level[v] < n ) {
 		longest = a_level[v];
+		longest_v = v;
+	    }
 
 	std::cout << "Longest path from " << start
 		  << " (original: " << GA.originalID( start ) << ") : "
-		  << longest << "\n";
+		  << longest
+		  << " at: " << longest_v
+		  << " (" << GA.originalID( longest_v ) << ")\n";
+
+	frontier wrong;
+	// Assuming symmetric graph, showing inverse properties:
+	// Any neigbours must be immediately before us, together with
+	// us or at most immediately after us.
+	// Note: condition for wrong values
+	if( GA.isSymmetric() ) {
+	    api::edgemap(
+		GA,
+		api::record( wrong, api::reduction, api::strong ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    return a_level[s] > a_level[d] + _1
+			|| a_level[s] < a_level[d] - _1;
+		} )
+		)
+		.materialize();
+	}  else {
+	    // Directed graph: some paths may take longer to reach us and that
+	    // is fine. But no-one that can reach us can do it more than
+	    // one step ahead of us.
+	    api::edgemap(
+		GA,
+		api::record( wrong, api::reduction, api::strong ),
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    return a_level[s] < a_level[d] - _1;
+		} )
+		)
+		.materialize();
+	}
+	std::cout << "Number of vertices with nghbs not activated in time: "
+		  << wrong.nActiveVertices()
+		  << ( wrong.nActiveVertices() == 0 ? " PASS" : " FAIL" )
+		  << "\n";
 
 	std::cout << "Number of activated vertices: " << active << "\n";
 	std::cout << "Number of vertices: " << n << "\n";
@@ -277,16 +316,16 @@ public:
 #endif
     }
 
-    const VID * get_level() const { return a_level.get_ptr(); }
+    // const sVID * get_level() const { return a_level.get_ptr(); }
 
 private:
     const GraphType & GA;
     bool itimes, debug, calculate_active;
-    int iter;
+    sVID iter;
     VID start, active;
-    api::vertexprop<VID,VID,var_current> a_level;
+    api::vertexprop<sVID,VID,var_current> a_level;
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-    api::vertexprop<VID,VID,var_previous> a_prev_level;
+    api::vertexprop<sVID,VID,var_previous> a_prev_level;
 #endif
     std::vector<info> info_buf;
 };
