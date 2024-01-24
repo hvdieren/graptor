@@ -183,7 +183,7 @@ public:
 #if CONVERGENCE
 		api::filter( api::weak, api::dst, [&]( auto d ) {
 		    // Use > comparison as it is faster than >= on AVX2
-		    return a_level[d] > _c( iter );
+		    return a_level[d] > _c( iter+1 );
 		} ),
 #endif
 #if FUSION
@@ -209,7 +209,7 @@ public:
 	    maintain_copies( part, /*output,*/ prev_level, level );
 #endif
 
-	    print( std::cerr, part, a_level );
+	    // print( std::cerr, part, a_level );
 	    
 	    if( itimes ) {
 		VID active = 0;
