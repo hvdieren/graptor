@@ -342,6 +342,54 @@ public:
     }
 
     static type add( type a, type b ) { return _mm_add_epi32( a, b ); }
+    static type adds( type a, type b ) {
+	if constexpr ( std::is_signed_v<member_type> ) {
+	    // Based on: https://stackoverflow.com/questions/29498824/add-saturate-32-bit-signed-ints-intrinsics
+	    const __m128i int_max = _mm_set1_epi32( INT32_MAX );
+
+	    // normal result (possibly wraps around)
+	    const __m128i res = _mm_add_epi32( a, b );
+
+	    // If result saturates, it has the same sign as both a and b
+	    // shift sign to lowest bit
+	    const __m128i sign_bit = _mm_srli_epi32( a, 31 );
+
+#if defined(__AVX512VL__)
+	    const __m128i overflow = _mm_ternarylogic_epi32( a, b, res, 0x42);
+#else
+	    const __m128i sign_xor = _mm_xor_si128( a, b );
+	    const __m128i overflow =
+		_mm_andnot_si128( sign_xor, _mm_xor_si128( a, res ) );
+#endif
+
+#if defined(__AVX512DQ__) && defined(__AVX512VL__)
+	    return _mm_mask_add_epi32( res, _mm_movepi32_mask( overflow ),
+				       int_max, sign_bit );
+#else
+	    const __m128i saturated = _mm_add_epi32( int_max, sign_bit );
+
+#if defined(__SSE4_1__)
+	    return
+		_mm_castps_si128(
+		    _mm_blendv_ps(
+			_mm_castsi128_ps( res ),
+			_mm_castsi128_ps( saturated ),
+			_mm_castsi128_ps( overflow )
+			)
+		    );
+#else
+	    const __m128i overflow_mask = _mm_srai_epi32( overflow, 31 );
+	    return
+		_mm_or_si128(
+		    _mm_and_si128( overflow_mask, saturated ),
+		    _mm_andnot_si128( overflow_mask, res )
+		    );
+#endif
+#endif
+	} else {
+	    assert( 0 && "NYI" );
+	}
+    }
     static type sub( type a, type b ) { return _mm_sub_epi32( a, b ); }
     static type mul( type a, type b ) { return _mm_mullo_epi32( a, b ); }
 

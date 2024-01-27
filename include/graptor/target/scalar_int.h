@@ -97,6 +97,19 @@ public:
 	return m ? a + b : s;
     }
     static type add( type a, type b ) { return a + b; }
+    static type adds( type a, type b ) {
+	if constexpr ( std::is_signed_v<member_type> ) {
+	    type c;
+	    if( !__builtin_add_overflow( a, b, &c ) )
+		c = ~(member_type)0;
+	    return c;
+	} else {
+	    type c = a + b;
+	    if( c < a )
+		c = ~(member_type)0;
+	    return c;
+	}
+    }
     static type sub( type a, type b ) { return a - b; }
     static type mul( type a, type b ) { return a * b; }
     static type mulhi( type a, type b ) {

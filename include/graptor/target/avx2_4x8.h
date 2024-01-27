@@ -459,11 +459,46 @@ public:
 	return _mm256_blendv_epi8( src, sum, m );
     }
     static type add( type src, mask_type m, type a, type b ) {
+#if __AVX512VL__
 	type sum = add( a, b );
 	return _mm256_mask_blend_epi32( m, src, sum );
+#else
+	return add( src, asvector( m ), a, b );
+#endif
     }
 
     static type add( type a, type b ) { return _mm256_add_epi32( a, b ); }
+    static type adds( type a, type b ) {
+	if constexpr ( std::is_signed_v<member_type> ) {
+	    // Based on: https://stackoverflow.com/questions/29498824/add-saturate-32-bit-signed-ints-intrinsics
+	    const type int_max = set1( INT32_MAX );
+
+	    // normal result (possibly wraps around)
+	    const type res = add( a, b );
+
+	    // If result saturates, it has the same sign as both a and b
+	    // shift sign to lowest bit
+	    const type sign_bit = srli( a, 31 );
+
+#if defined(__AVX512VL__)
+	    const type overflow = _mm256_ternarylogic_epi32( a, b, res, 0x42 );
+#else
+	    const type sign_xor = bitwise_xor( a, b );
+	    const type overflow =
+		bitwise_andnot( sign_xor, bitwise_xor( a, res ) );
+#endif
+
+	    // Only top bit of overflow is meaningful, enforce using only
+	    // this by SRAI. With AVX512VL, may be better to move to mask.
+#if __AVX512VL__
+	    return add( res, asmask( overflow ), int_max, sign_bit );
+#else
+	    return add( res, srai( overflow, B-1 ), int_max, sign_bit );
+#endif
+	} else {
+	    assert( 0 && "NYI" );
+	}
+    }
     static type sub( type a, type b ) { return _mm256_sub_epi32( a, b ); }
     static type mul( type a, type b ) { return _mm256_mullo_epi32( a, b ); }
     static vpair<type,type> divmod3( type a ) {
