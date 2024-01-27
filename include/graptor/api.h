@@ -541,6 +541,7 @@ struct arg_filter_a_op {
 		typename VIDType::type, VIDType::VL>;
 	    return m_op.active( d ) &&
 		expr::make_unop_cvt_to_mask<Tr>( m_method( d ) );
+		// m_method( d );
 	} else
 	    return m_op.active( d );
     }
@@ -1130,6 +1131,8 @@ struct arg_record_method_op {
 		expr::add_predicate( expr::constant_val_one(vid), mask ) );
 	} else if constexpr ( is_priv ) {
 	    // TODO: consider use of let to hold mask
+	    // ... experimental code below
+#if 0
 	    auto mask = expr::rewrite_internal( m_method( vid ) );
 	    return expr::make_seq(
 		m_op.vertexop( vid ),
@@ -1138,6 +1141,25 @@ struct arg_record_method_op {
 		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
 		nactv[expr::zero_val(vid)] +=
 		expr::add_predicate( expr::constant_val_one(vid), mask ) );
+#else
+	    auto mm = m_method( vid );
+	    using MTr = typename std::decay_t<decltype(mm)>::data_type;
+	    return expr::let<expr::aid_let_record>(
+		expr::rewrite_internal(
+		    expr::make_unop_switch_to_vector( mm ) ),
+		[&]( auto mask ) {
+		    return expr::make_seq(
+			m_op.vertexop( vid ),
+			m_array[vid] = mask, // expr::make_unop_switch_to_vector( mask ),
+			nacte[expr::zero_val(vid)] +=
+			expr::add_predicate( expr::cast<EID>( degree[vid] ),
+					     expr::make_unop_cvt_to_mask<MTr>( mask ) ),
+			nactv[expr::zero_val(vid)] +=
+			expr::add_predicate( expr::constant_val_one(vid),
+					     expr::make_unop_cvt_to_mask<MTr>( mask ) ) );
+		} );
+		
+#endif
 	} else {
 	    // TODO: consider use of let to hold mask
 	    auto mask = expr::rewrite_internal( m_method( vid ) );
