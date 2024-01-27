@@ -83,6 +83,9 @@ static inline void GraptorCSCDataParCached(
     const EID nvec = GP.numSIMDEdgesDeltaPar();
     edge = &edge[nvec_d1];
 
+    // timer tm;
+    // tm.start();
+
     // std::cerr << "PARTITION " << p << " nvec=" << nvec
 	      // << " from=" << part.start_of(p)
 	      // << " to=" << part.end_of(p)
@@ -170,7 +173,7 @@ static inline void GraptorCSCDataParCached(
 
 	    while( s < smax ) {
 		// Check all lanes are active; using cached values.
-		if( !env.evaluate_bool( c, m, aexpr ) ) {
+		if( !env.evaluate_bool( c, m, aexpr ) ) [[unlikely]] {
 		    s = smax;
 		    break;
 		}
@@ -275,6 +278,8 @@ static inline void GraptorCSCDataParCached(
     assert( s == nvec );
 
     cache_commit( env, vop_caches, c, m_pid );
+
+    // std::cout << "part " << p << ": takes " << tm.stop() << "\n";
 }
 
 template<typename EMapConfig, typename Operator>
