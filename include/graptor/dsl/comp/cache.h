@@ -1727,6 +1727,9 @@ auto extract_cacheable_refs_helper( ternop<E1,E2,E3,TernOp> t ) {
 template<typename A, typename T, unsigned short VL>
 static constexpr
 auto extract_cacheable_refs_helper( refop<A,T,VL> r ) {
+    // A read-only variable that is subject to de-/encoding is worthwhile
+    // caching. Need to check for duplicates (don't cache multiple times;
+    // careful if also written to).
     return extract_cacheable_refs_helper( r.index() );
 }
 
