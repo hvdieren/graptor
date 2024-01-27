@@ -985,13 +985,18 @@ template<unsigned short Bits>
 struct array_encoding<bitfield<Bits>> : public array_encoding_bit<Bits> {
 };
 
-template<typename StoredTy, typename Enable = void>
+template<typename StoredTy, bool _saturate = false, typename Enable = void>
 struct array_encoding_wide {
     using stored_type = StoredTy;
     using storage_type = StoredTy;
 
     template<unsigned short VL_>
     using stored_traits = vector_type_traits_vl<stored_type, VL_>;
+
+    // When storing a value, saturate to limits of stored value.
+    // Only relevant if width of StoredTy is less than width of supplied
+    // value.
+    static constexpr bool saturate_on_store = _saturate;
 
     static mmap_ptr<stored_type>
     allocate( size_t num_elems, const numa_allocation && kind ) {
@@ -1059,10 +1064,11 @@ struct array_encoding_wide {
     static void
     store( storage_type * base, index_type idx,
 	   typename Tr::type raw ) {
+	auto sat = saturate<Tr>( raw );
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
-	    Tr::VL>::convert( raw );
+	    Tr::VL>::convert( sat );
 	stored_traits<Tr::VL>::store( &base[idx], value );
     }
 
@@ -1070,10 +1076,11 @@ struct array_encoding_wide {
     static void
     store( storage_type * base, index_type idx,
 	   typename Tr::type raw, typename MTr::type mask ) {
+	auto sat = saturate<Tr>( raw );
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
-	    Tr::VL>::convert( raw );
+	    Tr::VL>::convert( sat );
 	auto cmask = conversion_traits<
 	    typename MTr::member_type,
 	    logical<stored_traits<Tr::VL>::W>,
@@ -1087,10 +1094,11 @@ struct array_encoding_wide {
     static void
     storeu( storage_type * base, index_type idx,
 	   typename Tr::type raw ) {
+	auto sat = saturate<Tr>( raw );
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
-	    Tr::VL>::convert( raw );
+	    Tr::VL>::convert( sat );
 	stored_traits<Tr::VL>::storeu( &base[idx], value );
     }
 
@@ -1249,10 +1257,11 @@ struct array_encoding_wide {
     scatter( storage_type * base, index_type idx, typename Tr::type val ) {
 	static_assert( sizeof(StoredTy) >= 4 || Tr::VL == 1,
 		       "vector scatter i32/i64 only" );
+	auto sat = saturate<Tr>( val );
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
-	    Tr::VL>::convert( val );
+	    Tr::VL>::convert( sat );
 	stored_traits<Tr::VL>::scatter( base, idx, value );
     }
 
@@ -1262,16 +1271,18 @@ struct array_encoding_wide {
 	     mask_type mask ) {
 	static_assert( sizeof(StoredTy) >= 4 || Tr::VL == 1,
 		       "vector scatter i32/i64 only" );
+	auto sat = saturate<Tr>( val );
 	auto value = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<Tr::VL>::member_type,
-	    Tr::VL>::convert( val );
+	    Tr::VL>::convert( sat );
 	stored_traits<Tr::VL>::scatter( base, idx, value, mask );
     }
 
     [[deprecated("replaced by template version for correctness")]]
     static bool cas( volatile storage_type * addr,
 		     stored_type old, stored_type val ) {
+	// No saturation applied due to deprecated
 	return stored_traits<1>::cas( addr, old, val );
     }
 
@@ -1280,8 +1291,9 @@ struct array_encoding_wide {
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
+	auto sat = saturate<Tr>( val );
 	// Re-use baseline CAS definition
-	return array_encoding<stored_type>::template cas<Tr>( addr, old, val );
+	return array_encoding<stored_type>::template cas<Tr>( addr, old, sat );
     }
 
 public:
@@ -1430,6 +1442,48 @@ public:
 	}
 
 	assert( 0 && "Unhandled case" );
+    }
+
+    template<typename Tr>
+    static auto saturate( typename Tr::type val ) {
+	// Only apply saturation on integral types, when narrowing on store,
+	// and when flag says to do so.
+	if constexpr ( !std::is_integral_v<typename Tr::member_type>
+		       || sizeof(StoredTy) >= Tr::W
+		       || !saturate_on_store )
+	    return val;
+	using tr = typename Tr::traits;
+	using st = stored_traits<Tr::VL>;
+
+	if constexpr ( !std::is_signed_v<StoredTy> && 
+		       std::is_signed_v<typename Tr::member_type> ) {
+	    // Stored value is unsigned, while value in registers is signed
+	    // Saturate to range 0x00.. to 0xff..
+	    auto sign_bit = tr::srli( val, tr::B-1 ); // 0 or 1
+	    auto upper = tr::srli( tr::setone(), tr::B - st::B ); // 0xff..
+	    auto clip = upper; // one-sided for now
+	    auto hi = tr::srli( val, st::B );
+	    auto excess = tr::cmpne( tr::setzero(), hi, target::mt_vmask() );
+	    return tr::blend( excess, val, clip );
+	} else if constexpr ( std::is_signed_v<StoredTy> ) {
+	    // When signed, respect signed range. Clip to 0x7f.. or 0x80..
+	    // depending on top bit of val
+/*
+	    auto sign_bit = tr::srli( val, tr::B-1 ); // 0 or 1
+	    auto mask1 = tr::srli( tr::setone(), tr::B - st::B + 1 ); // 0x7f..
+	    auto clip = tr::add( mask1, sign_bit ); // 0x7f.. or 0x80..
+
+	    // Determine lanes that overflow
+	    auto hi = tr::srli( val, st::B );
+	    auto excess = tr::cmpne( tr::setzero(), hi, tr::vt_vmask() );
+
+	    // Select
+	    return tr::blend( excess, val, clip );
+*/
+	    assert( 0 && "NYI" );
+	} else {
+	    assert( 0 && "NYI" );
+	}
     }
 };
 
