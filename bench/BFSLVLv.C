@@ -28,7 +28,6 @@ using expr::_c;
 #endif
 #define MEMO 0
 
-// TODO: FUSION works well for road networks: estimate network type and select at runtime
 #ifndef FUSION
 #define FUSION 0
 #endif
@@ -45,8 +44,8 @@ using sVID = std::make_signed_t<VID>;
 using bVID = sVID;
 using Enc = array_encoding<sVID>;
 
-// using bVID = int8_t;
-// using Enc = array_encoding_wide<bVID>;
+// using bVID = uint8_t;
+// using Enc = array_encoding_wide<bVID,true>;
 
 template <class GraphType>
 class BFSLVLv {
@@ -106,6 +105,8 @@ public:
 	sVID n = GA.numVertices();
 	EID m = GA.numEdges();
 
+	// It is assumed we can increment sufficiently above ilvl without
+	// incurring overflow.
 	sVID ilvl = n+1; // std::numeric_limits<bVID>::max(); // can only store bVID
 	// Assign initial labels
 	make_lazy_executor( part )
@@ -323,9 +324,9 @@ private:
     bool itimes, debug, calculate_active;
     sVID iter;
     VID start, active;
-    api::vertexprop<sVID,VID,var_current> a_level;
+    api::vertexprop<sVID,VID,var_current,Enc> a_level;
 #if !LEVEL_ASYNC || DEFERRED_UPDATE
-    api::vertexprop<sVID,VID,var_previous> a_prev_level;
+    api::vertexprop<sVID,VID,var_previous,Enc> a_prev_level;
 #endif
     std::vector<info> info_buf;
 };
