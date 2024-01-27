@@ -1455,8 +1455,9 @@ public:
 	using tr = typename Tr::traits;
 	using st = stored_traits<Tr::VL>;
 
-	if constexpr ( !std::is_signed_v<StoredTy> && 
-		       std::is_signed_v<typename Tr::member_type> ) {
+	if constexpr ( !std::is_signed_v<StoredTy>
+		       && std::is_signed_v<typename Tr::member_type>
+		       && std::is_integral_v<typename Tr::member_type> ) {
 	    // Stored value is unsigned, while value in registers is signed
 	    // Saturate to range 0x00.. to 0xff..
 	    auto sign_bit = tr::srli( val, tr::B-1 ); // 0 or 1
@@ -1465,7 +1466,9 @@ public:
 	    auto hi = tr::srli( val, st::B );
 	    auto excess = tr::cmpne( tr::setzero(), hi, target::mt_vmask() );
 	    return tr::blend( excess, val, clip );
-	} else if constexpr ( std::is_signed_v<StoredTy> ) {
+	} else if constexpr (
+	    std::is_signed_v<StoredTy>
+	    && std::is_integral_v<typename Tr::member_type> ) {
 	    // When signed, respect signed range. Clip to 0x7f.. or 0x80..
 	    // depending on top bit of val
 /*
