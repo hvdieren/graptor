@@ -24,7 +24,26 @@ alignas(64) const uint64_t increasing_sequence_epi64[16] = {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 };
 
-alignas(64) const uint32_t movemask_lut_epi32[16*4] = {
+alignas(64) const uint32_t movemask_lut_epi32[16*4] = { // 16-bit fields?
+    0,      0,      0,      0,      // mask 0
+    0xffff, 0,      0,      0,      // mask 1
+    0,      0xffff, 0,      0,      // mask 2
+    0xffff, 0xffff, 0,      0,      // mask 3
+    0,      0,      0xffff, 0,      // mask 4
+    0xffff, 0,      0xffff, 0,      // mask 5
+    0,      0xffff, 0xffff, 0,      // mask 6
+    0xffff, 0xffff, 0xffff, 0,      // mask 7
+    0,      0,      0,      0xffff, // mask 8
+    0xffff, 0,      0,      0xffff, // mask 9
+    0,      0xffff, 0,      0xffff, // mask 10
+    0xffff, 0xffff, 0,      0xffff, // mask 11
+    0,      0,      0xffff, 0xffff, // mask 12
+    0xffff, 0,      0xffff, 0xffff, // mask 13
+    0,      0xffff, 0xffff, 0xffff, // mask 14
+    0xffff, 0xffff, 0xffff, 0xffff  // mask 15
+};
+
+alignas(64) const uint16_t movemask_lut_epi16[16*4] = {
     0,      0,      0,      0,      // mask 0
     0xffff, 0,      0,      0,      // mask 1
     0,      0xffff, 0,      0,      // mask 2
