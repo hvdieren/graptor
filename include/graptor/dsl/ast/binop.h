@@ -1130,6 +1130,38 @@ auto operator + ( E1 l, E2 r ) -> decltype(make_add( l, r )) {
     return make_add( l, r );
 }
 
+/* binop: adds (saturating add)
+ */
+struct binop_adds {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type;
+    };
+    
+    static constexpr char const * name = "binop_adds";
+    
+    template<typename VTr, layout_t Layout1, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<VTr,Layout1> l,
+				 sb::rvalue<VTr,Layout2> r,
+				 const MPack & mpack ) {
+	return make_rvalue( adds( l.value(), r.value() ), mpack );
+    }
+};
+
+template<typename E1, typename E2>
+auto make_adds( E1 l, E2 r,
+		std::enable_if_t<is_base_of<expr_base,E1>::value
+		&& is_base_of<expr_base,E2>::value> * = nullptr ) {
+    return make_binop( l, r, binop_adds() );
+}
+
+template<typename E1, typename E2>
+auto adds ( E1 l, E2 r ) -> decltype(make_adds( l, r )) {
+    return make_adds( l, r );
+}
+
 /* binop: sub
  */
 struct binop_sub {
