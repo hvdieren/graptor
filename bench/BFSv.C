@@ -70,9 +70,11 @@ public:
 	float active;
 	EID nacte;
 	VID nactv;
+	frontier_type ftype;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
+		      << ' ' << ftype
 		      << " density: " << density
 		      << " nacte: " << nacte
 		      << " nactv: " << nactv
@@ -195,6 +197,7 @@ public:
 		info_buf[iter].active = float(active)/float(n);
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].nactv = F.nActiveVertices();
+		info_buf[iter].ftype = F.getType();
 		if( debug )
 		    info_buf[iter].dump( iter );
 	    }
