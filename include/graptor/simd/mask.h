@@ -137,6 +137,15 @@ struct mask_cvt<mask_bit_logical_traits<B,VL>,mask_bit_traits<VL>> {
     }
 };
 
+template<unsigned short B1, unsigned short B2, unsigned short VL>
+struct mask_cvt<mask_bit_logical_traits<B1,VL>,mask_bit_logical_traits<B2,VL>,
+		std::enable_if_t<B1 != B2>> {
+    static typename mask_bit_logical_traits<B1,VL>::type
+    convert( typename mask_bit_logical_traits<B2,VL>::type v ) {
+	return mask_bit_logical_traits<B2,VL>::traits::template asvector<bitfield<B1>>( v );
+    }
+};
+
 } // namespace detail
 
 /***********************************************************************
@@ -267,6 +276,21 @@ public:
     bool is_all_false() {
 	return traits::is_all_false( get() );
     }
+
+    // Register equivalence between mask_bit_logical_traits<1,VL> and
+    // mask_bit_traits<VL>
+    template<typename XTr>
+    std::enable_if_t<std::is_same_v<XTr,mask_bit_traits<VL>>,
+	mask_impl<mask_bit_logical_traits<1,VL>>>
+	convert_to_equiv_blt() const {
+	return mask_impl<mask_bit_logical_traits<1,VL>>( get() );
+    }
+    
+    template<unsigned short VL>
+    operator mask_impl<mask_bit_logical_traits<1,VL>> () const {
+	return convert_to_equiv_blt<data_type>();
+    }
+
 
 #if 0
     // scalar bool version

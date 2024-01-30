@@ -128,12 +128,12 @@ struct mask_bit_logical_traits {
     static constexpr unsigned short W = 0;
     static constexpr unsigned short B = B_;
     static constexpr unsigned short VL = VL_;
-    using member_type = void;
+    using member_type = bitfield<B>;
     using element_type = bitfield<B>;
     using traits = vector_type_traits_vl<element_type, VL>;
     using type = typename traits::type;
     using pointer_type = typename traits::pointer_type;
-    using tag_type = target::mt_vmask;
+    using tag_type = std::conditional_t<B==1,target::mt_mask,target::mt_vmask>;
     using index_type = VID; // something sensible
 
     using prefmask_traits = detail::mask_bit_logical_traits<B, VL>;
@@ -144,9 +144,10 @@ struct mask_bit_logical_traits {
     };
 
     template<unsigned short VL2>
-    struct rebindVL {
-	using type = mask_bit_logical_traits<B,VL2>;
-    };
+    struct rebindVL;
+    // {
+    // using type = mask_bit_logical_traits<B,VL2>;
+    // };
 
     template<unsigned short VL2>
     using rebindVL_t = typename rebindVL<VL2>::type;
@@ -167,7 +168,7 @@ struct mask_bit_traits {
     static constexpr unsigned short B = 1;
     static constexpr unsigned short VL = VL_;
     using member_type = bitfield<1>; // no member_type present
-    using element_type = bool;
+    using element_type = bitfield<1>;
     using traits = mask_type_traits<VL>;
     using type = typename traits::type;
     using pointer_type = unsigned char; // type; // Pointing to a vector!
@@ -185,6 +186,9 @@ struct mask_bit_traits {
     template<typename B> // scalar only
     static constexpr auto get_val( B b ) { return !!b; }
 };
+
+// template<unsigned short VL_>
+// using mask_bit_traits = mask_bit_logical_traits<1,VL_>;
 
 // Bool value, only at vector length 1 (scalar)
 struct mask_bool_traits {
@@ -298,11 +302,11 @@ struct mask_sel {
 // Anything larger relates to longint and it becomes way more efficient
 // to use bitmasks. This sets a preference but does not preclude wide masks.
 /*
+*/
 template<unsigned short W, unsigned short VL>
 struct mask_sel<W,VL,std::enable_if_t<(W>8) && (VL>1)>> {
     using type = mask_bit_traits<VL>;
 };
-*/
 
 template<unsigned short W>
 struct mask_sel<W,1,std::enable_if_t<W!=0>> {
@@ -382,6 +386,8 @@ namespace detail {
 // When extending a bool at VL=1 to a wider mask, we don't have much information
 // to go on to select between a vector mask and a bit mask. Use the preferred
 // version.
+// Problem: when working with bitfields, this resorts to 1-bit masks rather
+// than B-bit bit_logical masks. For that reason, should avoid its use.
 template<unsigned short VL2>
 struct mask_bool_traits::rebindVL {
     using type = mask_preferred_traits_width<sizeof(VID),VL2>;
@@ -404,6 +410,21 @@ struct mask_bit_traits<VL_>::rebindVL {
     using type = typename mask_bit_traits_rebindVL<VL2>::type;
 };
 
+template<unsigned short B, unsigned short VL>
+struct mask_bit_logical_traits_rebindVL {
+    using type = mask_bit_logical_traits<B,VL>;
+};
+
+template<unsigned short B>
+struct mask_bit_logical_traits_rebindVL<B,1> {
+    using type = mask_bool_traits;
+};
+
+template<unsigned short B, unsigned short VL_>
+template<unsigned short VL2>
+struct mask_bit_logical_traits<B,VL_>::rebindVL {
+    using type = typename mask_bit_logical_traits_rebindVL<B,VL2>::type;
+};
 
 /***********************************************************************
  * vector configurations
@@ -459,6 +480,8 @@ struct vdata_traits<bitfield<Bits>,VL_> {
 	detail::mask_preferred_traits_type<element_type, VL>;
     using simd_mask_type = mask_impl<prefmask_traits>;
     using tag_type = typename prefmask_traits::tag_type;
+
+    static_assert( prefmask_traits::B == Bits || VL == 1, "check" );
 
     template<typename U>
     struct rebindTy {

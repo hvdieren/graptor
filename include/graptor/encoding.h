@@ -183,8 +183,9 @@ struct array_encoding {
 	return stored_traits<1>::cas( addr, old, val );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
@@ -194,7 +195,7 @@ struct array_encoding {
 	auto s_val = conversion_traits<
 	    typename Tr::member_type,
 	    typename stored_traits<1>::member_type,1>::convert( val );
-	return stored_traits<1>::cas( addr, s_old, s_val );
+	return stored_traits<1>::cas( &addr[idx], s_old, s_val );
     }
 };
 
@@ -398,8 +399,9 @@ struct array_encoding<customfp<E,M>,std::enable_if_t<(E+M)==21>> {
 	return false;
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
@@ -485,6 +487,20 @@ struct array_encoding_bit {
 	auto elm = stored_traits<factor>::lane( raw, idx % factor );
 	return stored_type( elm );
     }
+
+    template<typename Tr, typename index_type>
+    static typename Tr::type
+    ldcas( storage_type * base, index_type idx ) {
+	using tr = stored_traits<Tr::VL>;
+	return tr::loads( base, idx );
+    }
+
+    template<typename Tr>
+    static typename Tr::type
+    extract( typename Tr::type val ) {
+	return val;
+    }
+
 
     template<typename Tr, typename index_type>
     static typename Tr::type
@@ -596,7 +612,7 @@ struct array_encoding_bit {
 		// e.g. vertexmap with partition-boundaries that are multiples
 		// of 8.
 		success = array_encoding<storage_type>::template cas<UTr>(
-		    &base[idx/factor], m, u );
+		    base, idx/factor, m, u );
 	    } while( !success );
 	} else {
 	    // A CAS is necessary as two threads may modify different bits
@@ -972,12 +988,26 @@ struct array_encoding_bit {
 	return __sync_bool_compare_and_swap( addr, old, val );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
-	assert( 0 && "NYI" );
+
+	static constexpr unsigned short VL = 8 / bits;
+	using tr = stored_traits<1>;
+	using trv = stored_traits<VL>;
+	using pty = typename trv::pointer_type;
+	using wtr = target::scalar_int<pty>;
+	pty * ptr = const_cast<pty *>( addr );
+
+	auto w = trv::load( &ptr[idx / tr::factor] );
+	auto wo = trv::lane( w, idx % tr::factor );
+	if( wo != old )
+	    return false;
+	auto n = trv::setlane( w, val, idx % tr::factor );
+	return wtr::cas( &ptr[idx / tr::factor], w, n );
     }
 };
 
@@ -1286,14 +1316,16 @@ struct array_encoding_wide {
 	return stored_traits<1>::cas( addr, old, val );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
 	auto sat = saturate<Tr>( val );
 	// Re-use baseline CAS definition
-	return array_encoding<stored_type>::template cas<Tr>( addr, old, sat );
+	return array_encoding<stored_type>::template cas<Tr>(
+	    &addr[idx], old, sat );
     }
 
 public:
@@ -1695,8 +1727,9 @@ struct array_encoding_zero {
 	return base_encoding::cas( addr, old, val );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
@@ -2052,8 +2085,9 @@ struct array_encoding_permute {
 	return stored_traits<1>::cas( addr, old, val );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
 	static_assert( Tr::VL == 1, "CAS applies to scalar values only" );
@@ -2247,11 +2281,12 @@ struct array_encoding_intlv2_ifc {
 	return base_encoding::template scatter<A,Tr>( base, idx, val, mask );
     }
 
-    template<typename Tr>
+    template<typename Tr, typename index_type>
     static bool cas( volatile storage_type * addr,
+		     index_type idx,
 		     typename Tr::member_type old,
 		     typename Tr::member_type val ) {
-	return base_encoding::template cas<A,Tr>( addr, old, val );
+	return base_encoding::template cas<A,Tr>( &addr[idx], old, val );
     }
 };
 

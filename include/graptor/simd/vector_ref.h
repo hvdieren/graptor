@@ -74,7 +74,7 @@ public:
     // using vmask_type = typename traits::vmask_type;
 
     // Logical masks
-    using logmask_traits = detail::mask_logical_traits<sizeof(member_type), VL>;
+    using logmask_traits = detail::mask_logical_traits<sizeof(element_type), VL>;
     using simd_vmask_type = mask_impl<logmask_traits>;
 
     // Preferred masks
@@ -156,6 +156,7 @@ public:
     template<layout_t Layout_>
     inline simd_mask_type bor_assign( vec<vector_traits,Layout_> r );
     inline simd_mask_type bor_assign( mask_impl<vector_traits> r );
+    inline simd_mask_type bor_assign( mask_impl<vector_traits> r, mask_impl<vector_traits> m );
 
     template<layout_t Layout_>
     inline simd_mask_type band_assign( vec<vector_traits,Layout_> r, simd_mask_type m );
@@ -341,14 +342,18 @@ public:
 	// TODO: as this is logicalor, just overwrite with true
 
 	member_type nn = val.at(0); // assumes VL == 1
-	member_type o, n;
+	member_type o, oc, n;
 	bool r = false;
 	do {
-	    o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    // o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    oc = encoding::template ldcas<vector_traits>( m_addr, m_sidx );
+	    o = encoding::template extract<vector_traits>( oc );
 	    n = o | nn;
 	} while( o != n
 		 && !(r = encoding::template cas<vector_traits>(
-			  &m_addr[m_sidx], o, n ))
+			  m_addr, m_sidx, oc, n ))
+		 // && !(r = encoding::template cas<vector_traits>(
+		 // &m_addr[m_sidx], o, n ))
 	    );
 	using L = typename add_logical<member_type>::type;
 	return r
@@ -384,14 +389,16 @@ public:
 	static_assert( VL == 1, "only supported for VL=1" );
 
 	member_type nn = val.at(0); // assumes VL == 1
-	member_type o, n;
+	member_type o, oc, n;
 	bool r = false;
 	do {
-	    o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    // o = encoding::template load<vector_traits>( m_addr, m_sidx );
+	    oc = encoding::template ldcas<vector_traits>( m_addr, m_sidx );
+	    o = encoding::template extract<vector_traits>( oc );
 	    n = o & nn;
 	} while( o != n
 		 && !(r = encoding::template cas<vector_traits>(
-			  &m_addr[m_sidx], o, n ))
+			  m_addr, m_sidx, o, n ))
 	    );
 	using L = typename add_logical<member_type>::type;
 	return r

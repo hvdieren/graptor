@@ -344,11 +344,20 @@ using vector_impl  = vec<Traits,lo_variable>;
 template<class Traits>
 template<typename V>
 auto mask_impl<Traits>::asvector() const {
-    using Ty = vector_impl<vdata_traits<typename add_logical<V>::type,VL>>;
-    // return Ty( Ty::traits::asvector( get() ) );
-    using cvt = mask_cvt<mask_logical_traits<sizeof(V),Traits::VL>,Traits>;
-    auto v = cvt::convert( get() );
-    return Ty( v );
+    if constexpr ( is_bitfield_v<V> ) {
+	if constexpr ( is_mask_bit_logical_traits<data_type>::value
+		       && V::bits == data_type::B ) {
+	    // no-op conversion
+	    using Ty = vector_impl<vdata_traits<V,VL>>;
+	    return Ty( get() );
+	}
+	assert( 0 && "NYI" );
+    } else {
+	using Ty = vector_impl<vdata_traits<typename add_logical<V>::type,VL>>;
+	using cvt = mask_cvt<mask_logical_traits<sizeof(V),Traits::VL>,Traits>;
+	auto v = cvt::convert( get() );
+	return Ty( v );
+    }
 }
 
 // Override vector_impl for bit masks by inheriting behavior of mask
@@ -391,16 +400,7 @@ public:
     using type = typename vector_traits::type;
     using traits = typename vector_traits::traits;
 
-    // Logical masks
-    // using logmask_traits = detail::mask_logical_traits<sizeof(member_type), VL>;
-
-	// Bitmasks
-    // using bitmask_traits = detail::mask_bit_traits<VL>;
-    // using bmask_traits = typename bitmask_traits::traits;
-    // using bmask_type = typename bitmask_traits::type;
-
     // Preferred masks
-    // using prefmask_traits = detail::mask_preferred_traits_type<element_type, VL>;
     using prefmask_traits = typename vector_traits::prefmask_traits;
     using mask_traits = typename prefmask_traits::traits;
     using mask_type = typename prefmask_traits::type;

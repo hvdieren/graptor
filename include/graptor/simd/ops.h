@@ -101,6 +101,16 @@ auto operator | ( simd::detail::vec<Tr,Layout1> l,
 	Tr::traits::bitwise_or( l.data(), r.data() ) );
 }
 
+template<layout_t Layout, unsigned short VL>
+auto operator | ( simd::detail::vec<simd::detail::mask_bit_traits<VL>,Layout> l,
+		  simd::detail::mask_impl<simd::detail::mask_bit_traits<VL>> r ) {
+    return simd::detail::vec<
+	simd::detail::mask_bit_traits<VL>,
+	simd::lo_unknown>(
+	    simd::detail::mask_bit_traits<VL>::traits::logical_or(
+		l.data(), r.data() ) );
+}
+
 template<typename Tr, layout_t Layout1, layout_t Layout2>
 auto operator ^ ( simd::detail::vec<Tr,Layout1> l,
 		  simd::detail::vec<Tr,Layout2> r ) {
@@ -373,6 +383,14 @@ auto blend( simd::detail::mask_impl<MTr> m,
 #include "graptor/simd/reduction.h"
 #undef REDUCTION_OP
 
+#define REDUCTION_OP logicaland
+#include "graptor/simd/reduction.h"
+#undef REDUCTION_OP
+
+#define REDUCTION_OP bitwiseand
+#include "graptor/simd/reduction.h"
+#undef REDUCTION_OP
+
 #define REDUCTION_OP add
 #include "graptor/simd/reduction.h"
 #undef REDUCTION_OP
@@ -449,6 +467,18 @@ vector_ref_impl<Tr,I,Enc,NT_,Layout>::bor_assign(
     auto z = vector_type::zero_val();
     return (v != z).asmask();
 #endif
+}
+
+template<class Tr, typename I, typename Enc, bool NT_, layout_t Layout>
+typename vector_ref_impl<Tr,I,Enc,NT_,Layout>::simd_mask_type
+vector_ref_impl<Tr,I,Enc,NT_,Layout>::bor_assign(
+    mask_impl<Tr> r,
+    mask_impl<Tr> m ) {
+    auto a = load( m ); // load data
+    auto upd = a | r;
+    store( upd, m ); // store data
+    // Ensures that return value is stronger than m
+    return (upd != a).asmask() & m;
 }
 
 template<class Tr, typename I, typename Enc, bool NT_,layout_t Layout>
