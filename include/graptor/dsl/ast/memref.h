@@ -115,6 +115,7 @@ struct bitarray_intl : expr_base {
     using type = void; // tell expression you won't get a value, only mask
     using stype = T;
     using index_type = U;
+    using encoding = array_encoding_bit<1>;
     static constexpr short AID = AID_;
 
     static constexpr op_codes opcode = op_bitarray;
@@ -145,6 +146,7 @@ struct bitarray_ro : bitarray_intl<T,U,AID_> {
     using type = void; // tell expression you won't get a value, only mask
     using stype = T;
     using index_type = U;
+    using encoding = array_encoding_bit<1>;
     static constexpr short AID = AID_;
 
     static constexpr op_codes opcode = op_bitarray;
@@ -171,6 +173,19 @@ struct bitarray_ro : bitarray_intl<T,U,AID_> {
 
 private:
     stype * m_ptr;
+};
+
+template<typename T, typename U, short AID, typename Enc, bool NT = false,
+	 bool WithPtr = false, typename Enable = void>
+struct array_ro_select {
+    using type = array_ro<T,U,AID,Enc,NT>;
+};
+
+template<typename T, typename U, short AID, typename Enc, bool NT, bool WithPtr>
+struct array_ro_select<T,U,AID,Enc,NT,WithPtr,
+		       std::enable_if_t<is_bitfield_v<T>>> {
+    // Note: assumes Enc is array_encoding_bit, or at least will revert to that
+    using type = bitarray_ro<T,U,AID>;
 };
 
 template<frontier_type ftype, typename T, typename U, short AID,
@@ -386,7 +401,8 @@ struct scalar : public expr_base, private NonCopyable<scalar<T,AID_>> {
 
     /*! Create a refop for use in ASTs
      *
-     * @tparam <VL> Vector length of resulting expression
+     * @tparam <VL> Vector length of resulting expression. Note: all lanes
+     * point to same scalar element at index zero.
      */
     template<unsigned short VL>
     auto make_refop() {

@@ -283,9 +283,9 @@ struct unop_cvt_data_type {
     static GG_INLINE auto
     evaluate( sb::rvalue<VTr,Layout> a, const MPack & mpack ) {
 	static_assert( VTr::VL == data_type::VL, "vector length must match" );
-	return make_rvalue(
-	    a.value().template convert_data_type<data_type>(),
-	    mpack );
+	auto r = a.value().template convert_data_type<data_type>();
+	static_assert( std::is_same_v<typename decltype(r)::data_type,data_type> );
+	return make_rvalue( r, mpack );
     }
     template<typename VTr, layout_t Layout>
     static GG_INLINE auto
@@ -309,11 +309,13 @@ make_unop_cvt_data_type( Expr e ) {
     if constexpr ( std::is_same_v<typename Expr::data_type,Tr> ) {
 	// Already of the right type
 	return e;
+/*
     } else if constexpr ( is_unop_cvt_data_type<Expr>::value ) {
 	// This is a convert. Cancel the previous conversion and put this one
 	// instead. Re-run this method in case the argument is already of the
 	// desired type.
 	return make_unop_cvt_data_type<Tr>( e.data() );
+*/
     } else
 	return make_unop( e, unop_cvt_data_type<Tr>() );
 }
@@ -498,7 +500,8 @@ template<typename StoreTy, unsigned short VL_>
 struct unop_cvt_to_pmask {
     static constexpr unsigned short VL = VL_;
 
-    using mask_traits = simd::detail::mask_preferred_traits_width<sizeof(VID),VL>;
+    // using mask_traits = simd::detail::mask_preferred_traits_width<sizeof(VID),VL>;
+    using mask_traits = simd::detail::mask_preferred_traits_width<sizeof(StoreTy),VL>;
     using data_type = mask_traits;
     // static_assert( !simd::detail::is_mask_bit_traits<mask_traits>::value,
     // "bitmask not yet supported here" );
@@ -520,6 +523,33 @@ struct unop_cvt_to_pmask {
 
     static constexpr char const * name = "unop_cvt_to_pmask";
 
+    template<typename VTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<VTr,Layout> a, const MPack & mpack ) {
+	if constexpr ( std::is_void_v<VTr> ) {
+	    auto m = convert_mask( a.value() );
+	    return make_rvalue( m, mpack );
+	} else if constexpr ( simd::detail::is_mask_traits<VTr>::value ) {
+	    // Not currently supporting case where a vector (value part of
+	    // rvalue) holds a mask data_type.
+	    // If we do, should convert using simd::mask_cvt<>() as used
+	    // by masks.
+	    auto m = a.value().template convert_data_type<data_type>();
+	    return make_rvalue( m, mpack );
+	} else {
+	    // VTr is vdata_traits
+	    auto v = a.value().template asmask<data_type>();
+
+	    if constexpr ( MPack::is_empty() ) {
+		return make_rvalue( v );
+	    } else {
+		auto m = mpack.template get_mask<data_type>();
+		return make_rvalue( join_mask<data_type>( m, v ) );
+	    }
+	}
+    }
+
+#if 0
     template<typename VTr, layout_t Layout, typename MTr>
     static GG_INLINE auto
     evaluate( rvalue<VTr,Layout,MTr> a,
@@ -563,6 +593,13 @@ struct unop_cvt_to_pmask {
 	      typename std::enable_if<simd::matchVLtu<MTr,VL>::value>::type *
 	      = nullptr ) {
 	return a;
+    }
+#endif
+    
+private:
+    template<typename MTr>
+    static auto convert_mask( simd::detail::mask_impl<MTr> m ) {
+	return m.template convert<data_type>();
     }
 };
 

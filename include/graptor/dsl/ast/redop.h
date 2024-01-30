@@ -70,7 +70,8 @@ struct redop_logicalor {
     struct types {
 	using result_type = typename E1::data_type::prefmask_traits;
 	// TODO: prefmask_traits?
-	using cache_type = typename add_logical<typename E2::type>::type;
+	// TODO: replaced to E1 to expand A[v] |= _true
+	using cache_type = typename add_logical<typename E1::type>::type;
 	using infer_type = typename E1::data_type;
     };
 
@@ -221,9 +222,10 @@ struct redop_logicalor {
 
 
 template<typename E1, typename E2>
-auto make_redop_lor( E1 l, E2 r,
-	       std::enable_if_t<is_logical_type<typename E1::type>::value>
-	       * = nullptr ) {
+auto
+make_redop_lor( E1 l, E2 r,
+		std::enable_if_t<is_logical_type<typename E1::type>::value>
+		* = nullptr ) {
     return make_redop( l, r, redop_logicalor() );
 }
 
@@ -277,6 +279,7 @@ struct redop_bitwiseor {
 	} 
     }
 
+#if 0
     template<typename VTr, typename MTr1, typename MTr2, typename I,
 	     typename Enc,  bool NT, layout_t LayoutR, layout_t Layout>
     static auto
@@ -350,6 +353,7 @@ struct redop_bitwiseor {
 	       std::enable_if_t<simd::matchVLtt<VTr,MTr>::value> * = nullptr ) {
 	return make_rvalue( reduce_bitwiseor( r.value(), r.mask() ) );
     }
+#endif
 
     template<typename VTr, layout_t Layout, typename MPack>
     static auto
@@ -425,9 +429,10 @@ struct redop_bitwiseor {
 };
 
 template<typename E1, typename E2>
-auto make_redop_bor( E1 l, E2 r,
-	       std::enable_if_t<!is_logical_type<typename E1::type>::value>
-	       * = nullptr ) {
+auto
+make_redop_bor( E1 l, E2 r,
+		std::enable_if_t<!is_logical_type<typename E1::type>::value>
+		* = nullptr ) {
     return make_redop( l, r, redop_bitwiseor() );
 }
 
@@ -444,7 +449,7 @@ struct redop_logicaland {
     struct types {
 	// using result_type = typename add_logical<typename E1::type>::type; // bool-like;
 	using result_type = typename E1::data_type::prefmask_traits;
-	using cache_type = typename add_logical<typename E2::type>::type;
+	using cache_type = typename add_logical<typename E1::type>::type;
 	using infer_type = typename E1::data_type;
     };
 
@@ -525,10 +530,16 @@ struct redop_logicaland {
 };
 
 template<typename E1, typename E2>
-typename std::enable_if<is_logical_type<typename E1::type>::value,
-			redop<E1,E2,redop_logicaland>>::type
-operator &= ( E1 l, E2 r ) {
-    return redop<E1,E2,redop_logicaland>( l, r, redop_logicaland() );
+auto
+make_redop_land( E1 l, E2 r,
+		 std::enable_if_t<is_logical_type<typename E1::type>::value>
+		 * = nullptr ) {
+    return make_redop( l, r, redop_logicaland() );
+}
+
+template<typename E1, typename E2>
+auto operator &= ( E1 l, E2 r ) -> decltype(make_redop_land(l,r)) {
+    return make_redop_land( l, r );
 }
 
 /* redop: bitwise and
@@ -539,7 +550,7 @@ struct redop_bitwiseand {
     struct types {
 	// using result_type = typename E1::type; // bool-like;
 	using result_type = typename E1::data_type::prefmask_traits;
-	using cache_type = typename E2::type;
+	using cache_type = typename E1::type;
 	using infer_type = typename E1::data_type;
     };
 
@@ -567,7 +578,7 @@ struct redop_bitwiseand {
 	// store. Alternative: only store back relevant values.
 	// Best situation may depend on whether the lvalue is linear or not.
 	if constexpr ( MPack::is_empty() ) {
-	    return make_rvalue( l.value().land_assign( r.value() ), mpack );
+	    return make_rvalue( l.value().band_assign( r.value() ), mpack );
 	} else {
 	    using MTr = typename VTr::prefmask_traits;
 	    auto mask = mpack.template get_mask<MTr>();
@@ -606,9 +617,10 @@ struct redop_bitwiseand {
 };
 
 template<typename E1, typename E2>
-auto make_redop_band( E1 l, E2 r,
-	       std::enable_if_t<!is_logical_type<typename E1::type>::value>
-	       * = nullptr ) {
+auto
+make_redop_band( E1 l, E2 r,
+		 std::enable_if_t<!is_logical_type<typename E1::type>::value>
+		 * = nullptr ) {
     return make_redop( l, r, redop_bitwiseand() );
 }
 
