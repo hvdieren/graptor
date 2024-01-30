@@ -1408,6 +1408,13 @@ mce_bron_kerbosch_recpar_xps(
 		  << " ce=" << ce << " depth=" << depth << "\n";
     }
 
+    // TODO: subtract neighbours of pivot from xp for the purpose
+    //       of the loop iteration. This helps to keep vertices in order
+    //       and comes in place of the semisort. It is not necessary to have
+    //       a hash representation of the intersection.
+    //       In the recursive part: need to ensure that the neighbours of the
+    //       pivot remain in the P set.
+
     parallel_loop( ne, pe, 1, [&,ne,pe,ce]( VID i ) {
 	VID v = xp.at( i );
 
