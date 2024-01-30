@@ -140,8 +140,18 @@ struct bf_conversion_traits<T, bitfield<B>, VL> {
 
     static typename dst_traits::type convert( typename src_traits::type a ) {
 	using U = bitfield<B>;
+
+	if constexpr ( U::bits == 1 ) {
+	    if constexpr ( is_logical_v<T> )
+		return src_traits::asmask( a );
+	    else {
+		return src_traits::asmask(
+		    src_traits::slli( a, src_traits::B-1 ) );
+	    }
+	}
+	
 	if constexpr ( src_traits::W > 1 ) {
-	    if constexpr ( is_logical_v<T> || is_logical_v<U> ) {
+	    if constexpr ( is_logical_v<T> ) {
 		auto b = int_conversion_traits<T,logical<1>,VL>::convert( a );
 		return bf_conversion_traits<logical<1>,U,VL>::convert( b );
 	    } else {
@@ -150,7 +160,7 @@ struct bf_conversion_traits<T, bitfield<B>, VL> {
 	    }
 	}
 	
-	if constexpr ( U::bits == 1 && 0 ) {
+	if constexpr ( U::bits == 1 && false ) {
 	    // Pick top bit if logical
 	    long long unsigned int mask = is_logical_v<T>
 		? 0x8080808080808080ULL : 0x0101010101010101ULL;

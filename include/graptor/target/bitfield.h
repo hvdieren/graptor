@@ -31,7 +31,7 @@ public:
     using member_type = bitfield<bits>;
     using type = int_type_of_size_t<size>;
     using vmask_type = type;
-    using pointer_type = type;
+    using pointer_type = unsigned char;
     // using itype = __m256i;
     // using int_type = uint8_t;
 
@@ -88,6 +88,14 @@ public:
 	return ( type(hi) << ((vlen/2)*bits) ) | type(lo);
     }
 
+    static bool is_all_false( type a ) {
+	// TODO: consider only top bit
+	if constexpr ( bits == 1 )
+	    return a == 0;
+	else
+	    assert( 0 && "NYI" );
+    }
+
     static member_type lane( type a, unsigned short lane ) {
 	type b = a >> ( lane * bits );
 	type m = ( type(1) << bits ) - 1;
@@ -111,6 +119,12 @@ public:
 	    return (mask_type) _pext_u64( a, mask );
 	}
 	assert( 0 && "NYI" );
+    }
+
+    template<typename T>
+    static auto asvector( type m ) {
+	using vtraits = vector_type_traits_vl<T,8>;
+	return vtraits::asvector( m );
     }
 
     static vmask_type asvector( mask_type mask ) {
@@ -164,6 +178,13 @@ public:
 	return ( mm & b ) | ( ~mm & a );
     }
 
+    static mask_type cmpne( type a, type b, mt_mask ) {
+	if constexpr ( bits == 1 )
+	    return a ^ b;
+	else
+	    return asmask( cmpne( a, b, mt_vmask() ) );
+    }
+    
     static vmask_type cmpne( type a, type b, mt_vmask ) {
 	if constexpr ( bits == 1 ) {
 	    return a ^ b;
@@ -211,12 +232,9 @@ public:
 
     // Contrary to other implementations, the address passed into load and store
     // is a vector address, not a member address.
-/*
-    template<typename index_type>
-    static member_type load( const pointer_type * a, index_type idx ) {
+    static member_type loads( const pointer_type * a, unsigned int idx ) {
 	return lane( a[idx/factor], idx % factor );
     }
-*/
     static type load( const type * a ) {
 	return *a;
     }
@@ -251,7 +269,7 @@ public:
     using member_type = bitfield<bits>;
     using type = typename base_traits::type;
     using vmask_type = type;
-    using pointer_type = type;
+    using pointer_type = unsigned char;
     using itype = type;
     // using int_type = uint8_t;
 
@@ -290,6 +308,14 @@ public:
     static type set_pair( typename half_traits::type hi,
 			  typename half_traits::type lo ) {
 	return base_traits::set_pair( hi, lo );
+    }
+
+    static bool is_all_false( type a ) {
+	// TODO: consider only top bit
+	if constexpr ( bits == 1 )
+	    return a == 0;
+	else
+	    assert( 0 && "NYI" );
     }
 
     static member_type lane( type a, unsigned short lane ) {
@@ -484,6 +510,10 @@ public:
 
     // Contrary to other implementations, the address passed into load and store
     // is a vector address, not a member address.
+    template<typename index_type>
+    static member_type loads( const pointer_type * a, index_type idx ) {
+	return vtraits::lane( vtraits::load( a+(idx/factor) ), idx % factor );
+    }
     template<typename index_type>
     static member_type load( const pointer_type * a, index_type idx ) {
 	return vtraits::lane( vtraits::load( a+(idx/factor) ), idx % factor );
