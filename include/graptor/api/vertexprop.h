@@ -110,14 +110,20 @@ public:
 	return encoding::template load<simd::ty<T,1>>( mem.get(), v );
     }
 
-    typename encoding::stored_type * get_ptr() const {
+    void set( VID v, T t ) {
+	encoding::template store<simd::ty<T,1>>( mem.get(), v, t );
+    }
+
+    // Should relay on encoding for get/set
+    [[deprecated("not reliable with bitfields")]]
+    typename encoding::storage_type * get_ptr() const {
 	return mem.get();
     }
 
     const char * get_name() const { return m_name; }
 
 private:
-    mm::buffer<typename encoding::stored_type> mem;	//!< memory buffer
+    mm::buffer<typename encoding::storage_type> mem;	//!< memory buffer
     const char * m_name;	//!< explanatory name describing vertex property
 };
 
