@@ -791,11 +791,25 @@ struct arg_record_reduction_op {
     template<typename VIDSrc, typename VIDDst, typename EIDEdge>
     auto relax( VIDSrc s, VIDDst d, EIDEdge e ) const {
 	// |= will be evaluated as atomic if !is_priv
+	// static_assert( !std::is_same_v<StoreTy,logical<1>> );
+	static_assert( !std::is_same_v<StoreTy,unsigned char> || ftype == frontier_type::ft_bit );
+	// static_assert( sizeof(StoreTy) != 1 || std::is_same_v<StoreTy,bool> );
+	// Needs appropriate adjustements for ft_bit2
 	auto dd = expr::remove_mask( d );
-	return expr::set_mask(
-	    expr::get_mask_cond( d ),
-	    m_array[dd] |= expr::cast<StoreTy>( m_op.relax( s, dd, e ) )
-	    );
+	if constexpr ( ftype == frontier_type::ft_bit ) {
+	    static constexpr unsigned short VL = std::decay_t<decltype(d)>::VL;
+	    using MTr = simd::detail::mask_bit_traits<VL>;
+	    return expr::set_mask(
+		expr::get_mask_cond( d ),
+		m_array[dd] |= expr::make_unop_cvt_data_type<MTr>(
+		    m_op.relax( s, dd, e ) )
+		);
+	} else {
+	    return expr::set_mask(
+		expr::get_mask_cond( d ),
+		m_array[dd] |= expr::cast<StoreTy>( m_op.relax( s, dd, e ) )
+		);
+	}
 /* -- this version does not work correctly for reduction_or_method with
  * -- embedded frontier
 	return expr::set_mask(
