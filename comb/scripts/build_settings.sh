@@ -246,6 +246,9 @@ function get_flags() {
     if [[ "$v" == *_scut* ]] ; then
 	flags["TUNABLE_SMALL_AVOID_CUTOUT_LEAF"]=`echo "${v}_" | sed -e 's/^.*_scut\([0-9][0-9]*\)_.*$/\1/'`;
     fi
+    if [[ "$v" == *_nopopc* ]] ; then
+	flags["DISABLE_POCNT"]=1
+    fi
     if [[ "$v" == *_vl* ]] ; then
 	flags["MAX_VL"]=`echo "${v}_" | sed -e 's/^.*_vl\([0-9][0-9]*\)_.*$/\1/'`;
 	flags["GRAPTOR_DEGREE_BITS"]=${flags["MAX_VL"]};

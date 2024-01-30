@@ -10,15 +10,15 @@ function get_avg() {
     local count=0
     local fail=0
     
-    for file in `ls -1 graptor_epyc/$commit/output.${commit}.t${threads}.r*.${bench}.${graph} 2> /dev/null` ; do
+    for file in `ls -1 graptor_avx512/$commit/output.${commit}.t${threads}.r*.${bench}.${graph} 2> /dev/null` ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 ; then
 		fail=1
 	    else
 		local val=`( grep "Maximal clique enumeration time:" $file 2> /dev/null || echo Maximal clique enumeration time: ABORT ) | cut -d' ' -f5 | sed -e 's/s$//'`
 		if [ x$val != xABORT ] ; then
-		    sum=`dc <<< "4 k $sum $val + p"`
-		    count=`dc <<< "$count 1 + p"`
+		    sum=`bc <<< "scale=4;  $sum + $val"`
+		    count=`bc <<< "scale=4;  $count + 1"`
 		fi
 	    fi
 	else
@@ -27,9 +27,9 @@ function get_avg() {
     done
 
     if [ $fail -eq 0 -a $count -ne 0 ] ; then
-	dc <<< "4 k $sum $count / p"
+	bc <<< "scale=4; $sum / $count"
     else
-	echo ABSENT # graptor_epyc/$commit/output.${commit}.t${threads}.r*.${bench}.${graph} 
+	echo ABSENT # graptor_avx512/$commit/output.${commit}.t${threads}.r*.${bench}.${graph} 
     fi
 }
 

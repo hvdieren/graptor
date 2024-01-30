@@ -64,11 +64,12 @@ function for_gg()
     done
 
     
-    for threads in 1 8 16 32 64 128 ; do
-	for r in `seq 0 9` ; do
+    for r in `seq 0 9` ; do
+	for threads in 1 8 16 32 64 128 ; do
 	    one mce $graph_path ${1}_${2} $threads $commit $r
 	done
 	#one mce_nohopscotch $graph_path ${1}_${2} $threads $commit 0
+	one mce_profiling $graph_path ${1}_${2} 1 $commit 0
     done
 }
 

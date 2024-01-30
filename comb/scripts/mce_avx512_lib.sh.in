@@ -60,18 +60,41 @@ function for_gg()
 
     for r in `seq 0 9` ; do
 	for threads in 128 ; do # 1 4 8 16 32 64 128 ; do
-	    one $b MCE "" vl8 $graph_path $g $threads $commit $r 1024
-	    one $b MCE "" vl8_no512 $graph_path $g $threads $commit $r 1024
-	    one $b MCE "" vl8_no512_noavx512f $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8_nopopc $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8_no512 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8_no512_noavx512f $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8_yes512_noavx512f $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl8_yes512_noavx512f_nopopc $graph_path $g $threads $commit $r 1024
 
 	    one $b MCE "" vl16 $graph_path $g $threads $commit $r 1024
 	    one $b MCE "" vl16_no512_noavx512f $graph_path $g $threads $commit $r 1024
 	    one $b MCE "" vl16_yes512_noavx512f $graph_path $g $threads $commit $r 1024
 	    one $b MCE "" vl16_no512 $graph_path $g $threads $commit $r 1024
+
+	    one $b MCE _abBc_abDc_abGc vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abGc vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abPxph vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abAxph vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abBxph vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abDxph vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abDi_abBi vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abTy vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abTd vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abTd_abL vl16 $graph_path $g $threads $commit $r 1024
+	    one $b MCE _abL vl16 $graph_path $g $threads $commit $r 1024
 	done
 	#for threads in 1 ; do
-	    #one $b MCE "" vl16_papi $graph_path $g $threads $commit $r 1024
+#	    one $b MCE "" vl16_papi $graph_path $g $threads $commit $r 1024
+#	    one $b MCE "" vl8 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE "" vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _abGc vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _abPxph vl16 $graph_path $g $threads $commit $r 1024
+	    #one $b MCE _abDi_abBi vl16 $graph_path $g $threads $commit $r 1024
 	#done
+	for threads in 1 8 16 32 64 128 ; do
+	    one $b MCE "" vl16 $graph_path $g $threads $commit $r 1024
+	done
     done
 
 #    for threads in 128 ; do

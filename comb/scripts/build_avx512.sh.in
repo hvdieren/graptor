@@ -71,10 +71,14 @@ one MCE _vl16_no512_noavx512f ${arch} &
 
 one MCE _vl16_no512 ${arch} &
 one MCE _vl16_yes512_noavx512f ${arch} 
+one MCE _vl16_no512_noavx512f ${arch} 
 
 one MCE _vl8 ${arch} &
+one MCE _vl8_nopopc ${arch} &
 one MCE _vl8_no512 ${arch} &
 one MCE _vl8_no512_noavx512f ${arch} &
+one MCE _vl8_yes512_noavx512f ${arch} 
+one MCE _vl8_yes512_noavx512f_nopopc ${arch} 
 
 #one MCE _vl16_papi ${arch} &
 
@@ -83,45 +87,50 @@ one MCE _vl8_no512_noavx512f ${arch} &
 #one MCE _par1_vl16_papi ${arch} &
 #one MCE _par0_vl16_papi ${arch} &
 
-#one MCE _abTd_vl8 &
-#one MCE _abL_vl8 &
-#one MCE _abTd_abL_vl8 &
-#one MCE _abL_abBxph_vl8 &
-#one MCE _abDnpt_abBnpt_vl8 &
-#one MCE _top1_vl8 &
-#one MCE _top2_vl8 &
-#one MCE _abBc_abDc_abGc_vl8  
-#one MCE _abTy_abTd_abL_vl8 &
-#one MCE _abDxph_abBxph_abAxph_vl8 &
-#one MCE _abPxph_vl8 &
-#one MCE _abxpv_vl8 
+#one MCE _abTd_vl16 &
+#one MCE _abL_vl16 &
+one MCE _abTd_abL_vl16 &
+#one MCE _abL_abBxph_vl16 &
+#one MCE _abDnpt_abBnpt_vl16 &
+#one MCE _top1_vl16 &
+#one MCE _top2_vl16 &
+one MCE _abBc_abDc_abGc_vl16  &
+one MCE _abGc_vl16  
+#one MCE _abTy_abTd_abL_vl16 &
+#one MCE _abDxph_abBxph_abAxph_vl16 &
+one MCE _abPxph_vl16 &
+one MCE _abBxph_vl16 &
+one MCE _abAxph_vl16 &
+one MCE _abDxph_vl16 &
+one MCE _abDi_abBi_vl16
+#one MCE _abxpv_vl16 
 
-#one MCE _DQ128_BQ128_vl8 &
-#one MCE _DQ64_BQ64_vl8 &
-#one MCE _DQ64_BQ64_Dq32_Bq32_vl8 &
-#one MCE _DQ32_BQ32_Dq32_Bq32_vl8 &
+#one MCE _DQ128_BQ128_vl16 &
+#one MCE _DQ64_BQ64_vl16 &
+#one MCE _DQ64_BQ64_Dq32_Bq32_vl16 &
+#one MCE _DQ32_BQ32_Dq32_Bq32_vl16 &
 #one MCE _Dq32_Bq32_vl16 &
 #one MCE _Dq40_Bq40_vl16 &
 #one MCE _Dq64_Bq64_vl16 &
 
-#one MCE _Dq3_Bq3_vl8 &
-#one MCE _Dq10_Bq10_vl8 &
-#one MCE _Dq20_Bq20_vl8 &
-#one MCE _Dq50_Bq50_vl8 
-#one MCE _Dq1024_Bq1024_vl8 
-#one MCE _Dd20_Bd20_vl8 &
-#one MCE _Dd80_Bd80_vl8 &
-#one MCE _Dd99_Bd99_vl8 &
+#one MCE _Dq3_Bq3_vl16 &
+#one MCE _Dq10_Bq10_vl16 &
+#one MCE _Dq20_Bq20_vl16 &
+#one MCE _Dq50_Bq50_vl16 
+#one MCE _Dq1024_Bq1024_vl16 
+#one MCE _Dd20_Bd20_vl16 &
+#one MCE _Dd80_Bd80_vl16 &
+#one MCE _Dd99_Bd99_vl16 &
 
-#one MCE _abBxph_vl8 &
-#one MCE _abBxph_abAxph_vl8 &
-#one MCE _abBhm_vl8 
-#one MCE _abDhm_vl8 &
-#one MCE _scut8_vl8 &
-#one MCE _abTy_vl8 &
-#one MCE _abTd_vl8 
-#one MCE _abL_vl8 &
-#one MCE _abRPa_vl8 &
-#one MCE _abRPn_vl8 &
+#one MCE _abBxph_vl16 &
+#one MCE _abBxph_abAxph_vl16 &
+#one MCE _abBhm_vl16 
+#one MCE _abDhm_vl16 &
+#one MCE _scut8_vl16 &
+one MCE _abTy_vl16 &
+one MCE _abTd_vl16 
+one MCE _abL_vl16 &
+#one MCE _abRPa_vl16 &
+#one MCE _abRPn_vl16 &
 
 wait

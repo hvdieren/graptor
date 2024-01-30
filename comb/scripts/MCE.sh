@@ -1,5 +1,13 @@
 #!/bin/bash
 
+#what="Enumeration"
+#what="Removed self-edges"
+what="Calculating coreness"
+#what="Determining sort order"
+#what="Remapping graph"
+#what="Building hashed graph"
+whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
+
 function get_avg() {
     local commit=$1
     local threads=$2
@@ -21,7 +29,8 @@ function get_avg() {
 	    if grep FAIL $file > /dev/null 2>&1 ; then
 		fail=1
 	    else
-		local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
+		#local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
+		local val=`( grep "$what:" $file 2> /dev/null || echo $what: ABORT ) | cut -d' ' -f$whatn`
 		if [ x$val != xABORT ] ; then
 		    sum=`echo "scale=4; $sum + $val" | bc`
 		    count=$(( $count + 1 ))
@@ -70,9 +79,11 @@ function mce() {
 	dir=$commit
     fi
 
+    local variants="$vl"
     #local variants="$vl abDc_abBc_abGc_$vl abTy_abTd_abL_$vl abTy_$vl abTd_abL_$vl abDxph_abBxph_abAxph_$vl abPxph_$vl abxpv_$vl abDi_abBi_$vl"
-    #local variants="$vl abDc_abBc_abGc_$vl abTy_abTd_abL_$vl abTy_$vl abTd_abL_$vl abDxph_$vl abBxph_$vl abAxph_$vl abDxph_abBxph_abAxph_$vl abPxph_$vl abxpv_$vl abDi_abBi_$vl"
-    local variants="$vl ${vl}_yes512_noavx512f ${vl}_no512 ${vl}_no512_noavx512f"
+    ##local variants="$vl abDc_abBc_abGc_$vl abTy_abTd_abL_$vl abTy_$vl abTd_abL_$vl abDxph_$vl abBxph_$vl abAxph_$vl abDxph_abBxph_abAxph_$vl abPxph_$vl abxpv_$vl abDi_abBi_$vl abGc_$vl"
+    #local variants="$vl ${vl}_yes512_noavx512f ${vl}_no512 ${vl}_no512_noavx512f"
+    #local variants="$vl ${vl}_yes512_noavx512f ${vl}_no512 ${vl}_no512_noavx512f abGc_${vl} ${vl}_nopopc ${vl}_yes512_noavx512f_nopopc abGc_$vl"
     #local variants="$vl abDc_abBc_abGc_$vl abTy_abTd_abL_$vl abDxph_abBxph_abAxph_$vl abPxph_$vl abxpv_$vl abDi_abBi_$vl Dq32_Bq32_$vl Dq64_Bq64_$vl Dq128_Bq128_$vl"
     #local variants="$vl par2_$vl par4_$vl"
     #local variants="$vl par0_${vl}_papi par1_${vl}_papi"
@@ -115,4 +126,9 @@ function mce() {
 #mce 16 32 3ae3ceec 512 avx512
 #mce 8 1 f0192005 128
 
-mce 16 128 0f20dd74 1024 avx512 0f20dd74
+#mce 16 128 0f20dd74 1024 avx512 0f20dd74
+#mce 8 128 0f20dd74 1024 avx512 0f20dd74
+#mce 8 128 f4e4c4c5 1024 avx512 f4e4c4c5
+mce 16 128 f4e4c4c5 1024 avx512 f4e4c4c5
+#mce 16 1 f4e4c4c5 1024 avx512 f4e4c4c5
+#mce 8 1 f4e4c4c5 1024 avx512 f4e4c4c5

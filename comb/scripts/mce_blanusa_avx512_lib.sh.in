@@ -56,6 +56,11 @@ function for_gg()
 	done
 	#one mce_nohopscotch $graph_path ${1}_${2} $threads $commit 0
     done
+    for threads in 1; do # 1 64 128 ; do
+	for r in 0 ; do
+	    one mce_profiling $graph_path ${1}_${2} $threads $commit $r
+	done
+    done
 }
 
 true
