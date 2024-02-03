@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# For custom gcc build
+. $HOME/tools/gcc-13-install/bin/load.sh
+
+TREE_ROOT=/var/shared/projects/asap/graphs/adj/realworld/recent
+
+TOOLSPATH=@CMAKE_BINARY_DIR@/tools
+CILK_LIB=@graptor_ld_preload@
+
+WEIGHTS=none
+
+hostname
+
+function run()
+{
+    local prog=$1
+    local graph_path=$2
+    local graph_name=$3
+    local start=$4
+    local threads=$5
+    local opt=$6
+    local commit=$7
+
+    rounds=10
+    bindir=bin_gapbs_$commit
+
+    local outdir=./gapbs/$commit
+    [ -d $outdir ] || mkdir -p $outdir
+    local file=$outdir/output.t${threads}.${prog}.${opt}.${graph_name}
+
+    local weights=
+    local weight_opt=""
+    local ext="el"
+    if [[ $prog == sssp* ]] ; then
+        weights=$WEIGHTS
+        weight_opt="-d ${delta}" 
+        file=${file}_${WEIGHTS}_${delta}
+        ext="wel"
+    fi
+    if [[ $prog == pr* ]] ; then
+        weight_opt="-i 100 -t 1e-7"
+    fi
+
+    if [ ! -f $file ] ; then
+        echo $1 $2
+
+        local gfile=`unzip_file ${graph_path} $LOCALPATH/${graph_name}.$ext`
+        
+        echo "OMP_NUM_THREADS=${threads} ./${bindir}/${1} -n $rounds -a -v -r $start $weight_opt -f $gfile > $file"
+        OMP_NUM_THREADS=${threads} ./${bindir}/${1} -n $rounds -a -v -r $start $weight_opt -f $gfile > $file 2>&1
+    fi
+}
+
+# one 1:bench 2:graph-path 3:graph-name 4:start 5:threads 6:opt 7:commit
+function one() {
+    run ${1} $2 $3 $4 $5 $6 $7
+}
+
+# args: graph start-vertex
+function for_gg()
+{
+    local start=$3
+    local commit=$4
+
+    local graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise ligra $1 $2 $WEIGHTS`
+
+    #one KCore $graph_path ${1}_${2} $start 128 none $commit
+    one BFS $graph_path ${1}_${2} $start 128 none $commit
+    #one GraphColoring $graph_path ${1}_${2} $3 128 none $commit
+
+    #one LabelPropagation $graph_path ${1}_${2} $3 128 none $commit
+    #one SDB14 $graph_path ${1}_${2} $3 128 none $commit
+    #one SimpleUnionAsync $graph_path ${1}_${2} $3 128 none $commit
+    #one Jayantibfs $graph_path ${1}_${2} $3 128 none $commit
+    #one LiuTarjanbfs $graph_path ${1}_${2} $3 128 none $commit
+    #one UniteRemCASkout $graph_path ${1}_${2} $3 128 none $commit
+    #one UniteRemCASldd $graph_path ${1}_${2} $3 128 none $commit
+    #one BFSCC $graph_path ${1}_${2} $3 128 none $commit
+}
+
+true

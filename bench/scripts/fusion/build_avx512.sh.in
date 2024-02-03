@@ -1,0 +1,63 @@
+#!/bin/bash
+
+INC=`echo "$include_dirs" \
+ | perl -ne 'chomp; print join(" ", map { "-I$_" } split/ / ) . "\n";' `
+
+echo "include_dirs=$include_dirs"
+echo "INC=$INC"
+
+export GRAPTOR=@CMAKE_SOURCE_DIR@
+export CC=@CMAKE_C_COMPILER@
+export CFLAGS="$INC @graptor_cflags@"
+export CXX=@CMAKE_CXX_COMPILER@
+export CXXFLAGS="$INC @graptor_cxxflags@"
+export LD_FLAGS=`echo "$link_libs" | sed -e 's,graptorlib,@CMAKE_BINARY_DIR@/libgraptorlib.a,'`
+
+. @CMAKE_CURRENT_SOURCE_DIR@/build_settings.sh
+
+commit=`get_commit $1`
+
+echo building commit $commit
+
+bindir=bin_avx512_$commit
+outdir=log_avx512_$commit
+
+arch=@GRAPTOR_ARCH@
+
+mkdir -p $bindir
+mkdir -p $outdir
+
+function one() {
+    local bench=$1
+    local version=$2
+    local arch=$3
+    
+    echo $bench $version ...
+    build ${GRAPTOR}/bench/$bench.C ${bindir}/${bench}_${version} ${outdir}/${bench}_${version}.txt "$(get_flags $version)" $arch
+}
+
+one BFSBool _uvvid_bitf_vl16 ${arch} &
+one BFSBool _uvbit_bitf_vl16 ${arch} &
+
+one BFSLVLv _nofusion_vl16 ${arch} &
+one BFSLVLv _fusion_vl16 ${arch} &
+
+one BFSLVL_narrow _nofusion_vl16 ${arch} &
+one BFSLVL_narrow _fusion_vl16 ${arch} &
+
+one BFSv _vl16 ${arch} &
+
+one CCv _nofusion_vl16 ${arch} &
+one CCv _fusion_vl16 ${arch} &
+
+one GC_JP_fusion _nofusion_vl16 ${arch} &
+one GC_JP_fusion _fusion_vl16 ${arch} &
+one GC_JP_fusion _llf_fusion_vl16 ${arch} &
+
+one GC_gm3p _vl16 ${arch} &
+one GC_gm3p_v2 _vl16 ${arch} &
+
+one KC_bucket _nofusion_vl16 ${arch} &
+one KC_bucket _fusion_vl16 ${arch} &
+
+wait
