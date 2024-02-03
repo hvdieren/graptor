@@ -1325,7 +1325,7 @@ struct array_encoding_wide {
 	auto sat = saturate<Tr>( val );
 	// Re-use baseline CAS definition
 	return array_encoding<stored_type>::template cas<Tr>(
-	    &addr[idx], old, sat );
+	    addr, idx, old, sat );
     }
 
 public:
