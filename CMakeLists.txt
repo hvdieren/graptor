@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set project name and version
-project(Graptor VERSION 0.1)
+project(Graptor VERSION 0.1 LANGUAGES C CXX)
 
 # specify C++ standard 17
 set(CMAKE_CXX_STANDARD 17)
@@ -12,13 +12,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set_directory_properties(PROPERTIES EP_BASE "./external")
 
 # init to minimal necessary arguments
-set(graptor_cflags "-Wno-ignored-attributes -g -DLONG")
-set(graptor_cxxflags "-Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG")
+set(graptor_cflags "-O0 -Wno-ignored-attributes -g -DLONG -UNDEBUG")
+set(graptor_cxxflags "-O0 -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG -UNDEBUG")
 
 # architectures
 set(var GRAPTOR_ARCH "native" CACHE STRING "target processor architecture")
-string(APPEND graptor_cflags " -march=${GRAPTOR_ARCH} -DMAX_VL=16")
-string(APPEND graptor_cxxflags " -march=${GRAPTOR_ARCH} -DMAX_VL=16")
+string(APPEND graptor_cflags " -march=${GRAPTOR_ARCH}")
+string(APPEND graptor_cxxflags " -march=${GRAPTOR_ARCH}")
 
 # set configuration file
 configure_file(include/graptor/config.h.in config.h)
@@ -157,7 +157,7 @@ if(GRAPTOR_TEST)
 endif(GRAPTOR_TEST)
 
 # bench
-#add_subdirectory(bench)
+add_subdirectory(bench)
 
 # tools
 add_subdirectory(tools)
