@@ -513,9 +513,13 @@ private:
 	// edges
 	EID * degree = new EID[2*m+1];
 	const VID * const s = buf->vertex_begin();
+/* called from parallel threads, m should be relatively small...
 	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
 	    degree[i] = idx[s[i]+1] - idx[s[i]];
 	} );
+*/
+	for( VID i=0; i < m; ++i )
+	    degree[i] = idx[s[i]+1] - idx[s[i]];
 
 	EID* voffsets = &degree[m];
 	EID mm2 = voffsets[m] = sequence::plusScan( degree, voffsets, m );
