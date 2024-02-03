@@ -97,7 +97,7 @@ public:
     }
     static type set1inc0() {
 	return load(
-	    static_cast<const member_type *>( &increasing_sequence_epi16[0] ) );
+	    reinterpret_cast<const member_type *>( &increasing_sequence_epi16[0] ) );
     }
 /*
     static type set( member_type a7, member_type a6,
