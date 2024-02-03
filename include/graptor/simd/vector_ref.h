@@ -216,7 +216,7 @@ public:
 	    o = encoding::template extract<vector_traits>( oc );
 	} while( o > n
 		 && !(r = encoding::template cas<vector_traits>(
-			  &m_addr[m_sidx], oc, n ))
+			  m_addr, m_sidx, oc, n ))
 	    );
 	using L = typename add_logical<member_type>::type;
 	return r
@@ -264,7 +264,7 @@ public:
 		n = static_cast<stored_type>(
 		    static_cast<member_type>( o ) + d );
 	    } while( !(r = encoding::template cas<vector_traits>(
-			   &m_addr[m_sidx], o, n )) );
+			   m_addr, m_sidx, o, n )) );
 	} else {
 	    volatile member_type * ptr = &m_addr[m_sidx];
 	    do {
@@ -295,9 +295,9 @@ public:
 	stored_type o;
 	stored_type n;
 	bool r = false;
-	volatile member_type * ptr = &m_addr[m_sidx];
+	volatile member_type * ptr = m_addr;
 	do {
-	    o = *ptr;
+	    o = ptr[m_sidx];
 	    if( o <= l ) {
 		if constexpr ( conditional )
 		    return vector<L,1>::false_mask();
@@ -306,7 +306,8 @@ public:
 	    }
 	    n = static_cast<stored_type>(
 		static_cast<member_type>( o ) + d );
-	} while( !(r = encoding::template cas<vector_traits>( ptr, o, n )) );
+	} while( !(r = encoding::template cas<vector_traits>(
+		       ptr, m_sidx, o, n )) );
 	// assert( ( *ptr >= l || o < l ) && "oops, pushed value below threshold" );
 	if constexpr ( conditional ) {
 	    // previous if( o <= l ) implies o > l // o > l && n == l
@@ -328,7 +329,7 @@ public:
 	    o = m_addr[m_sidx];
 	} while( o == ~(VID)0
 		 && !(r = encoding::template cas<vector_traits>(
-			  &m_addr[m_sidx], o, n )) );
+			  m_addr, m_sidx, o, n )) );
 	using L = typename add_logical<member_type>::type;
 	return r
 	    ? vector<L,1>::true_mask()
@@ -398,7 +399,7 @@ public:
 	    n = o & nn;
 	} while( o != n
 		 && !(r = encoding::template cas<vector_traits>(
-			  m_addr, m_sidx, o, n ))
+			  m_addr, m_sidx, oc, n ))
 	    );
 	using L = typename add_logical<member_type>::type;
 	return r
