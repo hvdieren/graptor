@@ -363,6 +363,19 @@ public:
 	return asvector( cmple( a, b, mt_mask() ) );
     }
 
+    static mask_type cmpneg( type a, mt_mask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return asmask( a );
+	else
+	    return mask_traits::setzero();
+    }
+    static vmask_type cmpneg( type a, mt_vmask ) {
+	if constexpr ( std::is_signed_v<member_type> )
+	    return srai( a, 31 );
+	else
+	    return setzero();
+    }
+
     static bool cmpne( type a, type b, mt_bool ) { // any lane differs
 	mask_type ne = cmpne( a, b, mt_mask() );
 	bool all_zero = _kortestz_mask16_u8( ne, ne ); // ne == 0...0 ? 1 : 0
