@@ -13,6 +13,8 @@
 // #include "graptor/target/sse42_4x4.h" // for half-sized indices
 #endif // __AVX2__
 
+alignas(64) extern const uint64_t increasing_sequence_epi64[16];
+
 namespace target {
 
 /***********************************************************************
@@ -95,9 +97,13 @@ public:
     }
     
     static type set1( member_type a ) { return _mm512_set1_epi64( a ); }
+    static type set1inc0() {
+	return load(
+	    reinterpret_cast<const member_type *>(
+		&increasing_sequence_epi64[0] ) );
+    }
     static type set1inc( member_type a ) {
-	return add( set1( a ),
-		    _mm512_set_epi64( 7, 6, 5, 4, 3, 2, 1, 0 ) );
+	return add( set1( a ), set1inc0() );
     }
     static type set( member_type a7, member_type a6,
 		     member_type a5, member_type a4,
