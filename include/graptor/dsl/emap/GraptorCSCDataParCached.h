@@ -35,7 +35,7 @@ auto get_end_mask( VID dst, VID send ) {
     return simd::detail::template mask_impl<
 	simd::detail::template mask_bit_traits<VL>
 	>(
-	    ( (VID(1)<<( std::min( send-dst, VID(VL) ) )) << 1 ) - 1 );
+	    ( VID(1)<<( std::min( send-dst, VID(VL) ) ) ) - 1 );
 }
 #else
 template<unsigned short VL>
