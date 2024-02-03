@@ -511,6 +511,7 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
 
     // Rewrite local variables
+    expr::cache<> vcaches_dst;
     auto vcaches = expr::extract_local_vars( vexpr0 );
     auto vexpr1 = expr::rewrite_caches<expr::vk_zero>( vexpr0, vcaches );
 
@@ -528,7 +529,8 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 	    intT d = idx[v+1]-idx[v];
 	    o[k] = ~(VID)0;
 	    process_csc_sparse_aset<true>(
-		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k], vexpr, vcaches, env );
+		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k],
+		vexpr, vcaches, vcaches_dst, env );
 	}
     } else {
 	parallel_loop( VID(0), m, 1, [&]( VID k ) {
@@ -540,7 +542,8 @@ static __attribute__((noinline)) frontier csc_sparse_aset_with_f(
 	    // for very high-degree vertices.
 	    o[k] = ~(VID)0;
 	    process_csc_sparse_aset<true>(
-		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k], vexpr, vcaches, env );
+		&edge[idx[v]], d, 0 /*part.part_of(v)*/, v, idx[v], &o[k],
+		vexpr, vcaches, vcaches_dst, env );
 	} );
     }
 
@@ -1418,6 +1421,8 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // std::cerr << "v=" << m << " e=" << mm << " p=" << mm_parts << "\n";
 #endif
 
+    const bool do_seq = mm_parts < mm_min || !cfg.is_parallel();
+
     // Every call with a fusion operation defined will be executed in the
     // fusion-based traversal. Exceptions are made when the fusion operation
     // is read-only, i.e., it has no side effects. In this case we assume that
@@ -1427,16 +1432,18 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// std::cerr << "mm_min=" << mm_min << " mm_parts=" << mm_parts << "\n";
 	// if( /* !expr::is_readonly_fusion_op<Operator>::value
 	// || */ ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) || true ) {
-	if( cfg.is_parallel()
+	if( !do_seq && cfg.is_parallel()
 	    && graptor_num_threads() > 1
-	    && cfg.do_fusion( m, mm, GA.numVertices() ) ) {
+	    && cfg.do_fusion( m, mm, GA.numEdges() ) ) {
+	    std::cerr << "fusion " << m << " " << mm << "\n";
 	    delete[] degree;
 	    return csr_sparse_with_f_fusion_stealing(
 		cfg, GA, eid_retriever, part, old_frontier, op );
 	}
     }
 
-    if( /* m < 1024 */ mm_parts < mm_min || !cfg.is_parallel() ) {
+    if( do_seq ) { // /* m < 1024 */ mm_parts < mm_min || !cfg.is_parallel() ) {
+	std::cerr << "sequential " << mm_parts << " / " << mm_min << " parts\n";
 	delete[] degree;
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, mm, old_frontier, zf, op );
