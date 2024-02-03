@@ -1,6 +1,14 @@
 #ifndef GRAPTOR_CONFIG_H_IN
 #define GRAPTOR_CONFIG_H_IN
 
+#ifndef MAX_VL
+#if defined(__AVX512F__)
+#define MAX_VL 16
+#elif defined(__AVX2__) || defined(__SSE42__)
+#define MAX_VL 8
+#endif
+#endif
+
 #define Graptor_VERSION_MAJOR @Graptor_VERSION_MAJOR@
 #define Graptor_VERSION_MINOR @Graptor_VERSION_MINOR@
 
