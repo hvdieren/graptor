@@ -5,8 +5,8 @@ list(APPEND benchmarks CCv BFSv PRv APRv BFv MISv FMv BFSLVLv)
 
 # determine what graph types to compile
 #list(APPEND graphtypes VEBOPartCCSR GGVEBO)
-#list(APPEND graphtypes GGVEBO VEBOGraptorPullDataParCached VEBOGraptorPullDataParNotCached VEBOGraptorPushDataParCached VEBOGraptorPushDataParNotCached)
-list(APPEND graphtypes GGVEBO VEBOGraptorPullDataParCached)
+#list(APPEND graphtypes GGVEBO)
+list(APPEND graphtypes VEBOGraptorPullDataParCached)
 
 # Add include directory
 string(APPEND graptor_cxxflags " -I${CMAKE_SOURCE_DIR}/bench")
@@ -23,3 +23,6 @@ foreach(bb ${benchmarks})
 	list(APPEND executables ${bb}_${g})
     endforeach()
 endforeach()
+
+# do scripts also
+add_subdirectory(scripts)
