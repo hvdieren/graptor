@@ -107,7 +107,8 @@ public:
     static member_type lane15( type a ) { return lane( a, 15 ); }
 
     static type setoneval() {
-	// Agner Fog optimization manual
+	// Agner Fog optimization manual. Gcc 13 replaces this by broadcast
+	// of a constant 1.
 	return _mm_abs_epi8( setone() );
     }
     
@@ -117,7 +118,7 @@ public:
     }
     static type set1inc0() {
 	return load(
-	    static_cast<const member_type *>( &increasing_sequence_epi8[0] ) );
+	    reinterpret_cast<const member_type *>( &increasing_sequence_epi8[0] ) );
     }
     static type setl0( member_type a ) {
 	return _mm_set1_epi16( (uint16_t)a );
@@ -558,6 +559,18 @@ public:
 #endif
     }
 
+    static type sllv( type a, type sh ) {
+	assert( 0 && "NYI" );
+    }
+    static type srai( type a, unsigned int sh ) {
+	assert( 0 && "NYI" );
+    }
+    static type slli( type a, unsigned int sh ) {
+	auto b = _mm_slli_epi16( a, sh );
+	auto m = set1( (member_type)((1<<(W*8-sh))-1) );
+	auto c = _mm_andnot_si128( m, b );
+	return c;
+    }
     static type srli( type a, unsigned int sh ) {
 	auto b = _mm_srli_epi32( a, sh );
 	auto m = set1( (member_type)((1<<(W*8-sh))-1) );
