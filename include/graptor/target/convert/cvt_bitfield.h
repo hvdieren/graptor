@@ -21,6 +21,10 @@ struct bf_conversion_traits<bitfield<B>, U, VL> {
     static typename dst_traits::type convert( typename src_traits::type a ) {
 	using T = bitfield<B>;
 	
+	if constexpr ( T::bits == 1 && is_logical_v<U> ) {
+	    return dst_traits::asvector( a );
+	}
+	
 	if constexpr ( T::bits*VL <= 8*dst_traits::W ) {
 	    // Broadcast the bit pattern to all lanes, shift and mask out
 	    // relevant bits
@@ -142,11 +146,27 @@ struct bf_conversion_traits<T, bitfield<B>, VL> {
 	using U = bitfield<B>;
 
 	if constexpr ( U::bits == 1 ) {
+	    // Note: the conversion to mask may not deliver the right type
+	    // when VL is "too large" but <= 64, i.e., in cases where
+	    // vt_recursive kicks in but a single scalar value is expected.
 	    if constexpr ( is_logical_v<T> )
 		return src_traits::asmask( a );
-	    else {
-		return src_traits::asmask(
-		    src_traits::slli( a, src_traits::B-1 ) );
+	    // In certain cases, the meaning of != 0 could suffice.
+	    else if constexpr ( std::is_same_v<T,bool> ) {
+		return src_traits::cmpne( a, src_traits::setzero(),
+					  target::mt_mask() );
+	    } else {
+		if constexpr ( B == 8 ) {
+		    // No slli_epi8 exists, hence use different approach to
+		    // get the least significant bit.
+		    auto one = src_traits::setoneval();
+		    auto m = src_traits::bitwise_and( a, one );
+		    return src_traits::cmpne( m, src_traits::setzero(),
+					      target::mt_mask() );
+		} else {
+		    return src_traits::asmask(
+			src_traits::slli( a, src_traits::B-1 ) );
+		}
 	    }
 	}
 	
