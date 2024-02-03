@@ -207,7 +207,7 @@ public:
 
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) { return priority[v] = _0; } )
-	    .vertex_map( [&]( auto v ) { return color[v] = _1s; } )
+	    // .vertex_map( [&]( auto v ) { return color[v] = _1s; } )
 	    .materialize();
 
 /*
@@ -252,7 +252,9 @@ first set color[v] = v
 
 	make_lazy_executor( part )
 	    // Set color of roots (initial color = _1s to indicate undefined)
-	    .vertex_map( roots, [&]( auto v ) { return color[v] = _0; } )
+	    .vertex_map( [&]( auto v ) {
+		return color[v] = expr::iif( priority[v] == _0, _1s, _0 );
+	    } )
 	    .materialize();
 
 	roots.toSparse( part );
@@ -333,7 +335,7 @@ first set color[v] = v
 			[&]( auto old ) {
 			    return expr::iif(
 				old == _1,
-				_1s,
+				_1s(d),
 				expr::make_seq(
 				    expr::set_mask( old == _1,
 						    select_col_pull( d ) ),
