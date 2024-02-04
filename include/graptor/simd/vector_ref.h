@@ -327,7 +327,7 @@ public:
 	bool r = false;
 	do {
 	    o = m_addr[m_sidx];
-	} while( o == ~(VID)0
+	} while( ~o == (VID)0
 		 && !(r = encoding::template cas<vector_traits>(
 			  m_addr, m_sidx, o, n )) );
 	using L = typename add_logical<member_type>::type;
