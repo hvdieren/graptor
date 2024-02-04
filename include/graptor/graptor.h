@@ -56,7 +56,7 @@ static const int num_numa_node = 1;
 #endif
 
 #include "graptor/partitioner.h"
-#include "graptor/backend.h"
+#include "graptor/backend/backend.h"
 
 /*======================================================================*
  * Basics
