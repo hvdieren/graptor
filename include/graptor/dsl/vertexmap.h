@@ -463,6 +463,8 @@ private:
 	timer tm;
 	tm.start();
 #endif
+	// Map
+	map_partitionL( part, [&]( int p ) {
 
 	auto vid1 = expr::value<simd::ty<VID,1>,expr::vk_vid>();
 	auto vid = expr::make_unop_incseq<VL>( vid1 );
@@ -505,8 +507,6 @@ private:
 
 	// fail_expose<std::is_class>( cache_vid1 );
 
-	// Map
-	map_partitionL( part, [&]( int p ) {
 		VID s = part.start_of( p );
 		VID e = part.end_of( p );
 
