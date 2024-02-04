@@ -14,6 +14,8 @@ CILK_LIB=@graptor_ld_preload@
 
 WEIGHTS=none
 
+PAR_VAR=@graptor_parallel_variable@
+
 hostname
 
 # args 1:prog_graph_layout 2:graph-file 3:graph-name 4:start-vertex 5:threads 6:partitions 7:vlen 8:delta 9:commit
@@ -38,8 +40,8 @@ function run()
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "CILK_NWORKERS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$CILK_LIB $TOOLSPATH/interposer.so\" ./${bindir}/${prog} -c ${part} -b -s -l 16 -itimes -start $start -rounds ${round} -i ${graph_path} > $file"
-	CILK_NWORKERS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_PRELOAD="$CILK_LIB $TOOLSPATH/interposer.so" ./${bindir}/${prog} -c ${part} -s -b -l 16 -itimes -start $start -rounds ${round} -i ${graph_path} > $file 2>&1
+	echo "env ${PAR_VAR}=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$CILK_LIB $TOOLSPATH/interposer.so\" ./${bindir}/${prog} -c ${part} -b -s -l 16 -itimes -start $start -rounds ${round} -i ${graph_path} > $file"
+	env ${PAR_VAR}=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_PRELOAD="$CILK_LIB $TOOLSPATH/interposer.so" ./${bindir}/${prog} -c ${part} -s -b -l 16 -itimes -start $start -rounds ${round} -i ${graph_path} > $file 2>&1
     fi
 }
 
