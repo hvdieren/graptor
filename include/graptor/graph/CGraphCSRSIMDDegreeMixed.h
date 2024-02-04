@@ -504,7 +504,7 @@ public:
 	fVID * degp = new fVID[n];
 	fVID * imap = new fVID[n];
 
-	parallel_for( fVID v=0; v < n; ++v ) {
+	parallel_loop( (fVID)0, n, [&]( fVID v ) {
 	    // Calculate the degree of each vertex within this partition
 	    fVID r = remap.origID( v );
 	    fVID mdeg = r < norig ? idx[r+1] - idx[r] : 0;
@@ -518,7 +518,7 @@ public:
 
 	    // Construct a remapping array
 	    imap[v] = v;
-	}
+	} );
 	// TODO: Can we be more intelligent here? Look at common destinations?
 	//       Or uncommon destinations to avoid padding?
 	//       Sort lexicographically for tied degrees?
@@ -546,8 +546,9 @@ public:
 	else
 	    rmap.allocate( nnz_alc, numa_allocation_local( allocation ) );
 
-	parallel_for( fVID v=0; v < nnz; ++v )
+	parallel_loop( (fVID)0, nnz, [&]( fVID v ) {
 	    rmap[v] = imap[v];
+	} );
 	for( fVID v=nnz; v < nnz_alc; ++v ) // low numbers
 	    rmap[v] = n;
 	
@@ -882,7 +883,7 @@ public:
 	const EID * idx = Gcsr.getIndex();
 	const VID * edg = Gcsr.getEdges();
 
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    VID deg = idx[v+1] - idx[v];
 
 #if GRAPTOR_CSR_INDIR == 0
@@ -933,7 +934,7 @@ public:
 		}
 		delete[] vcnt;
 	    }
-	}
+	} );
 
 #if GRAPTOR_CSR_INDIR == 0
 	for( unsigned int p=0; p < np; ++p ) {

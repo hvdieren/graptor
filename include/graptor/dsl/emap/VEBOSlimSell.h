@@ -502,7 +502,7 @@ static inline void csc_vector_with_cache_loop(
 		unsigned short lsVL = rt_ilog2( storedVL );
 		constexpr unsigned short lVL = ilog2( VL );
 		VID e = (to - from + storedVL - 1) >> lsVL;
-		parallel_for( VID s=0; s < e; ++s ) {
+		parallel_loop( (VID)0, e, [&]( VID s ) {
 		    auto c = cache_create_no_init( cache_cat( vcaches, vop_caches ), m_pid );
 		    cache_init( c, vop_caches, m_pid );
 		    for( VID ss=0; ss < storedVL; ss += VL ) {
@@ -519,7 +519,7 @@ static inline void csc_vector_with_cache_loop(
 			    vcaches, c );
 		    }
 		    cache_commit( vop_caches, c, m_pid );
-		}
+		} );
 	    } else {
 		// TODO: split caches with pid cache hoisted out of loop
 		// only valid when storedVL == VL.

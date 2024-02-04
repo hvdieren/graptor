@@ -77,10 +77,10 @@ public:
 	
 	// Invert reverse array.
 	std::fill( remap.get(), &remap.get()[next], ~(VID)0 );
-	parallel_for( VID v=0; v < next; ++v ) {
+	parallel_loop( (VID)0, next, [&]( VID v ) {
 	    assert( remap.get()[reverse.get()[v]] == ~(VID)0 );
 	    remap.get()[reverse.get()[v]] = v;
-	}
+	} );
 	
 	std::cerr << "ReorderDegreeSort: done\n";
     }
@@ -192,10 +192,10 @@ public:
 	    tm.start();
 	    reverse.allocate( nwpad, numa_allocation_interleaved() );
 	    std::fill( reverse.get(), &reverse.get()[nwpad], ~(VID)0 );
-	    parallel_for( VID v=0; v < nwpad; ++v ) {
+	    parallel_loop( (VID)0, nwpad, [&]( VID v ) {
 		assert( reverse.get()[remap.get()[v]] == ~(VID)0 );
 		reverse.get()[remap.get()[v]] = v;
-	    }
+	    } );
 	    std::cerr << "VEBO: reversing map: " << tm.next() << "\n";
 	}
 
@@ -495,11 +495,11 @@ private:
 	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    histo[v] = 0;
 	    first[v] = 0;
 	    next[v] = ~(VID)0;
-	}
+	} );
 
 	std::cerr << "VEBO: setup: " << tm.next() << "\n";
 
@@ -986,11 +986,11 @@ private:
 	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
-	parallel_for( VID v=0; v < n; ++v ) {
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    histo[v] = 0;
 	    first[v] = 0;
 	    next[v] = ~(VID)0;
-	}
+	} );
 
 	std::cerr << "VEBO: setup: " << tm.next() << "\n";
 
@@ -1248,7 +1248,7 @@ private:
 	// per partition, and we can handle partitions in parallel.
 	// Place vertices to partition in order of decreasing degree.
 	VID *remap_p = remap.get();
-	parallel_for( VID p=0; p < P; ++p ) {
+	parallel_loop( (VID)0, (VID)P, [&]( VID p ) {
 	    VID seq = s[p];
 	    if( plast[p] != n+p ) {
 		for( VID v=pfirst[p]; v != plast[p]; v=next[v] )
@@ -1256,7 +1256,7 @@ private:
 		remap_p[plast[p]] = seq++;
 	    }
 	    s[p] = seq;
-	}
+	} );
 
 	// Note: if pmul == 1, then padding vertices appear strictly
 	//       in the final partition only.
@@ -1369,12 +1369,12 @@ public:
 	    // reverse.Interleave_allocate( nwpad );
 	    reverse.allocate( nwpad, numa_allocation_interleaved() );
 	    std::fill( reverse.get(), &reverse.get()[nwpad], ~(VID)0 );
-	    parallel_for( VID v=0; v < nwpad; ++v ) {
+	    parallel_loop( (VID)0, nwpad, [&]( VID v ) {
 		if( remap.get()[v] != ~(VID)0 ) {
 		    assert( reverse.get()[remap.get()[v]] == ~(VID)0 );
 		    reverse.get()[remap.get()[v]] = v;
 		}
-	    }
+	    } );
 	}
 
 	// TODO: correctness checking
@@ -1545,8 +1545,9 @@ private:
 	VID * last = mm_alloc.get();
 	VID * next = mm_next.get();
 	VID * histo = mm_histo.get(); // assume histo is zero-initialised
-	parallel_for( VID v=0; v < n; ++v )
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    histo[v] = 0;
+	} );
 
 	const EID * idx = csc.getIndex();
 	EID dmax = 0;

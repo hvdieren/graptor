@@ -37,6 +37,7 @@
 #include <utility>
 #include <algorithm>
 #include "parallel.h"
+#include "graptor/graptor.h"
 //#include "mm.h"
 #include <sys/mman.h>
 using namespace std;
@@ -174,11 +175,11 @@ class FDense
     intT _ee = _e;					\
     intT _n = _ee-_ss;					\
     intT _l = nblocks(_n,_bsize);			\
-    parallel_for (intT _i = 0; _i < _l; _i++) {		\
+    parallel_loop( (intT)0, _l, [&]( intT _i ) {        \
       intT _s = _ss + _i * (_bsize);			\
       intT _e = min(_s + (_bsize), _ee);		\
       _body						\
-	}						\
+	  } );						\
   }
 
 template <class OT, class intT, class F, class G>
@@ -716,10 +717,8 @@ template <class ET, class intT, class PRED>
 intT filter(ET* In, ET* Out, intT n, PRED p)
 {
     bool *Fl = new bool [n];
-#if defined(CILK) || defined(CILKP)
-    _Pragma( STRINGIFY(cilk grainsize = _F_BSIZE) )
-#endif
-	parallel_for (intT i=0; i < n; i++) Fl[i] = (bool) p(In[i]);
+    parallel_loop( (intT)0, n, _F_BSIZE,
+		   [&]( intT i ) { Fl[i] = (bool) p(In[i]); } );
     intT  m = pack(In, Out, Fl, n);
     delete [] Fl;
     return m;

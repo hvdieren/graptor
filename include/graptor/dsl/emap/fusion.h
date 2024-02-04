@@ -286,10 +286,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 	}
 
 	VID n = GA.numVertices();
-	parallel_for( VID v=0; v < n; ++v )
-	    zf[v] = false;
-/*
-*/
+	map_vertexL( part, [&]( VID v ) { zf[v] = false; } );
 /*
 	uint64_t * zf64 = reinterpret_cast<uint64_t *>( zf );
 	VID n64 = n / 8;

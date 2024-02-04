@@ -233,6 +233,7 @@ inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
 
     constexpr size_t BLOCK = size_t(128) << 20; // 128 MiB
     unsigned num_threads = graptor_num_threads();
+    assert( num_threads != 0 && "need some number of threads to succeed..." );
     size_t nblock = ( len + BLOCK - 1 ) / BLOCK;
     parallel_loop( (unsigned)0, num_threads, [&]( unsigned t ) { 
 	size_t blk_from = ( nblock * t ) / num_threads;

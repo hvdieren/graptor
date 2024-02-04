@@ -92,8 +92,9 @@ public:
 	  m_csr( csr ) {
 	VID n = csr.numVertices()+1;
 	const EID * idx = m_csr.getIndex();
-	parallel_for( VID v=0; v < n; ++v )
+	parallel_loop( (VID)0, n, [&]( VID v ) {
 	    m_idx[v] = idx[v];
+	} );
     }
 
     /**
