@@ -558,10 +558,13 @@ lVID partition_edge_list(
 	    // Skip it, under the assumption that we care to iterate edges.
 	    // The loop below ensures the assertion at the end (v_done == m)
 	    // succeeds.
+	    // Note: this loop takes time and its only purpose is to make
+	    //       an assert pass...
 	    assert( e_done == mm );
-	    while( v_done < m && idx[s[v_done]] == idx[s[v_done]+1] )
-		++v_done;
-	    break;
+	    return p;
+	    // while( v_done < m && idx[s[v_done]] == idx[s[v_done]+1] )
+	    //     ++v_done;
+	    // break;
 	} else {
 	    lVID bnd_pos = bnd - cdegree;
 	    record( p, v_done, bnd_pos, next_start, idx[s[bnd_pos-1]+1], e_done );
