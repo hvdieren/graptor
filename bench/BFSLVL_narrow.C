@@ -42,7 +42,7 @@ enum var {
     var_previous = 5
 };
 
-enum variant {
+enum dvariant {
     spmv8,
     spmv16,
     spmv,
@@ -180,7 +180,7 @@ public:
 	}
 
 	bool done = F.isEmpty();
-	variant state = enable_fusion ? spmv : spmv8, prev_state;
+	dvariant state = enable_fusion ? spmv : spmv8, prev_state;
 	
 	while( !done ) {
 	    prev_state = state;
@@ -392,7 +392,7 @@ public:
     const sVID * get_level() const { return a_level.get_ptr(); }
 
 private:
-    void transition( variant from, variant to ) {
+    void transition( dvariant from, dvariant to ) {
 	const sVID upper8 = ( sVID(1) << 8 ) - 4;
 	const sVID upper16 = ( sVID(1) << 16 ) - 4;
 	const sVID ilvl = GA.numVertices()+1;
