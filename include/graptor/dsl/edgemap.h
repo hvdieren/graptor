@@ -1443,7 +1443,6 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     }
 
     if( do_seq ) { // /* m < 1024 */ mm_parts < mm_min || !cfg.is_parallel() ) {
-	std::cerr << "sequential " << mm_parts << " / " << mm_min << " parts\n";
 	delete[] degree;
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, mm, old_frontier, zf, op );
