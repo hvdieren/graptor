@@ -17,6 +17,7 @@
 #define BACKEND_cilk 2
 #define BACKEND_openmp_numa 3
 #define BACKEND_openmp 4
+#define BACKEND_parlay 6 // experimental
 
 #define HAS_NUMA(cfg)  ((cfg)&1)
 

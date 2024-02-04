@@ -12,8 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set_directory_properties(PROPERTIES EP_BASE "./external")
 
 # init to minimal necessary arguments
-set(graptor_cflags "-O0 -Wno-ignored-attributes -g -DLONG -UNDEBUG")
-set(graptor_cxxflags "-O0 -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG -UNDEBUG")
+set(graptor_cflags "-O4 -Wno-ignored-attributes -g -DLONG -UNDEBUG")
+set(graptor_cxxflags "-O4 -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -g -DLONG -UNDEBUG")
 
 # architectures
 set(var GRAPTOR_ARCH "native" CACHE STRING "target processor architecture")
@@ -43,7 +43,7 @@ set(var GRAPTOR_CILK_CXX_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "C++ co
 
 ## choice of parallel backend
 set(GRAPTOR_PARALLEL cilk_numa CACHE STRING "Parallel backend chosen by user at configure time")
-set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa)
+set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa parlay)
 
 # Dependent projects for Cilk; built-in compiler support OpenMP
 include(ExternalProject)
@@ -97,6 +97,22 @@ elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
     if(LIBDL)
 	list(APPEND EXTRA_LIBS ${LIBDL})
     endif()
+elseif(GRAPTOR_PARALLEL STREQUAL "parlay")
+    ExternalProject_Add(
+	    parlay_project
+	    GIT_REPOSITORY "https://github.com/cmuparlay/parlaylib"
+	    GIT_TAG "master"
+	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+    )
+
+    add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
+    ExternalProject_Get_Property(parlay_project BINARY_DIR)
+    target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
+    add_dependencies(GRAPTOR_BACKEND parlay_project)
+
+    string(APPEND graptor_cxxflags " -pthread")
+    string(APPEND graptor_cflags " -pthread")
+    list(APPEND EXTRA_LIBS "-lpthread")
 elseif(GRAPTOR_PARALLEL STREQUAL "openmp" OR GRAPTOR_PARALLEL STREQUAL "openmp_numa")
     find_package(OpenMP REQUIRED)
     string(APPEND graptor_cflags " -fopenmp")

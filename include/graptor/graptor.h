@@ -63,6 +63,9 @@ static const int num_numa_node = 1;
     || GRAPTOR_PARALLEL == BACKEND_openmp_numa
 #include "graptor/backend/openmp.h"
 #define CILK 0
+#elif GRAPTOR_PARALLEL == BACKEND_parlay
+#define CILK 0
+#include "graptor/backend/parlay.h"
 #else
 #include "graptor/backend/sequential.h"
 #define CILK 0
