@@ -290,6 +290,12 @@ auto cmpneg( vec<Tr,Layout1> l ) {
 	Tr::traits::cmpneg( l.data(), typename Tr::tag_type() ) );
 }
 
+template<typename Tr, layout_t Layout1>
+auto msbset( vec<Tr,Layout1> l ) {
+    return vec<Tr,Layout1>::make_mask(
+	Tr::traits::msbset( l.data(), typename Tr::tag_type() ) );
+}
+
 template<typename Tr, layout_t Layout1, layout_t Layout2>
 auto operator <= ( vec<Tr,Layout1> l, vec<Tr,Layout2> r ) {
     return vec<Tr,Layout1>::make_mask(

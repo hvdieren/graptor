@@ -168,13 +168,23 @@ public:
     static vmask_type cmpgt( type a, type b, target::mt_vmask ) { return a > b ? ~vmask_type(0) : vmask_type(0); }
     static vmask_type cmpge( type a, type b, target::mt_vmask ) { return a >= b ? ~vmask_type(0) : vmask_type(0); }
     static vmask_type cmpneg( type a, target::mt_vmask ) { return a < member_type(0) ? ~vmask_type(0) : vmask_type(0); }
+    static vmask_type msbset( type a, target::mt_vmask ) {
+	using sty = std::make_signed_t<member_type>;
+	return sty(a) < sty(0) ? ~vmask_type(0) : vmask_type(0);
+    }
     static mask_type cmpeq( type a, type b, target::mt_mask ) { return a == b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpne( type a, type b, target::mt_mask ) { return a != b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmplt( type a, type b, target::mt_mask ) { return a < b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmple( type a, type b, target::mt_mask ) { return a <= b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpgt( type a, type b, target::mt_mask ) { return a > b ? mask_traits::setone() : mask_traits::setzero(); }
     static mask_type cmpge( type a, type b, target::mt_mask ) { return a >= b ? mask_traits::setone() : mask_traits::setzero(); }
-    static vmask_type cmpneg( type a, target::mt_mask ) { return a < member_type(0) ? mask_traits::setone() : mask_traits::setzero(); }
+    static vmask_type cmpneg( type a, target::mt_mask ) {
+	return a < member_type(0) ? mask_traits::setone() : mask_traits::setzero();
+    }
+    static vmask_type msbset( type a, target::mt_mask ) {
+	using sty = std::make_signed_t<member_type>;
+	return sty(a) < sty(0) ? mask_traits::setone() : mask_traits::setzero();
+    }
     static bool cmpne( type a, type b, target::mt_bool ) { return a != b; }
     static bool cmpeq( type a, type b, target::mt_bool ) { return a == b; }
     static bool cmplt( type a, type b, target::mt_bool ) { return a < b; }
@@ -182,6 +192,10 @@ public:
     static bool cmpgt( type a, type b, target::mt_bool ) { return a > b; }
     static bool cmpge( type a, type b, target::mt_bool ) { return a >= b; }
     static bool cmpneg( type a, target::mt_bool ) { return a < member_type(0); }
+    static bool msbset( type a, target::mt_bool ) {
+	using sty = std::make_signed_t<member_type>;
+	return sty(a) < sty(0);
+    }
 
     // Second definition is chosen if type auto-casts to bool
     // static type blend( type c, type a, type b ) { return c != 0 ? b : a; }

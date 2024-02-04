@@ -138,7 +138,7 @@ public:
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
-			     [&] ( auto d ) { return parent[d] == _1s; }
+			     [&] ( auto d ) { return expr::msbset( parent[d] ); }
 		    ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {

@@ -394,6 +394,8 @@ public:
 	else
 	    return setzero();
     }
+    static mask_type msbset( type a, mt_mask ) { return asmask( a ); }
+    static vmask_type msbset( type a, mt_vmask ) { return srai( a, 31 ); }
     static vmask_type cmpeq( type a, type b, mt_vmask ) {
 	return _mm256_cmpeq_epi32( a, b );
     }

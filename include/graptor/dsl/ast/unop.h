@@ -1161,6 +1161,35 @@ auto cmpneg( Expr e,
     return unop<Expr,Op>( e, Op() );
 }
 
+/**
+ * unop_msbset: checks if top bit set
+ */
+template<unsigned short VL_>
+struct unop_msbset {
+    static constexpr unsigned short VL = VL_;
+
+    template<typename E>
+    struct types {
+	using result_type = typename E::data_type::prefmask_traits;
+    };
+
+    static constexpr char const * name = "unop_msbset";
+
+    template<typename MTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
+	return make_rvalue( simd::detail::msbset( r.value() ), mpack );
+    }
+};
+
+template<typename Expr>
+auto msbset( Expr e,
+	     std::enable_if_t<std::is_base_of_v<expr_base,Expr>> * = nullptr ) {
+    using Op = unop_msbset<Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
+
 } // namespace expr
 
 #endif // GRAPTOR_DSL_AST_UNOP_H

@@ -376,6 +376,9 @@ public:
 	    return setzero();
     }
 
+    static mask_type msbset( type a, mt_mask ) { return asmask( a ); }
+    static vmask_type msbset( type a, mt_vmask ) { return srai( a, 31 ); }
+
     static bool cmpne( type a, type b, mt_bool ) { // any lane differs
 	mask_type ne = cmpne( a, b, mt_mask() );
 	bool all_zero = _kortestz_mask16_u8( ne, ne ); // ne == 0...0 ? 1 : 0
