@@ -242,7 +242,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
     VID num_threads = graptor_num_threads();
     assert( num_threads > 1 && "fusion requires multi-threaded execution" );
     work_stealing<VID,no_duplicate_processing> work_queues( num_threads, GA );
-    
+
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
     parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {

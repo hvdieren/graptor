@@ -7,6 +7,19 @@
 #include "graptor/legacy/parallel.h"
 #include "graptor/utils.h"
 
+/***********************************************************************
+ * Disable elastic parallelism in Parlay. Issues have been observed that
+ * not all workers are woken up for code constructs that require
+ * participation of all threads for correctness (progress) reasons, such
+ * as the fusion operation (include/graptor/dsl/emap/fusion.h) and
+ * managing performance monitoring counters. The issues imply deadlock.
+ * In other cases, the lack of some workers not participating in the
+ * computation may result in performance variability. A factor of 3x
+ * performance variability has been observed for BFS (which probably
+ * has other causes also).
+ ***********************************************************************/
+#define PARLAY_ELASTIC_PARALLELISM 0
+
 #include <parlay/parallel.h>
 #include <parlay/thread_specific.h>
 
