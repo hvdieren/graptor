@@ -4,9 +4,12 @@
 
 #include <math.h>
 
+#include "config.h"
 #include "graptor/mm.h"
+#include "graptor/itraits.h"
 #include "graptor/bitfield.h"
 #include "graptor/target/vector.h"
+#include "graptor/frontier/type.h"
 
 alignas(64) extern const uint8_t avx2_1x32_array_encoding_permute_lut_vl4[32];
 // alignas(64) extern const uint32_t avx512_4x16_evenodd_intlv_epi32_vl4[16];
@@ -17,7 +20,7 @@ alignas(64) extern const uint8_t shuffle_encoding_bitfield_1x8_off1[16];
 alignas(64) extern const uint8_t shuffle_encoding_bitfield_shuffle_2bx32[32];
 alignas(64) extern const uint32_t shuffle_encoding_bitfield_sllv_2bx32[8];
 
-template<typename StoredTy, typename Enable = void>
+template<typename StoredTy, typename Enable>
 struct array_encoding {
     using stored_type = StoredTy;
     using storage_type = StoredTy;
@@ -2507,7 +2510,7 @@ struct array_encoding_intlv2 {
     }
 };
 
-template<unsigned short W, bool MSB, typename Enable = void>
+template<unsigned short W, bool MSB, typename Enable>
 struct array_encoding_msb {
     using stored_type = std::conditional_t<MSB,logical<W>,int_type_of_size_t<W>>;
     using storage_type = stored_type;

@@ -38,23 +38,6 @@
 /*======================================================================*
  * Partitioning and parallelism control
  *======================================================================*/
-#if HAS_NUMA(GRAPTOR_PARALLEL)
-#define USE_NUMA
-#define NUMA 1
-#include <numa.h>
-#include <numaif.h>
-static const int num_numa_node = numa_num_configured_nodes();
-#else
-#ifdef USE_NUMA
-#undef USE_NUMA
-#endif // USE_NUMA
-#if NUMA
-#warning NUMA set to true
-#endif
-#define NUMA 0
-static const int num_numa_node = 1;
-#endif
-
 #include "graptor/partitioner.h"
 #include "graptor/backend/backend.h"
 
@@ -83,14 +66,14 @@ static const int num_numa_node = 1;
  * Graptor data types and API
  *======================================================================*/
 #include "graptor/graph/cgraph.h"
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 #include "graptor/dsl/vmap_utils.h"
 #include "graptor/dsl/edgemap.h"
 
 /*======================================================================*
  * Graptor API implementation
  *======================================================================*/
-#include "graptor/frontier_impl.h"
+#include "graptor/frontier/impl.h"
 #include "graptor/longint_impl.h"
 
 /*======================================================================*

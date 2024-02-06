@@ -3,6 +3,7 @@
 
 #include <limits>
 
+#include "config.h"
 #include "graptor/customfp.h"
 #include "graptor/bitfield.h"
 #include "graptor/utils.h"
@@ -22,7 +23,7 @@ namespace detail {
 //       (as well as raising the question whether we will be able to influence
 //        that frontier, which won't be possible, e.g., in case the user
 //        copies the frontier array).
-// NOTE: Since introduction of super-length vectors, chose the shortest type
+// NOTE: Since introduction of super-length vectors, choose the shortest type
 //       when types of different sizes occur.
 
 /*----------------------------------------------------------------------*

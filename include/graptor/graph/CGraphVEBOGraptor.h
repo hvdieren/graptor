@@ -12,7 +12,7 @@
 #include "graptor/graph/CGraphCSxSIMDDegreeDeltaMixed.h"
 #include "graptor/graph/GraptorDataParPull.h"
 #include "graptor/graph/GraptorDataParPush.h"
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 
 // TODO
 // - Reconsider VEBO, map top 8 high-degree vertices in same partition

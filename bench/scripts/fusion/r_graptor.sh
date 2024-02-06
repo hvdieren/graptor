@@ -99,4 +99,4 @@ function presults() {
     echo
 }
 
-presults 16 128 25ac2a53 1024 avx512 25ac2a53 
+presults 16 128 d5cbb0b4 1024 avx512 d5cbb0b4 

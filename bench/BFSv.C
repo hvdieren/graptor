@@ -90,16 +90,24 @@ public:
 	EID m = GA.numEdges();
 
 	// Assign initial labels
+	parent.fill( part, ~(VID)0 );
+	// fill_by_partition( part, parent.get_ptr(), ~(VID)0 );
+#if DEFERRED_UPDATE
+	prev_parent.fill( part, ~(VID)0 );
+	// fill_by_partition( part, prev_parent.get_ptr(), ~(VID)0 );
+#endif
+#if 0
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) { return parent[v] = _1s; } )
 #if DEFERRED_UPDATE
 	    .vertex_map( [&]( auto v ) { return prev_parent[v] = _1s; } )
 #endif
 	    .materialize();
+#endif
 	
-	parent.get_ptr()[start] = start;
+	parent.set( start, start );
 #if DEFERRED_UPDATE
-	prev_parent.get_ptr()[start] = start;
+	prev_parent.set( start, start );
 #endif
 
 	// Create initial frontier

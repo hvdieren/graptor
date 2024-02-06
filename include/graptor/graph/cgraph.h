@@ -10,10 +10,10 @@
 #include <cstdio>
 #include <algorithm>
 
-#include "graptor/mm.h"
-#include "graptor/frontier.h"
+#include "config.h"
 
-constexpr unsigned short VLUpperBound = ~(unsigned short)0;
+#include "graptor/mm.h"
+#include "graptor/frontier/frontier.h"
 
 #include "graptor/graph/EIDRemapper.h"
 #include "graptor/graph/VEBOReorder.h"

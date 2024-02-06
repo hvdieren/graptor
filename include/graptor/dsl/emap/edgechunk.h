@@ -345,17 +345,19 @@ public:
 
     template<bool need_atomic,
 	     typename Cache, typename Environment, typename Expr>
-    VID process_push( const VID * vertices,
-		      VID * out_edges,
-		      bool * zf,
-		      const EID * idx,
-		      const VID * edges,
-		      Cache & c,
-		      const Environment & env, 
-		      const Expr & expr ) const {
+    std::pair<VID,EID>
+    process_push( const VID * vertices,
+		  VID * out_edges,
+		  bool * zf,
+		  const EID * idx,
+		  const VID * edges,
+		  Cache & c,
+		  const Environment & env, 
+		  const Expr & expr ) const {
 	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
 	VID *f_out = &out_edges[m_offset];
+	EID nacte = 0;
 	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
 	    VID v = vertices[j];
 	    EID x = j == js ? m_fstart : idx[v];
@@ -384,28 +386,37 @@ public:
 			if( zf[dst.data()] == 0
 			    && __sync_fetch_and_or(
 				(unsigned char *)&zf[dst.data()],
-				(unsigned char)1 ) == 0 )
+				(unsigned char)1 ) == 0 ) {
 			    // first time being set
-			    *f_out++ = dst.data();
+			    VID va = dst.data();
+			    *f_out++ = va;
+			    nacte += idx[va+1] - idx[va];
+			}
 		    } else {
 			// first time and only time being set
-			*f_out++ = dst.data();
+			VID va = dst.data();
+			*f_out++ = va;
+			nacte += idx[va+1] - idx[va];
 		    }
 		}
 	    }
 	}
-	return f_out - &out_edges[m_offset];
+	return std::make_pair( f_out - &out_edges[m_offset], nacte );
     }
 
     template<bool need_atomic, update_method um,
 	     typename Cache, typename Environment, typename Expr>
-    void
+    std::pair<VID,EID>
     process_push_many( const VID * vertices,
 		       const EID * idx,
 		       const VID * edges,
 		       bool *zf,
 		       Cache & c, const Environment & env,
 		       const Expr & expr ) const {
+	VID nactv = 0;
+	EID nacte = 0;
+	auto upon_activate =
+	    [&]( VID v ) { ++nactv; nacte += idx[v+1] - idx[v]; };
 	for( VID js=super::get_from(), je=super::get_to(), j=js; j < je; ++j ) {
 	    VID v = vertices[j];
 	    EID x = j == js ? m_fstart : idx[v];
@@ -413,8 +424,9 @@ public:
 	    // assert( y >= x );
 	    VID d = y-x;
 	    process_csr_sparse<need_atomic,um>(
-		&edges[x], x, d, v, nullptr, zf, c, env, expr );
+		&edges[x], x, d, v, nullptr, zf, upon_activate, c, env, expr );
 	}
+	return std::make_pair( nactv, nacte );
     }
 
     template<typename Cache, typename Environment, typename Expr>
@@ -711,20 +723,21 @@ public:
 
     template<bool need_atomic,
 	     typename Cache, typename Environment, typename Expr>
-    VID process_push( VID * out_edges,
-		      bool * zf,
-		      const EID * idx,
-		      const VID * edges,
-		      Cache & c,
-		      const Environment & env, 
-		      const Expr & expr ) const {
+    std::pair<VID,EID>
+    process_push( VID * out_edges,
+		  bool * zf,
+		  const EID * idx,
+		  const VID * edges,
+		  Cache & c,
+		  const Environment & env, 
+		  const Expr & expr ) const {
 	return m_partition.template process_push<need_atomic>(
 	    m_vertices, out_edges, zf, idx, edges, c, env, expr );
     }
 
     template<bool need_atomic, update_method um,
 	     typename Cache, typename Environment, typename Expr>
-    void
+    std::pair<VID,EID>
     process_push_many( const VID * vertices,
 		       const EID * idx,
 		       const VID * edges,

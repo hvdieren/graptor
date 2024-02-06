@@ -9,6 +9,8 @@
 #endif
 #endif
 
+constexpr unsigned short VLUpperBound = ~(unsigned short)0;
+
 #define Graptor_VERSION_MAJOR @Graptor_VERSION_MAJOR@
 #define Graptor_VERSION_MINOR @Graptor_VERSION_MINOR@
 
@@ -17,11 +19,29 @@
 #define BACKEND_cilk 2
 #define BACKEND_openmp_numa 3
 #define BACKEND_openmp 4
+#define BACKEND_parlay_numa 5 // experimental
 #define BACKEND_parlay 6 // experimental
 
 #define HAS_NUMA(cfg)  ((cfg)&1)
 
 #cmakedefine GRAPTOR_PARALLEL BACKEND_@GRAPTOR_PARALLEL@
+
+#if HAS_NUMA(GRAPTOR_PARALLEL)
+#define USE_NUMA
+#define NUMA 1
+#include <numa.h>
+#include <numaif.h>
+static const int num_numa_node = numa_num_configured_nodes();
+#else
+#ifdef USE_NUMA
+#undef USE_NUMA
+#endif // USE_NUMA
+#if NUMA
+#warning NUMA set to true
+#endif
+#define NUMA 0
+static const int num_numa_node = 1;
+#endif
 
 #define ALT_BOR_ASSIGN 1
 

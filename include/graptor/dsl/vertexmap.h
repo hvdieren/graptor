@@ -43,7 +43,7 @@
 #include <typeinfo>
 #include <mutex>
 
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 #include "graptor/dsl/ast.h"
 #include "graptor/dsl/ast_accum.h"
 #include "graptor/dsl/frontier_wrap.h"

@@ -16,34 +16,14 @@
 #include "graptor/mm/mm.h"
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/remap.h"
+#include "graptor/simd/simd.h"
+#include "graptor/dsl/emap/types.h"
 
 #if EXTERNAL_SPTRANS
 #include "../../sptrans/sptrans.h"
 #endif
 
 void partitionBalanceEdges( const GraphCSx & Gcsc, partitioner &part );
-
-enum class graph_traversal_kind {
-    gt_sparse = 0,
-    gt_pull = 1,
-    gt_push = 2,
-    gt_ireg = 3,
-    gt_N = 4
-};
-
-extern const char * graph_traversal_kind_names[
-    static_cast<std::underlying_type_t<graph_traversal_kind>>(
-	graph_traversal_kind::gt_N )+1];
-
-static std::ostream &
-operator << ( std::ostream & os, graph_traversal_kind gtk ) {
-    using T = std::underlying_type_t<graph_traversal_kind>;
-    T igtk = (T) gtk;
-    if( igtk >= 0 && igtk < (T)graph_traversal_kind::gt_N )
-	return os << graph_traversal_kind_names[igtk];
-    else
-	return os << graph_traversal_kind_names[(int)graph_traversal_kind::gt_N];
-}
 
 template<bool IsSorted, typename lVID>
 lVID merge_count( const lVID * ls, const lVID * le,

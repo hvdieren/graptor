@@ -9,7 +9,7 @@
 #include <memory>
 
 #include "graptor/utils.h"
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 #include "graptor/dsl/simd_vector.h"
 
 #include "graptor/dsl/aval.h"

@@ -128,8 +128,12 @@ static inline void GraptorCSCDataParCached(
     const VID dmax = 1 << (GP.getMaxVL() * GP.getDegreeBits());
     // The condition sdst.at(0) < send should be satisfied whenever s < nvec.
     while( s < nvec /* && sdst.at(0) < send */ ) {
-	// Load cache for vdst
+	// Mask to disable remaining non-existing or padding vertices
+	// TODO: consider setting the mask initially all true and
+	//       updating the mask only when sdst.at(0)+VL > send
 	auto vpend = get_end_mask<VL>( sdst.at(0), send );
+
+	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
 	    expr::create_entry<expr::vk_mask>( vpend ),

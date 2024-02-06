@@ -4,6 +4,7 @@
 
 #include "graptor/utils.h"
 #include "graptor/encoding.h"
+#include "graptor/primitives.h"
 
 namespace api {
 
@@ -118,6 +119,12 @@ public:
     [[deprecated("not reliable with bitfields")]]
     typename encoding::storage_type * get_ptr() const {
 	return mem.get();
+    }
+
+    void fill( const partitioner & part, T && val ) {
+	if constexpr ( !std::is_same_v<encoding,array_encoding<T>> )
+	    assert( 0 && "NYI - encoding" );
+	fill_by_partition<T>( part, mem.get(), std::forward<T>( val ) );
     }
 
     const char * get_name() const { return m_name; }

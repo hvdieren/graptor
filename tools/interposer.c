@@ -32,7 +32,10 @@
 #define LESVOS 4
 
 int init=0;
-#if GRAPTOR_PARALLEL == BACKEND_cilk || GRAPTOR_PARALLEL == BACKEND_cilk_numa || GRAPTOR_PARALLEL == BACKEND_parlay
+#if GRAPTOR_PARALLEL == BACKEND_cilk 	 	\
+    || GRAPTOR_PARALLEL == BACKEND_cilk_numa	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay 	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay_numa
 int count=0; // Cilk
 #else
 int count=1; //initialise count to 0 for openmp, count=1 for Cilk & stand alone scheduler
@@ -63,11 +66,13 @@ void set_num_threads(int num, int topology){
 
 void init_interposer() {
     const char * s = NULL;
-#if GRAPTOR_PARALLEL == BACKEND_cilk || GRAPTOR_PARALLEL == BACKEND_cilk_numa
+#if GRAPTOR_PARALLEL == BACKEND_cilk 	 	\
+    || GRAPTOR_PARALLEL == BACKEND_cilk_numa
     s = getenv( "CILK_NWORKERS" );
-#elif GRAPTOR_PARALLEL == BACKEND_parlay
+#elif GRAPTOR_PARALLEL == BACKEND_parlay	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay_numa
     s = getenv( "PARLAY_NUM_THREADS" );
-#elif GRAPTOR_PARALLEL == BACKEND_openmp \
+#elif GRAPTOR_PARALLEL == BACKEND_openmp	\
     || GRAPTOR_PARALLEL == BACKEND_openmp_numa
     s = getenv( "OMP_NUM_THREADS" );
 #endif
@@ -121,7 +126,10 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
         }
     }
 
-#if GRAPTOR_PARALLEL == BACKEND_cilk || GRAPTOR_PARALLEL == BACKEND_cilk_numa || GRAPTOR_PARALLEL == BACKEND_parlay
+#if GRAPTOR_PARALLEL == BACKEND_cilk 	 	\
+    || GRAPTOR_PARALLEL == BACKEND_cilk_numa	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay_numa
     // Move the main thread to its CPU now. Only do this once.
     // Only do this when creating the first thread, because prior to that
     // the runtime may decide on the number of threads to create based on

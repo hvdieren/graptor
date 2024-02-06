@@ -3,145 +3,14 @@
 #define GRAPTOR_FRONTIER_H
 
 #include "graptor/partitioner.h"
-#include "simd/simd.h"
+#include "graptor/frontier/type.h"
+#include "graptor/primitives.h"
 
 // Pre-declarations
 template<typename vertex>
 class graph;
 
 class GraphCSx;
-
-enum class frontier_type {
-    ft_true = 0,
-    ft_unbacked = 1,
-    ft_bool = 2,
-    ft_bit = 3,
-    ft_logical1 = 4,
-    ft_logical2 = 5,
-    ft_logical4 = 6,
-    ft_logical8 = 7,
-    ft_sparse = 8,
-    ft_bit2 = 9,
-    ft_msb4 = 10,
-    ft_N = 11
-};
-
-extern const char * frontier_type_names[static_cast<std::underlying_type_t<frontier_type>>( frontier_type::ft_N )+1];
-
-inline std::ostream & operator << ( std::ostream & os, frontier_type fr ) {
-    int ifr = (int) fr;
-    if( ifr >= 0 && ifr < (int)frontier_type::ft_N )
-	return os << frontier_type_names[ifr];
-    else
-	return os << frontier_type_names[(int)frontier_type::ft_N];
-}
-
-// Default information
-template<frontier_type ftype_, unsigned short VL, typename Enable = void>
-struct frontier_params; /* {
-    static constexpr frontier_type ftype = ftype_;
-    using type = void;
-    }; */
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_bool,VL_> {
-    static constexpr unsigned short W = 1;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_bool;
-    using type = bool;
-    using data_type = simd::ty<bool,VL>;
-    using mask_type = simd::detail::mask_bool_traits;
-    using encoding = array_encoding<type>;
-};
-
-template<>
-struct frontier_params<frontier_type::ft_bit,0> {
-    static constexpr unsigned short W = 0;
-    static constexpr unsigned short VL = 0;
-    static constexpr frontier_type ftype = frontier_type::ft_bit;
-    using type = unsigned char;
-    using data_type = simd::ty<void,VL>;
-    using mask_type = simd::detail::mask_bit_traits<VL>;
-    using encoding = array_encoding<type>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_bit2,VL_> {
-    static constexpr unsigned short W = 0;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_bit2;
-    using type = unsigned char;
-    using data_type = simd::ty<bitfield<2>,VL>;
-    using mask_type = simd::detail::mask_bit_logical_traits<2,VL>;
-    using encoding = array_encoding_bit<1>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_bit,VL_,std::enable_if_t<VL_ != 0>> {
-    static constexpr unsigned short W = 0;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_bit;
-    using type = typename mask_type_traits<1>::type;
-    using data_type = simd::ty<void,VL>;
-    using mask_type = simd::detail::mask_bit_traits<VL>;
-    using encoding = array_encoding_bit<2>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_logical1,VL_> {
-    static constexpr unsigned short W = 1;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_logical1;
-    using type = logical<1>;
-    using data_type = simd::detail::mask_logical_traits<W,VL>;
-    using mask_type = data_type;
-    using encoding = array_encoding<type>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_logical2,VL_> {
-    static constexpr unsigned short W = 2;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_logical2;
-    using type = logical<2>;
-    using data_type = simd::detail::mask_logical_traits<W,VL>;
-    using mask_type = data_type;
-    using encoding = array_encoding<type>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_logical4,VL_> {
-    static constexpr unsigned short W = 4;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_logical4;
-    using type = logical<4>;
-    using data_type = simd::detail::mask_logical_traits<W,VL>;
-    using mask_type = data_type;
-    using encoding = array_encoding<type>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_logical8,VL_> {
-    static constexpr unsigned short W = 8;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_logical8;
-    using type = logical<8>;
-    using data_type = simd::detail::mask_logical_traits<W,VL>;
-    using mask_type = data_type;
-    using encoding = array_encoding<type>;
-};
-
-template<unsigned short VL_>
-struct frontier_params<frontier_type::ft_msb4,VL_> {
-    static constexpr unsigned short W = 4;
-    static constexpr unsigned short VL = VL_;
-    static constexpr frontier_type ftype = frontier_type::ft_msb4;
-    using type = logical<4>;
-    using data_type = simd::detail::mask_logical_traits<W,VL>;
-    using mask_type = data_type;
-    using encoding = array_encoding_msb<W,true>;
-};
-
 
 template<typename lVID>
 struct BitReader {
@@ -238,9 +107,10 @@ public:
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	unsigned char * d = f.get_bit().get();
-        map_partitionL( part, [&]( unsigned int p ) {
-		std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
-	    } );
+	fill_by_partition( cpart, d, (unsigned char)0 );
+        // map_partitionL( part, [&]( unsigned int p ) {
+	// std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
+	// } );
 
 	f.ftype = frontier_type::ft_bit;
 	return f;
@@ -258,9 +128,10 @@ public:
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	unsigned char * d = f.get_bit2().get();
-        map_partitionL( part, [&]( unsigned int p ) {
-		std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
-	    } );
+	fill_by_partition( cpart, d, (unsigned char)0 );
+        // map_partitionL( part, [&]( unsigned int p ) {
+	// std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
+	// } );
 
 	f.ftype = frontier_type::ft_bit2;
 	return f;
@@ -286,8 +157,7 @@ public:
 	fb.allocate( numa_allocation_partitioned( part ) );
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
-	logical<W> * d = fb.get();
-	map_vertexL( part, [&]( VID v ) { d[v]=logical<W>::false_val(); } );
+	fill_by_partition( part, fb.get(), logical<W>::false_val() );
 
 	switch( W ) {
 	case 1: f.ftype = frontier_type::ft_logical1; break;
@@ -339,7 +209,7 @@ public:
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	bool * d = f.get_b().get();
-        map_vertexL( part, [&]( VID v ) { d[v]=false; } );
+	fill_by_partition( part, d, false );
 
 	f.ftype = frontier_type::ft_bool;
 	return f;
@@ -442,7 +312,7 @@ public:
 	    fb.allocate( numa_allocation_partitioned( part ) );
 	    logical<1> * d = fb.get();
 	    logical<1> * dd = get_l<1>();
-	    map_vertexL(part, [&](VID j) { d[j]=dd[j]; });
+	    copy_by_partition( part, d, dd );
 	    break;
 	}
 	case frontier_type::ft_logical2:
@@ -456,7 +326,7 @@ public:
 	    fb.allocate( numa_allocation_partitioned( part ) );
 	    logical<2> * d = fb.get();
 	    logical<2> * dd = get_l<2>();
-	    map_vertexL(part, [&](VID j){d[j]=dd[j];});
+	    copy_by_partition( part, d, dd );
 	    break;
 	}
 	case frontier_type::ft_logical4:
@@ -470,7 +340,7 @@ public:
 	    fb.allocate( numa_allocation_partitioned( part ) );
 	    logical<4> * d = fb.get();
 	    logical<4> * dd = get_l<4>();
-	    map_vertexL(part,[&](VID j){d[j]=dd[j];});
+	    copy_by_partition( part, d, dd );
 	    break;
 	}
 	case frontier_type::ft_logical8:
@@ -484,7 +354,7 @@ public:
 	    fb.allocate( numa_allocation_partitioned( part ) );
 	    logical<8> * d = fb.get();
 	    logical<8> * dd = get_l<8>();
-	    map_vertexL(part,[&](VID j){d[j]=dd[j];});
+	    copy_by_partition( part, d, dd );
 	    break;
 	}
 	case frontier_type::ft_sparse:
@@ -538,295 +408,19 @@ public:
 	toBool( part ); // TODO: temporary
     }
 
-    void toBool( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool: break;
-	case frontier_type::ft_bit:
-	case frontier_type::ft_bit2:
-	    assert( 0 && "NYI" );
-	    break;
-	case frontier_type::ft_logical1:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from logical<1> to bool\n";
-	    // No need to reallocate memory. Just reinterpret the values,
-	    // and remap 0->0 and ~0 -> 1. One may argue whether any action
-	    // is required at all as usually ~0 is interpreted as true.
-	    // However, ~0 != true, so it depends on coding style.
-	    logical<1> * p = get_l<1>().get();
-	    char * cp = reinterpret_cast<char *>( p );
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // cp[0:nv] = ( cp[0:nv] != (char)0 );
-	    // TODO: parallelise as well as vectorise
-	    for( VID v=0; v < nv; ++v )
-		cp[v] = ( cp[v] != (char)0 );
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	case frontier_type::ft_logical2:
-	{
-	    assert( 0 && "NYI" );
-	    break;
-	}
-	case frontier_type::ft_logical4:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from logical<4> to bool\n";
-	    mmap_ptr<logical<4>> l4( std::move( get_l<4>() ) );
-	    mmap_ptr<bool> & b = get_b();
-	    new ( &b ) mmap_ptr<bool>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l4.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		b.get()[v] = (bool)l4.get()[v];
-
-	    l4.del();
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	case frontier_type::ft_logical8:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from logical<8> to bool\n";
-	    mmap_ptr<logical<8>> l8( std::move( get_l<8>() ) );
-	    mmap_ptr<bool> & b = get_b();
-	    new ( &b ) mmap_ptr<bool>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l8.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		b.get()[v] = (bool)l8.get()[v];
-
-	    l8.del();
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	case frontier_type::ft_sparse:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from sparse to bool\n";
-	    VID * s = get_s();
-	    mmap_ptr<bool> & b = get_b();
-	    new ( &b ) mmap_ptr<bool>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    bool *bp = b.get();
-	    map_vertexL( part, [&]( VID v ) { bp[v]=0; } );
-	    parallel_loop( (VID)0, nactv, [&]( VID i ) { bp[s[i]] = 1; } );
-	    delete[] s;
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
-
-    void toBit( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool:
-	{
-	    partitioner cpart = part.contract( sizeof(unsigned char) );
-	    mmap_ptr<bool> bo( std::move( get_b() ) );
-	    mmap_ptr<unsigned char> & b = get_bit();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( cpart ) );
-	    for( VID v=0; v < nv; v += 8 ) {
-		unsigned char m = 0;
-		for( VID vs=0; vs < 8; ++vs ) {
-		    bool val = bo.get()[v+8-vs];
-		    m <<= 1;
-		    m |= (val != 0);
-		}
-		b.get()[v/8] = m;
-	    }
-
-	    bo.del();
-	    ftype = frontier_type::ft_bit;
-	    break;
-	}
-	case frontier_type::ft_bit: break;
-	case frontier_type::ft_bit2: break;
-	case frontier_type::ft_logical1:
-	case frontier_type::ft_logical2:
-	    assert( 0 && "NYI" );
-	    break;
-	case frontier_type::ft_logical4:
-	{
-	    partitioner cpart = part.contract( sizeof(unsigned char) );
-	    mmap_ptr<logical<4>> l4( std::move( get_l<4>() ) );
-	    mmap_ptr<unsigned char> & b = get_bit();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-
-#if __AVX512F__
-	    unsigned short * bp = reinterpret_cast<unsigned short *>( b.get() );
-	    for( VID v=0; v < nv; v += 16 ) {
-		auto vv = simd::vector<logical<4>,16>::load_from( &l4.get()[v] );
-		simd::mask<0,16> m = vv.template asmask<simd::detail::mask_bit_traits<16>>();
-		bp[v/16] = m.get(); // div 16 because unsigned short *
-	    }
-#elif __AVX2__
-	    unsigned char * bp = reinterpret_cast<unsigned char *>( b.get() );
-	    for( VID v=0; v < nv; v += 8 ) {
-		auto vv = simd::vector<logical<4>,8>::load_from( &l4.get()[v] );
-		simd::mask<0,8> m = vv.template asmask<simd::detail::mask_bit_traits<8>>();
-		bp[v/8] = m.get(); // div 8 because unsigned char *
-	    }
-#else
-	    assert( 0 && "Not supported" );
-#endif
-
-	    l4.del();
-	    ftype = frontier_type::ft_bit;
-	    break;
-	}
-	case frontier_type::ft_logical8:
-	{
-	    assert( 0 && "NYI" );
-	    mmap_ptr<logical<8>> l8( std::move( get_l<8>() ) );
-	    mmap_ptr<bool> & b = get_b();
-	    new ( &b ) mmap_ptr<bool>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l8.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		b.get()[v] = (bool)l8.get()[v];
-
-	    l8.del();
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	case frontier_type::ft_sparse:
-	{
-	    partitioner cpart = part.contract( sizeof(unsigned char) );
-	    VID * s = get_s();
-	    mmap_ptr<unsigned char> & b = get_bit();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( cpart ) );
-	    unsigned char *bp = b.get();
-	    map_vertexL( cpart, [&]( VID v ) { bp[v]=0; } );
-	    /*parallel_*/for( VID i=0; i < nactv; i++ ) {
-		VID idx = s[i] / 8;
-		bp[idx] |= ((unsigned char)1) << ( s[i] % 8 );
-	    }
-	    delete[] s;
-	    ftype = frontier_type::ft_bit;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
-    void toBit2( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool:
-	{
-	    partitioner cpart = part.contract( 4 );
-	    mmap_ptr<bool> bo( std::move( get_b() ) );
-	    mmap_ptr<unsigned char> & b = get_bit2();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( cpart ) );
-	    for( VID v=0; v < nv; v += 4 ) {
-		unsigned char m = 0;
-		for( VID vs=0; vs < 8; ++vs ) {
-		    bool val = bo.get()[v+8-vs];
-		    m <<= 2;
-		    m |= (val == 0 ? 0 : 3);
-		}
-		b.get()[v/8] = m;
-	    }
-
-	    bo.del();
-	    ftype = frontier_type::ft_bit;
-	    break;
-	}
-	case frontier_type::ft_bit:
-	{
-	    assert( 0 && "NYI" );
-	    break;
-	}
-	case frontier_type::ft_bit2: break;
-	case frontier_type::ft_logical1:
-	case frontier_type::ft_logical2:
-	    assert( 0 && "NYI" );
-	    break;
-	case frontier_type::ft_logical4:
-	{
-	    assert( 0 && "NYI" );
-	    partitioner cpart = part.contract( sizeof(unsigned char) );
-	    mmap_ptr<logical<4>> l4( std::move( get_l<4>() ) );
-	    mmap_ptr<unsigned char> & b = get_bit2();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    unsigned short * bp = reinterpret_cast<unsigned short *>( b.get() );
-
-#if __AVX512F__
-	    for( VID v=0; v < nv; v += 16 ) {
-		auto vv = simd::vector<logical<4>,16>::load_from( &l4.get()[v] );
-		simd::mask<0,16> m = vv.template asmask<simd::detail::mask_bit_traits<16>>();
-		bp[v/16] = m.get(); // div 8 because unsigned char *
-	    }
-#else
-	    assert( 0 && "Not supported" );
-#endif
-
-	    l4.del();
-	    ftype = frontier_type::ft_bit;
-	    break;
-	}
-	case frontier_type::ft_logical8:
-	{
-	    assert( 0 && "NYI" );
-	    mmap_ptr<logical<8>> l8( std::move( get_l<8>() ) );
-	    mmap_ptr<bool> & b = get_b();
-	    new ( &b ) mmap_ptr<bool>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l8.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		b.get()[v] = (bool)l8.get()[v];
-
-	    l8.del();
-	    ftype = frontier_type::ft_bool;
-	    break;
-	}
-	case frontier_type::ft_sparse:
-	{
-	    VID * s = get_s();
-	    mmap_ptr<unsigned char> & b = get_bit2();
-	    new ( &b ) mmap_ptr<unsigned char>();
-	    b.allocate( numa_allocation_partitioned( part ) );
-	    unsigned char *bp = b.get();
-
-	    partitioner cpart = part.contract( 4 ); // 8 bits / 2 bits per elm
-	    map_vertexL( cpart, [&]( VID v ) { bp[v]=0; } );
-
-	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
-		bp[s[i]/4] |= 3 << ((s[i]%4)*2);
-	    } );
-	    delete[] s;
-	    ftype = frontier_type::ft_bit2;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
-
+    inline void toBool( const partitioner & part );
+    inline void toBit( const partitioner & part );
+    inline void toBit2( const partitioner & part );
 
     template<unsigned short B>
 	void toLogical( const partitioner & part ) {
-	if( B == 8 )
+	if constexpr ( B == 8 )
 	    toLogical8( part );
-	else if( B == 4 )
+	else if constexpr ( B == 4 )
 	    toLogical4( part );
-	else if( B ==  2 )
+	else if constexpr ( B ==  2 )
 	    toLogical2( part );
-	else if( B ==  1 )
+	else if constexpr ( B ==  1 )
 	    toLogical1( part );
 	else
 	    assert( 0 && "NYI" );
@@ -867,7 +461,8 @@ public:
 	    new ( &l1 ) mmap_ptr<logical<1>>();
 	    l1.allocate( numa_allocation_partitioned( part ) );
 	    logical<1> *l1p = l1.get();
-	    map_vertexL( part, [&](VID v) { l1p[v]=logical<1>::false_val(); } );
+	    // map_vertexL( part, [&](VID v) { l1p[v]=logical<1>::false_val(); } );
+	    fill_by_partition( part, l1p, logical<1>::false_val() );
 	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		assert( !l1p[s[i]] );
 		l1p[s[i]] = logical<1>::true_val();
@@ -894,195 +489,15 @@ public:
 	l2.allocate( numa_allocation_partitioned( part ) );
 	logical<ToW> *l2p = l2.get();
 
+	// TODO: use copy_cast
 	convert_logical<logical<FromW>, logical<ToW>>( part, l1p, l2p );
 
 	l1.del();
     }
-    
-    void toLogical2( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool:
-	case frontier_type::ft_bit:
-	case frontier_type::ft_logical8:
-	    assert( 0 && "NYI" );
-	    break;
-	case frontier_type::ft_logical1:
-	{
-	    convert_logical<1,2>( part );
-	    ftype = frontier_type::ft_logical2;
-	    break;
-	}
-	case frontier_type::ft_logical4:
-	{
-	    convert_logical<4,2>( part );
-	    ftype = frontier_type::ft_logical2;
-	    break;
-	}
-	case frontier_type::ft_logical2:
-	    break; // nothing to do
-	case frontier_type::ft_sparse:
-	{
-	    VID * s = get_s();
-	    mmap_ptr<logical<2>> & l2 = get_l<2>();
-	    new ( &l2 ) mmap_ptr<logical<2>>();
-	    l2.allocate( numa_allocation_partitioned( part ) );
-	    logical<2> *l2p = l2.get();
-	    map_vertexL( part, [&](VID v) { l2p[v]=logical<2>::false_val(); } );
-	    /*parallel_*/for( VID i=0; i < nactv; i++ ) {
-		assert( !l2p[s[i]] );
-		l2p[s[i]] = logical<2>::true_val();
-	    }
 
-	    delete[] s;
-	    ftype = frontier_type::ft_logical2;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
-    void toLogical4( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from bool to logical<4>\n";
-	    mmap_ptr<bool> b( std::move( get_b() ) );
-	    mmap_ptr<logical<4>> & l4 = get_l<4>();
-	    new ( &l4 ) mmap_ptr<logical<4>>();
-	    l4.allocate( numa_allocation_partitioned( part ) );
-	    logical<4> * l4p = l4.get();
-	    bool * bp = b.get();
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l4.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		l4p[v] = logical<4>::get_val( bp[v] );
-
-	    b.del();
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	case frontier_type::ft_bit:
-	{
-	    partitioner cpart = part.contract( sizeof(unsigned char) );
-	    mmap_ptr<unsigned char> b( std::move( get_bit() ) );
-	    mmap_ptr<logical<4>> & l4 = get_l<4>();
-	    new ( &l4 ) mmap_ptr<logical<4>>();
-	    l4.allocate( numa_allocation_partitioned( part ) );
-	    logical<4> * l4p = l4.get();
-	    unsigned char * bp = b.get();
-#if __AVX512F__
-	    using vtraits = vector_type_traits_vl<logical<4>,8>;
-	    map_partitionL( cpart, [&]( VID v ) {
-		    unsigned char m = bp[v];
-		    typename vtraits::type vm = vtraits::asvector( m );
-		    vtraits::store( &l4p[v*8], vm );
-		} );
-#else
-	    assert( 0 && "Not supported" );
-#endif
-	    b.del();
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	case frontier_type::ft_logical4:
-	    break; // nothing to do
-	case frontier_type::ft_msb4:
-	    // Leave as is; works nearly same way as logical<4>, so why change?
-	    break;
-	case frontier_type::ft_logical1:
-	{
-	    convert_logical<1,4>( part );
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	case frontier_type::ft_logical8:
-	{
-	    convert_logical<8,4>( part );
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	case frontier_type::ft_logical2:
-	{
-	    convert_logical<2,4>( part );
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	case frontier_type::ft_sparse:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from sparse to logical<4>\n";
-	    VID * s = get_s();
-	    mmap_ptr<logical<4>> & l4 = get_l<4>();
-	    new ( &l4 ) mmap_ptr<logical<4>>();
-	    l4.allocate( numa_allocation_partitioned( part ) );
-	    logical<4> *l4p = l4.get();
-	    map_vertexL( part, [&](VID v) { l4p[v]=logical<4>::false_val(); } );
-	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
-		// Assertion meaningful only when prior sparse edgemaps
-		// are guaranteed to remove duplicates
-		// assert( !l4p[s[i]] );
-		l4p[s[i]] = logical<4>::true_val();
-	    } );
-
-	    delete[] s;
-	    ftype = frontier_type::ft_logical4;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
-    void toLogical8( const partitioner & part ) {
-	switch( ftype ) {
-	case frontier_type::ft_true: break;
-	case frontier_type::ft_unbacked: break;
-	case frontier_type::ft_bool: break;
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from bool to logical<8>\n";
-	    mmap_ptr<bool> b( std::move( get_b() ) );
-	    mmap_ptr<logical<8>> & l8 = get_l<8>();
-	    new ( &l8 ) mmap_ptr<logical<8>>();
-	    l8.allocate( numa_allocation_partitioned( part ) );
-	    logical<8> * l8p = l8.get();
-	    bool * bp = b.get();
-	    // TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	    // TODO: parallelise as well as vectorise
-	    // b.get()[0:nv] = l8.get()[0:nv];
-	    for( VID v=0; v < nv; ++v )
-		l8p[v] = logical<8>::get_val( bp[v] );
-
-	    b.del();
-	    ftype = frontier_type::ft_logical8;
-	    break;
-	}
-	case frontier_type::ft_bit:
-	case frontier_type::ft_logical1:
-	case frontier_type::ft_logical2:
-	case frontier_type::ft_logical4:
-	    assert( 0 && "NYI" );
-	    break;
-	case frontier_type::ft_sparse:
-	{
-	    // std::cerr << "FRONTIER CONVERT frontier from sparse to logical<8>\n";
-	    VID * s = get_s();
-	    mmap_ptr<logical<8>> & l8 = get_l<8>();
-	    new ( &l8 ) mmap_ptr<bool>();
-	    l8.allocate( numa_allocation_partitioned( part ) );
-	    logical<8> *l8p = l8.get();
-	    map_vertexL( part, [&](VID v) { l8p[v]=logical<8>::false_val(); } );
-	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
-		l8p[s[i]] = logical<8>::true_val();
-	    } );
-
-	    delete[] s;
-	    ftype = frontier_type::ft_logical8;
-	    break;
-	}
-	default: UNREACHABLE_CASE_STATEMENT;
-	}
-    }
+    inline void toLogical2( const partitioner & part );
+    inline void toLogical4( const partitioner & part );
+    inline void toLogical8( const partitioner & part );
 
     frontier copySparse( const partitioner & part ) {
 	frontier nf = *this;
@@ -1908,22 +1323,5 @@ inline logical<4> * frontier::getDense<frontier_type::ft_msb4>() const {
 
 
 using partitioned_vertices = frontier;
-
-enum frontier_mode {
-    fm_all_true = 0,
-    fm_reduction = 1,
-    fm_calculate = 2,
-    fm_N = 3
-};
-
-extern const char * frontier_mode_names[fm_N+1];
-
-inline std::ostream & operator << ( std::ostream & os, frontier_mode fr ) {
-    int ifr = (int) fr;
-    if( ifr >= 0 && ifr < (int)fm_N )
-	return os << frontier_mode_names[ifr];
-    else
-	return os << frontier_mode_names[(int)fm_N];
-}
 
 #endif // GRAPTOR_FRONTIER_H

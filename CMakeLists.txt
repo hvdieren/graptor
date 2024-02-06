@@ -43,7 +43,7 @@ set(var GRAPTOR_CILK_CXX_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "C++ co
 
 ## choice of parallel backend
 set(GRAPTOR_PARALLEL cilk_numa CACHE STRING "Parallel backend chosen by user at configure time")
-set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa parlay)
+set_property(CACHE GRAPTOR_PARALLEL PROPERTY STRINGS seq cilk cilk_numa openmp openmp_numa parlay parlay_numa)
 
 # Dependent projects for Cilk; built-in compiler support OpenMP
 include(ExternalProject)
@@ -62,6 +62,7 @@ if(GRAPTOR_PARALLEL STREQUAL "cilk")
     ExternalProject_Get_Property(cilkrts_project BINARY_DIR)
     list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libcilkrts.so.5)
     set(graptor_ld_preload ${BINARY_DIR}/lib/libcilkrts.so.5)
+    set(graptor_parallel_variable CILK_NWORKERS)
     target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
     add_dependencies(GRAPTOR_BACKEND cilkrts_project)
 
@@ -109,10 +110,34 @@ elseif(GRAPTOR_PARALLEL STREQUAL "parlay")
     ExternalProject_Get_Property(parlay_project BINARY_DIR)
     target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
     add_dependencies(GRAPTOR_BACKEND parlay_project)
+    set(graptor_parallel_variable PARLAY_NUM_THREADS)
 
     string(APPEND graptor_cxxflags " -pthread")
     string(APPEND graptor_cflags " -pthread")
     list(APPEND EXTRA_LIBS "-lpthread")
+elseif(GRAPTOR_PARALLEL STREQUAL "parlay_numa")
+    ExternalProject_Add(
+	    parlay_project
+	    GIT_REPOSITORY "https://github.com/cmuparlay/parlaylib"
+	    GIT_TAG "master"
+	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+    )
+
+    add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
+    ExternalProject_Get_Property(parlay_project BINARY_DIR)
+    target_include_directories(GRAPTOR_BACKEND INTERFACE ${BINARY_DIR}/include)
+    add_dependencies(GRAPTOR_BACKEND parlay_project)
+    set(graptor_parallel_variable PARLAY_NUM_THREADS)
+
+    string(APPEND graptor_cxxflags " -pthread")
+    string(APPEND graptor_cflags " -pthread")
+    list(APPEND EXTRA_LIBS "-lpthread")
+
+    # libraries
+    find_library(LIBNUMA NAMES numa)
+    if(LIBNUMA)
+	list(APPEND EXTRA_LIBS ${LIBNUMA})
+    endif()
 elseif(GRAPTOR_PARALLEL STREQUAL "openmp" OR GRAPTOR_PARALLEL STREQUAL "openmp_numa")
     find_package(OpenMP REQUIRED)
     string(APPEND graptor_cflags " -fopenmp")
@@ -126,9 +151,11 @@ elseif(GRAPTOR_PARALLEL STREQUAL "openmp" OR GRAPTOR_PARALLEL STREQUAL "openmp_n
     endif()
     # just need to mention some target to make this work
     add_custom_target(GRAPTOR_BACKEND)
+    set(graptor_parallel_variable OMP_NUM_THREADS)
 elseif(GRAPTOR_PARALLEL STREQUAL "seq")
     # just need to mention some target to make this work
     add_custom_target(GRAPTOR_BACKEND)
+    set(graptor_parallel_variable NOTHREADS)
 endif()
 
 # Building documentation?

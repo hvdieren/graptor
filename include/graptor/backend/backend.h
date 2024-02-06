@@ -2,14 +2,16 @@
 #ifndef GRAPTOR_BACKEND_BACKEND_H
 #define GRAPTOR_BACKEND_BACKEND_H
 
-#if GRAPTOR_PARALLEL == BACKEND_cilk || GRAPTOR_PARALLEL == BACKEND_cilk_numa
+#if GRAPTOR_PARALLEL == BACKEND_cilk 	 	\
+    || GRAPTOR_PARALLEL == BACKEND_cilk_numa
 #include "graptor/backend/cilk.h"
 #define CILK 1
-#elif GRAPTOR_PARALLEL == BACKEND_openmp \
+#elif GRAPTOR_PARALLEL == BACKEND_openmp	\
     || GRAPTOR_PARALLEL == BACKEND_openmp_numa
 #include "graptor/backend/openmp.h"
 #define CILK 0
-#elif GRAPTOR_PARALLEL == BACKEND_parlay
+#elif GRAPTOR_PARALLEL == BACKEND_parlay	\
+    || GRAPTOR_PARALLEL == BACKEND_parlay_numa
 #define CILK 0
 #include "graptor/backend/parlay.h"
 #else

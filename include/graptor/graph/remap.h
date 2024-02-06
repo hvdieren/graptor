@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "graptor/partitioner.h"
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 #include "graptor/graph/gtraits.h"
 
 /*

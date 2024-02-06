@@ -2,7 +2,7 @@
 #ifndef GRAPTOR_DSL_FRONTIER_WRAP_H
 #define GRAPTOR_DSL_FRONTIER_WRAP_H
 
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 #include "graptor/dsl/ast.h"
 
 /*======================================================================*

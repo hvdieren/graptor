@@ -7,7 +7,7 @@
 #include <typeinfo>
 #include <mutex>
 
-#include "graptor/frontier.h"
+#include "graptor/frontier/frontier.h"
 
 //Note: this is the optimized version of vertexMap which does not
 //perform a filter
