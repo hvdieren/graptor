@@ -4,6 +4,9 @@
 #include <ostream>
 #include <type_traits>
 
+// Only include headers that we really need to define types. Limitation is
+// that uses are not observed and hence need to declare variables with
+// external linkage.
 #include "graptor/dsl/emap/types.h"
 #include "graptor/frontier/type.h"
 
@@ -271,7 +274,7 @@ alignas(64) const uint64_t avx2_1x4_convert_to_8x4_lut[64] = {
 };
 
 // Supports vector length up to 16
-alignas(64) const uint32_t avx2_4x16_termination_lut_epi32[32] = {
+alignas(64) extern const uint32_t avx2_4x16_termination_lut_epi32[32] = {
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
