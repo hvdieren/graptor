@@ -13,6 +13,7 @@
 #include <utility>
 #include <algorithm>
 
+#include "config.h"
 #include "graptor/utils.h"
 
 template<typename lVID, typename lEID, typename lPID>
