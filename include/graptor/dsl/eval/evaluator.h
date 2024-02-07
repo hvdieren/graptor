@@ -1243,7 +1243,7 @@ bool evaluate_bool( Cache & c, const ValueMap & m, Expr expr ) {
     else {
 	auto r = expr::evaluate<Cache,ValueMap,cache<>,Expr>( c, m, expr );
 	static_assert( decltype(r)::VL == 1, "expect 1D vector or kmask" );
-	return expr::is_true( r );
+	return expr::is_true( r ); // any lane true
     }
 }
 
@@ -1258,7 +1258,7 @@ bool evaluate_bool_any( Cache & c, ValueMap & m, Expr expr ) {
     else {
 	auto r = expr::evaluate( c, m, expr );
 	static_assert( decltype(r)::VL == 1, "expect 1D vector or kmask" );
-	return !expr::is_false( r );
+	return !expr::is_false( r ); // same as is_true( r ) ...
     }
 }
 
