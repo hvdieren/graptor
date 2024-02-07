@@ -52,6 +52,10 @@ struct mask_type_traits<16> {
 
     static bool is_zero( type a ) { return _kortestz_mask16_u8( a, a ); }
 
+    static bool reduce_logicalandz( type a, type b ) {
+	return ! _ktestz_mask16_u8( a, b );
+    }
+
     static type cmpne( type l, type r, target::mt_mask ) {
 	return _kxor_mask16( l, r );
     }

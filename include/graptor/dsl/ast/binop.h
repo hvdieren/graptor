@@ -492,6 +492,42 @@ auto operator && ( E1 l, E2 r ) -> decltype(make_land(l,r)) {
     return make_land( l, r );
 }
 
+/* binop: logical and with zero check
+ */
+struct binop_landz {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type;
+    };
+
+    static constexpr char const * name = "binop_landz";
+    
+    template<typename VTr1, layout_t Layout1,
+	     typename VTr2, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<VTr1,Layout1> l,
+				 sb::rvalue<VTr2,Layout2> r,
+				 const MPack & mpack ) {
+	auto v = l.value();
+	if constexpr ( !mpack.is_empty() ) {
+	    auto m = mpack.get_mask_for( v );
+	    v = v & m;
+	}
+	return make_rvalue( reduce_logicalandz( v, r.value() ),
+			    sb::mask_pack<>() );
+    }
+};
+
+// Optimise for the cases where we try to merge no-op or true masks
+template<typename E1, typename E2>
+auto make_landz( E1 l, E2 r,
+		 std::enable_if_t<std::is_base_of_v<expr_base,E1>
+		 && std::is_base_of_v<expr_base,E2>> * = nullptr ) {
+    return make_binop( l, r, binop_landz() );
+}
+
+
 /* binop: bitwise and
  */
 struct binop_band {
