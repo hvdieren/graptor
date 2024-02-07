@@ -255,57 +255,6 @@ void step_emap_dense<GraphType,EdgeOperator,EMapConfig,true>
     }
 }
 
-#if 0
-template<typename GraphType, typename EdgeOperator,typename EMapConfig>
-template<graph_traversal_kind gtk>
-void step_emap_dense<GraphType,EdgeOperator,EMapConfig,true>::execute(
-    const partitioner & part ) {
-    // Not sure what it means here if part != m_G.get_partitioner()
-
-    emap_report_dyn<GraphType,EdgeOperator,EMapConfig,gtk>( std::cout );
-
-    if constexpr ( gtk == graph_traversal_kind::gt_push )
-	emap_push<EMapConfig>( getGraph(), get_operator(), part );
-    else if constexpr ( gtk == graph_traversal_kind::gt_pull )
-	emap_pull<EMapConfig>( getGraph(), get_operator(), part );
-    else if constexpr ( gtk == graph_traversal_kind::gt_ireg )
-	emap_ireg<EMapConfig>( getGraph(), get_operator(), part );
-    else if constexpr ( gtk == graph_traversal_kind::gt_sparse )
-	; // nothing to do
-    else
-	UNREACHABLE_CASE_STATEMENT;
-
-    std::cout << "done emap dense\n";
-}
-
-template<typename GraphType,
-	 typename PushOperator, typename PullOperator, typename IRegOperator>
-void
-step_emap_dense3<GraphType,PushOperator,PullOperator,IRegOperator>::execute(
-    const partitioner & part ) {
-    // Not sure what it means here if part != m_G.get_partitioner()
-
-    switch( m_kind ) {
-    case graph_traversal_kind::gt_push:
-	m_push.template execute<graph_traversal_kind::gt_push>( part );
-	break;
-    case graph_traversal_kind::gt_pull:
-	m_pull.template execute<graph_traversal_kind::gt_pull>( part );
-	break;
-    case graph_traversal_kind::gt_ireg:
-	m_ireg.template execute<graph_traversal_kind::gt_ireg>( part );
-	break;
-    case graph_traversal_kind::gt_sparse:
-	// nothing to do
-	break;
-    default:
-	UNREACHABLE_CASE_STATEMENT;
-    }
-    
-    // emap_report_dyn<GraphType,Operator,EMapConfig>( std::cout );
-
-}
-#endif
 
 
 
