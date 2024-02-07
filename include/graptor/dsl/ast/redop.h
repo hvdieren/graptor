@@ -368,6 +368,7 @@ struct redop_bitwiseor {
 	}
     }
 
+#if 0
 /*
     template<unsigned short W, unsigned short VL>
     static GG_INLINE auto
@@ -408,6 +409,7 @@ struct redop_bitwiseor {
 	auto val = l.value().atomic_bitwiseor( r.value() );
 	return make_rvalue( val );
     }
+#endif
 
     template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
 	     layout_t Layout, typename MPack>
@@ -487,15 +489,6 @@ struct redop_logicaland {
 	    return make_rvalue( l.value().land_assign( r.value(), mask ),
 				mpack );
 	} 
-    }
-
-    template<typename VTr, typename MTr1, typename MTr2, typename I,
-	     typename Enc, bool NT, layout_t LayoutR, layout_t Layout>
-    static auto
-    evaluate( lvalue<VTr,I,MTr1,Enc,NT,LayoutR> l, rvalue<VTr,Layout,MTr2> r,
-	      std::enable_if_t<simd::matchVL_<VTr::VL,MTr1,MTr2>::value> *
-	      = nullptr ) {
-	return make_rvalue( l.value().land_assign( r.value(), l.mask() & r.mask() ) );
     }
 
     template<typename VTr, typename I, typename Enc,  bool NT, layout_t LayoutR,
