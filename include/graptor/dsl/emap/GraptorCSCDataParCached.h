@@ -59,7 +59,8 @@ auto get_end_mask( VID dst, VID send ) {
 // to short-circuit inactive vertices.
 template<bool Idempotent, unsigned short VL, graptor_mode_t M,
 	 typename AExpr, typename MVExpr,
-	 typename MRExpr, typename VOPCache, typename VCache,
+	 typename MRExpr, typename VAExpr,
+	 typename VOPCache, typename VCache,
 	 typename VCacheUse, typename AllCaches, typename Environment,
 	 typename Config, graptor_mode_t Mode>
 __attribute__((always_inline, flatten))
@@ -71,6 +72,7 @@ static inline void GraptorCSCDataParCached(
     const AExpr & aexpr,
     const MVExpr & m_vexpr,
     const MRExpr & m_rexpr,
+    const VAExpr & vactiv,
     const VOPCache & vop_caches,
     const VCache & vcaches,
     const VCacheUse & vcaches_use,
@@ -126,6 +128,7 @@ static inline void GraptorCSCDataParCached(
     EID sedge = part.edge_start_of( p );
     EID s = 0;
     const VID dmax = 1 << (GP.getMaxVL() * GP.getDegreeBits());
+
     // The condition sdst.at(0) < send should be satisfied whenever s < nvec.
     while( s < nvec /* && sdst.at(0) < send */ ) {
 	// Mask to disable remaining non-existing or padding vertices
@@ -136,7 +139,7 @@ static inline void GraptorCSCDataParCached(
 	// Load cache for vdst
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
-	    expr::create_entry<expr::vk_mask>( vpend ),
+	    expr::create_entry<expr::vk_vpend>( vpend ),
 	    expr::create_entry<expr::vk_pid>( pvec1 ) );
 	cache_init( env, c, vcaches, m ); // partial init
 
@@ -166,28 +169,20 @@ static inline void GraptorCSCDataParCached(
 
 	    // End of run of SIMD groups
 	    EID smax = s + EID(deg) * VL;
-	    // assert( smax <= nvec );
 
-	    // std::cerr << "SIMD group v0=" << sdst.at(0) << " s=" << s << " deg=" << deg << " nvec=" << nvec << " - new\n";
-
-	    // Should do extract_source only first time, rest should
+	    // Should do extract_source only first vector, rest should
 	    // be raw source data (no degree encoded)
 	    auto vdecode = simd::template create_unknown<vid_type>(
 		extractor.extract_source( edata.data() ) );
 
 	    while( s < smax ) {
-		// Check all lanes are active; using cached values.
-		if( !env.evaluate_bool( c, m, aexpr ) ) [[unlikely]] {
-		    s = smax;
-		    break;
-		}
-
 		_mm_prefetch( &edge[s + 256], _MM_HINT_NTA );
 
 		// apply op vsrc, vdst;
 		auto sv = simd::create_scalar<seid_type>( sedge+s );
 		auto m = expr::create_value_map_new<VL>(
 		    expr::create_entry<expr::vk_pid>( pvec1 ),
+		    expr::create_entry<expr::vk_vpend>( vpend ),
 		    expr::create_entry<expr::vk_mask>( vmask ),
 		    expr::create_entry<expr::vk_src>( vdecode ),
 		    expr::create_entry<expr::vk_dst>( sdst ),
@@ -199,6 +194,20 @@ static inline void GraptorCSCDataParCached(
 		// the mask. As such, masks are lost to cache_init/commit,
 		// and the main expression evaluation is oblivious to it
 		// as the memory references are likely captured in the cache.
+
+		// Check if any lanes are still active; using cached values.
+		// If any lane has seen a padding edge (vk_src == vk_mask)
+		// then the lane is effectively inactive. This is encoded
+		// in the aexpr.
+		// TODO: single-trigger: base active check off any lane
+		//       having been modified, or initially non-unit value.
+		// It looks like we typically take one jump only per
+		// vector of vertices in the case of BFS.
+		if( !env.evaluate_bool( c, m, aexpr ) ) [[unlikely]] {
+		    s = smax;
+		    break;
+		}
+		
 		auto mpack = expr::sb::create_mask_pack( vdecode != vmask );
 		cache_init( env, c, vcaches_use, m, mpack ); // partial init of uses (src)
 		// auto rval_output =
@@ -219,10 +228,14 @@ static inline void GraptorCSCDataParCached(
 	    && s < nvec );
 
 	// Evaluate hoisted part of expression.
-	{
+	// It is quite  abit of work to count active vertices and
+	// edges, so do this conditionally only if any lane was activated.
+	// TODO: Need to check if m_rexpr includes code that does not
+	//       relate to the frontier and should be executed regardless.
+	if( env.evaluate_bool( c, m, vactiv ) ) {
 	    auto vpend = get_end_mask<VL>( sdst.at(0), send );
 	    auto m = expr::create_value_map_new<VL>(
-		expr::create_entry<expr::vk_mask>( vpend ),
+		expr::create_entry<expr::vk_vpend>( vpend ),
 		expr::create_entry<expr::vk_dst>( sdst ),
 		expr::create_entry<expr::vk_pid>( pvec1 ) );
 	    env.evaluate( c, m, m_rexpr );
@@ -254,7 +267,7 @@ static inline void GraptorCSCDataParCached(
 	auto vpend = get_end_mask<VL>( sdst.at(0), send );
 	auto m = expr::create_value_map_new<VL>(
 	    expr::create_entry<expr::vk_dst>( sdst ),
-	    expr::create_entry<expr::vk_mask>( vpend ),
+	    expr::create_entry<expr::vk_vpend>( vpend ),
 	    expr::create_entry<expr::vk_pid>( pvec1 ) );
 	cache_init( env, c, vcaches, m ); // partial init
 
@@ -283,6 +296,9 @@ static inline void GraptorCSCDataParCached(
 
     cache_commit( env, vop_caches, c, m_pid );
 
+    // static std::mutex mx;
+    // std::lock_guard<std::mutex> g(mx);
+
     // std::cout << "part " << p << ": takes " << tm.stop() << "\n";
 }
 
@@ -305,11 +321,11 @@ static inline void emap_pull(
     auto v_edge = expr::template make_unop_incseq<VL>(
 	expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     // disables padding vertices
-    // auto v_adst_cond = v_dst < expr::value<simd::ty<VID,VL>,expr::vk_mask>();
+    // auto v_adst_cond = v_dst < expr::value<simd::ty<VID,VL>,expr::vk_vpend>();
 #if __AVX512F__
-    auto v_adst_cond = expr::value<simd::detail::mask_bit_traits<VL>,expr::vk_mask>();
+    auto v_adst_cond = expr::value<simd::detail::mask_bit_traits<VL>,expr::vk_vpend>();
 #else
-    auto v_adst_cond = expr::value<simd::detail::mask_logical_traits<sizeof(VID),VL>,expr::vk_mask>();
+    auto v_adst_cond = expr::value<simd::detail::mask_logical_traits<sizeof(VID),VL>,expr::vk_vpend>();
 #endif
     auto v_pid0 = expr::make_unop_incseq<VL>(
 	expr::value<simd::ty<VID,1>,expr::vk_pid>() );
@@ -321,6 +337,8 @@ static inline void emap_pull(
 		    v_edge );
     // Vertexop - no mask
     auto vop0 = op.vertexop( v_dst );
+    // Any vertex activated?
+    auto vactiv0 = op.any_activated( v_dst );
 
     // Extract accumulators, also on edges. Generate expressions to reduce
     // accumulators
@@ -360,10 +378,15 @@ static inline void emap_pull(
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
     // Loop termination condition (active check)
-    auto aexpr0 = op.active( v_dst ); // mask
+    // Mesh the check with observation of any padded lane. It is assumed
+    // that once a padded edge is observed on any lane, then no non-padded
+    // edge will occur again and we can consider the lane inactive (for now).
+    auto aexpr0 = expr::make_landz(
+	op.active( v_dst ), make_cmpne( v_src, v_one ) );
     auto aexpr1 = rewrite_internal( aexpr0 );
     auto aexpr2 = expr::rewrite_caches<expr::vk_dst>( aexpr1, vcaches_dst );
-    auto aexpr3 = expr::set_mask( v_adst_cond, aexpr2 );
+    // No need to set vpend mask as the check on v_src subsumes it
+    auto aexpr3 = aexpr2; // expr::set_mask( v_adst_cond, aexpr2 );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
     // LICM: only inner-most redop needs to be performed inside loop.
@@ -391,6 +414,13 @@ static inline void emap_pull(
     auto m_rexpr5 = expr::set_mask( v_adst_cond, m_rexpr4 );
     auto m_rexpr = expr::rewrite_mask_main( m_rexpr5 );
 
+    // Rewrite any_activated expression. Note: no accumulators, no new variables
+    // Assume same cached variables as vertexop, which handles the frontier
+    // computation
+    auto vactiv1 = expr::rewrite_caches<expr::vk_dst>( vactiv0, vcaches_dst );
+    auto vactiv2 = expr::rewrite_caches<expr::vk_src>( vactiv1, vcaches_use );
+    auto vactiv3 = expr::rewrite_caches<expr::vk_zero>( vactiv2, vcaches_let );
+
     using Cfg = std::decay_t<decltype(op.get_config())>;
 
     static_assert( Cfg::max_vector_length() >= VL,
@@ -403,6 +433,7 @@ static inline void emap_pull(
 	    aexpr, // rewrite_internal( aexpr ),
 	    m_vexpr, // rewrite_internal( m_vexpr ),
 	    m_rexpr, // rewrite_internal( m_rexpr ),
+	    vactiv3,
 	    vop_caches, vcaches, vcaches_use, all_caches, env,
 	    op.get_config() );
     } );

@@ -43,7 +43,8 @@ enum value_kind {
     vk_inc = 11,
     vk_cstone = 12,
     vk_truemask = 13,
-    vk_edge = 14
+    vk_edge = 14,
+    vk_vpend = 15
 };
 
 template<value_kind vk>

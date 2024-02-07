@@ -382,6 +382,11 @@ struct arg_filter_op {
     }
     
     template<typename VIDType>
+    auto any_activated( VIDType d ) {
+	return m_op.any_activated( d );
+    }
+    
+    template<typename VIDType>
     auto vertexop( VIDType vid ) {
 	// Semantics of this are unclear: what if we specify a filter src/dst
 	// and a vertexmap is merged in with the edgemap. Is the vertexmap
@@ -549,6 +554,11 @@ struct arg_filter_a_op {
     template<typename VIDType>
     auto update( VIDType vid ) {
 	return m_op.update( vid );
+    }
+    
+    template<typename VIDType>
+    auto any_activated( VIDType d ) {
+	return m_op.any_activated( d );
     }
     
     template<typename VIDType>
@@ -836,6 +846,13 @@ struct arg_record_reduction_op {
     auto update( VIDType vid ) {
 	return m_op.update( vid );
     }
+
+    template<typename VIDType>
+    auto any_activated( VIDType vid ) {
+	using Tr = simd::detail::mask_preferred_traits_type<
+	    typename VIDType::type, VIDType::VL>;
+	return expr::make_unop_cvt_to_mask<Tr>( m_array[vid] );
+    }
     
     template<typename VIDType>
     auto vertexop( VIDType vid ) {
@@ -976,6 +993,11 @@ struct arg_record_reduction_op<
     template<typename VIDType>
     auto update( VIDType vid ) {
 	return m_op.update( vid );
+    }
+    
+    template<typename VIDType>
+    auto any_activated( VIDType vid ) {
+	return m_op.any_activated( vid );
     }
     
     template<typename VIDType>
@@ -1121,6 +1143,11 @@ struct arg_record_method_op {
     template<typename VIDType>
     auto update( VIDType vid ) {
 	return expr::rewrite_internal( m_method( vid ) );
+    }
+    
+    template<typename VIDType>
+    auto any_activated( VIDType vid ) {
+	return m_op.any_activated( vid );
     }
     
     template<typename VIDType>
@@ -1745,6 +1772,11 @@ struct op_def {
     }
     
     template<typename VIDDst>
+    auto any_activated( VIDDst d ) const {
+	return expr::_true( d );
+    }
+    
+    template<typename VIDDst>
     auto vertexop( VIDDst d ) const {
 	auto dd = expr::remove_mask( d );
 	auto m = expr::get_mask_cond( d );
@@ -2294,8 +2326,8 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 	assert( applied_emap && "if always-sparse, should have done so" );
 	return make_lazy_executor( part ); // nothing more to do
     } else {
-	// Determine if we prefer push / pull / irregular (COO) based on frontier
-	// density, filters supplied and GraphType.
+	// Determine if we prefer push / pull / irregular (COO) based on
+	// frontier density, filters supplied and GraphType.
 	// Override recording strength if unbacked frontier is sparse.
 	frontier ftrue = frontier::all_true( GA.numVertices(), GA.numEdges() );
 	frontier * gtk_frontier = &ftrue;
@@ -2319,6 +2351,13 @@ static auto DBG_NOINLINE edgemap( const GraphType & GA, Args &&... args ) {
 		&& "Too late to decide on sparse traversal now..." );
 
 	// Set up frontiers (memory allocation / conversion)
+	// TODO: where weak frontiers are used, there is no point in
+	//       converting the frontier as it won't be read.
+	//       The logic for this is spread between:
+	//       * here (where we should ideally create/change frontiers to
+	//         help with lazy executor dependency tracking on frontiers)
+	//       * op_def::variant()
+	//       * step_emap_dense::execute()
 	switch( gtk ) {
 	case graph_traversal_kind::gt_sparse: break; // done
 	case graph_traversal_kind::gt_push:
