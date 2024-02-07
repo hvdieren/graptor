@@ -433,6 +433,8 @@ void frontier::merge_or_ds( const GraphType & G, LHSTy * lhs_p,
 }
 
 void frontier::merge_or_sparse( const GraphCSx & G, frontier & f ) {
+    std::cerr << "WARNING: sequential loop in frontier::merge_or_sparse()\n";
+
     using std::swap;
     
     // Worst-case memory allocation
@@ -587,11 +589,6 @@ void frontier::toBool( const partitioner & part ) {
 	// However, ~0 != true, so it depends on coding style.
 	logical<1> * p = get_l<1>().get();
 	bool * cp = reinterpret_cast<bool *>( p );
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// cp[0:nv] = ( cp[0:nv] != (char)0 );
-	// TODO: parallelise as well as vectorise
-	// for( VID v=0; v < nv; ++v )
-	// cp[v] = ( cp[v] != (char)0 );
 	copy_cast<bool,logical<1>>( part, cp, p );
 	ftype = frontier_type::ft_bool;
 	break;
@@ -608,11 +605,6 @@ void frontier::toBool( const partitioner & part ) {
 	mmap_ptr<bool> & b = get_b();
 	new ( &b ) mmap_ptr<bool>();
 	b.allocate( numa_allocation_partitioned( part ) );
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l4.get()[0:nv];
-	// for( VID v=0; v < nv; ++v )
-	// b.get()[v] = (bool)l4.get()[v];
 	copy_cast<bool,logical<4>>( part, b.get(), l4.get() );
 
 	l4.del();
@@ -626,11 +618,6 @@ void frontier::toBool( const partitioner & part ) {
 	mmap_ptr<bool> & b = get_b();
 	new ( &b ) mmap_ptr<bool>();
 	b.allocate( numa_allocation_partitioned( part ) );
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l8.get()[0:nv];
-	// for( VID v=0; v < nv; ++v )
-	// b.get()[v] = (bool)l8.get()[v];
 	copy_cast<bool,logical<8>>( part, b.get(), l8.get() );
 
 	l8.del();
@@ -645,7 +632,7 @@ void frontier::toBool( const partitioner & part ) {
 	new ( &b ) mmap_ptr<bool>();
 	b.allocate( numa_allocation_partitioned( part ) );
 	bool *bp = b.get();
-	fill_by_partition( part, bp, false );
+	clear_by_partition( part, bp );
 	parallel_loop( (VID)0, nactv, [&]( VID i ) { bp[s[i]] = 1; } );
 	delete[] s;
 	ftype = frontier_type::ft_bool;
@@ -666,18 +653,8 @@ void frontier::toBit( const partitioner & part ) {
 	mmap_ptr<unsigned char> & b = get_bit();
 	new ( &b ) mmap_ptr<unsigned char>();
 	b.allocate( numa_allocation_partitioned( cpart ) );
-#if 0
-	for( VID v=0; v < nv; v += 8 ) {
-	    unsigned char m = 0;
-	    for( VID vs=0; vs < 8; ++vs ) {
-		bool val = bo.get()[v+8-vs];
-		m <<= 1;
-		m |= (val != 0);
-	    }
-	    b.get()[v/8] = m;
-	}
-#endif
-	copy_cast( part, b.get(), bo.get() );
+	copy_cast<bitfield<1>,bool>(
+	    part, reinterpret_cast<bitfield<1>*>( b.get() ), bo.get() );
 
 	bo.del();
 	ftype = frontier_type::ft_bit;
@@ -696,26 +673,6 @@ void frontier::toBit( const partitioner & part ) {
 	mmap_ptr<unsigned char> & b = get_bit();
 	new ( &b ) mmap_ptr<unsigned char>();
 	b.allocate( numa_allocation_partitioned( part ) );
-
-#if 0
-#if __AVX512F__
-	unsigned short * bp = reinterpret_cast<unsigned short *>( b.get() );
-	for( VID v=0; v < nv; v += 16 ) {
-	    auto vv = simd::vector<logical<4>,16>::load_from( &l4.get()[v] );
-	    simd::mask<0,16> m = vv.template asmask<simd::detail::mask_bit_traits<16>>();
-	    bp[v/16] = m.get(); // div 16 because unsigned short *
-	}
-#elif __AVX2__
-	unsigned char * bp = reinterpret_cast<unsigned char *>( b.get() );
-	for( VID v=0; v < nv; v += 8 ) {
-	    auto vv = simd::vector<logical<4>,8>::load_from( &l4.get()[v] );
-	    simd::mask<0,8> m = vv.template asmask<simd::detail::mask_bit_traits<8>>();
-	    bp[v/8] = m.get(); // div 8 because unsigned char *
-	}
-#else
-	assert( 0 && "Not supported" );
-#endif
-#endif
 	copy_cast<bitfield<1>,logical<4>>(
 	    part, reinterpret_cast<bitfield<1> *>( b.get() ), l4.get() );
 
@@ -730,16 +687,11 @@ void frontier::toBit( const partitioner & part ) {
 	mmap_ptr<bool> & b = get_b();
 	new ( &b ) mmap_ptr<bool>();
 	b.allocate( numa_allocation_partitioned( part ) );
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l8.get()[0:nv];
-	// for( VID v=0; v < nv; ++v )
-	// b.get()[v] = (bool)l8.get()[v];
 	copy_cast<bitfield<1>,logical<8>>(
 	    part, reinterpret_cast<bitfield<1> *>( b.get() ), l8.get() );
 
 	l8.del();
-	ftype = frontier_type::ft_bool;
+	ftype = frontier_type::ft_bit;
 	break;
     }
     case frontier_type::ft_sparse:
@@ -750,9 +702,9 @@ void frontier::toBit( const partitioner & part ) {
 	new ( &b ) mmap_ptr<unsigned char>();
 	b.allocate( numa_allocation_partitioned( cpart ) );
 	unsigned char *bp = b.get();
-	// map_vertexL( cpart, [&]( VID v ) { bp[v]=0; } );
-	fill_by_partition( cpart, bp, (unsigned char)0 );
-	/*parallel_*/for( VID i=0; i < nactv; i++ ) {
+	clear_by_partition( cpart, bp );
+	std::cerr << "WARNING: sequential loop in frontier::toBit()\n";
+	for( VID i=0; i < nactv; i++ ) {
 	    VID idx = s[i] / 8;
 	    bp[idx] |= ((unsigned char)1) << ( s[i] % 8 );
 	}
@@ -775,6 +727,7 @@ void frontier::toBit2( const partitioner & part ) {
 	mmap_ptr<unsigned char> & b = get_bit2();
 	new ( &b ) mmap_ptr<unsigned char>();
 	b.allocate( numa_allocation_partitioned( cpart ) );
+	std::cerr << "WARNING: sequential loop in frontier::toBit()\n";
 	for( VID v=0; v < nv; v += 4 ) {
 	    unsigned char m = 0;
 	    for( VID vs=0; vs < 8; ++vs ) {
@@ -810,6 +763,7 @@ void frontier::toBit2( const partitioner & part ) {
 	unsigned short * bp = reinterpret_cast<unsigned short *>( b.get() );
 
 #if __AVX512F__
+	std::cerr << "WARNING: sequential loop in frontier::toBit2()\n";
 	for( VID v=0; v < nv; v += 16 ) {
 	    auto vv = simd::vector<logical<4>,16>::load_from( &l4.get()[v] );
 	    simd::mask<0,16> m = vv.template asmask<simd::detail::mask_bit_traits<16>>();
@@ -830,9 +784,7 @@ void frontier::toBit2( const partitioner & part ) {
 	mmap_ptr<bool> & b = get_b();
 	new ( &b ) mmap_ptr<bool>();
 	b.allocate( numa_allocation_partitioned( part ) );
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l8.get()[0:nv];
+	std::cerr << "WARNING: sequential loop in frontier::toBit2()\n";
 	for( VID v=0; v < nv; ++v )
 	    b.get()[v] = (bool)l8.get()[v];
 
@@ -849,8 +801,7 @@ void frontier::toBit2( const partitioner & part ) {
 	unsigned char *bp = b.get();
 
 	partitioner cpart = part.contract( 4 ); // 8 bits / 2 bits per elm
-	// map_vertexL( cpart, [&]( VID v ) { bp[v]=0; } );
-	fill_by_partition( cpart, bp, (unsigned char)0 );
+	clear_by_partition( cpart, bp );
 
 	// TODO: race conditions?
 	parallel_loop( (VID)0, nactv, [&]( VID i ) {
@@ -894,8 +845,8 @@ void frontier::toLogical2( const partitioner & part ) {
 	new ( &l2 ) mmap_ptr<logical<2>>();
 	l2.allocate( numa_allocation_partitioned( part ) );
 	logical<2> *l2p = l2.get();
-	// map_vertexL( part, [&](VID v) { l2p[v]=logical<2>::false_val(); } );
-	fill_by_partition( part, l2p, logical<2>::false_val() );
+	clear_by_partition( part, l2p );
+	std::cerr << "WARNING: sequential loop in frontier::toLogical2()\n";
 	/*parallel_*/for( VID i=0; i < nactv; i++ ) {
 	    assert( !l2p[s[i]] );
 	    l2p[s[i]] = logical<2>::true_val();
@@ -922,11 +873,7 @@ void frontier::toLogical4( const partitioner & part ) {
 	l4.allocate( numa_allocation_partitioned( part ) );
 	logical<4> * l4p = l4.get();
 	bool * bp = b.get();
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l4.get()[0:nv];
-	for( VID v=0; v < nv; ++v )
-	    l4p[v] = logical<4>::get_val( bp[v] );
+	copy_cast<logical<4>,bool>( part, l4.get(), bp );
 
 	b.del();
 	ftype = frontier_type::ft_logical4;
@@ -939,20 +886,6 @@ void frontier::toLogical4( const partitioner & part ) {
 	mmap_ptr<logical<4>> & l4 = get_l<4>();
 	new ( &l4 ) mmap_ptr<logical<4>>();
 	l4.allocate( numa_allocation_partitioned( part ) );
-	// logical<4> * l4p = l4.get();
-	// unsigned char * bp = b.get();
-#if 0
-#if __AVX512F__
-	using vtraits = vector_type_traits_vl<logical<4>,8>;
-	map_partitionL( cpart, [&]( VID v ) {
-		unsigned char m = bp[v];
-		typename vtraits::type vm = vtraits::asvector( m );
-		vtraits::store( &l4p[v*8], vm );
-	    } );
-#else
-	assert( 0 && "Not supported" );
-#endif
-#endif
 	copy_cast<logical<4>,bitfield<1>>(
 	    part, l4.get(), reinterpret_cast<bitfield<1> *>( b.get() ) );
 	b.del();
@@ -991,7 +924,7 @@ void frontier::toLogical4( const partitioner & part ) {
 	l4.allocate( numa_allocation_partitioned( part ) );
 	logical<4> *l4p = l4.get();
 	// map_vertexL( part, [&](VID v) { l4p[v]=logical<4>::false_val(); } );
-	fill_by_partition( part, l4p, logical<4>::false_val() );
+	clear_by_partition( part, l4p );
 	parallel_loop( (VID)0, nactv, [&]( VID i ) {
 	    // Assertion meaningful only when prior sparse edgemaps
 	    // are guaranteed to remove duplicates
@@ -1020,11 +953,6 @@ void frontier::toLogical8( const partitioner & part ) {
 	l8.allocate( numa_allocation_partitioned( part ) );
 	logical<8> * l8p = l8.get();
 	bool * bp = b.get();
-	// TODO: Use Cilk array extensions to facilitate auto-vectorisation.
-	// TODO: parallelise as well as vectorise
-	// b.get()[0:nv] = l8.get()[0:nv];
-	// for( VID v=0; v < nv; ++v )
-	// l8p[v] = logical<8>::get_val( bp[v] );
 	copy_cast<logical<8>,bool>( part, l8.get(), bp );
 
 	b.del();
@@ -1046,7 +974,7 @@ void frontier::toLogical8( const partitioner & part ) {
 	l8.allocate( numa_allocation_partitioned( part ) );
 	logical<8> *l8p = l8.get();
 	// map_vertexL( part, [&](VID v) { l8p[v]=logical<8>::false_val(); } );
-	fill_by_partition( part, l8p, logical<8>::false_val() );
+	clear_by_partition( part, l8p );
 	parallel_loop( (VID)0, nactv, [&]( VID i ) {
 	    l8p[s[i]] = logical<8>::true_val();
 	} );
