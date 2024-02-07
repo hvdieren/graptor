@@ -56,9 +56,15 @@ BitReader2<lVID> operator + ( BitReader2<lVID> b, lVID off ) {
 }
 
 class frontier {
-    /*************************************************************
+    /*===========================================================*
      * Creation and destruction
-     *************************************************************/
+     * TODO: where frontiers are created in edgemap or vertexmap,
+     *       using pull-style or guarantee to write to all elements,
+     *       provide a create_uninitialized variant that avoids
+     *       zero-ing out. Needs to work with initialization of
+     *       cache for frontier, such that the cache is initialized
+     *       to zero even if the frontier is not.
+     *===========================================================*/
 public:
     // Create functions (no constructors used)
     [[deprecated("redundant")]]
@@ -100,14 +106,14 @@ public:
 	f.nactv = 0;
 	f.nacte = 0;
 
-	partitioner cpart = part.contract( sizeof(unsigned char) );
+	partitioner cpart = part.contract( sizeof(unsigned char) ); // * 8 ???
 	mmap_ptr<unsigned char> & fb = f.get_bit();
 	new ( &fb ) mmap_ptr<unsigned char>();
 	fb.allocate( numa_allocation_partitioned( cpart ) );
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	unsigned char * d = f.get_bit().get();
-	fill_by_partition( cpart, d, (unsigned char)0 );
+	clear_by_partition( cpart, d );
         // map_partitionL( part, [&]( unsigned int p ) {
 	// std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
 	// } );
@@ -128,7 +134,7 @@ public:
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	unsigned char * d = f.get_bit2().get();
-	fill_by_partition( cpart, d, (unsigned char)0 );
+	clear_by_partition( cpart, d );
         // map_partitionL( part, [&]( unsigned int p ) {
 	// std::fill( &d[cpart.start_of(p)], &d[cpart.start_of(p+1)], 0 );
 	// } );
@@ -157,7 +163,7 @@ public:
 	fb.allocate( numa_allocation_partitioned( part ) );
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
-	fill_by_partition( part, fb.get(), logical<W>::false_val() );
+	clear_by_partition( part, fb.get() );
 
 	switch( W ) {
 	case 1: f.ftype = frontier_type::ft_logical1; break;
@@ -209,7 +215,7 @@ public:
 
 	// TODO: is it necessary to zero out? avoidable (mmap)?
 	bool * d = f.get_b().get();
-	fill_by_partition( part, d, false );
+	clear_by_partition( part, d );
 
 	f.ftype = frontier_type::ft_bool;
 	return f;
@@ -462,7 +468,7 @@ public:
 	    l1.allocate( numa_allocation_partitioned( part ) );
 	    logical<1> *l1p = l1.get();
 	    // map_vertexL( part, [&](VID v) { l1p[v]=logical<1>::false_val(); } );
-	    fill_by_partition( part, l1p, logical<1>::false_val() );
+	    clear_by_partition( part, l1p );
 	    parallel_loop( (VID)0, nactv, [&]( VID i ) {
 		assert( !l1p[s[i]] );
 		l1p[s[i]] = logical<1>::true_val();
@@ -755,6 +761,12 @@ public:
 	    VID * sold = getSparse();
 	    VID * snew = fnew.getSparse();
 	    VID ne = 0;
+	    // TODO: parallelize. E.g., parallel map on all vertices in this
+	    //       populating entries in fnew for filtered vertices with ~0.
+	    //       Then remove unused entries and compact.
+	    //       Alternative is for each part to write sequentially in
+	    //       compact way, then move all bits in place.
+	    std::cerr << "WARNING: sequential loop in frontier::filter()\n";
 	    for( VID i=0; i < nactv; ++i ) {
 		VID v = sold[i];
 		if( fn( v ) )
@@ -783,6 +795,7 @@ private:
 	case frontier_type::ft_logical8: filter_dense( part, getDenseL<8>(), dnew, fn ); break;
 	case frontier_type::ft_sparse:
 	{
+	    std::cerr << "WARNING: sequential loop in frontier::filter_to()\n";
 	    VID * sold = getSparse();
 	    for( VID i=0; i < nactv; ++i ) {
 		VID v = sold[i];
@@ -887,6 +900,8 @@ public:
 	    return get_l<8>().get()[v];
 	case frontier_type::ft_sparse:
 	{
+	    // Note: this is slow, by design. Hence method should not
+	    //       normally be used except for debugging.
 	    const VID * f = get_s();
 	    for( VID i=0; i < nactv; ++i )
 		if( f[i] == v )
