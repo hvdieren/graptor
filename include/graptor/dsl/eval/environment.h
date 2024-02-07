@@ -57,14 +57,35 @@ public:
     inline bool
     evaluate_bool( cache_map_type & c, const value_map_type & m,
 		   const Expr & expr ) const {
-	// Check all lanes are active.
-	// Type-check on the expression to see if it is constant true.
+	// Check any lane is active.
+	// Type-check on the expression to see if it is constant true/false.
 	// If so, omit the check.
 	if constexpr ( expr::is_constant_true<Expr>::value )
 	    return true;
+	else if constexpr ( expr::is_constant_false<Expr>::value )
+	    return false;
 	else {
 	    auto r = evaluate( c, m, expr );
 	    return !expr::is_false( r );
+	}
+    }
+
+    template<typename cache_map_type, typename value_map_type, typename Expr>
+    __attribute__((always_inline))
+    inline bool
+    evaluate_bool_any_false( cache_map_type & c, const value_map_type & m,
+			     const Expr & expr ) const {
+	// Check any lane has a false value.
+	// Type-check on the expression to see if it is constant true/false.
+	// If so, omit the check.
+/*
+	if constexpr ( expr::is_constant_true<Expr>::value )
+	    return false;
+	else if constexpr ( expr::is_constant_false<Expr>::value )
+	    return true;
+	    else */ {
+	    auto r = evaluate( c, m, expr );
+	    return !expr::is_true( r );
 	}
     }
 
