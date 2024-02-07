@@ -34,7 +34,8 @@ enum update_method {
     um_list,
     um_list_must_init,
     um_list_must_init_unique,
-    um_flags_only
+    um_flags_only,
+    um_flags_only_unique
 };
 
 #include "graptor/dsl/emap/fusion.h"
@@ -341,7 +342,7 @@ bool conditional_set( VID * f, bool * zf, bool updated, VID d ) {
 		return false;
 	    } else {
 		*f = d;
-		true;
+		return true;
 	    }
 	} else { // set false
 	    *f = ~(VID)0;
@@ -354,6 +355,27 @@ bool conditional_set( VID * f, bool * zf, bool updated, VID d ) {
 	if( updated )
 	    *zf = true;
 	return updated;
+    } else if constexpr ( um == um_flags_only_unique ) {
+	// at least initialise *f
+	if( updated ) { // set true
+#if 1
+	    // For some reason, the fetch-and-or, which includes cmp-xchg
+	    // in a loop, performs slightly faster
+	    if( *zf != 0 || __sync_fetch_and_or( (unsigned char *)zf,
+						 (unsigned char)1 ) )
+#else
+	    if( __atomic_exchange_n( (unsigned char *)zf, (unsigned char)1,
+				     __ATOMIC_ACQ_REL ) != 0 )
+#endif
+	    {
+		// already set, don't set twice
+		return false;
+	    } else {
+		return true;
+	    }
+	} else { // set false
+	    return false;
+	}
     } else {
 	// Do nothing for um_none
 	static_assert( um == um_none, "invalid value for um" );
@@ -1564,7 +1586,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	// Iterate over edges, setting frontier en lieu of zero flags
 	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
 	    std::tie( n_out_block[p], n_out_block[p+mm_parts] ) =
-		parts[p].template process_push_many<need_atomic,um_flags_only>(
+		parts[p].template process_push_many<need_atomic,um_flags_only_unique>(
 		    s, idx, edge, pzf, c, env, vexpr );
 	} );
 
