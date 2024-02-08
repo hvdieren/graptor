@@ -290,8 +290,8 @@ void frontier::calculateActiveCounts_tmpl(
 
     map_partition(
 	part, [&]( int p ) {
-		  VID s = part.start_of( p );
-		  VID e = part.end_of( p );
+		  VID s = part.start_of_vbal( p );
+		  VID e = part.end_of_vbal( p );
 		  VID nv = 0;
 		  EID ne = 0;
 		  for( VID v=s; v < e; ++v ) {

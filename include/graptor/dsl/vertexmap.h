@@ -362,6 +362,7 @@ private:
 	timer tm;
 	tm.start();
 #endif
+
 	// Map
 	map_partitionL( part, [&]( int p ) {
 
@@ -406,8 +407,8 @@ private:
 
 	// fail_expose<std::is_class>( cache_vid1 );
 
-		VID s = part.start_of( p );
-		VID e = part.end_of( p );
+		VID s = part.start_of_vbal( p );
+		VID e = part.end_of_vbal( p );
 
 		// There is a potential issue here as the end of one partition
 		// will partially update a vector while the start of the next
@@ -769,8 +770,8 @@ private:
 				  // VL*VID(p) );
 		auto pp = simd::template create_set1inc<simd::ty<VID,VL>,true>(
 		    VL*VID(p) );
-		VID s = part.start_of( p );
-		VID e = part.end_of( p );
+		VID s = part.start_of_vbal( p );
+		VID e = part.end_of_vbal( p );
 
 		// assert( (s % VL) == 0 && "partition should be vertex-aligned" );
 

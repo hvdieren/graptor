@@ -27,8 +27,8 @@ fill_by_partition( const partitioner & part, T * ptr, T && val ) {
 	// Specialise to help get memset, in particular for common values
 	// where all bytes are equal.
 	map_partitionL( part, [=,&part]( unsigned p ) {
-		VID ps = part.start_of( p );
-		VID pe = part.end_of( p );
+		VID ps = part.start_of_vbal( p );
+		VID pe = part.end_of_vbal( p );
 		// std::fill<T *,T>( &ptr[ps], &ptr[pe], val );
 		char * cps = reinterpret_cast<char *>( &ptr[ps] );
 		char * cpe = reinterpret_cast<char *>( &ptr[pe] );
@@ -37,8 +37,8 @@ fill_by_partition( const partitioner & part, T * ptr, T && val ) {
 	    } );
     } else {
 	map_partitionL( part, [=,&part]( unsigned p ) {
-		VID ps = part.start_of( p );
-		VID pe = part.end_of( p );
+		VID ps = part.start_of_vbal( p );
+		VID pe = part.end_of_vbal( p );
 		std::fill<T *,T>( &ptr[ps], &ptr[pe], val );
 	    } );
     }
@@ -59,8 +59,8 @@ clear_by_partition( const partitioner & part, T * ptr ) {
 
     // Specialise to memset as this is the fastest option, better than std::fill
     map_partitionL( part, [=,&part]( unsigned p ) {
-	VID ps = part.start_of( p );
-	VID pe = part.end_of( p );
+	VID ps = part.start_of_vbal( p );
+	VID pe = part.end_of_vbal( p );
 	char * cps = reinterpret_cast<char *>( &ptr[ps] );
 	char * cpe = reinterpret_cast<char *>( &ptr[pe] );
 	memset( cps, (char)0, cpe-cps );
@@ -81,8 +81,8 @@ copy_by_partition( const partitioner & part, T * to, const T * from ) {
     tm.start();
 #endif
     map_partitionL( part, [=,&part]( unsigned p ) {
-	    VID ps = part.start_of( p );
-	    VID pe = part.end_of( p );
+	    VID ps = part.start_of_vbal( p );
+	    VID pe = part.end_of_vbal( p );
 	    std::copy( &from[ps], &from[pe], &to[ps] );
 	} );
 
