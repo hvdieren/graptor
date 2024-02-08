@@ -703,11 +703,18 @@ void frontier::toBit( const partitioner & part ) {
 	b.allocate( numa_allocation_partitioned( cpart ) );
 	unsigned char *bp = b.get();
 	clear_by_partition( cpart, bp );
-	std::cerr << "WARNING: sequential loop in frontier::toBit()\n";
-	for( VID i=0; i < nactv; i++ ) {
-	    VID idx = s[i] / 8;
-	    bp[idx] |= ((unsigned char)1) << ( s[i] % 8 );
-	}
+
+	using Enc = array_encoding_bit<1>;
+	using data_type = simd::ty<bitfield<1>,1>;
+	parallel_loop( (VID)0, nactv, [&]( VID i ) {
+	    VID v = s[i];
+	    auto l = Enc::extract<data_type>( Enc::ldcas<data_type>( bp, v ) );
+	    auto ll = bitfield<1>( 1 );
+	    while( !Enc::cas<data_type>( bp, v, l, ll ) ) {
+		l = Enc::extract<data_type>( Enc::ldcas<data_type>( bp, v ) );
+	    }
+	} );
+	
 	delete[] s;
 	ftype = frontier_type::ft_bit;
 	break;
