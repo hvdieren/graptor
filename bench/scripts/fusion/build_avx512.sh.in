@@ -46,6 +46,7 @@ one BFSLVL_narrow _nofusion_vl16 ${arch} &
 one BFSLVL_narrow _fusion_vl16 ${arch} &
 
 one BFSv _vl16 ${arch} &
+one BFSv _bitf_vl16 ${arch} &
 
 one CCv _nofusion_vl16 ${arch} &
 one CCv _fusion_vl16 ${arch} &

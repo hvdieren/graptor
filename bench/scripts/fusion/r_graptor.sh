@@ -79,7 +79,7 @@ function presults() {
 	dir=$commit
     fi
 
-    local variants="BFSv-none BFSLVL_narrow-nofusion BFSLVL_narrow-fusion BFSLVLv-nofusion BFSLVLv-fusion BFSBool-uvvid_bitf BFSBool-uvbit_bitf CCv-nofusion CCv-fusion GC_JP_fusion-nofusion GC_JP_fusion-fusion GC_JP_fusion-llf_fusion GC_gm3p-vl16 GC_gm3p_v2-vl16 KC_bucket-nofusion KC_bucket-fusion"
+    local variants="BFSv-none BFSv-bitf BFSLVL_narrow-nofusion BFSLVL_narrow-fusion BFSLVLv-nofusion BFSLVLv-fusion BFSBool-uvvid_bitf BFSBool-uvbit_bitf CCv-nofusion CCv-fusion GC_JP_fusion-nofusion GC_JP_fusion-fusion GC_JP_fusion-llf_fusion GC_gm3p-vl16 GC_gm3p_v2-vl16 KC_bucket-nofusion KC_bucket-fusion"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
     (
@@ -99,4 +99,4 @@ function presults() {
     echo
 }
 
-presults 16 128 d5cbb0b4 1024 avx512 d5cbb0b4 
+presults 16 128 385835ce 1024 avx512 
