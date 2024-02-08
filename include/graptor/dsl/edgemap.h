@@ -1395,7 +1395,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     if constexpr ( api::has_fusion_op_v<Operator> ) {
 	// if( /* !expr::is_readonly_fusion_op<Operator>::value
 	// || */ ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) || true ) {
-	if( !do_seq && cfg.is_parallel()
+	if( /* !do_seq && */ cfg.is_parallel()
 	    && graptor_num_threads() > 1
 	    && cfg.do_fusion( m, mm, GA.numEdges() ) ) {
 	    return csr_sparse_with_f_fusion_stealing(
