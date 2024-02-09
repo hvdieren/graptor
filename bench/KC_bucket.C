@@ -267,7 +267,7 @@ public:
 			//       on unsigned is more expensive than on signed.
 			//       Replace by == cK which should be sufficient
 			auto cK = expr::constant_val( coreness[v], K );
-			return coreness[v] >= cK;
+			return coreness[v] == cK;
 		    } )
 		.materialize();
 
@@ -332,7 +332,10 @@ public:
 	    frontier output;
 	    api::edgemap(
 		GA,
-		api::config( api::always_sparse ),
+		api::config(
+		    api::always_sparse,
+		    api::fusion_select(
+			unique.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 ) ),
 		api::filter( api::src, api::strong, unique ),
 		api::record( output, api::reduction, api::strong ),
 		api::fusion( [&]( auto s, auto d, auto e ) {
