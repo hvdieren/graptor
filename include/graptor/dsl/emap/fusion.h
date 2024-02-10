@@ -245,6 +245,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_fusion_stealing(
 
     std::vector<VID> * F = new std::vector<VID>[num_threads]();
 
+    // Partition the work. Note this is a vertex-balanced parallelisation
     parallel_loop( (uint32_t)0, num_threads, 1, [&]( uint32_t t ) {
 	VID from = ( uint64_t(t) * uint64_t(m) ) / uint64_t(num_threads);
 	VID to = std::min( uint64_t(m),

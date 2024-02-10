@@ -1233,11 +1233,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     const partitioner & part,
     EID outEdgeCount,
     frontier & old_frontier,
-    bool * zf,
     const Operator & op ) {
     const EID * idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
     VID * s = old_frontier.getSparse();
+
+    bool * zf = nullptr;
+    if constexpr ( zerof )
+	zf = GA.get_flags( part );
 
     // if constexpr ( emap_do_add_in_frontier_out<Operator>::value )
     // outEdgeCount += m; // Add in m vertices in old frontier
@@ -1345,6 +1348,27 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     return new_frontier;
 }
 
+EID calculate_edge_count( const VID * s, VID m, const EID * const idx,
+			  EID * degree, EID * voffsets ) {
+    EID mm0;
+    if( m > 2048 ) {
+	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
+	    degree[i] = idx[s[i]+1] - idx[s[i]];
+	} );
+	mm0 = sequence::plusScan( degree, voffsets, m );
+    } else {
+	mm0 = 0;
+	for( VID i=0; i < (VID)m; ++i ) {
+	    EID deg = idx[s[i]+1] - idx[s[i]];
+	    // degree[i] = deg; -- unused
+	    voffsets[i] = mm0;
+	    mm0 += deg;
+	}
+    }
+    voffsets[m] = mm0;
+    return mm0;
+}
+
 // Sparse CSR traversal (GraphCSx) with a new frontier
 // Uses internal array for removing duplicates, contrasted to the explicit
 // removeDuplicates step
@@ -1356,9 +1380,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     const partitioner & part,
     frontier & old_frontier,
     const Operator & op ) {
-    const EID * idx = GA.getIndex();
+    const EID * const idx = GA.getIndex();
     VID m = old_frontier.nActiveVertices();
-    VID * s = old_frontier.getSparse();
+    const VID * s = old_frontier.getSparse();
     EID mm = old_frontier.nActiveEdges();
 
     // timer tm;
@@ -1368,9 +1392,19 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // of the same vertex. Disable if the atomic is a single-trigger operation,
     // i.e., it will activate any vertex at most once by design.
     static constexpr bool zerof = !expr::is_single_trigger_op<Operator>::value;
-    bool * zf = nullptr;
-    if constexpr ( zerof )
-	zf = GA.get_flags( part );
+
+    // Arrays to support edge-balanced partitioning. We may not need these
+    // if we hand over to sequential or fusion methods, except if the number
+    // of edges was not known.
+    EID * degree = nullptr, * voffsets = nullptr;
+
+    // Unknown number of edges, not calculated yet
+    if( mm == ~(EID)0 ) {
+	degree = new EID[2*m+1];
+	voffsets = &degree[m];
+	mm = calculate_edge_count( s, m, idx, degree, voffsets );
+	old_frontier.setActiveCounts( m, mm ); // for what it's worth
+    }
 
     // Block sizes for parallelisation.
     static constexpr EID mm_block = EMAP_BLOCK_SIZE;
@@ -1393,9 +1427,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // it is correct to also execute with a non-fusion traversal, which we will
     // do if a sequential execution is preferred.
     if constexpr ( api::has_fusion_op_v<Operator> ) {
-	// if( /* !expr::is_readonly_fusion_op<Operator>::value
-	// || */ ( cfg.is_parallel() && /* m >= 1024 */ mm_parts >= mm_min ) || true ) {
-	if( /* !do_seq && */ cfg.is_parallel()
+	if( cfg.is_parallel()
 	    && graptor_num_threads() > 1
 	    && cfg.do_fusion( m, mm, GA.numEdges() ) ) {
 	    return csr_sparse_with_f_fusion_stealing(
@@ -1403,9 +1435,9 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
     }
 
-    if( do_seq ) { // /* m < 1024 */ mm_parts < mm_min || !cfg.is_parallel() ) {
+    if( do_seq ) {
 	return csr_sparse_with_f_seq<zerof>(
-	    cfg, GA, eid_retriever, part, mm, old_frontier, zf, op );
+	    cfg, GA, eid_retriever, part, mm, old_frontier, op );
     }
 
     // Calculate info on the degrees of the vertices and total number of edges
@@ -1414,25 +1446,13 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // the number of active edges is similar to the number of active vertices),
     // the approach ensures that long neighbour lists are parallelised without
     // further effort.
-    EID * degree = new EID[2*m+1];
-    EID * voffsets = &degree[m];
-    EID mm0;
-    if( m > 2048 ) {
-	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
-	    degree[i] = idx[s[i]+1] - idx[s[i]];
-	} );
-	mm0 = sequence::plusScan( degree, voffsets, m );
-    } else {
-	mm0 = 0;
-	for( VID i=0; i < (VID)m; ++i ) {
-	    EID deg = idx[s[i]+1] - idx[s[i]];
-	    // degree[i] = deg; -- unused
-	    voffsets[i] = mm0;
-	    mm0 += deg;
-	}
+    if( degree == nullptr ) {
+	degree = new EID[2*m+1];
+	voffsets = &degree[m];
+	[[maybe_unused]] EID mm0 =
+	    calculate_edge_count( s, m, idx, degree, voffsets );
+	assert( mm == mm0 );
     }
-    voffsets[m] = mm0;
-    assert( mm0 == mm );
     
     // auto tm1 = tm.next();
 
@@ -1549,6 +1569,10 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	}
 	new_frontier.setActiveCounts( nactv, nacte );
     } else {
+	bool * zf = nullptr;
+	if constexpr ( zerof )
+	    zf = GA.get_flags( part );
+
 	// Case of likely sparse output frontier
 	assert( mm <= EID(std::numeric_limits<VID>::max())
 		&& "limitation due to cast in frontier construction" );
