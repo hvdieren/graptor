@@ -107,9 +107,8 @@ struct mask_logical_traits {
     using prefmask_traits = detail::mask_logical_traits<W, VL>;
 
     template<unsigned short VL2>
-    struct rebindVL {
-	using type = mask_logical_traits<W,VL2>;
-    };
+    struct rebindVL;
+    // { using type = mask_logical_traits<W,VL2>; };
 
     template<unsigned short VL2>
     using rebindVL_t = typename rebindVL<VL2>::type;
@@ -424,6 +423,22 @@ template<unsigned short B, unsigned short VL_>
 template<unsigned short VL2>
 struct mask_bit_logical_traits<B,VL_>::rebindVL {
     using type = typename mask_bit_logical_traits_rebindVL<B,VL2>::type;
+};
+
+template<unsigned short B, unsigned short VL>
+struct mask_logical_traits_rebindVL {
+    using type = mask_logical_traits<B,VL>;
+};
+
+template<unsigned short B>
+struct mask_logical_traits_rebindVL<B,1> {
+    using type = mask_bool_traits;
+};
+
+template<unsigned short B, unsigned short VL_>
+template<unsigned short VL2>
+struct mask_logical_traits<B,VL_>::rebindVL {
+    using type = typename mask_logical_traits_rebindVL<B,VL2>::type;
 };
 
 /***********************************************************************
