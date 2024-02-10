@@ -699,7 +699,10 @@ public:
     VID * nActiveVerticesPtr() { return &nactv; }
     EID * nActiveEdgesPtr() { return &nacte; }
 
-    bool isEmpty() const { return nActiveEdges() == 0; }
+    // Check that there are no vertices. An edgemap operation may be satisfied
+    // no work to be done if number of edges is zero, but in this case a
+    // vertexmap may still require processing.
+    bool isEmpty() const { return nActiveVertices() == 0; }
 
     double density( EID m ) const {
 /*
