@@ -39,6 +39,9 @@ public:
 	return *this;
     }
 
+    void insert_at( size_t xpos, ID val ) {
+	m_entries[xpos] = val;
+    }
     void insert( size_t xpos, ID val ) {
 	m_entries[m_count+xpos] = val;
     }
@@ -498,11 +501,11 @@ private:
 	size_t hsize = ( BLOCK + sizeof(ID) - 1 ) / sizeof(ID);
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	size_t * hist = new size_t[(np+1) * hsize](); // zero init
+	size_t * hist = new size_t[np * hsize](); // zero init
 	uint8_t * idb = new uint8_t[num_elements];
 
-	assert( sizeof(*idb)*256 >= m_open_buckets+1
-		&& "number of open buckets limited to 256-1" );
+	assert( ((size_t(256)<<sizeof(*idb))-1) >= m_open_buckets+1
+		&& "number of open buckets limited to tmp bucket ID (byte)" );
 	static_assert( std::is_same_v<ID,VID>, "implicit assumption" );
 
 	// 1. Calculate number of elements moving to each bucket
@@ -530,20 +533,18 @@ private:
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each partition / bucket
-	size_t * thist = &hist[np * hsize];
+	// 3. Resize buckets to accommodate new elements
 	parallel_loop( (BID)0, m_open_buckets+1, [&]( BID b ) {
 	    size_t t = 0;
 	    for( unsigned p=0; p < np; ++p ) {
 		size_t u = hist[p*hsize+b];
-		hist[p*hsize+b] = t;
+		hist[p*hsize+b] = t + m_buckets[b].size();
 		t += u;
 	    }
-	    thist[b] = t;
+	    m_buckets[b].grow( t );
+	    m_buckets[b].resize( t );
+	    __sync_fetch_and_add( &m_elems, t );
 	} );
-
-	// 3. Resize buckets to accommodate new elements
-	for( BID b=0; b < m_open_buckets+1; ++b )
-	    m_buckets[b].grow( thist[b] );
 
 	// 4. Insert elements into buckets
 	map_partition( part, [&]( unsigned p ) {
@@ -564,21 +565,9 @@ private:
 
 		// ID b = slot( bkt );
 		BID b = idb[v];
-		m_buckets[b].insert( lhist[b]++, id );
-/*
-		if( m_fn.set_slot( id, b ) )
-		    m_buckets[b].insert( lhist[b]++, id );
-		else
-		    __sync_fetch_and_add( &thist[b], -1 );
-*/
+		m_buckets[b].insert_at( lhist[b]++, id );
 	    }
 	} );
-
-	// 5. Update bucket sizes
-	for( BID b=0; b < m_open_buckets+1; ++b ) {
-	    m_buckets[b].resize( thist[b] );
-	    m_elems += thist[b];
-	}
 
 #if 0
 	// 6. Sanity check (debugging)
@@ -611,10 +600,11 @@ private:
 	size_t hsize = BLOCK;
 	while( hsize < m_open_buckets+1 )
 	    hsize *= 2;
-	size_t * hist = new size_t[(np+1) * hsize]();
+	size_t * hist = new size_t[np * hsize]();
 	uint8_t * idb = new uint8_t[num_elements];
 
-	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
+	assert( ((size_t(256)<<sizeof(*idb))-1) >= m_open_buckets+1
+		&& "number of open buckets limited to tmp bucket ID (byte)" );
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
@@ -641,20 +631,18 @@ private:
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each chunk / bucket
-	size_t * thist = &hist[np * hsize];
+	// 3. Resize buckets to accommodate new elements
 	parallel_loop( (BID)0, m_open_buckets+1, [&]( BID b ) {
 	    size_t t = 0;
 	    for( size_t p=0; p < np; ++p ) {
 		size_t u = hist[p*hsize+b];
-		hist[p*hsize+b] = t;
+		hist[p*hsize+b] = t + m_buckets[b].size();
 		t += u;
 	    }
-	    thist[b] = t;
+	    __sync_fetch_and_add( &m_elems, t );
+	    m_buckets[b].grow( t );
+	    m_buckets[b].resize( t );
 	} );
-
-	// 3. Resize buckets to accommodate new elements
-	for( BID b=0; b < m_open_buckets+1; ++b )
-	    m_buckets[b].grow( thist[b] );
 
 	// 4. Insert elements into buckets
 	parallel_loop( size_t(0), np, [&]( size_t p ) {
@@ -675,7 +663,7 @@ private:
 
 		// ID b = slot( bkt );
 		BID b = idb[v];
-		m_buckets[b].insert( lhist[b]++, id );
+		m_buckets[b].insert_at( lhist[b]++, id );
 /*
 		if( m_fn.set_slot( id, b ) )
 		    m_buckets[b].insert( lhist[b]++, id );
@@ -684,19 +672,6 @@ private:
 */
 	    }
 	} );
-
-	// 4b. filter empty slots
-/*
-	parallel_for( ID b=0; b < m_open_buckets+1; ++b ) {
-	    thist[b] = m_buckets[b].filter( thist[b] );
-	}
-*/
-
-	// 5. Update bucket sizes
-	for( BID b=0; b < m_open_buckets+1; ++b ) {
-	    m_buckets[b].resize( thist[b] );
-	    m_elems += thist[b];
-	}
 
 #if 0
 	// 6. Sanity check (debugging)
