@@ -308,9 +308,12 @@ public:
 		static_cast<member_type>( o ) + d );
 	} while( !(r = encoding::template cas<vector_traits>(
 		       ptr, m_sidx, o, n )) );
-	// assert( ( *ptr >= l || o < l ) && "oops, pushed value below threshold" );
 	if constexpr ( conditional ) {
-	    // previous if( o <= l ) implies o > l // o > l && n == l
+	    // Return true if the value was lowered to equal the limit.
+	    // If the value was already below or equal to the limit, then
+	    // false is returned.
+	    // Note: to arrive here with n == l implies that previously the
+	    // check o <= l failed.
 	    return n == l
 		? vector<L,1>::true_mask()
 		: vector<L,1>::false_mask();
