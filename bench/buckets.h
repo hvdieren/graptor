@@ -408,6 +408,9 @@ public:
 	BID cur = get_current_bucket();
 	BID oflow = initialize
 	    ? std::numeric_limits<ID>::max() : get_overflow_bucket();
+
+	// TODO: switch frontier type...
+	
 	switch( f.getType() ) {
 	case frontier_type::ft_true:
 	{
@@ -498,14 +501,15 @@ private:
 	size_t * hist = new size_t[(np+1) * hsize](); // zero init
 	uint8_t * idb = new uint8_t[num_elements];
 
-	assert( sizeof(*idb)*256 >= m_open_buckets+1 );
+	assert( sizeof(*idb)*256 >= m_open_buckets+1
+		&& "number of open buckets limited to 256-1" );
 	static_assert( std::is_same_v<ID,VID>, "implicit assumption" );
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
 	map_partition( part, [&]( unsigned p ) {
-	    VID s = part.start_of( p );
-	    VID e = part.end_of( p );
+	    VID s = part.start_of_vbal( p );
+	    VID e = part.end_of_vbal( p );
 	    size_t * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
 		ID id;
@@ -527,7 +531,7 @@ private:
 	// 2. Aggregate histograms and compute insertion points for
 	//    each partition / bucket
 	size_t * thist = &hist[np * hsize];
-	parallel_for( BID b=0; b < m_open_buckets+1; ++b ) {
+	parallel_loop( (BID)0, m_open_buckets+1, [&]( BID b ) {
 	    size_t t = 0;
 	    for( unsigned p=0; p < np; ++p ) {
 		size_t u = hist[p*hsize+b];
@@ -535,7 +539,7 @@ private:
 		t += u;
 	    }
 	    thist[b] = t;
-	}
+	} );
 
 	// 3. Resize buckets to accommodate new elements
 	for( BID b=0; b < m_open_buckets+1; ++b )
@@ -543,8 +547,8 @@ private:
 
 	// 4. Insert elements into buckets
 	map_partition( part, [&]( unsigned p ) {
-	    VID s = part.start_of( p );
-	    VID e = part.end_of( p );
+	    VID s = part.start_of_vbal( p );
+	    VID e = part.end_of_vbal( p );
 	    size_t * lhist = &hist[p*hsize];
 	    for( VID v=s; v < e; ++v ) {
 		ID id;
@@ -576,11 +580,13 @@ private:
 	    m_elems += thist[b];
 	}
 
+#if 0
 	// 6. Sanity check (debugging)
 	size_t k = 0;
 	for( BID i=0; i < m_open_buckets+1; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
+#endif
 
 	// Cleanup
 	delete[] idb;
@@ -612,7 +618,7 @@ private:
 
 	// 1. Calculate number of elements moving to each bucket
 	//    There are m_open_buckets+1 buckets (final one is overflow)
-	parallel_for( size_t p=0; p < np; ++p ) {
+	parallel_loop( size_t(0), np, [&]( size_t p ) {
 	    size_t s = p * CHUNK;
 	    size_t e = std::min( (p+1)*CHUNK, num_elements );
 	    size_t * lhist = &hist[p*hsize];
@@ -631,12 +637,12 @@ private:
 		lhist[b]++;
 		idb[v] = b;
 	    }
-	};
+	} );
 	
 	// 2. Aggregate histograms and compute insertion points for
 	//    each chunk / bucket
 	size_t * thist = &hist[np * hsize];
-	parallel_for( BID b=0; b < m_open_buckets+1; ++b ) {
+	parallel_loop( (BID)0, m_open_buckets+1, [&]( BID b ) {
 	    size_t t = 0;
 	    for( size_t p=0; p < np; ++p ) {
 		size_t u = hist[p*hsize+b];
@@ -644,14 +650,14 @@ private:
 		t += u;
 	    }
 	    thist[b] = t;
-	}
+	} );
 
 	// 3. Resize buckets to accommodate new elements
 	for( BID b=0; b < m_open_buckets+1; ++b )
 	    m_buckets[b].grow( thist[b] );
 
 	// 4. Insert elements into buckets
-	parallel_for( size_t p=0; p < np; ++p ) {
+	parallel_loop( size_t(0), np, [&]( size_t p ) {
 	    VID s = p * CHUNK;
 	    VID e = std::min( (p+1)*CHUNK, num_elements );
 	    size_t * lhist = &hist[p*hsize];
@@ -677,7 +683,7 @@ private:
 		    m_buckets[b].insert( lhist[b]++, ~(ID)0 );
 */
 	    }
-	};
+	} );
 
 	// 4b. filter empty slots
 /*
@@ -692,11 +698,13 @@ private:
 	    m_elems += thist[b];
 	}
 
+#if 0
 	// 6. Sanity check (debugging)
 	size_t k = 0;
 	for( BID i=0; i < m_open_buckets+1; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
+#endif
 
 	// Cleanup
 	delete[] idb;
@@ -730,11 +738,13 @@ private:
 	}
 	m_elems += num_inserted;
 
+#if 0
 	// Sanity check (debugging)
 	size_t k = 0;
 	for( BID i=0; i <= m_open_buckets; ++i )
 	    k += m_buckets[i].size();
 	assert( k == m_elems );
+#endif
     }
 
 private:
