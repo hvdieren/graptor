@@ -735,7 +735,8 @@ struct array_encoding_bit {
 		// ? 0 1 | 0
 		// ? 1 0 | 1
 		// ? 1 1 | 0
-		auto undef = omask; // any value
+		// Slightly more efficient code if left undefined
+		typename idx_traits::type undef;
 		woff = idx_traits::template ternary<0b01000100>(
 		    undef, omask, idx );
 	    } else {
