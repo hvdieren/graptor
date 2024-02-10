@@ -220,6 +220,10 @@ public:
     static mask_type asvector( type a ) { return a; }
     static mask_type asmask( type a ) { return movemask( a ); }
     static member_type reduce_logicalor( type val ) { return member_type(val != 0); }
+    static bool reduce_logicaland( type a, type b ) {
+	return ( logical_and( a, b ) ) == 0;
+    }
+    static bool reduce_logicalandz( type val ) { return !(val != 0); }
     static type min( type a, type b ) { return std::min( a, b ); }
     static type max( type a, type b ) { return std::max( a, b ); }
     static member_type reduce_min( type val ) { return val; }

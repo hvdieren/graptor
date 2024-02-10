@@ -181,6 +181,7 @@ public:
 	}
     }
 
+
 /*
     static type logical_and( type a, type b ) { return _mm256_and_si256( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm256_andnot_si256( a, b ); }
@@ -568,7 +569,8 @@ public:
 	return setzero(); // _mm256_reduce_add_epi64( val );
     }
     static member_type reduce_add( type val, vmask_type mask ) {
-	type zval = _mm256_blendv_epi8( setzero(), val, mask );
+	type zval =
+	    _mm256_blendv_epi8( setzero(), val, mask );
 	return reduce_add( zval );
     }
     static member_type reduce_logicalor( type val ) {
@@ -582,6 +584,9 @@ public:
     }
     static member_type reduce_logicaland( type val ) {
 	return member_type( asmask( val ) == 0xff );
+    }
+    static bool reduce_logicalandz( type a, type b ) {
+	return asmask( logical_and( a, b ) ) == 0;
     }
     static member_type reduce_logicaland( type val, type mask ) {
 	// if mask then true if val; if not mask, then true
