@@ -210,9 +210,7 @@ static inline void GraptorCSCDataParCached(
 		
 		auto mpack = expr::sb::create_mask_pack( vdecode != vmask );
 		cache_init( env, c, vcaches_use, m, mpack ); // partial init of uses (src)
-		// auto rval_output =
 		env.evaluate( c, m, mpack, m_vexpr );
-		// output.lor_assign( rval_output.value().template convert_data_type<OTr>() );
 
 		// Proceed to next vector of sources
 		s += VL;
