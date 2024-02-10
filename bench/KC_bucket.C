@@ -33,9 +33,6 @@ enum kc_variable_name {
 struct bucket_fn {
     using ID = VID;
     using BID = std::make_unsigned_t<ID>;
-#if OPTIONAL
-    using SID = std::make_signed_t<ID>;
-#endif
     
     bucket_fn( VID * degree )
 	: m_degree( degree ) { }
@@ -44,9 +41,6 @@ struct bucket_fn {
 	return v == std::numeric_limits<VID>::max() // illegal vertex
 	    || BID(m_degree[v]) < current	// or processing completed
 	    || BID(m_degree[v]) >= overflow	// or already in overflow bucket
-#if OPTIONAL
-	    || SID(m_degree[v]) < 0             // pre-calculated
-#endif
 	    ? std::numeric_limits<BID>::max() // ... then drop vertex
 	    : BID(m_degree[v]);		// ... else this is the bucket
     }
@@ -125,64 +119,6 @@ public:
 		} )
 	    .materialize();
 
-#if OPTIONAL
-	// Pre-determine the coreness of some vertices where we can
-	// TODO: merge emap and vfilter?
-	api::vertexprop<VID,VID,var_ngh>
-	    n_ngh( part, "coreness neighbour count" );
-	frontier predefined;
-	make_lazy_executor( part )
-	    .vertex_map(
-		[&]( auto v ) { return n_ngh[v] = _0; }
-		).materialize();
-	api::edgemap(
-	    GA,
-	    api::relax( [&]( auto s, auto d, auto e ) {
-		return n_ngh[d] += expr::iif( coreness[s] <= _1, _0, _1 );
-	    } )
-	    ).materialize();
-
-	make_lazy_executor( part )
-	    .vertex_filter(
-		GA,
-		ftrue,
-		predefined,
-		[&]( auto v ) {
-		    constexpr size_t W = sizeof(VID) * 8 - 1;
-		    auto cW = expr::constant_val( coreness[v], W );
-		    auto val = ( _1 << cW ) + _1;
-		    return expr::make_seq(
-			coreness[v] = expr::set_mask(
-			    n_ngh[v] >= a_degrees_ro[v] - _1, val ),
-			n_ngh[v] >= a_degrees_ro[v] - _1 );
-		} )
-	    .materialize();
-	n_ngh.del();
-
-	// For each pre-calculated coreness, subtract one from its neighbours'
-	// coreness, provided the neighbour has not been precalculated
-	// TODO: check if more efficient to filter with frontier...
-	api::edgemap(
-	    GA,
-	    api::filter( api::src, api::strong, predefined ),
-	    api::filter( api::dst, api::strong,
-			 [&]( auto d ) {
-			     using SID = std::make_signed_t<VID>;
-			     return expr::cast<SID>( coreness[d] ) >= _0; } ),
-	    api::relax( [&]( auto s, auto d, auto e ) {
-		// using SID = std::make_signed_t<VID>;
-		return coreness[d] += _1s;
-		// return coreness[d] += expr::iif(
-		// expr::cast<SID>( coreness[s] ) < _0, _0, _1s ); // -1
-/*
-		return coreness[d] += expr::set_mask(
-		    expr::cast<SID>( coreness[s] ) >= _0,
-		    _1s ); // conditionally subtract 1
-*/
-	    } )
-	    ).materialize();
-#endif
-
 	VID K = 0;
 	VID L = 0;
 
@@ -195,9 +131,6 @@ public:
 	bkts.initialize_buckets( part, nonzero );
 #if !FUSION
 	VID todo = nonzero.nActiveVertices();
-#if OPTIONAL
-	todo -= predefined.nActiveVertices();
-#endif
 	// std::cerr << "todo: " << todo << "\n";
 #endif
 
@@ -227,6 +160,8 @@ public:
 	VID n_nonzero = nonzero.nActiveVertices();
 	nonzero.del();
 
+	VID prev_iter_K = K;
+
 	largestCore = 0;
 	iter = 0;
 
@@ -245,7 +180,7 @@ public:
 	    timer tm_iter;
 	    tm_iter.start();
 
-	    // TODO: once all m_degrees[] are less than/equal to largestCore,
+	    // TODO: once all coreness[] are less than/equal to largestCore,
 	    //       computation is complete. Could check for this if we have
 	    //       seen a few (effectively) empty buckets
 
@@ -258,61 +193,28 @@ public:
 	    // All vertices in bucket are removed, have coreness K
 	    // Watch out for duplicates in the buckets, as moved vertices
 	    // are not removed from their previous bucket.
-	    frontier unique;
-	    make_lazy_executor( part )
-		.vertex_filter(
-		    GA, F, unique,
-		    [&]( auto v ) {
-			// TODO: AVX2 >= is more expensive than > and comparison
-			//       on unsigned is more expensive than on signed.
-			//       Replace by == cK which should be sufficient
-			auto cK = expr::constant_val( coreness[v], K );
-			return coreness[v] == cK;
-		    } )
-		.materialize();
-
-#if 0
-	    unique.toSparse( part );
-	    if( unique.getType() == frontier_type::ft_sparse ) {
-		VID * s = unique.getSparse();
-		VID k = unique.nActiveVertices();
-
-		for( VID i=0; i < k; ++i ) {
-		    if( s[i] == ~(VID)0 )
-			std::cerr << "unique[" << i << "] is _1s\n";
-		}
-	    }
-#endif
-
-	    // Remove duplicate edges. Edges may be multiply represented
-	    // as they may be inserted once per edge in the worst case.
-	    // This is a consequence of not removing vertices from a bucket
-	    // when they move to a different bucket.
-	    // In principle each vertex should occur in each bucket once,
-	    // however, they may appear multiple times in the overflow bucket.
-	    // Note: we have avoided the need to remove duplicates *by design*.
-	    // There may remain ~0 duplicates, which are harmless.
-	    if( false && !unique.isEmpty() ) {
-		frontier Fnew
-		    = frontier::sparse( GA.numVertices(), unique.nActiveVertices() );
-		removeDuplicates( unique.getSparse(), unique.nActiveVertices(), part );
-		VID nv_new = sequence::filter(
-		    unique.getSparse(), Fnew.getSparse(), unique.nActiveVertices(),
-		    ValidVID() );
-		Fnew.setActiveCounts( nv_new, nv_new );
-		VID diff = unique.nActiveVertices() - nv_new;
-		std::cerr << "removed " << diff << " duplicates\n";
-		assert( diff == 0 );
-		unique.del();
-		unique = Fnew;
+	    // Duplicates only appear in the buckets, not in the output frontier
+	    VID F_nactv = F.nActiveVertices();
+	    if( prev_iter_K != K ) {
+		frontier unique;
+		make_lazy_executor( part )
+		    .vertex_filter(
+			GA, F, unique,
+			[&]( auto v ) {
+			    // AVX2 >= is more expensive than > and comparison
+			    // on unsigned is more expensive than on signed.
+			    // Replace by == cK which should be sufficient
+			    auto cK = expr::constant_val( coreness[v], K );
+			    return coreness[v] == cK;
+			} )
+		    .materialize();
+		F.del();
+		F = unique;
 	    }
 
-	    // std::cerr << "remove duplicates: " << tm_iter.next() << "\n";
+	    prev_iter_K = K;
 
-	    // std::cerr << "F: " << F.nActiveVertices() << "\n";
-	    // std::cerr << "F: " << F << "\n";
-
-	    if( !unique.isEmpty() )
+	    if( !F.isEmpty() )
 		largestCore = K;
 
 #if !FUSION
@@ -325,7 +227,6 @@ public:
 	    // std::cerr << "K: " << K << "\n";
 	    // std::cerr << "overflow_bkt: " << overflow_bkt << "\n";
 	    // std::cerr << "F     : " << F << "\n";
-	    // std::cerr << "unique: " << unique << "\n";
 	    // print( std::cerr, part, coreness );
 
 #if FUSION
@@ -333,66 +234,32 @@ public:
 	    api::edgemap(
 		GA,
 		api::config(
-		    api::always_sparse,
+		    // api::always_sparse,
 		    api::fusion_select(
-			unique.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 ) ),
-		api::filter( api::src, api::strong, unique ),
+			F.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 ) ),
+		api::filter( api::src, api::strong, F ),
 		api::record( output, api::reduction, api::strong ),
 		api::fusion( [&]( auto s, auto d, auto e ) {
 		    // Requires that RHS of && is evaluated after LHS.
 		    auto cK = expr::constant_val( coreness[d], K );
 		    auto cO = expr::constant_val( coreness[d], overflow_bkt );
-		    // return coreness[v].count_down( cK );
-#if OPTIONAL
-		    using SID = std::make_signed_t<VID>;
-		    return expr::let<var_let>(
-			coreness[v].count_down_value( cK ),
-			[&]( auto old ) {
-			    return expr::cast<int>(
-				expr::iif(
-				    expr::cast<SID>( coreness[v] ) >= _0,
-				    _1s, // inactive, stay
-				    expr::iif(
-					old == cK + _1,
-					expr::iif( old > cO,
-						   _0, // degree below overflow, move
-						   _1s ), // in overflow bucket, stay
-					_1 ) ) ); // degree dropped to K
-			} );
-#else
 		    return expr::let<var_let>(
 			coreness[d].count_down_value( cK ),
 			[&]( auto old ) {
-			    return
-				expr::cast<int>(
+			    return expr::cast<int>(
 				expr::iif(
-				    old <= cK || old > cO,
-				    expr::iif( old == cK + _1,
-					       _0, // degree below overflow, move
-					       _1 ), // degree dropped to K
-				    _1s ) ); // in overflow bucket, or done, don't move
+				    old == cK + _1,
+				    expr::iif(
+					old <= cK || old > cO,
+					_0(d), // degree below overflow, move
+					_1s(d) ), // in oflow or done, don't move
+				    _1(d) ) ); // degree dropped to K
 			} );
-#endif
 		},
 		    api::no_reporting_processed | api::no_duplicate_reporting ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    auto cK = expr::constant_val( coreness[s], K );
-#if OPTIONAL
-		    using SID = std::make_signed_t<VID>;
-		    return coreness[d].count_down_value(
-			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
-					cK )
-			) > cK;
-#else
 		    return coreness[d].count_down_value( cK ) > cK;
-/*
-		    using SID = std::make_signed_t<VID>;
-		    return coreness[d].count_down_value(
-			expr::set_mask( expr::cast<SID>( coreness[d] ) >= _0,
-					cK )
-			) > cK;
-*/
-#endif
 		} )
 		)
 		.materialize();
@@ -400,7 +267,7 @@ public:
 	    frontier output;
 	    api::edgemap(
 		GA,
-		api::filter( api::src, api::strong, unique ),
+		api::filter( api::src, api::strong, F ),
 		api::record( output, api::reduction, api::strong ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    // Note: constant_val copies over the mask of s
@@ -419,26 +286,11 @@ public:
 		.materialize();
 #endif
 
-	    // std::cerr << "unique: " << unique.nActiveVertices() << "\n";
-
-#if 0
-	    output.toSparse( part );
-	    if( output.getType() == frontier_type::ft_sparse ) {
-		VID * s = output.getSparse();
-		VID k = output.nActiveVertices();
-
-		for( VID i=0; i < k; ++i ) {
-		    if( s[i] == ~(VID)0 )
-			std::cerr << "unique[" << i << "] is _1s\n";
-		}
-	    }
-#endif
-
 #if MD_ORDERING
 	    {
-		unique.toSparse( part );
-		const VID * s = unique.getSparse();
-		VID l = unique.nActiveVertices();
+		F.toSparse( part );
+		const VID * s = F.getSparse();
+		VID l = F.nActiveVertices();
 		std::copy( &s[0], &s[l], md_order.get_ptr() + md_index );
 		md_index += l;
 		std::cerr << "md_index: " << md_index << "\n";
@@ -446,9 +298,8 @@ public:
 #endif
 
 #if !FUSION
-	    todo -= unique.nActiveVertices();
+	    todo -= F.nActiveVertices();
 #endif
-	    unique.del();
 
 	    // std::cerr << "edgemap: " << tm_iter.next() << "\n";
 
@@ -462,10 +313,10 @@ public:
 
 	    if( itimes ) {
 		info_buf.resize( iter+1 );
-		info_buf[iter].density = unique.density( GA.numEdges() );
+		info_buf[iter].density = F.density( GA.numEdges() );
 		info_buf[iter].delay = tm_iter.total();
-		info_buf[iter].F_act = F.nActiveVertices();
-		info_buf[iter].rm_act = unique.nActiveVertices();
+		info_buf[iter].F_act = F_nactv;
+		info_buf[iter].rm_act = F.nActiveVertices();
 		info_buf[iter].wakeup_act = output.nActiveVertices();
 		info_buf[iter].K = K;
 		if( debug )
@@ -479,22 +330,6 @@ public:
 
 	std::cerr << "Estimated lower bound on maximum clique size: "
 		  << L << "\n";
-
-#if OPTIONAL
-	make_lazy_executor( part )
-	    .vertex_map(
-		predefined,
-		[&]( auto v ) {
-		    using DT = simd::ty<VID, decltype(v)::VL>;
-		    auto mask = expr::_xp<DT>( _1s ) >> expr::_xp<DT>( _1 );
-		    return coreness[v] &= mask;
-		}
-		).materialize();
-
-	// std::cerr << "predefined: " << predefined << "\n";
-
-	predefined.del();
-#endif
 
 #if MD_ORDERING
 	std::cerr << "md_index: " << md_index << "\n";

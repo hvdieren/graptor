@@ -97,7 +97,7 @@ public:
 	frontier F = frontier::sparse( n, m_count, m_entries );
 	m_entries = nullptr;
 	m_count = m_capacity = 0;
-	F.setActiveCounts( F.nActiveVertices(), F.nActiveVertices() );
+	F.setActiveCounts( F.nActiveVertices(), ~(EID)0 ); // unknown edges
 	return F;
     }
 
@@ -543,7 +543,8 @@ private:
 	    }
 	    m_buckets[b].grow( t );
 	    m_buckets[b].resize( t );
-	    __sync_fetch_and_add( &m_elems, t );
+	    if( t != 0 )
+		__sync_fetch_and_add( &m_elems, t );
 	} );
 
 	// 4. Insert elements into buckets
@@ -639,9 +640,10 @@ private:
 		hist[p*hsize+b] = t + m_buckets[b].size();
 		t += u;
 	    }
-	    __sync_fetch_and_add( &m_elems, t );
 	    m_buckets[b].grow( t );
 	    m_buckets[b].resize( t );
+	    if( t != 0 )
+		__sync_fetch_and_add( &m_elems, t );
 	} );
 
 	// 4. Insert elements into buckets
