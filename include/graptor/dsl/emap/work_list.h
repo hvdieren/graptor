@@ -3,6 +3,7 @@
 #define GRAPTOR_DSL_EMAP_WORK_LIST_H
 
 #include <sched.h>
+#include <unistd.h>
 #include <cstdint>
 #include <atomic>
 
@@ -458,12 +459,24 @@ public:
 	--m_working;
 
 	// Randomly select any buffer.
+	// Sleeping protocol based of Parlay, which cites
+	// https://raw.githubusercontent.com/ogiroux/atomic_wait/master/include/atomic_wait
+	long history = 10;
 	while( m_working.load() != 0 ) {
 	    unsigned id = rand() % m_threads;
 	    if( buffer_type * buf = m_queues[id].pop() ) {
 		++m_working;
 		return buf;
 	    }
+
+	    // If failing to steal, sleep increasing amounts
+	    // sched_yield();
+/*
+            usleep( history >> 2 );
+            history += history >> 2;
+            if( history > (1 << 10) )
+                history = 1 << 10;
+*/
 	}
 	return nullptr;
     }
