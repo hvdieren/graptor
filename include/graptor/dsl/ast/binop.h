@@ -52,6 +52,11 @@ auto make_binop( E1 e1, E2 e2, BinOp op ) {
 	return binop<E1,E2,BinOp>( e1, e2, op );
 }
 
+template<typename E1, typename E2>
+auto make_land( E1 l, E2 r,
+		std::enable_if_t<std::is_base_of_v<expr_base,E1>
+		&& std::is_base_of_v<expr_base,E2>> * = nullptr );
+
 /* binop: masking
  */
 struct binop_mask {
@@ -395,6 +400,55 @@ auto make_seq( E0 e0, EN... en ) {
 	return make_seq( e0, make_seq( en... ) );
 }
 
+/* binop: logical andnot
+ */
+struct binop_landnot {
+    template<typename E1, typename E2>
+    struct types {
+	using result_type = typename E1::data_type;
+    };
+
+    static constexpr char const * name = "binop_landnot";
+    
+    template<typename VTr1, layout_t Layout1,
+	     typename VTr2, layout_t Layout2,
+	     typename MPack>
+    __attribute__((always_inline))
+    static inline auto evaluate( sb::rvalue<VTr1,Layout1> l,
+				 sb::rvalue<VTr2,Layout2> r,
+				 const MPack & mpack ) {
+	if constexpr ( std::is_same_v<VTr1,VTr2> )
+	    return make_rvalue( logical_andnot( l.value(), r.value() ), mpack );
+	else {
+	    auto rr = r.value().template convert_data_type<VTr1>();
+	    return make_rvalue( logical_andnot( l.value(), rr ), mpack );
+	}
+    }
+};
+
+// Optimise for the cases where we try to merge no-op or true masks
+template<typename E1, typename E2>
+auto make_landnot( E1 l, E2 r,
+		   std::enable_if_t<std::is_base_of_v<expr_base,E1>
+		   && std::is_base_of_v<expr_base,E2>> * = nullptr ) {
+    if constexpr ( is_value_vk<E1,vk_false>::value )
+	return r;
+    else if constexpr ( is_value_vk<E1,vk_true>::value )
+	return value<typename E1::data_type, vk_false>();
+    else if constexpr ( is_value_vk<E2,vk_true>::value )
+	return !l;
+    else if constexpr ( is_value_vk<E2,vk_false>::value )
+	return r;
+    else if constexpr ( is_identical<E1,E2>::value )
+	return add_mask( value<typename E1::data_type, vk_false>(),
+			 get_mask( l ) );
+    else if constexpr ( is_unop_linvert<E1>::value )
+	return make_land( l.data(), r );
+    else
+	return make_binop( l, r, binop_landnot() );
+}
+
+
 /* binop: logical and
  */
 struct binop_land {
@@ -419,47 +473,13 @@ struct binop_land {
 	    return make_rvalue( l.value() && rr, mpack );
 	}
     }
-    
-    template<typename VTr, layout_t Layout1, typename MTr, layout_t Layout2>
-    static auto
-    evaluate( rvalue<VTr,Layout1,MTr> l, rvalue<VTr,Layout2,MTr> r,
-	      typename std::enable_if<!std::is_void<VTr>::value>::type *
-	      = nullptr ) {
-	return make_rvalue( l.value() & r.value(), l.mask() & r.mask() );
-    }
-    
-    template<typename VTr, layout_t Layout1, typename MTr, layout_t Layout2>
-    static auto
-    evaluate( rvalue<VTr,Layout1,MTr> l, rvalue<void,Layout2,MTr> r,
-	      typename std::enable_if<!std::is_void<VTr>::value>::type *
-	      = nullptr ) {
-	return make_rvalue( l.value(), l.mask() & r.mask() );
-    }
-    
-    template<layout_t Layout1, typename MTr1, layout_t Layout2, typename MTr2>
-    static auto evaluate( rvalue<void,Layout1,MTr1> l,
-			  rvalue<void,Layout2,MTr2> r ) {
-	auto m = join_mask<MTr1>( l.mask(), r.mask() );
-	return make_rvalue( m );
-    }
-
-    template<layout_t Layout1, typename MTr, layout_t Layout2>
-    static auto
-    evaluate( rvalue<void,Layout1,simd::detail::mask_bit_traits<MTr::VL>> l,
-	      rvalue<void,Layout2,MTr> r,
-	      std::enable_if_t<!simd::detail::is_mask_bit_traits<MTr>::value> *
-	      = nullptr ) {
-	auto m = r.mask().template
-	    convert<simd::detail::mask_bit_traits<MTr::VL>>();
-	return make_rvalue( l.mask() & m );
-    }
 };
 
 // Optimise for the cases where we try to merge no-op or true masks
 template<typename E1, typename E2>
 auto make_land( E1 l, E2 r,
 		std::enable_if_t<std::is_base_of_v<expr_base,E1>
-		&& std::is_base_of_v<expr_base,E2>> * = nullptr ) {
+		&& std::is_base_of_v<expr_base,E2>> * ) {
     if constexpr ( std::is_same_v<E1,noop> )
 	return r;
     else if constexpr ( is_value_vk<E1,vk_true>::value )
@@ -474,6 +494,10 @@ auto make_land( E1 l, E2 r,
 	return r;
     else if constexpr ( is_identical<E1,E2>::value )
 	return l; // either l or r
+    else if constexpr ( is_unop_linvert<E1>::value )
+	// Interestingly, we cannot convert a && ~b to landnot(b,a) because
+	// of the strict interpretation of the evaluation order of arguments
+	return make_landnot( l.data(), r );
     else if constexpr ( is_binop_land<E1>::value ) {
 	if constexpr ( is_identical<typename E1::left_type,E2>::value )
 	    return l;

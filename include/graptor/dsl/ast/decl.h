@@ -217,6 +217,9 @@ struct unop_reduce;
 template<unsigned short VL>
 struct unop_switch_to_vector;
 
+template<unsigned short VL>
+struct unop_linvert;
+
 // Pre-declared reduction operations
 struct redop_logicalor;
 template<bool conditional = true>
@@ -405,6 +408,12 @@ template<typename T>
 struct is_not_unop_incseq {
     static constexpr bool value = ! is_unop_incseq<T>::value;
 };
+
+template<typename T, typename Enable = void>
+struct is_unop_linvert : std::false_type { };
+
+template<typename E, unsigned short VL>
+struct is_unop_linvert<unop<E,unop_linvert<VL>>> : std::true_type { };
 
 // TODO: used?
 template<typename E1, typename E2, typename U = void>

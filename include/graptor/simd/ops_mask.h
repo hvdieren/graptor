@@ -76,6 +76,12 @@ operator && ( mask_impl<mask_bit_traits<1>> l,
 }
 
 template<typename Tr>
+auto logical_andnot( mask_impl<Tr> l, mask_impl<Tr> r ) {
+    return mask_impl<Tr>( 
+	mask_impl<Tr>::traits::logical_andnot( l.get(), r.get() ) );
+}
+
+template<typename Tr>
 simd::detail::mask_impl<Tr> operator ~ ( simd::detail::mask_impl<Tr> a ) {
     return simd::detail::mask_impl<Tr>( simd::detail::mask_impl<Tr>::traits::logical_invert( a.get() ) );
 }
