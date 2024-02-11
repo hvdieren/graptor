@@ -481,10 +481,10 @@ vector_ref_impl<Tr,I,Enc,NT_,Layout>::bor_assign(
     mask_impl<Tr> r,
     mask_impl<Tr> m ) {
     auto a = load( m ); // load data
-    auto upd = a | r;
-    store( upd, m ); // store data
+    auto upd = a | ( r & m ); // only update active lanes
+    store( upd ); // store data unconditionally, making use of lattice structure
     // Ensures that return value is stronger than m
-    return (upd != a).asmask() & m;
+    return (upd != a).asmask();
 }
 
 template<class Tr, typename I, typename Enc, bool NT_,layout_t Layout>
