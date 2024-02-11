@@ -138,41 +138,49 @@ public:
 	    frontier output;
 	    api::edgemap(
 		GA,
-#if DEFERRED_UPDATE
-		api::record( output,
-			     [&]( auto d ) { return ??; },
-			     api::strong ),
-#else
+		// api::config( api::frac_threshold( 10 ) ),
 		api::record( output, api::reduction, api::strong ),
-#endif
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst, [&]( auto d ) {
-		    // return expr::cast<logical<4>>( unvisited[d] );
-		    return unvisited[d] != _0;
+		    // Making a guess on the type of the frontier
+#if FRONTIER_BITMASK
+		    expr::bitarray_intl<unsigned char,VID,expr::aid_frontier_new> curfr;
+#else
+		    expr::array_intl<logical<4>,VID,expr::aid_frontier_new> curfr;
+#endif
+		    return !curfr[d];
 		} ),
 #endif
-#if FUSION
-		api::config( api::fusion_select( enable_fusion ) ),
-		api::fusion( [&]( auto s, auto d, auto e ) {
-		    return expr::cast<int>(
-			expr::iif( level[d].min( level[s]+_1 ),
-				   _1s, // no change, ignore d
-				   _1 // changed, propagate change
-			    ) );
-		} ),
-#endif
+		// unvisited is effectively the amalgamation of prior
+		// frontiers, so simplify code by:
+		//   relax: return true (conditional on strong src F)
+		//   convergence: current frontier false AND prior F false
+		//   prior if is dense, but seq access; updated together with
+		//   level
+		// This avoids duplication in code handling unvisited and
+		// code handling new frontier (effectively same operation)
 		api::relax( [&]( auto s, auto d, auto e ) {
-		    // Result of operation is to flag when visited has
-		    // been modified
-		    return unvisited[d] &= _0;
-		} )
+		    return unvisited[d] != _0;
+		}
+/*
+		    ,
+		    // vertex-op / conditional on frontier?
+		    [&]( auto d ) { return expr::make_seq(
+			    level[d] = _c( iter+1 ),
+			    unvisited[d] = _0
+			    ); }
+*/
+		    )
 		)
-		.materialize();
-	    make_lazy_executor( part )
+		// TODO: ensure encapsulation in vertexop attached to edgemap
+		// to maximize locality and avoid an additional pass.
 		.vertex_map(
 		    output,
-		    [&]( auto v ) { return level[v] = _c( iter+1 ); } )
+		    [&]( auto v ) { return expr::make_seq(
+			    level[v] = _c( iter+1 ),
+			    unvisited[v] = _0
+			    ); } )
 		.materialize();
 
 	    // print( std::cerr, part, level );
