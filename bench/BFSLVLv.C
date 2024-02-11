@@ -28,6 +28,13 @@ using expr::_c;
 #endif
 #define MEMO 0
 
+/**
+ * FUSION variable:
+ * 0: no fusion
+ * 1: conditional fusion only for low-degree graphs and tails after dense
+ *    iterations
+ * 2: fusion always activated
+ */
 #ifndef FUSION
 #define FUSION 0
 #endif
@@ -133,12 +140,15 @@ public:
 	all.getDenseB()[start] = true;
 #endif
 
+#if FUSION == 1
 	// Enable fusion immediately if the graph has relatively low
 	// degrees (e.g., road network). Otherwise, wait until a dense
 	// iteration has occured (in which case further dense iterations
 	// will still take precedence over sparse/fusion iterations).
-#if FUSION
 	bool enable_fusion = isLowDegreeGraph( GA );
+#else
+	// Fusion is unconditionally enabled
+	bool enable_fusion = true;
 #endif
 
 	while( !F.isEmpty() ) {  // iterate until all vertices visited
@@ -155,8 +165,6 @@ public:
 	    api::edgemap(
 		GA,
 #if DEFERRED_UPDATE
-		// TODO: if not FUSION, compare a_level[d] to iters,
-		//       obviating the need for prev_level
 		// TODO: try reduction_or_method
 		api::record( output,
 			     [&]( auto d ) {
@@ -236,7 +244,7 @@ public:
 
 	    ++iter;
 
-#if FUSION
+#if FUSION == 1
 	    if( !api::default_threshold().is_sparse( F, m ) )
 		enable_fusion = true;
 #endif
