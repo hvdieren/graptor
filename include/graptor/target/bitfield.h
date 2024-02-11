@@ -196,6 +196,9 @@ public:
 	}
 	assert( 0 && "NYI" );
     }
+    static mask_type cmpeq( type a, type b, mt_mask ) {
+	return ~cmpne( a, b, mt_mask() );
+    }
     static vmask_type cmpeq( type a, type b, mt_vmask ) {
 	return ~cmpne( a, b, mt_vmask() );
     }
