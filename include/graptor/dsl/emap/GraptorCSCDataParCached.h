@@ -355,16 +355,30 @@ static inline void emap_pull(
     auto m_vexpr0 = expr::rewrite_privatize_accumulators(
 	m_vexpr0a, part, accum, v_pid0 );
 
-    // Determine cached values
+    // Loop termination condition (active check)
+    // Mesh the check with observation of any padded lane. It is assumed
+    // that once a padded edge is observed on any lane, then no non-padded
+    // edge will occur again and we can consider the lane inactive (for now).
+    auto aexpr0 = expr::make_landz(
+	op.active( v_dst ), make_cmpne( v_src, v_one ) );
+    auto aexpr1 = rewrite_internal( aexpr0 );
+
+    // Determine cached values, includes expressions in aexpr
     auto vcaches_dst
 	= expr::extract_cacheable_refs<expr::vk_dst>( m_vexpr0, vop_caches );
+    auto vcaches_duse = expr::extract_uses<expr::vk_dst>(
+	expr::make_seq( aexpr1, m_vexpr0 ), // avoids duplicate caching of vars
+	cache_cat( vop_caches, vcaches_dst ) );
     auto vcaches_use = expr::extract_uses<expr::vk_src>(
-	m_vexpr0, cache_cat( vop_caches, vcaches_dst ) );
+	m_vexpr0, cache_cat( vop_caches,
+			     cache_cat( vcaches_dst, vcaches_duse ) ) );
     auto vcaches_let
 	= expr::extract_local_vars(
 	    expr::make_seq( m_vexpr0, vop2 ),
-	    cache_cat( vop_caches, cache_cat( vcaches_dst, vcaches_use ) ) );
-    auto vcaches = cache_cat( vcaches_dst, vcaches_let );
+	    cache_cat( cache_cat( vop_caches, vcaches_dst ),
+		       cache_cat( vcaches_duse, vcaches_use ) ) );
+    auto vcaches = cache_cat( vcaches_dst,
+			      cache_cat( vcaches_duse, vcaches_let ) );
 
     auto all_caches
 	= cache_cat( vop_caches, cache_cat( vcaches, vcaches_use ) );
@@ -375,16 +389,10 @@ static inline void emap_pull(
 	op, all_caches,
 	GA.getWeights() ? GA.getWeights()->get() : nullptr );
 
-    // Loop termination condition (active check)
-    // Mesh the check with observation of any padded lane. It is assumed
-    // that once a padded edge is observed on any lane, then no non-padded
-    // edge will occur again and we can consider the lane inactive (for now).
-    auto aexpr0 = expr::make_landz(
-	op.active( v_dst ), make_cmpne( v_src, v_one ) );
-    auto aexpr1 = rewrite_internal( aexpr0 );
     auto aexpr2 = expr::rewrite_caches<expr::vk_dst>( aexpr1, vcaches_dst );
     // No need to set vpend mask as the check on v_src subsumes it
     auto aexpr3 = aexpr2; // expr::set_mask( v_adst_cond, aexpr2 );
+    // auto aexpr3 = expr::rewrite_caches<expr::vk_dst>( aexpr2, vcaches_duse );
     auto aexpr = expr::rewrite_mask_main( aexpr3 );
 
     // LICM: only inner-most redop needs to be performed inside loop.
@@ -402,9 +410,6 @@ static inline void emap_pull(
     auto m_vexpr4 = expr::rewrite_caches<expr::vk_zero>( m_vexpr3, vcaches_let );
     auto m_vexpr = expr::rewrite_mask_main( m_vexpr4 );
 
-    // fail_expose<std::is_class>( vcaches_dst );
-
-
     // Post-loop part
     auto m_rexpr2 = expr::rewrite_caches<expr::vk_dst>( m_rexpr1, vcaches_dst );
     auto m_rexpr3 = expr::rewrite_caches<expr::vk_src>( m_rexpr2, vcaches_use );
@@ -418,6 +423,8 @@ static inline void emap_pull(
     auto vactiv1 = expr::rewrite_caches<expr::vk_dst>( vactiv0, vcaches_dst );
     auto vactiv2 = expr::rewrite_caches<expr::vk_src>( vactiv1, vcaches_use );
     auto vactiv3 = expr::rewrite_caches<expr::vk_zero>( vactiv2, vcaches_let );
+
+    // fail_expose<std::is_class>( vcaches_dst );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
 
