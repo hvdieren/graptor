@@ -1031,12 +1031,12 @@ process_csr_sparse_parallel( const EIDRetriever & eid_retriever,
 }
 
 template<bool atomic, update_method um, typename FActiv,
-	 typename Cache, typename Environment, typename Expr>
+	 typename Cache, typename Environment, typename Expr, typename RExpr>
 static void
 process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
 		    bool *zf, FActiv & factiv,
 		    Cache & c, const Environment & env,
-		    const Expr & e ) {
+		    const Expr & e, const RExpr & re ) {
     static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
     auto src = simd::template create_scalar<simd::ty<VID,1>>( srcv );
@@ -1054,8 +1054,10 @@ process_csr_sparse( const VID *out, EID be, VID deg, VID srcv, VID *frontier,
 	auto ret = env.template evaluate<atomic>( c, m, e );
 	bool act = conditional_set<um>( &frontier[j], &zf[dst.data()],
 					ret.value().data(), dst.data() );
-	if( act )
+	if( act ) {
 	    factiv( dst.data() );
+	    env.template evaluate<atomic>( c, m, re );
+	}
     }
 }
 
@@ -1251,6 +1253,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto rexpr0 = op.vertexop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
 
     // Append. TODO: ensure short-circuit evaluation in scalar execution
     // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
@@ -1260,6 +1263,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
     // Rewrite local variables
     auto l_cache = expr::extract_local_vars( vexpr1, expr::cache<>() );
     auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache );
+    auto rexpr = expr::rewrite_caches<expr::vk_zero>( rexpr0, l_cache );
 
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
@@ -1311,6 +1315,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 		if( add ) {
 		    outEdges[nactv++] = sdst;
 		    nacte += idx[sdst+1] - idx[sdst];
+		    env.evaluate( c, m, rexpr );
 		}
 	    }
 	}
@@ -1474,6 +1479,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 			    expr::value<simd::ty<VID,1>,expr::vk_dst>(),
 			    expr::value<simd::ty<EID,1>,expr::vk_edge>() );
     auto uexpr0 = op.update( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
+    auto rexpr0 = op.vertexop( expr::value<simd::ty<VID,1>,expr::vk_dst>() );
 
     // Append. TODO: ensure short-circuit evaluation in scalar execution
     // auto vexpr1 = expr::set_mask( vexpr0, uexpr0 );
@@ -1483,6 +1489,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
     // Rewrite local variables
     auto l_cache = expr::extract_local_vars( vexpr1, expr::cache<>() );
     auto vexpr2 = expr::rewrite_caches<expr::vk_zero>( vexpr1, l_cache );
+    auto rexpr = expr::rewrite_caches<expr::vk_zero>( rexpr0, l_cache );
 
     // Match vector lengths and move masks
     auto vexpr = expr::rewrite_mask_main( vexpr2 );
@@ -1556,7 +1563,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	parallel_loop( VID(0), mm_parts, 1, [&]( VID p ) {
 	    std::tie( n_out_block[p], n_out_block[p+mm_parts] ) =
 		parts[p].template process_push_many<need_atomic,um_flags_only_unique>(
-		    s, idx, edge, pzf, c, env, vexpr );
+		    s, idx, edge, pzf, c, env, vexpr, rexpr );
 	} );
 
 	// Calculate active counts, based on counts obtained during edge
@@ -1586,7 +1593,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	    // tm.start();
 	    std::tie( n_out_block[p], n_out_block[p+mm_parts] ) =
 		parts[p].template process_push<need_atomic>(
-		    s, outEdges, zf, idx, edge, c, env, vexpr );
+		    s, outEdges, zf, idx, edge, c, env, vexpr, rexpr );
 	    // tm_parts[p] = tm.next();
 	} );
 

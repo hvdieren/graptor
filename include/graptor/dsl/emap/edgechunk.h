@@ -344,7 +344,8 @@ public:
     void set_offset( EID offset ) { m_offset = offset; }
 
     template<bool need_atomic,
-	     typename Cache, typename Environment, typename Expr>
+	     typename Cache, typename Environment,
+	     typename Expr, typename RExpr>
     std::pair<VID,EID>
     process_push( const VID * vertices,
 		  VID * out_edges,
@@ -353,7 +354,8 @@ public:
 		  const VID * edges,
 		  Cache & c,
 		  const Environment & env, 
-		  const Expr & expr ) const {
+		  const Expr & expr,
+		  const RExpr & rexpr ) const {
 	static_assert( Expr::VL == 1, "Sparse traversal requires VL == 1" );
 
 	VID *f_out = &out_edges[m_offset];
@@ -391,12 +393,14 @@ public:
 			    VID va = dst.data();
 			    *f_out++ = va;
 			    nacte += idx[va+1] - idx[va];
+			    env.template evaluate<need_atomic>( c, m, rexpr );
 			}
 		    } else {
 			// first time and only time being set
 			VID va = dst.data();
 			*f_out++ = va;
 			nacte += idx[va+1] - idx[va];
+			env.template evaluate<need_atomic>( c, m, rexpr );
 		    }
 		}
 	    }
@@ -405,14 +409,16 @@ public:
     }
 
     template<bool need_atomic, update_method um,
-	     typename Cache, typename Environment, typename Expr>
+	     typename Cache, typename Environment,
+	     typename Expr, typename RExpr>
     std::pair<VID,EID>
     process_push_many( const VID * vertices,
 		       const EID * idx,
 		       const VID * edges,
 		       bool *zf,
 		       Cache & c, const Environment & env,
-		       const Expr & expr ) const {
+		       const Expr & expr,
+		       const RExpr & rexpr ) const {
 	VID nactv = 0;
 	EID nacte = 0;
 	auto upon_activate =
@@ -424,7 +430,8 @@ public:
 	    // assert( y >= x );
 	    VID d = y-x;
 	    process_csr_sparse<need_atomic,um>(
-		&edges[x], x, d, v, nullptr, zf, upon_activate, c, env, expr );
+		&edges[x], x, d, v, nullptr, zf, upon_activate, c, env,
+		expr, rexpr );
 	}
 	return std::make_pair( nactv, nacte );
     }
@@ -722,7 +729,8 @@ public:
     }
 
     template<bool need_atomic,
-	     typename Cache, typename Environment, typename Expr>
+	     typename Cache, typename Environment,
+	     typename Expr, typename RExpr>
     std::pair<VID,EID>
     process_push( VID * out_edges,
 		  bool * zf,
@@ -730,22 +738,25 @@ public:
 		  const VID * edges,
 		  Cache & c,
 		  const Environment & env, 
-		  const Expr & expr ) const {
+		  const Expr & expr,
+		  const RExpr & rexpr ) const {
 	return m_partition.template process_push<need_atomic>(
-	    m_vertices, out_edges, zf, idx, edges, c, env, expr );
+	    m_vertices, out_edges, zf, idx, edges, c, env, expr, rexpr );
     }
 
     template<bool need_atomic, update_method um,
-	     typename Cache, typename Environment, typename Expr>
+	     typename Cache, typename Environment,
+	     typename Expr, typename RExpr>
     std::pair<VID,EID>
     process_push_many( const VID * vertices,
 		       const EID * idx,
 		       const VID * edges,
 		       bool *zf,
 		       Cache & c, const Environment & env,
-		       const Expr & expr ) const {
+		       const Expr & expr,
+		       const RExpr & rexpr ) const {
 	return m_partition.template process_push_many<need_atomic,um>(
-	    vertices, idx, edges, zf, c, env, expr );
+	    vertices, idx, edges, zf, c, env, expr, rexpr );
     }
 
     VID size() const { return get_to() - get_from(); }
