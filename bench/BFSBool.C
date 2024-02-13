@@ -149,7 +149,8 @@ public:
 #else
 		    expr::array_intl<logical<4>,VID,expr::aid_frontier_new> curfr;
 #endif
-		    return !curfr[d];
+		    return !curfr[d] && unvisited[d] != _0;
+		    // return unvisited[d] != _0;
 		} ),
 #endif
 		// unvisited is effectively the amalgamation of prior
@@ -162,25 +163,15 @@ public:
 		// code handling new frontier (effectively same operation)
 		api::relax( [&]( auto s, auto d, auto e ) {
 		    return unvisited[d] != _0;
-		}
-/*
-		    ,
-		    // vertex-op / conditional on frontier?
+		    // return unvisited[d] &= _0;
+		},
+		    // vertex-op / conditional on frontier
 		    [&]( auto d ) { return expr::make_seq(
 			    level[d] = _c( iter+1 ),
 			    unvisited[d] = _0
 			    ); }
-*/
 		    )
 		)
-		// TODO: ensure encapsulation in vertexop attached to edgemap
-		// to maximize locality and avoid an additional pass.
-		.vertex_map(
-		    output,
-		    [&]( auto v ) { return expr::make_seq(
-			    level[v] = _c( iter+1 ),
-			    unvisited[v] = _0
-			    ); } )
 		.materialize();
 
 	    // print( std::cerr, part, level );
