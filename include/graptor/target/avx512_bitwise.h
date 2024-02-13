@@ -33,7 +33,10 @@ struct avx512_bitwise {
     static type setone() {
 	// Recommended here:
 	// https://stackoverflow.com/questions/45105164/set-all-bits-in-cpu-register-to-1-efficiently/45113467#45113467
+	// Seems that gcc sets x to zero first using vpxor $xmm
+	// Tell compiler we are writing into x to avoid initialisation
 	__m512i x;
+	__asm__( "" : "=v"(x) : : );
 	return _mm512_ternarylogic_epi32( x, x, x, 0xff );
     }
 

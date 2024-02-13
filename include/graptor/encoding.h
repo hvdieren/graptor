@@ -737,6 +737,7 @@ struct array_encoding_bit {
 		// ? 1 1 | 0
 		// Slightly more efficient code if left undefined
 		typename idx_traits::type undef;
+		__asm__( "" : "=v"(undef) : : ); // what register specifier?
 		woff = idx_traits::template ternary<0b01000100>(
 		    undef, omask, idx );
 	    } else {
