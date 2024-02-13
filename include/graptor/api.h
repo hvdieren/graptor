@@ -856,27 +856,33 @@ struct arg_record_reduction_op {
     
     template<typename VIDType>
     auto vertexop( VIDType vid ) {
-	// Count active vertices and edges
-	static_assert( ftype != frontier_type::ft_true
-		       && ftype != frontier_type::ft_sparse
-		       && ftype != frontier_type::ft_unbacked );
+	if constexpr ( VIDType::data_type::VL == 1 )
+	    // Do not record the frontier in scalar operation. Handled
+	    // by the edgemap code itself.
+	    return m_op.vertexop( vid );
+	else {
+	    // Count active vertices and edges
+	    static_assert( ftype != frontier_type::ft_true
+			   && ftype != frontier_type::ft_sparse
+			   && ftype != frontier_type::ft_unbacked );
 
-	expr::array_intl<VID,VID,expr::aid_graph_degree,
-			 array_encoding<VID>,false> degree;
-	expr::array_intl<VID,VID,expr::aid_frontier_nactv,array_encoding<VID>,
-		       false> nactv;
-	expr::array_intl<EID,VID,expr::aid_frontier_nacte,array_encoding<EID>,
-		       false> nacte;
+	    expr::array_intl<VID,VID,expr::aid_graph_degree,
+			     array_encoding<VID>,false> degree;
+	    expr::array_intl<VID,VID,expr::aid_frontier_nactv,
+			     array_encoding<VID>,false> nactv;
+	    expr::array_intl<EID,VID,expr::aid_frontier_nacte,
+			     array_encoding<EID>,false> nacte;
 
-	using Tr = simd::detail::mask_preferred_traits_type<
-	    typename VIDType::type, VIDType::VL>;
-	auto mask = expr::make_unop_cvt_to_mask<Tr>( m_array[vid] );
-	return expr::make_seq(
-	    m_op.vertexop( vid ),
-	    nacte[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
-	    nactv[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	    using Tr = simd::detail::mask_preferred_traits_type<
+		typename VIDType::type, VIDType::VL>;
+	    auto mask = expr::make_unop_cvt_to_mask<Tr>( m_array[vid] );
+	    return expr::make_seq(
+		expr::set_mask( mask, m_op.vertexop( vid ) ),
+		nacte[expr::zero_val(vid)] +=
+		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
+		nactv[expr::zero_val(vid)] +=
+		expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	}
     }
 
     template<typename PSet>
@@ -1002,27 +1008,33 @@ struct arg_record_reduction_op<
     
     template<typename VIDType>
     auto vertexop( VIDType vid ) {
-	// Count active vertices and edges
-	static_assert( ftype != frontier_type::ft_true
-		       && ftype != frontier_type::ft_sparse );
+	if constexpr ( VIDType::data_type::VL == 1 ) {
+	    // Do not record the frontier in scalar operation. Handled
+	    // by the edgemap code itself.
+	    return m_op.vertexop( vid );
+	} else {
+	    // Count active vertices and edges
+	    static_assert( ftype != frontier_type::ft_true
+			   && ftype != frontier_type::ft_sparse );
 
-	expr::array_intl<VID,VID,expr::aid_graph_degree,
-			 array_encoding<VID>,false> degree;
-	expr::array_intl<VID,VID,expr::aid_frontier_nactv,array_encoding<VID>,
-		       false> nactv;
-	expr::array_intl<EID,VID,expr::aid_frontier_nacte,array_encoding<EID>,
-		       false> nacte;
+	    expr::array_intl<VID,VID,expr::aid_graph_degree,
+			     array_encoding<VID>,false> degree;
+	    expr::array_intl<VID,VID,expr::aid_frontier_nactv,
+			     array_encoding<VID>,false> nactv;
+	    expr::array_intl<EID,VID,expr::aid_frontier_nacte,
+			     array_encoding<EID>,false> nacte;
 
-	using Tr = simd::detail::mask_preferred_traits_type<
-	    typename VIDType::type, VIDType::VL>;
-	// TODO: use let for mask?
-	auto mask = update( vid ); // return formula, evaluated after vertexop
-	return expr::make_seq(
-	    m_op.vertexop( vid ),
-	    nacte[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
-	    nactv[expr::zero_val(vid)] +=
-	    expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	    using Tr = simd::detail::mask_preferred_traits_type<
+		typename VIDType::type, VIDType::VL>;
+	    // TODO: use let for mask?
+	    auto mask = update( vid ); // return formula, evaluated after vertexop
+	    return expr::make_seq(
+		expr::set_mask( mask, m_op.vertexop( vid ) ),
+		nacte[expr::zero_val(vid)] +=
+		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
+		nactv[expr::zero_val(vid)] +=
+		expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	}
     }
 
     template<typename PSet>
@@ -1152,65 +1164,72 @@ struct arg_record_method_op {
     
     template<typename VIDType>
     auto vertexop( VIDType vid ) {
-	// Count active vertices and edges
-	static_assert( ftype != frontier_type::ft_true && ftype != frontier_type::ft_sparse );
-
-	expr::array_intl<VID,VID,expr::aid_graph_degree,
-			 array_encoding<VID>,false> degree;
-	expr::array_intl<VID,VID,expr::aid_frontier_nactv,
-			 array_encoding<VID>,false> nactv;
-	expr::array_intl<EID,VID,expr::aid_frontier_nacte,
-			 array_encoding<EID>,false> nacte;
-
-	if constexpr ( ftype == frontier_type::ft_unbacked ) {
-	    auto mask = expr::rewrite_internal( m_method( vid ) );
-	    return expr::make_seq(
-		m_op.vertexop( vid ),
-		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
-		nactv[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::constant_val_one(vid), mask ) );
-	} else if constexpr ( is_priv ) {
-	    // TODO: consider use of let to hold mask
-	    // ... experimental code below
-#if 0
-	    auto mask = expr::rewrite_internal( m_method( vid ) );
-	    return expr::make_seq(
-		m_op.vertexop( vid ),
-		m_array[vid] = expr::make_unop_switch_to_vector( mask ),
-		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
-		nactv[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::constant_val_one(vid), mask ) );
-#else
-	    auto mm = m_method( vid );
-	    using MTr = typename std::decay_t<decltype(mm)>::data_type;
-	    return expr::let<expr::aid_let_record>(
-		expr::rewrite_internal(
-		    expr::make_unop_switch_to_vector( mm ) ),
-		[&]( auto mask ) {
-		    return expr::make_seq(
-			m_op.vertexop( vid ),
-			m_array[vid] = mask, // expr::make_unop_switch_to_vector( mask ),
-			nacte[expr::zero_val(vid)] +=
-			expr::add_predicate( expr::cast<EID>( degree[vid] ),
-					     expr::make_unop_cvt_to_mask<MTr>( mask ) ),
-			nactv[expr::zero_val(vid)] +=
-			expr::add_predicate( expr::constant_val_one(vid),
-					     expr::make_unop_cvt_to_mask<MTr>( mask ) ) );
-		} );
-		
-#endif
+	if constexpr ( VIDType::data_type::VL == 1 ) {
+	    // Do not record the frontier in scalar operation. Handled
+	    // by the edgemap code itself.
+	    return m_op.vertexop( vid );
 	} else {
-	    // TODO: consider use of let to hold mask
-	    auto mask = expr::rewrite_internal( m_method( vid ) );
-	    return expr::make_seq(
-		m_op.vertexop( vid ),
-		m_array[vid] |= expr::make_unop_switch_to_vector( mask ),
-		nacte[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
-		nactv[expr::zero_val(vid)] +=
-		expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	    // Count active vertices and edges
+	    static_assert( ftype != frontier_type::ft_true
+			   && ftype != frontier_type::ft_sparse );
+
+	    expr::array_intl<VID,VID,expr::aid_graph_degree,
+			     array_encoding<VID>,false> degree;
+	    expr::array_intl<VID,VID,expr::aid_frontier_nactv,
+			     array_encoding<VID>,false> nactv;
+	    expr::array_intl<EID,VID,expr::aid_frontier_nacte,
+			     array_encoding<EID>,false> nacte;
+
+	    if constexpr ( ftype == frontier_type::ft_unbacked ) {
+		auto mask = expr::rewrite_internal( m_method( vid ) );
+		return expr::make_seq(
+		    expr::set_mask( mask, m_op.vertexop( vid ) ),
+		    nacte[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
+		    nactv[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	    } else if constexpr ( is_priv ) {
+		// TODO: consider use of let to hold mask
+		// ... experimental code below
+#if 0
+		auto mask = expr::rewrite_internal( m_method( vid ) );
+		return expr::make_seq(
+		    expr::set_mask( mask, m_op.vertexop( vid ) ),
+		    m_array[vid] = expr::make_unop_switch_to_vector( mask ),
+		    nacte[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
+		    nactv[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::constant_val_one(vid), mask ) );
+#else
+		auto mm = m_method( vid );
+		using MTr = typename std::decay_t<decltype(mm)>::data_type;
+		return expr::let<expr::aid_let_record>(
+		    expr::rewrite_internal(
+			expr::make_unop_switch_to_vector( mm ) ),
+		    [&]( auto mask ) {
+			return expr::make_seq(
+			    expr::set_mask( mask, m_op.vertexop( vid ) ),
+			    m_array[vid] = mask, // expr::make_unop_switch_to_vector( mask ),
+			    nacte[expr::zero_val(vid)] +=
+			    expr::add_predicate( expr::cast<EID>( degree[vid] ),
+						 expr::make_unop_cvt_to_mask<MTr>( mask ) ),
+			    nactv[expr::zero_val(vid)] +=
+			    expr::add_predicate( expr::constant_val_one(vid),
+						 expr::make_unop_cvt_to_mask<MTr>( mask ) ) );
+		    } );
+
+#endif
+	    } else {
+		// TODO: consider use of let to hold mask
+		auto mask = expr::rewrite_internal( m_method( vid ) );
+		return expr::make_seq(
+		    expr::set_mask( mask, m_op.vertexop( vid ) ),
+		    m_array[vid] |= expr::make_unop_switch_to_vector( mask ),
+		    nacte[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::cast<EID>( degree[vid] ), mask ),
+		    nactv[expr::zero_val(vid)] +=
+		    expr::add_predicate( expr::constant_val_one(vid), mask ) );
+	    }
 	}
     }
 
