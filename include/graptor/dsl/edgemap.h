@@ -1435,12 +1435,16 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	if( cfg.is_parallel()
 	    && graptor_num_threads() > 1
 	    && cfg.do_fusion( m, mm, GA.numEdges() ) ) {
+	    if( degree )
+		delete[] degree;
 	    return csr_sparse_with_f_fusion_stealing(
 		cfg, GA, eid_retriever, part, old_frontier, op );
 	}
     }
 
     if( do_seq ) {
+	if( degree )
+	    delete[] degree;
 	return csr_sparse_with_f_seq<zerof>(
 	    cfg, GA, eid_retriever, part, mm, old_frontier, op );
     }
@@ -1547,11 +1551,14 @@ static __attribute__((noinline)) frontier csr_sparse_with_f(
 	ftrue.del();
     } else
 #endif
-    if( mm > EID(GA.numVertices()) ) {
+    if( mm > EID(GA.numVertices()) && !cfg.is_always_sparse() ) {
 	// Case of potentially high number of activated vertices
 	// We do not use zero flags as they copy the dense frontier.
 	// Update a dense boolean frontier direct as we would do with the
 	// zero flags.
+	// Do not use this code variant if the execution is always required
+	// to be sparse, as it implies a conversion to sparse frontier will
+	// be needed.
 
 	// Initialize bool frontier. Sets bool flags to zero
 	new_frontier = frontier::create<frontier_type::ft_bool>( part );
