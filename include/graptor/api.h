@@ -1554,6 +1554,9 @@ struct arg_config {
     constexpr bool do_fusion( frontier F, EID m ) const {
 	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
+    constexpr bool is_always_sparse() const {
+	return std::is_same_v<threshold_type,always_sparse_t>;
+    }
     
 private:
     threshold_type m_threshold;
