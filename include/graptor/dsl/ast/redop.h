@@ -1141,7 +1141,7 @@ struct redop_count_down {
 
     static constexpr bool is_idempotent = false;
     static constexpr bool is_benign_race = false; // load-modify-store
-    static constexpr bool is_single_trigger = conditional_;
+    static constexpr bool is_single_trigger = true; // conditional_;
     static constexpr bool conditional = conditional_;
 
     // TODO: should have an ID here instead of string
