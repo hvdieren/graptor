@@ -62,29 +62,37 @@ function for_gg()
     local commit=$4
 
     for threads in 128 ; do # 1 4 8 16 32 64 128 ; do
-	one $b BFSBool _uvbit_bitf vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b BFSBool _uvvid_bitf vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b BFSLVLv _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b BFSLVLv _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b BFSLVL_narrow _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b BFSLVL_narrow _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b BFSv "" vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b CCv _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b CCv _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b GC_JP_fusion _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b GC_JP_fusion _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b GC_JP_fusion _llf_fusion vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	#one $b GC_gm3p "" vl16 $graph_path $g $threads $commit 10 1024 $start
-	#one $b GC_gm3p_v2 "" vl16 $graph_path $g $threads $commit 10 1024 $start
-
-	one $b KC_bucket _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
-	one $b KC_bucket _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+	local starting_points = "@CMAKE_BUILD_DIR@/bench/scripts/fusion/starting_points/$2/$1.1000";
+	cat $starting_points | head -n 10 | while read startp ; do
+	    one $b BFSBool _uvbit_bitf vl16 $graph_path $g $threads $commit 10 1024 $startp
+#	one $b BFSv _bitf vl16 $graph_path $g $threads $commit 10 1024 $startp
+#	one $b BFSLVLv _fusion vl16 $graph_path $g $threads $commit 10 1024 $startp
+	done
+	
+#	one $b BFSBool _uvbit_bitf vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b BFSBool _uvvid_bitf vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b BFSLVLv _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b BFSLVLv _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b BFSLVL_narrow _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b BFSLVL_narrow _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b BFSv "" vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b BFSv _bitf vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b CCv _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b CCv _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b GC_JP_fusion _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b GC_JP_fusion _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b GC_JP_fusion _llf_fusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	#one $b GC_gm3p "" vl16 $graph_path $g $threads $commit 10 1024 $start
+#	#one $b GC_gm3p_v2 "" vl16 $graph_path $g $threads $commit 10 1024 $start
+#
+#	one $b KC_bucket _nofusion vl16 $graph_path $g $threads $commit 10 1024 $start
+#	one $b KC_bucket _fusion vl16 $graph_path $g $threads $commit 10 1024 $start
     done
 }
 
