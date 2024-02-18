@@ -20,6 +20,7 @@ graptor_create_tool(CvtTwitter)
 #graptor_create_tool(IsEqual)
 graptor_create_tool(IsUndir)
 graptor_create_tool(RmDupEdges)
+graptor_create_tool(RndSelect)
 
 # interposer library
 add_executable(interposer.so interposer.c)
