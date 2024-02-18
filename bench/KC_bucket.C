@@ -38,11 +38,13 @@ struct bucket_fn {
 	: m_degree( degree ) { }
 
     BID operator() ( VID v, BID current, BID overflow ) const {
-	return v == std::numeric_limits<VID>::max() // illegal vertex
-	    || BID(m_degree[v]) < current	// or processing completed
-	    || BID(m_degree[v]) >= overflow	// or already in overflow bucket
+	BID deg = m_degree[v];
+	return // v == std::numeric_limits<VID>::max() // illegal vertex
+	    // ||
+	    deg < current	// or processing completed
+	    || deg >= overflow	// or already in overflow bucket
 	    ? std::numeric_limits<BID>::max() // ... then drop vertex
-	    : BID(m_degree[v]);		// ... else this is the bucket
+	    : deg;		// ... else this is the bucket
     }
     
 private:
@@ -83,9 +85,11 @@ public:
 	float density;
 	VID F_act, rm_act, wakeup_act;
 	VID K;
+	frontier_type ftype;
 
 	void dump( int i ) {
 	    std::cerr << "Iteration " << i << ": " << delay
+		      << ' ' << ftype
 		      << " density: " << density
 		      << " F_act: " << F_act
 		      << " rm_act: " << rm_act
@@ -204,8 +208,8 @@ public:
 			    // AVX2 >= is more expensive than > and comparison
 			    // on unsigned is more expensive than on signed.
 			    // Replace by == cK which should be sufficient
-			    auto cK = expr::constant_val( coreness[v], K );
-			    return coreness[v] == cK;
+			    // auto cK = expr::constant_val( coreness[v], K );
+			    return coreness[v] == _c( K );
 			} )
 		    .materialize();
 		F.del();
@@ -229,12 +233,14 @@ public:
 	    // std::cerr << "F     : " << F << "\n";
 	    // print( std::cerr, part, coreness );
 
+	    frontier output = frontier::empty();
+	    
+	    if( !F.isEmpty() ) {
 #if FUSION
-	    frontier output;
 	    api::edgemap(
 		GA,
 		api::config(
-		    // api::always_sparse,
+		    // api::always_sparse ),
 		    api::fusion_select(
 			F.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 ) ),
 		api::filter( api::src, api::strong, F ),
@@ -264,9 +270,9 @@ public:
 		)
 		.materialize();
 #else
-	    frontier output;
 	    api::edgemap(
 		GA,
+		api::config( api::always_sparse ),
 		api::filter( api::src, api::strong, F ),
 		api::record( output, api::reduction, api::strong ),
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -285,6 +291,8 @@ public:
 		)
 		.materialize();
 #endif
+
+	    } // !F.isEmpty()
 
 #if MD_ORDERING
 	    {
@@ -319,6 +327,7 @@ public:
 		info_buf[iter].rm_act = F.nActiveVertices();
 		info_buf[iter].wakeup_act = output.nActiveVertices();
 		info_buf[iter].K = K;
+		info_buf[iter].ftype = output.getType();
 		if( debug )
 		    info_buf[iter].dump( iter );
 		++iter;
