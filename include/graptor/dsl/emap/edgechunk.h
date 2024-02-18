@@ -10,11 +10,12 @@ process_csr_append( const VID *out, EID be, VID deg, VID srcv,
 		    Cache & c, const Environment & env, const Expr & e );
 
 template<bool atomic, update_method um,
-	 typename Cache, typename Environment, typename Expr>
-static void
+	 typename Cache, typename Environment, typename Expr, typename RExpr>
+void
 process_csr_sparse( const VID *out, EID be, VID deg, VID srcv,
 		    VID *frontier, bool *zf,
-		    Cache & c, const Environment & env, const Expr & e );
+		    Cache & c, const Environment & env,
+		    const Expr & e, const RExpr & re );
 
 template<typename lVID, typename lEID>
 struct basic_edge_iterator {
