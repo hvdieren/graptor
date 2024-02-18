@@ -1586,6 +1586,7 @@ struct missing_config_argument {
     constexpr bool do_fusion( frontier F, EID m ) const {
 	return do_fusion( F.nActiveVertices(), F.nActiveEdges(), m );
     }
+    constexpr bool is_always_sparse() const { return false; }
 };
 
 template<typename... Args>
