@@ -9,7 +9,9 @@
 #endif
 #endif
 
+#if defined(__cplusplus)
 constexpr unsigned short VLUpperBound = ~(unsigned short)0;
+#endif
 
 #define Graptor_VERSION_MAJOR @Graptor_VERSION_MAJOR@
 #define Graptor_VERSION_MINOR @Graptor_VERSION_MINOR@
