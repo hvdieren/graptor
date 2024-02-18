@@ -24,6 +24,7 @@
 
 #include "graptor/dsl/emap/utils.h"
 #include "graptor/dsl/emap/emap_scan.h"
+#include "graptor/dsl/primitives.h"
 
 #ifndef EMAP_BLOCK_SIZE
 #define EMAP_BLOCK_SIZE 2048
@@ -1356,6 +1357,7 @@ static __attribute__((noinline)) frontier csr_sparse_with_f_seq(
 EID calculate_edge_count( const VID * s, VID m, const EID * const idx,
 			  EID * degree, EID * voffsets ) {
     EID mm0;
+#if 0
     if( m > 2048 ) {
 	parallel_loop( (VID)0, (VID)m, [&]( auto i ) {
 	    degree[i] = idx[s[i]+1] - idx[s[i]];
@@ -1370,6 +1372,11 @@ EID calculate_edge_count( const VID * s, VID m, const EID * const idx,
 	    mm0 += deg;
 	}
     }
+#else
+    mm0 = sum_scan( voffsets, VID(0), m,
+		    [&]( VID i ) {
+			return idx[s[i]+1] - idx[s[i]]; } );
+#endif
     voffsets[m] = mm0;
     return mm0;
 }
