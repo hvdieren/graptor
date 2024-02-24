@@ -301,6 +301,21 @@ static inline void GraptorCSCDataParCached(
     // std::cout << "part " << p << ": takes " << tm.stop() << "\n";
 }
 
+// Create active expression
+// AExpr: the baseline active expression
+// VExpr: the valid lane expression
+// Return AExpr && VExpr, unless if the AExpr is trivially true
+// Gating AExpr with validity of the lane is useful in those cases where the
+// active lanes no longer have valid vertices (shorter degrees).
+// The expression evaluates to a scalar boolean value.
+template<typename AExpr, typename VExpr>
+auto make_active_expr( AExpr && aexpr, VExpr && vexpr ) {
+    if constexpr ( expr::is_constant_true<AExpr>::value )
+	return expr::value<simd::detail::mask_bool_traits, expr::vk_false>();
+    else
+	return expr::make_landz( aexpr, vexpr );
+}
+
 template<typename EMapConfig, typename Operator>
 __attribute__((flatten))
 static inline void emap_pull(
@@ -360,7 +375,7 @@ static inline void emap_pull(
     // Mesh the check with observation of any padded lane. It is assumed
     // that once a padded edge is observed on any lane, then no non-padded
     // edge will occur again and we can consider the lane inactive (for now).
-    auto aexpr0 = expr::make_landz(
+    auto aexpr0 = make_active_expr(
 	op.active( v_dst ), make_cmpne( v_src, v_one ) );
     auto aexpr1 = rewrite_internal( aexpr0 );
 
