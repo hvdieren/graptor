@@ -139,8 +139,7 @@ public:
 		api::filter( api::strong, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
-			     // [&] ( auto d ) { return !expr::msbset( parent[d] ); }
-			     [&] ( auto d ) { return parent[d] != _1s; }
+			     [&] ( auto d ) { return expr::msbset( parent[d] ); }
 		    ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
@@ -151,8 +150,6 @@ public:
 #if DEFERRED_UPDATE
 	    maintain_copies( part, output, prev_parent, parent );
 #endif
-
-	    // print( std::cout, part, parent );
 
 #if BFS_DEBUG
 	    // Correctness check
