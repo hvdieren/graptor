@@ -14,9 +14,10 @@
 #define CONVERGENCE 1
 #endif
 
-#ifndef UNCOND_EXEC
-#define UNCOND_EXEC 0
+#ifdef UNCOND_EXEC
+#undef UNCOND_EXEC
 #endif
+#define UNCOND_EXEC 0
 
 #ifdef LEVEL_ASYNC
 #undef LEVEL_ASYNC
@@ -89,20 +90,17 @@ public:
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
 
+	constexpr VID max_vertices = VID(1) << (8*sizeof(VID)-1);
+	if( n > max_vertices ) {
+	    std::cerr << "ERROR: maximum of " << max_vertices
+		      << " vertices supported; " << n << " present\n";
+	    return;
+	}
+
 	// Assign initial labels
 	parent.fill( part, ~(VID)0 );
-	// fill_by_partition( part, parent.get_ptr(), ~(VID)0 );
 #if DEFERRED_UPDATE
 	prev_parent.fill( part, ~(VID)0 );
-	// fill_by_partition( part, prev_parent.get_ptr(), ~(VID)0 );
-#endif
-#if 0
-	make_lazy_executor( part )
-	    .vertex_map( [&]( auto v ) { return parent[v] = _1s; } )
-#if DEFERRED_UPDATE
-	    .vertex_map( [&]( auto v ) { return prev_parent[v] = _1s; } )
-#endif
-	    .materialize();
 #endif
 	
 	parent.set( start, start );
@@ -127,11 +125,6 @@ public:
 	    tm_iter.start();
 
 	    // Traverse edges, remove duplicate live destinations.
-#if UNCOND_EXEC
-	    auto filter_strength = api::weak;
-#else
-	    auto filter_strength = api::strong;
-#endif
 	    frontier output;
 	    api::edgemap(
 		GA,
@@ -143,27 +136,15 @@ public:
 #else
 		api::record( output, api::reduction, api::strong ),
 #endif
-		api::filter( filter_strength, api::src, F ),
+		api::filter( api::strong, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
-			     [&] ( auto d ) { return expr::msbset( parent[d] ); }
+			     // [&] ( auto d ) { return !expr::msbset( parent[d] ); }
+			     [&] ( auto d ) { return parent[d] != _1s; }
 		    ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
-#if UNCOND_EXEC
-			// If we call relax while frontier says not included,
-			// then we need to check here, but luckily we know the
-			// frontier from parent[]
-			// Actually, this is WRONG as parent gets overwritten
-		        // during the edgemap and does not accurately reflect
-		        // the previous frontier.
-			return parent[d].setif(
-			    expr::add_predicate( s,
-						 parent[s] != expr::allones_val(d) )
-			    );
-#else
 			return parent[d].setif( s );
-#endif
 		    } )
 		)
 		.materialize();
@@ -171,6 +152,7 @@ public:
 	    maintain_copies( part, output, prev_parent, parent );
 #endif
 
+	    // print( std::cout, part, parent );
 
 #if BFS_DEBUG
 	    // Correctness check
@@ -193,16 +175,10 @@ public:
 	    active += output.nActiveVertices();
 
 	    if( itimes ) {
-		VID active = 0;
-		if( calculate_active ) { // Warning: expensive, included in time
-		    for( VID v=0; v < n; ++v )
-			if( parent[v] == ~VID(0) )
-			    active++;
-		}
 		info_buf.resize( iter+1 );
 		info_buf[iter].density = F.density( GA.numEdges() );
 		info_buf[iter].delay = tm_iter.next();
-		info_buf[iter].active = float(active)/float(n);
+		info_buf[iter].active = float(n - active)/float(n);
 		info_buf[iter].nacte = F.nActiveEdges();
 		info_buf[iter].nactv = F.nActiveVertices();
 		info_buf[iter].ftype = F.getType();
