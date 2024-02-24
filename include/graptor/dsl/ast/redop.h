@@ -1437,21 +1437,21 @@ struct redop_setif {
 	auto rval = r.value();
 	if constexpr ( MPack::is_empty() ) {
 	    auto lval = l.value().load();
-	    auto sel = ( lval == decltype(lval)::allones_val() );
-	    // auto sel = msbset( lval );
+	    // auto sel = ( lval == decltype(lval)::allones_val() );
+	    auto sel = msbset( lval );
 	    auto nval = ::iif( sel, lval, rval );
 	    l.value().store( nval );
 	    return make_rvalue( sel, mpack );
 	} else {
 	    // TODO: remove && mask in sel: it does not matter what value we
-	    //       select in disabled lanes.
+	    //       select in disabled lanes. But store based on mask && sel...
 	    auto mask = mpack.get_mask_for( rval );
 	    auto lval = l.value().load( mask );
-	    auto sel = ( lval == decltype(lval)::allones_val() ) && mask;
-	    // auto sel = msbset( lval ) && mask;
+	    // auto sel = ( lval == decltype(lval)::allones_val() ) && mask;
+	    auto sel = msbset( lval ); // && mask;
 	    // Reformulate because conditional store performs a blend itself
 	    // l.value().store( ::iif( sel, lval, rval ), mask );
-	    l.value().store( rval, sel );
+	    l.value().store( rval, sel && mask );
 	    return make_rvalue( sel, mpack ); // updated values
 	}
     }
