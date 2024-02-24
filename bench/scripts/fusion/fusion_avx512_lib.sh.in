@@ -35,7 +35,7 @@ function run()
 
     local outdir=./graptor_avx512/$commit
     [ -d $outdir ] || mkdir -p $outdir
-    local file=$outdir/output.${commit}.t${threads}.c${part}.${prog}.${graph_name} 
+    local file=$outdir/output.${commit}.t${threads}.c${part}.${prog}.s${start}.${graph_name} 
 
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
@@ -62,11 +62,11 @@ function for_gg()
     local commit=$4
 
     for threads in 128 ; do # 1 4 8 16 32 64 128 ; do
-	local starting_points = "@CMAKE_BUILD_DIR@/bench/scripts/fusion/starting_points/$2/$1.1000";
-	cat $starting_points | head -n 10 | while read startp ; do
+	local starting_points="@CMAKE_BINARY_DIR@/bench/scripts/fusion/starting_points/$2/$1.1000";
+	cut -d' ' -f1 $starting_points | head -n 1000 | while read startp ; do
 	    one $b BFSBool _uvbit_bitf vl16 $graph_path $g $threads $commit 10 1024 $startp
-#	one $b BFSv _bitf vl16 $graph_path $g $threads $commit 10 1024 $startp
-#	one $b BFSLVLv _fusion vl16 $graph_path $g $threads $commit 10 1024 $startp
+	    one $b BFSv _bitf vl16 $graph_path $g $threads $commit 10 1024 $startp
+	    one $b BFSLVLv _fusion vl16 $graph_path $g $threads $commit 10 1024 $startp
 	done
 	
 #	one $b BFSBool _uvbit_bitf vl16 $graph_path $g $threads $commit 10 1024 $start
