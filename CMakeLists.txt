@@ -103,7 +103,7 @@ elseif(GRAPTOR_PARALLEL STREQUAL "parlay")
 	    parlay_project
 	    GIT_REPOSITORY "https://github.com/cmuparlay/parlaylib"
 	    GIT_TAG "master"
-	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=. -DPARLAY_ELASTIC_PARALLELISM=Off
     )
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
