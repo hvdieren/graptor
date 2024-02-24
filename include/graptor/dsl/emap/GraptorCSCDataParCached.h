@@ -203,7 +203,8 @@ static inline void GraptorCSCDataParCached(
 		//       having been modified, or initially non-unit value.
 		// It looks like we typically take one jump only per
 		// vector of vertices in the case of BFS.
-		if( !env.evaluate_bool( c, m, aexpr ) ) [[unlikely]] {
+		// Note: landz in aexpr returns bool true if all lanes inactive
+		if( env.evaluate_bool( c, m, aexpr ) ) [[unlikely]] {
 		    s = smax;
 		    break;
 		}
