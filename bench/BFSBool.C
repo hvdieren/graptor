@@ -103,10 +103,15 @@ public:
 	EID m = GA.numEdges();
 
 	// Initialise arrays
+	// TODO: level.fill() and unvisited.fill() may be faster
+	level.fill( part, ~(VID)0 );
+	unvisited.fill( part, ~(VID)0 );
+/*
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto v ) { return level[v] = _1s; } )
 	    .vertex_map( [&]( auto v ) { return unvisited[v] = _1s; } )
 	    .materialize();
+*/
 
 	level.set( start, 0 );
 	unvisited.set( start, 0 );
