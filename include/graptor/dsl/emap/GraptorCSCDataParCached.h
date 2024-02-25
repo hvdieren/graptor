@@ -308,12 +308,26 @@ static inline void GraptorCSCDataParCached(
 // Gating AExpr with validity of the lane is useful in those cases where the
 // active lanes no longer have valid vertices (shorter degrees).
 // The expression evaluates to a scalar boolean value.
-template<typename AExpr, typename VExpr>
-auto make_active_expr( AExpr && aexpr, VExpr && vexpr ) {
-    if constexpr ( expr::is_constant_true<AExpr>::value )
+// Including the validity of lanes is not always helpful, e.g., FMv
+// Only check validity of lanes if it is likely that valid lanes are inactive;
+// use single-trigger as a proxy.
+template<typename AExpr, typename Expr, typename VExpr>
+auto make_active_expr( AExpr && aexpr, Expr && expr, VExpr && vexpr ) {
+    if constexpr ( expr::is_constant_true<AExpr>::value ) {
+	// All lanes active, no need to check.
 	return expr::value<simd::detail::mask_bool_traits, expr::vk_false>();
-    else
+    } else if constexpr ( expr::is_single_trigger<Expr>::value ) {
+	// Single trigger, so likely inactive lanes. Terminate iteration faster
+	// by requiring active lanes also have valid edges.
 	return expr::make_landz( aexpr, vexpr );
+    } else {
+	// Unlikely to benefit from terminating iteration over neighbours
+	// early when vertices remain active after update.
+	using Tr = simd::detail::mask_bit_traits<AExpr::VL>;
+	auto mexpr = expr::make_unop_cvt_to_mask<Tr>( aexpr );
+	return expr::make_unop_reduce( mexpr, expr::redop_logicaland() )
+	    == expr::value<simd::detail::mask_bool_traits, expr::vk_false>();
+    }
 }
 
 template<typename EMapConfig, typename Operator>
@@ -376,7 +390,7 @@ static inline void emap_pull(
     // that once a padded edge is observed on any lane, then no non-padded
     // edge will occur again and we can consider the lane inactive (for now).
     auto aexpr0 = make_active_expr(
-	op.active( v_dst ), make_cmpne( v_src, v_one ) );
+	op.active( v_dst ), m_vexpr0a, make_cmpne( v_src, v_one ) );
     auto aexpr1 = rewrite_internal( aexpr0 );
 
     // Determine cached values, includes expressions in aexpr
