@@ -174,6 +174,18 @@ auto operator % ( simd::detail::vec<Tr,Layout1> l,
 	Tr::traits::mod( l.data(), r.data() ) );
 }
 
+template<typename Tr, layout_t Layout>
+auto is_zero( simd::detail::vec<Tr,Layout> l ) {
+    return simd::detail::mask_impl<simd::detail::mask_bool_traits>(
+	Tr::traits::is_zero( l.data() ) );
+}
+
+template<typename Tr, layout_t Layout>
+auto is_ones( simd::detail::vec<Tr,Layout> l ) {
+    return simd::detail::mask_impl<simd::detail::mask_bool_traits>(
+	Tr::traits::is_ones( l.data() ) );
+}
+
 } // namespace detail
 } // namespace simd
 

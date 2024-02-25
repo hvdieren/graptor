@@ -51,6 +51,7 @@ struct mask_type_traits<16> {
     static type setalternating() { return 0x5555U; }
 
     static bool is_zero( type a ) { return _kortestz_mask16_u8( a, a ); }
+    static bool is_ones( type a ) { return _kortestc_mask16_u8( a, a ); }
 
     static bool reduce_logicalandz( type a, type b ) {
 	return _ktestz_mask16_u8( a, b );

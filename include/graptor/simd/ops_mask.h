@@ -103,6 +103,18 @@ auto operator == ( mask_impl<Tr> l, mask_impl<Tr> r ) {
 			      l.get(), r.get(), typename Tr::tag_type() ) );
 }
 
+template<typename Tr>
+auto is_zero( simd::detail::mask_impl<Tr> l ) {
+    return simd::detail::mask_impl<simd::detail::mask_bool_traits>(
+	Tr::traits::is_zero( l.data() ) );
+}
+
+template<typename Tr>
+auto is_ones( simd::detail::mask_impl<Tr> l ) {
+    return simd::detail::mask_impl<simd::detail::mask_bool_traits>(
+	Tr::traits::is_ones( l.data() ) );
+}
+
 } // namespace detail
 } // namespace simd
 

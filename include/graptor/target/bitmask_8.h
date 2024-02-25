@@ -88,7 +88,9 @@ struct mask_type_traits<8> {
 	return k != 0;
     }
     static auto reduce_logicaland( type k ) {
-	return k == 255;
+	// return k == (type)255;
+	static_assert( sizeof(type) == 1, "pre-requisite for inversion" );
+	return ~k == 0;
     }
 
     static type cmpne( type l, type r, target::mt_mask ) {

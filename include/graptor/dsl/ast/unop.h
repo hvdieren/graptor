@@ -1189,6 +1189,69 @@ auto msbset( Expr e,
     return unop<Expr,Op>( e, Op() );
 }
 
+/**
+ * unop_is_zero: checks if value is zero or false
+ */
+template<unsigned short VL_>
+struct unop_is_zero {
+    static constexpr unsigned short VL = VL_;
+
+    template<typename E>
+    struct types {
+	using result_type = simd::detail::mask_bool_traits;
+    };
+
+    static constexpr char const * name = "unop_is_zero";
+
+    template<typename MTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
+	return make_rvalue( simd::detail::is_zero( r.value() ), mpack );
+    }
+};
+
+template<typename Expr>
+auto
+make_unop_is_zero(
+    Expr e,
+    std::enable_if_t<std::is_base_of_v<expr_base,Expr>> * = nullptr ) {
+    using Op = unop_is_zero<Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
+/**
+ * unop_is_ones: checks if value is all ones.
+ * For logical masks, it is required that the whole mask is set to 1s, not
+ * just the top bit, to count is 'true'.
+ */
+template<unsigned short VL_>
+struct unop_is_ones {
+    static constexpr unsigned short VL = VL_;
+
+    template<typename E>
+    struct types {
+	using result_type = simd::detail::mask_bool_traits;
+    };
+
+    static constexpr char const * name = "unop_is_ones";
+
+    template<typename MTr, layout_t Layout, typename MPack>
+    static GG_INLINE auto
+    evaluate( sb::rvalue<MTr,Layout> r, const MPack & mpack ) {
+	return make_rvalue( simd::detail::is_ones( r.value() ), mpack );
+    }
+};
+
+template<typename Expr>
+auto
+make_unop_is_ones(
+    Expr e,
+    std::enable_if_t<std::is_base_of_v<expr_base,Expr>> * = nullptr ) {
+    using Op = unop_is_ones<Expr::VL>;
+    return unop<Expr,Op>( e, Op() );
+}
+
+
 
 } // namespace expr
 
