@@ -87,6 +87,9 @@ struct mask_type_traits<8> {
     static auto reduce_logicalor( type k ) {
 	return k != 0;
     }
+    static auto reduce_logicaland( type k ) {
+	return k == 255;
+    }
 
     static type cmpne( type l, type r, target::mt_mask ) {
 	return l ^ r;
