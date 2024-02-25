@@ -301,6 +301,22 @@ static inline void GraptorCSCDataParCached(
     // std::cout << "part " << p << ": takes " << tm.stop() << "\n";
 }
 
+template<typename AExpr>
+auto rewrite_mask_negation( AExpr aexpr ) {
+    return expr::make_unop_is_zero( aexpr );
+}
+
+template<typename MTr, typename LExpr, typename RExpr>
+auto rewrite_mask_negation(
+    // AVX2 cmpne is composed of cmpeq + xor. Embed the xor into the check
+    // for all ones using testc as opposed to using testz on the xor-result
+    expr::unop<expr::binop<LExpr,RExpr,expr::binop_cmpne>,
+    expr::unop_cvt_to_mask<MTr>> expr ) {
+    using Tr = simd::detail::mask_bit_traits<MTr::VL>;
+    return expr::make_unop_is_ones(
+	expr.data().data1() == expr.data().data2() );
+}
+
 // Create active expression
 // AExpr: the baseline active expression
 // VExpr: the valid lane expression
@@ -312,21 +328,20 @@ static inline void GraptorCSCDataParCached(
 // Only check validity of lanes if it is likely that valid lanes are inactive;
 // use single-trigger as a proxy.
 template<typename AExpr, typename Expr, typename VExpr>
-auto make_active_expr( AExpr && aexpr, Expr && expr, VExpr && vexpr ) {
+auto make_active_expr( AExpr aexpr, Expr expr, VExpr vexpr ) {
+    // fail_expose<std::is_class>( aexpr );
     if constexpr ( expr::is_constant_true<AExpr>::value ) {
 	// All lanes active, no need to check.
 	return expr::value<simd::detail::mask_bool_traits, expr::vk_false>();
     } else if constexpr ( expr::is_single_trigger<Expr>::value ) {
 	// Single trigger, so likely inactive lanes. Terminate iteration faster
-	// by requiring active lanes also have valid edges.
+	// by requiring that active lanes also have valid edges.
+	// TODO: BFSLVL may benefit from this, but is not single-trigger.
 	return expr::make_landz( aexpr, vexpr );
     } else {
 	// Unlikely to benefit from terminating iteration over neighbours
 	// early when vertices remain active after update.
-	using Tr = simd::detail::mask_bit_traits<AExpr::VL>;
-	auto mexpr = expr::make_unop_cvt_to_mask<Tr>( aexpr );
-	return expr::make_unop_reduce( mexpr, expr::redop_logicaland() )
-	    == expr::value<simd::detail::mask_bool_traits, expr::vk_false>();
+	return rewrite_mask_negation( aexpr );
     }
 }
 
@@ -396,9 +411,9 @@ static inline void emap_pull(
     // Determine cached values, includes expressions in aexpr
     auto vcaches_dst
 	= expr::extract_cacheable_refs<expr::vk_dst>( m_vexpr0, vop_caches );
-    auto vcaches_duse = expr::extract_uses<expr::vk_dst>(
-	expr::make_seq( aexpr1, m_vexpr0 ), // avoids duplicate caching of vars
-	cache_cat( vop_caches, vcaches_dst ) );
+    // ..._exclude_caches avoids duplicate caching of vars
+    auto vcaches_duse = expr::extract_uses_exclude_caches<expr::vk_dst>(
+	aexpr1, cache_cat( vop_caches, vcaches_dst ) );
     auto vcaches_use = expr::extract_uses<expr::vk_src>(
 	m_vexpr0, cache_cat( vop_caches,
 			     cache_cat( vcaches_dst, vcaches_duse ) ) );
@@ -454,7 +469,7 @@ static inline void emap_pull(
     auto vactiv2 = expr::rewrite_caches<expr::vk_src>( vactiv1, vcaches_use );
     auto vactiv3 = expr::rewrite_caches<expr::vk_zero>( vactiv2, vcaches_let );
 
-    // fail_expose<std::is_class>( vcaches_dst );
+    // fail_expose<std::is_class>( vcaches );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
 
