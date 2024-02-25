@@ -1135,6 +1135,20 @@ auto cache_dedup_uses(
     return cache_dedup_uses( cache_remove<C0::id>( cdr( c ) ) );
 }
 
+template<typename... C>
+static constexpr
+auto cache_remove_others( const cache<C...> & c,
+			  const cache<> & r ) {
+    return c;
+}
+
+template<typename R0, typename... R, typename... C>
+static constexpr
+auto cache_remove_others( const cache<C...> & c,
+			  const cache<R0,R...> & r ) {
+    return cache_remove_others( cache_remove<R0::id>( c ),
+				cdr( r ) );
+}
 
 template<typename... C>
 constexpr size_t cache_count( const cache<C...> & ) {
@@ -2014,6 +2028,16 @@ static constexpr
 auto extract_uses( Expr e, cache<C...> c ) {
     auto er = extract_uses_helper<VKind,false,false>( e, cache<>() );
     auto ci = cache_convert_use_info<sizeof...(C)>( er );
+    // fail_expose<std::is_class>( ci );
+    return ci;
+}
+
+template<value_kind VKind, typename Expr, typename... C>
+static constexpr
+auto extract_uses_exclude_caches( Expr e, cache<C...> c ) {
+    auto er = extract_uses_helper<VKind,false,false>( e, cache<>() );
+    auto rm = cache_remove_others( er, c );
+    auto ci = cache_convert_use_info<sizeof...(C)>( rm );
     // fail_expose<std::is_class>( ci );
     return ci;
 }
