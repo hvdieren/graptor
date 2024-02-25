@@ -351,9 +351,7 @@ public:
 		api::filter( filter_strength, api::src, F ),
 #if CONVERGENCE
 		api::filter( api::weak, api::dst,
-			     [&] ( auto d ) {
-				 return ( a_new_mask[d] != expr::constant_val2(d, ~BitStringTy(0)) );
-			     } ),
+			     [&] ( auto d ) { return a_new_mask[d] != _1s; } ),
 #endif
 		api::relax( [&]( auto s, auto d, auto e ) {
 				return a_new_mask[d] |= a_prev_mask[s];
