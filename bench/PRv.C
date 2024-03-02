@@ -32,6 +32,10 @@
 
 using FloatTy = float; // double;
 
+using expr::_0;
+using expr::_1;
+using expr::_c;
+
 enum variable_name {
     var_pr = 0,
     var_contrib = 1,
@@ -40,113 +44,6 @@ enum variable_name {
     var_s = 4,
     var_delta = 5,
     var_degree = expr::aid_graph_degree
-};
-
-// Main edge-map operation for PageRank using power iteration method
-struct PR_F
-{
-    // expr::array_ro/*update*/<FloatTy, VID, var_pr> pr;
-    expr::array_ro/*update*/<double, VID, var_pr, array_encoding<FloatTy>> pr;
-    expr::array_ro<FloatTy,VID, var_contrib> contrib;
-
-    PR_F(FloatTy *_pr, FloatTy *_contrib) : pr(_pr), contrib(_contrib) {}
-
-    // Do we need to calculate the new frontier, or is it all ones?
-#if DEFERRED_UPDATE
-    static constexpr frontier_mode new_frontier = fm_all_true;
-#else
-    static constexpr frontier_mode new_frontier = fm_reduction;
-#endif
-    static constexpr bool is_scan = false;
-    static constexpr bool is_idempotent = false;
-#if UNCOND_EXEC
-    static constexpr bool may_omit_frontier_rd = true;
-#else
-    static constexpr bool may_omit_frontier_rd = false;
-#endif
-    static constexpr bool may_omit_frontier_wr = true;
-    static constexpr bool new_frontier_dense = false;
-
-    template<typename VIDSrc, typename VIDDst>
-    auto relax( VIDSrc s, VIDDst d ) {
-	// return pr[d] += contrib[s];
-	return pr[d] += expr::cast<double>( contrib[s] );
-    }
-
-    template<typename VIDDst>
-    auto active( VIDDst d ) {
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto different( VIDDst d ) {
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto update( VIDDst d ) {
-	// Frontier always full; won't be used if new_frontier == fm_all_true
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto vertexop( VIDDst d ) {
-	return expr::make_noop();
-    }
-};
-
-// Inefficient edge-map operation for PageRank using power iteration method
-struct PR_Base_F
-{
-    expr::array_ro/*update*/<FloatTy, VID, var_pr> pr;
-    expr::array_ro<FloatTy,VID, var_oldpr> oldpr;
-    expr::array_ro<FloatTy,VID, var_outdeg> outdeg;
-    FloatTy dampen;
-
-    PR_Base_F(FloatTy *_pr, FloatTy _d, FloatTy *_oldpr, FloatTy *_outdeg)
-	: pr( _pr ), dampen( _d ), oldpr( _oldpr ), outdeg( _outdeg ) { }
-
-    // Do we need to calculate the new frontier, or is it all ones?
-#if DEFERRED_UPDATE
-    static constexpr frontier_mode new_frontier = fm_all_true;
-#else
-    static constexpr frontier_mode new_frontier = fm_reduction;
-#endif
-    static constexpr bool is_scan = false;
-    static constexpr bool is_idempotent = false;
-#if UNCOND_EXEC
-    static constexpr bool may_omit_frontier_rd = true;
-#else
-    static constexpr bool may_omit_frontier_rd = false;
-#endif
-    static constexpr bool may_omit_frontier_wr = true;
-    static constexpr bool new_frontier_dense = false;
-
-    template<typename VIDSrc, typename VIDDst>
-    auto relax( VIDSrc s, VIDDst d ) {
-	return pr[d] += ( expr::constant_val( oldpr[s], dampen ) * oldpr[s] ) / outdeg[s];
-    }
-
-    template<typename VIDDst>
-    auto active( VIDDst d ) {
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto different( VIDDst d ) {
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto update( VIDDst d ) {
-	// Frontier always full; won't be used if new_frontier == fm_all_true
-	return expr::true_val(d);
-    }
-
-    template<typename VIDDst>
-    auto vertexop( VIDDst d ) {
-	return expr::make_noop();
-    }
 };
 
 template<typename GraphType, typename floatty>
@@ -265,8 +162,7 @@ public:
 		.vertex_map( [&]( auto vid ) {
 			return y[vid] = expr::zero_val( y[vid] ); } )
 		.vertex_map( [&]( auto vid ) {
-			return x[vid] = expr::constant_val( x[vid], FloatTy(1) )
-			    / expr::constant_val( x[vid], FloatTy(n) );
+		    return x[vid] = _c( FloatTy(1)/FloatTy(n) );
 		    } )
 		.materialize();
 	}
@@ -279,7 +175,7 @@ public:
 	//       partitioner class with info on zero-degree chunks (will be in!)
 	make_lazy_executor( part )
 	    .vertex_map( [&]( auto vid ) {
-		    return contrib[vid] = expr::constant_val( x[vid], dampen )
+		    return contrib[vid] = _c( dampen )
 			* x[vid] / expr::cast<FloatTy>( degree[vid] );
 		} )
 	    .materialize();
@@ -310,8 +206,7 @@ public:
 			return y_acc[d] += expr::cast<double>( contrib[s] );
 #else
 			return y_acc[d] += expr::cast<double>(
-			    ( expr::constant_val( x[s], dampen ) * x[s] )
-			    / outdeg[s] );
+			    ( _c( dampen ) * x[s] ) / outdeg[s] );
 #endif
 		    } )
 		);
@@ -340,13 +235,11 @@ public:
 	    // output.del(); // TODO: this could also be enqueued on the lazy exec
 
 	    s = 0;
+	    w /= double(n);
 	    make_lazy_executor( part )
-		.vertex_map( [&]( auto vid ) {
-			return y[vid] += expr::constant_val( y[vid], w/double(n) );
-		    } )
+		.vertex_map( [&]( auto vid ) { return y[vid] += _c( w ); } )
 		.vertex_scan( [&]( auto vid ) {
-			return accum[expr::zero_val(vid)]
-			    += expr::cast<double>( y[vid] );
+			return accum[_0(vid)] += expr::cast<double>( y[vid] );
 		    } )
 		.materialize();
 
@@ -354,9 +247,7 @@ public:
 	    sdelta = 0;
 
 	    make_lazy_executor( part )
-		.vertex_map( [&]( auto vid ) {
-			return y[vid] *= expr::constant_val( y[vid], w );
-		    } )
+		.vertex_map( [&]( auto vid ) { return y[vid] *= _c( w ); } )
 		.vertex_scan( [&]( auto vid ) {
 			return delta[expr::zero_val( vid )]
 			    += expr::cast<double>(
@@ -371,9 +262,8 @@ public:
 	    // make_lazy_executor( part )
 #if MEMO
 		.vertex_map( [&]( auto vid ) {
-			return contrib[vid] = expr::constant_val( x[vid], dampen )
-			    * x[vid] / expr::cast<FloatTy>(
-				degree[vid] );
+			return contrib[vid] = _c( dampen )
+			    * x[vid] / expr::cast<FloatTy>( degree[vid] );
 		    } )
 #endif
 		.materialize();

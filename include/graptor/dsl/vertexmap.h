@@ -443,17 +443,43 @@ private:
 		    auto c = cache_create_no_init( cache_all, m_pid );
 		    cache_init( env, c, cache_pid, m_pid );
 
-		    for( ; v+VL <= e; v += VL ) {
-			// simd_vector<VID,VL> vv;
-			// vv.set1inc( v );
-			auto vv = simd::template create_constant<simd::ty<VID,1>>( v );
-			auto m = expr::create_value_map_new2<VL,expr::vk_vid,expr::vk_pid>(
-			    vv, pp );
-			cache_init( env, c, cache_vid, m );
-			// auto c = cache_create( env, cache_vid, m );
-			// expr::cache_prefetch<PFV_DISTANCE>( c, cache_vid, m );
-			auto r = env.evaluate( c, m, expr );
-			cache_commit( env, cache_vid, c, m, r.mpack() );
+		    for( ; v+VL*4 <= e; v += VL*4 ) {
+			{
+			    auto vv = simd::template
+				create_constant<simd::ty<VID,1>>( v );
+			    auto m = expr::create_value_map_new2<
+				VL,expr::vk_vid,expr::vk_pid>( vv, pp );
+			    cache_init( env, c, cache_vid, m );
+			    auto r = env.evaluate( c, m, expr );
+			    cache_commit( env, cache_vid, c, m, r.mpack() );
+			}
+			{
+			    auto vv = simd::template
+				create_constant<simd::ty<VID,1>>( v + VL );
+			    auto m = expr::create_value_map_new2<
+				VL,expr::vk_vid,expr::vk_pid>( vv, pp );
+			    cache_init( env, c, cache_vid, m );
+			    auto r = env.evaluate( c, m, expr );
+			    cache_commit( env, cache_vid, c, m, r.mpack() );
+			}
+			{
+			    auto vv = simd::template
+				create_constant<simd::ty<VID,1>>( v + 2*VL );
+			    auto m = expr::create_value_map_new2<
+				VL,expr::vk_vid,expr::vk_pid>( vv, pp );
+			    cache_init( env, c, cache_vid, m );
+			    auto r = env.evaluate( c, m, expr );
+			    cache_commit( env, cache_vid, c, m, r.mpack() );
+			}
+			{
+			    auto vv = simd::template
+				create_constant<simd::ty<VID,1>>( v + 3*VL );
+			    auto m = expr::create_value_map_new2<
+				VL,expr::vk_vid,expr::vk_pid>( vv, pp );
+			    cache_init( env, c, cache_vid, m );
+			    auto r = env.evaluate( c, m, expr );
+			    cache_commit( env, cache_vid, c, m, r.mpack() );
+			}
 		    }
 
 		    cache_commit( env, cache_pid, c, m_pid );
