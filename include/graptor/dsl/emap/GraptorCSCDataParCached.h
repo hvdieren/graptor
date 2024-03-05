@@ -476,17 +476,16 @@ static inline void emap_pull(
     static_assert( Cfg::max_vector_length() >= VL,
 		   "Cannot respect config option of maximum vector length" );
 
-    map_partition<Cfg::is_parallel()>(
-	part, [&]( int p ) __attribute__((noinline)) {
-	    GraptorCSCDataParCached<VL>(
-		GA, p, GA.getCSC( p ), part,
-		aexpr, // rewrite_internal( aexpr ),
-		m_vexpr, // rewrite_internal( m_vexpr ),
-		m_rexpr, // rewrite_internal( m_rexpr ),
-		vactiv3,
-		vop_caches, vcaches, vcaches_use, all_caches, env,
-		op.get_config() );
-	} );
+    map_partition<Cfg::is_parallel()>( part, [&]( int p ) {
+	GraptorCSCDataParCached<VL>(
+	    GA, p, GA.getCSC( p ), part,
+	    aexpr, // rewrite_internal( aexpr ),
+	    m_vexpr, // rewrite_internal( m_vexpr ),
+	    m_rexpr, // rewrite_internal( m_rexpr ),
+	    vactiv3,
+	    vop_caches, vcaches, vcaches_use, all_caches, env,
+	    op.get_config() );
+    } );
 
     // Scan across partitions
     if constexpr ( !expr::is_noop<decltype(pvop0)>::value
