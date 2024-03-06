@@ -10,6 +10,9 @@
 #include <cstdio>
 #include <string>
 #include <algorithm>
+#include <filesystem>
+
+#include <libconfig.h++>
 
 #include "graptor/itraits.h"
 #include "graptor/mm.h"
@@ -236,6 +239,30 @@ inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
 	      << pretty_size( double(len)/delay ) << "/s\n";
 }
 
+template<typename T>
+void write_binary_slab( const std::string & ofile,
+			size_t num_elements, const T * elements ) {
+    ofstream file( ofile, ios::out | ios::trunc | ios::binary );
+    file.write( (const char *)&elements[0], sizeof(T) * num_elements );
+    file.close();
+}
+
+template<typename T>
+void read_binary_slab( const std::string & ifile,
+		       size_t num_elements, T * elements ) {
+    int fd;
+
+    if( (fd = open( ifile.c_str(), O_RDONLY )) < 0 ) {
+	std::cerr << "Cannot open file '" << ifile << "': "
+		  << strerror( errno ) << "\n";
+	exit( 1 );
+    }
+
+    parallel_read( fd, 0, elements, sizeof(T)*num_elements );
+
+    close( fd );
+}
+
 class GraphCSx {
     VID n;
     VID nmaxdeg;
@@ -255,20 +282,16 @@ public:
 	: symmetric( _symmetric ), weights( nullptr ) {
 	if( allocation == -1 ) {
 	    numa_allocation_interleaved alloc;
-	    readFromBinaryFile( infile, alloc );
-	    if( wfile )
-		readWeightsFromBinaryFile( wfile, alloc );
+	    readFromGraptorFile( infile, wfile, alloc );
 	} else {
 	    numa_allocation_local alloc( allocation );
-	    readFromBinaryFile( infile, alloc );
-	    if( wfile )
-		readWeightsFromBinaryFile( wfile, alloc );
+	    readFromGraptorFile( infile, wfile, alloc );
 	}
     }
     GraphCSx( const std::string & infile, const numa_allocation & allocation,
 	      bool _symmetric )
 	: symmetric( _symmetric ), weights( nullptr ) {
-	readFromBinaryFile( infile, allocation );
+	readFromGraptorFile( infile, nullptr, allocation );
     }
     GraphCSx( VID n_, EID m_, int allocation, bool symmetric_ = false,
 	      bool weights_ = false )
@@ -2005,6 +2028,41 @@ public:
 	    file.close();
 	}
     }
+    void writeToGraptorV4File( const std::string & stem ) {
+	using namespace libconfig;
+	
+	const std::string ifile = stem + ".index";
+	const std::string efile = stem + ".edges";
+	const std::string wfile = stem + ".vweights";
+
+	Config cfg;
+	Setting & root = cfg.getRoot();
+	constexpr auto ty = Setting::TypeInt64;
+	constexpr auto fty = Setting::TypeString;
+	root.add( "version", ty ) = (int64_t)4;
+	root.add( "num_vertices", ty ) = (int64_t)numVertices();
+	root.add( "num_edges", ty ) = (int64_t)numEdges();
+	root.add( "symmetric", ty ) = (int64_t)(isSymmetric()?1:0);
+	root.add( "vid_size", ty ) = (int64_t)sizeof(VID);
+	root.add( "eid_size", ty ) = (int64_t)sizeof(EID);
+	root.add( "index", fty ) = ".index";
+	root.add( "edges", fty ) = ".edges";
+	if( weights )
+	    root.add( "vertex_weights", fty ) = ".vweights";
+
+	write_binary_slab( ifile, numVertices()+1, index.get() );
+	write_binary_slab( efile, numEdges(), edges.get() );
+	if( weights )
+	    write_binary_slab( wfile, numVertices(), weights->get() );
+	
+	try {
+	    cfg.writeFile( stem + ".cfg" );
+	} catch( const FileIOException & fioex ) {
+	    std::cerr << "Writing configuration file to stem \""
+		      << stem << "\" failed\n";
+	    exit( 1 );
+	}
+    }
     void writeToTextFile( const std::string & ofile ) {
 	ofstream file( ofile, ios::out | ios::trunc );
 
@@ -2046,6 +2104,19 @@ public:
 	    
 	file << buffer.rdbuf();
 	file.close();
+    }
+
+    void readFromGraptorFile( const std::string & ifile,
+			      const char * wfile,
+			      const numa_allocation & alloc ) {
+	if( std::filesystem::exists(
+		std::filesystem::status( ifile + ".cfg" ) ) )
+	    readFromGraptorV4File( ifile, wfile, alloc );
+	else {
+	    readFromBinaryFile( ifile, alloc );
+	    if( wfile )
+		readWeightsFromBinaryFile( wfile, alloc );
+	}
     }
 
     void readFromBinaryFile( const std::string & ifile,
@@ -2175,6 +2246,53 @@ public:
 #endif
 #endif
 	build_degree();
+    }
+
+    void readFromGraptorV4File( const std::string & stem,
+				const char * wfile,
+				const numa_allocation & alloc ) {
+	using namespace libconfig;
+	Config cfg;
+
+	const std::string cfile = stem + ".cfg";
+
+	try {
+	    cfg.readFile( cfile );
+	} catch( const FileIOException & fioex ) {
+	    std::cerr << "Reading configuration file from \""
+		      << cfile << "\" failed: I/O error\n";
+	    exit( 1 );
+	} catch( const ParseException & pex ) {
+	    std::cerr << "Reading configuration file from \""
+		      << cfile << "\" failed: parse error at "
+		      << pex.getFile() << ':' << pex.getLine()
+		      << ": " << pex.getError() << "\n";
+	    exit( 1 );
+	}
+	
+	const Setting & root = cfg.getRoot();
+	constexpr auto ty = Setting::TypeInt64 ;
+	constexpr auto fty = Setting::TypeString ;
+
+	const size_t vid_size = root["vid_size"];
+	const size_t eid_size = root["eid_size"];
+	assert( sizeof(VID) == vid_size );
+	assert( sizeof(EID) == eid_size );
+	
+	n = (int64_t)root["num_vertices"];
+	m = (int64_t)root["num_edges"];
+	symmetric = 0 != (int64_t)root["symmetric"];
+
+	allocate( alloc );
+
+	const std::string ifile = stem + std::string(root["index"]);
+	const std::string efile = stem + std::string(root["edges"]);
+
+	read_binary_slab( ifile, n+1, index.get() );
+	read_binary_slab( efile, m, edges.get() );
+
+	if( wfile )
+	    readWeightsFromBinaryFile( stem + std::string(root[wfile]), alloc );
     }
 
     void readWeightsFromBinaryFile( const std::string & wfile,

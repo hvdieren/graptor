@@ -158,6 +158,21 @@ elseif(GRAPTOR_PARALLEL STREQUAL "seq")
     set(graptor_parallel_variable NOTHREADS)
 endif()
 
+# libconfig
+ExternalProject_Add(
+	libconfig_project
+	GIT_REPOSITORY "https://github.com/hyperrealm/libconfig.git"
+	GIT_TAG "master"
+	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+)
+
+add_library(LIBCONFIG SHARED IMPORTED GLOBAL)
+ExternalProject_Get_Property(libconfig_project BINARY_DIR)
+string(APPEND graptor_cflags " -I${BINARY_DIR}/include")
+string(APPEND graptor_cxxflags " -I${BINARY_DIR}/include")
+add_dependencies(LIBCONFIG libconfig_project)
+list(APPEND EXTRA_LIBS ${BINARY_DIR}/lib/libconfig++.so)
+
 # Building documentation?
 option(GRAPTOR_BUILD_DOC "Build documentation" ON)
 if(GRAPTOR_BUILD_DOC)
@@ -190,7 +205,7 @@ string(APPEND graptor_cxxflags " -I${parallel_include}")
 # our object file(s)
 add_library(graptorlib STATIC src/constants.C)
 set_target_properties(graptorlib PROPERTIES COMPILE_FLAGS "${graptor_cxxflags}")
-add_dependencies(graptorlib GRAPTOR_BACKEND)
+add_dependencies(graptorlib GRAPTOR_BACKEND LIBCONFIG)
 
 # testing
 option(GRAPTOR_TEST "Build and run test cases" OFF)
