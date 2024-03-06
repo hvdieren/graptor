@@ -2283,13 +2283,44 @@ public:
 	m = (int64_t)root["num_edges"];
 	symmetric = 0 != (int64_t)root["symmetric"];
 
-	allocate( alloc );
-
 	const std::string ifile = stem + std::string(root["index"]);
 	const std::string efile = stem + std::string(root["edges"]);
 
-	read_binary_slab( ifile, n+1, index.get() );
-	read_binary_slab( efile, m, edges.get() );
+	// allocate( alloc );
+
+	// read_binary_slab( ifile, n+1, index.get() );
+	// read_binary_slab( efile, m, edges.get() );
+
+	int fd;
+	timer tm;
+	tm.start();
+	if( (fd = open( ifile.c_str(), O_RDONLY /*| O_DIRECT*/ )) < 0 ) {
+	    std::cerr << "Cannot open file '" << ifile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+	new (&index) mm::buffer<EID>( n+1, fd, off_t(0), alloc, "CSx index" );
+	close( fd );
+	double delay = tm.next();
+	std::cerr << "mmap " << pretty_size( size_t(n+1)*sizeof(VID) ) << " in "
+		  << delay << " seconds, "
+		  << pretty_size( double((n+1)*sizeof(VID))/delay ) << "/s\n";
+
+	tm.next();
+	if( (fd = open( efile.c_str(), O_RDONLY /*| O_DIRECT*/ )) < 0 ) {
+	    std::cerr << "Cannot open file '" << efile << "': "
+		      << strerror( errno ) << "\n";
+	    exit( 1 );
+	}
+	new (&edges) mm::buffer<VID>( m, fd, off_t(0), alloc, "CSx edges" );
+	close( fd );
+	delay = tm.next();
+	std::cerr << "mmap " << pretty_size( m*sizeof(VID) ) << " in "
+		  << delay << " seconds, "
+		  << pretty_size( double(m*sizeof(VID))/delay ) << "/s\n";
+
+	// Uninitialised for now
+	new (&degree) mm::buffer<VID>( n, alloc, "CSx degree" );
 
 	if( wfile )
 	    readWeightsFromBinaryFile( stem + std::string(root[wfile]), alloc );

@@ -14,8 +14,9 @@ int main( int argc, char *argv[] ) {
 
     size_t n = P.getOptionLongValue( "-n", 1 );
     size_t m = P.getOptionLongValue( "-m", 1 );
-    const char * ifile = P.getArgument( 0 );
+    bool v2 = P.getOption( "-v2", false );
     const char * ofile = P.getOptionValue( "-o" );
+    const char * ifile = P.getOptionValue( "-i" );
     bool binary = P.getOptionValue("-b");             //Galois binary format
 
     std::cerr << "Reading Ligra graph " << ifile << "\n";
@@ -27,5 +28,8 @@ int main( int argc, char *argv[] ) {
 
     // Write graph to file.
     std::cerr << "Write graph to file " << ofile << "\n";
-    G.writeToBinaryFile( ofile );
+    if( v2 )
+	G.writeToBinaryFile( ofile );
+    else
+	G.writeToGraptorV4File( ofile );
 }
