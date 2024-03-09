@@ -5,15 +5,15 @@
 namespace graptor {
 
 template<typename T>
-class range_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    T,	  			// value_type
-    T,				// difference_type
-    const T*, 	 		// pointer
-    T 	 	 		// reference
-    > {
+class range_iterator {
 public:
     using type = T;
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = type;
+    using difference_type = type;
+    using pointer = const type*;
+    using reference = type;
 
 public:
     explicit range_iterator( type pos = 0 ) : m_pos( pos ) { }

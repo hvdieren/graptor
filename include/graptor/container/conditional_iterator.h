@@ -4,16 +4,19 @@
 
 namespace graptor {
 
+// Assumes std::iterator_traits<Iterator>::iterator_category is compatible
+// with input_iterator_tag
 template<typename Iterator, typename Cond>
-class conditional_iterator : public std::iterator<
-    std::input_iterator_tag,		// iterator_category
-    typename Iterator::value_type,	// value_type
-    typename Iterator::difference_type,	// difference_type
-    typename Iterator::pointer,		// pointer
-    typename Iterator::reference	// reference
-    > {
+class conditional_iterator {
 public:
     using type = typename Iterator::value_type;
+
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = typename Iterator::value_type;
+    using difference_type = typename Iterator::difference_type;
+    using pointer = typename Iterator::pointer;
+    using reference = typename Iterator::reference;
 
 public:
     explicit conditional_iterator( Iterator it, Cond cond )

@@ -5,13 +5,16 @@
 namespace graptor {
 
 template<typename Iter>
-class difference_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    typename std::iterator_traits<Iter>::value_type,
-    typename std::iterator_traits<Iter>::difference_type,
-    typename std::iterator_traits<Iter>::pointer,
-    typename std::iterator_traits<Iter>::reference
-    > {
+class difference_iterator {
+public:
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = typename std::iterator_traits<Iter>::value_type;
+    using difference_type =
+	typename std::iterator_traits<Iter>::difference_type;
+    using pointer = typename std::iterator_traits<Iter>::pointer;
+    using reference = typename std::iterator_traits<Iter>::reference;
+
 public:
     explicit difference_iterator( Iter it ) : m_it( it ) { }
     difference_iterator& operator++() { m_it++; return *this; }

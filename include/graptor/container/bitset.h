@@ -33,19 +33,20 @@
  *======================================================================*/
 
 template<unsigned Bits, typename Enable = void>
-class bitset_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    unsigned,	  		// value_type
-    unsigned,			// difference_type
-    const unsigned*, 	 	// pointer
-    unsigned 	 	 	// reference
-    > {
+class bitset_iterator {
 public:
     using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
     static constexpr unsigned bits_per_lane = sizeof(type)*8;
     static constexpr unsigned short VL = Bits / bits_per_lane;
     using tr = vector_type_traits_vl<type,VL>;
     using bitset_type = typename tr::type;
+
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = unsigned;
+    using difference_type = unsigned;
+    using pointer = const unsigned *;
+    using reference = unsigned;
 
 public:
     // The end iterator has an empty bitset - that's when we're done!
@@ -127,20 +128,20 @@ private:
 
 // Variant with single tzcnt-able lane
 template<unsigned Bits>
-class bitset_iterator<Bits,std::enable_if_t<Bits <= 64>>
-    : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    unsigned,	  		// value_type
-    unsigned,			// difference_type
-    const unsigned*, 	 	// pointer
-    unsigned 	 	 	// reference
-    > {
+class bitset_iterator<Bits,std::enable_if_t<Bits <= 64>> {
 public:
     using type = std::conditional_t<Bits<=32,uint32_t,uint64_t>;
     static constexpr unsigned short VL = 1;
     static_assert( Bits <= 8*sizeof(type) );
     using tr = vector_type_traits_vl<type,VL>;
     using bitset_type = typename tr::type;
+
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = unsigned;
+    using difference_type = unsigned;
+    using pointer = const unsigned *;
+    using reference = unsigned;
 
 public:
     // The end iterator has an empty bitset - that's when we're done!

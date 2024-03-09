@@ -5,16 +5,17 @@
 namespace graptor {
 
 template<typename lVID, typename lEID>
-class generic_edge_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    std::pair<lVID,lVID>, 	// value_type
-    lEID,			// difference_type
-    const std::pair<lVID,lVID> *,	// pointer
-    std::pair<lVID,lVID> 		// reference
-    > {
+class generic_edge_iterator {
 public:
     using VID = lVID;
     using EID = lEID;
+
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = std::pair<VID,VID>;
+    using difference_type = EID;
+    using pointer = const std::pair<VID,VID> *;
+    using reference = std::pair<VID,VID>;
 
 public:
     explicit generic_edge_iterator(
