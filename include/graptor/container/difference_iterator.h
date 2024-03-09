@@ -37,13 +37,15 @@ private:
 };
 
 template<typename Iter>
-class pairwise_difference_iterator : public std::iterator<
-    std::input_iterator_tag,	// iterator_category
-    typename std::iterator_traits<Iter>::value_type,
-    typename std::iterator_traits<Iter>::difference_type,
-    typename std::iterator_traits<Iter>::pointer,
-    typename std::iterator_traits<Iter>::reference
-    > {
+class pairwise_difference_iterator {
+public:
+    // iterator traits
+    using iterator_category = std::input_iterator_tag;
+    using value_type = typename std::iterator_traits<Iter>::value_type;
+    using difference_type =
+	typename std::iterator_traits<Iter>::difference_type;
+    using pointer = typename std::iterator_traits<Iter>::pointer;
+    using reference = typename std::iterator_traits<Iter>::reference;
 public:
     explicit pairwise_difference_iterator( Iter it1, Iter it2 )
 	: m_it1( it1 ), m_it2( it2 ) { }
