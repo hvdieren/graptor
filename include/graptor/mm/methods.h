@@ -18,6 +18,7 @@
  * Represents a memory allocation
  ***********************************************************************/
 
+#include "graptor/utils.h"
 #include "graptor/partitioner.h"
 #include "graptor/mm/allocation.h"
 
@@ -268,7 +269,8 @@ struct methods {
 	case na_local:
 	case na_partitioned:
 	case na_edge_partitioned:
-	    assert( 0 && "NYI" );
+	default:
+	    terminal_error( "NYI" );
 	    break;
 	}
     }
