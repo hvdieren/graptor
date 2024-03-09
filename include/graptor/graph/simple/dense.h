@@ -901,7 +901,7 @@ private:
 		break;
 	};
 
-	auto task = [=,&EE]( VID u, row_type u_only ) {
+	auto task = [=,&EE,this]( VID u, row_type u_only ) {
 	    row_type u_ngh = get_row( u );
 	    row_type h = get_himask( u );
 	    row_type u_done = tr::bitwise_andnot( h, x );
