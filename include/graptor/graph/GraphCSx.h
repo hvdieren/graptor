@@ -2324,6 +2324,9 @@ public:
 
 	if( wfile )
 	    readWeightsFromBinaryFile( stem + std::string(root[wfile]), alloc );
+
+	// Build degree array
+	build_degree();
     }
 
     void readWeightsFromBinaryFile( const std::string & wfile,
@@ -2728,6 +2731,10 @@ private:
     }
 public:
     void build_degree() {
+	// TODO: consider loop unrolling, reducing redundnat loads of values
+	// into registers within an unrolled region.
+	// Note: if the graph topology is mmap'ed, then this will be the
+	// first touch of the data.
 	parallel_loop( (VID)0, n, [&]( VID v ) { 
 	    degree[v] = index[v+1] - index[v];
 	} );
