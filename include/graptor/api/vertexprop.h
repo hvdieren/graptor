@@ -115,9 +115,17 @@ public:
 	encoding::template store<simd::ty<T,1>>( mem.get(), v, t );
     }
 
-    // Should relay on encoding for get/set
-    [[deprecated("not reliable with bitfields")]]
+    // Should rely on encoding for get/set
+    // [[deprecated("not reliable with bitfields")]]
     typename encoding::storage_type * get_ptr() const {
+	terminal_error_check(
+	    (std::is_same_v<T,typename encoding::storage_type>),
+	    "pointer arithmetic will be invalid if types mismatch" );
+	return mem.get();
+    }
+
+    // For use in array_encoding
+    typename encoding::storage_type * get_raw_ptr() const {
 	return mem.get();
     }
 
