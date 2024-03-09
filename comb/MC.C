@@ -191,8 +191,6 @@ static constexpr size_t N_MAX_SIZE = 8;
 
 static bool verbose = false;
 
-static VID * global_coreness = nullptr;
-
 static std::mutex io_mux;
 static constexpr bool io_trace = false;
 
@@ -200,7 +198,9 @@ class MC_Enumerator {
 public:
     MC_Enumerator( size_t degen = 0 )
 	: m_degeneracy( degen ),
-	  m_best( 0 ) { }
+	  m_best( 0 ) {
+	m_timer.start();
+    }
 
     // Record solution
     void record( size_t s ) {
@@ -230,7 +230,8 @@ private:
 		    prior, s, 
 		    std::memory_order_release,
 		    std::memory_order_relaxed ) ) {
-		std::cout << "max_clique: " << s << '\n';
+		std::cout << "max_clique: " << s << " at "
+			  << m_timer.elapsed() << '\n';
 		break;
 	    }
 	    prior = m_best.load( std::memory_order_relaxed );
@@ -240,6 +241,7 @@ private:
 private:
     size_t m_degeneracy;
     std::atomic<size_t> m_best;
+    timer m_timer;
 };
 
 struct variant_statistics {
@@ -863,16 +865,16 @@ bk_recursive_call(
     PSet<VID> & xp_new,
     VID ce_new,
     int depth ) {
-    if( ce_new == 0 ) {
-	// Reached leaf of search tree
-	E.record( depth );
-	return;
-    }
-
     // Check if the best possible clique we can construct would improve
     // over the current best known clique.
     if( !E.is_feasible( depth + ce_new ) )
 	return;
+
+    // Reached leaf of search tree
+    if( ce_new == 0 ) {
+	E.record( depth );
+	return;
+    }
 
 #if TUNABLE_SMALL_AVOID_CUTOUT_LEAF != 0
     if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF )
@@ -884,6 +886,7 @@ bk_recursive_call(
 
     // Large sub-problem; search recursively
     // Tuning point: do we cut out a subgraph or not?
+    // Tuning point: do we proceed with MC or switch to VC?
     mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, ce_new, depth );
 }
 
@@ -1104,18 +1107,19 @@ void mc_top_level(
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
-    VID degeneracy ) {
+    VID degeneracy,
+    const VID * const remap_coreness ) {
 
     VID best = E.get_max_clique_size();
 
     // No point analysing a vertex of too low degree
-    if( G.getDegree(v) < best )
+    if( remap_coreness[v] < best )
 	return;
 
     // Filter out vertices where degree in main graph < best.
     // With degree == best, we can make a clique of size best+1 at best.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
-	cut( G, v, [&]( VID u ) { return G.getDegree(u) > best; } );
+	cut( G, v, [&]( VID u ) { return remap_coreness[u] > best; } );
 
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out.
@@ -1186,7 +1190,7 @@ void mc_top_level(
     //       eligibility of neighbours. This should include comparison against v
     GraphBuilderInduced<HGraphTy> ibuilder(
 	G, H, v, cut,
-	[&]( VID u ) { return u > v && G.getDegree( u ) >= best; } );
+	[&]( VID u ) { return u > v && remap_coreness[u] >= best; } );
     const auto & HG = ibuilder.get_graph();
 
     stats.record_genbuild( tm.stop() );
@@ -1385,8 +1389,13 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     sort_order( order.get(), rev_order.get(),
 		coreness, n, kcore.getLargestCore() );
-    global_coreness = coreness.get_ptr();
     std::cout << "Determining sort order: " << tm.next() << "\n";
+
+    mm::buffer<VID> remap_coreness( n, numa_allocation_interleaved() );
+    parallel_loop( (VID)0, n, [&]( VID v ) {
+	remap_coreness[v] = coreness[order[v]];
+    } );
+    std::cout << "Remapping coreness data: " << tm.next() << "\n";
 
     GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
     std::cout << "Remapping graph: " << tm.next() << "\n";
@@ -1440,14 +1449,11 @@ int main( int argc, char *argv[] ) {
 	      <<  USE_512_VECTOR
 	      << '\n';
     
-    MC_Enumerator E( kcore.getLargestCore() );
-
     system( "hostname" );
     system( "date" );
 
     std::cout << "Start enumeration: " << tm.next() << std::endl;
 
-    VID degeneracy = kcore.getLargestCore();
 
 #if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
@@ -1458,11 +1464,14 @@ int main( int argc, char *argv[] ) {
     } );
 #endif
 
+    VID degeneracy = kcore.getLargestCore();
+    MC_Enumerator E( degeneracy );
+
     // Number of partitions is tunable. A fairly large number is helpful
     // to help load balancing.
     parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
 	for( VID v=p; v < n; v += npart )
-	    mc_top_level( R, H, E, v, degeneracy );
+	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
     } );
 
 #if PAPI_REGION == 1
@@ -1480,11 +1489,11 @@ int main( int argc, char *argv[] ) {
 
     double duration = tm.total();
     std::cout << "Completed MCE in " << duration << " seconds\n";
+#if 0
     for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
 	std::cout << (1<<n) << "-bit dense: ";
 	stats.get( n ).print( std::cout ); 
     }
-#if 0
     for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
 	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
 	    std::cout << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
@@ -1507,6 +1516,7 @@ int main( int argc, char *argv[] ) {
 
     E.report( std::cout );
 
+    remap_coreness.del();
     rev_order.del();
     order.del();
     G.del();

@@ -11,14 +11,14 @@ namespace graph {
 //! Inspired by Fast Arrays
 // Constant-time initialisation
 template<typename _lVID = VID>
-class XPSet {
+class XPSetBase {
 public:
     using lVID = _lVID;
 
     template<bool present_p>
     class hash_set_interface {
     public:
-	hash_set_interface( const XPSet & xp, lVID ne )
+	hash_set_interface( const XPSetBase & xp, lVID ne )
 	    : m_xp( xp ), m_ne( ne ) { }
 
 	bool contains( lVID v ) const {
@@ -84,7 +84,7 @@ public:
 	}
 
     private:
-	const XPSet & m_xp;
+	const XPSetBase & m_xp;
 	lVID m_ne;
     };
 
@@ -92,7 +92,7 @@ public:
     // fit in with the intersect template code.
     class hash_table_interface {
     public:
-	hash_table_interface( const XPSet & xp ) : m_xp( xp ) { }
+	hash_table_interface( const XPSetBase & xp ) : m_xp( xp ) { }
 
 	lVID contains( lVID v ) const {
 	    lVID pos = m_xp.m_pos[v];
@@ -150,17 +150,17 @@ public:
 	}
 
     private:
-	const XPSet & m_xp;
+	const XPSetBase & m_xp;
     };
 
 public:
-    XPSet( VID n, VID ce_max )
+    XPSetBase( VID n, VID ce_max )
 	: m_pos( new lVID[n+ce_max] ), m_set( m_pos+n ), m_fill( 0 ) {
 	// Silent errors occur when allocating zero elements...
 	assert( n > 0 && "require non-empty graph" );
     }
-private:
-    XPSet( XPSet && xp )
+protected:
+    XPSetBase( XPSetBase && xp )
 	: m_set( std::forward<lVID*>( xp.m_set ) ),
 	  m_pos( std::forward<lVID*>( xp.m_pos ) ),
 	  m_fill( std::forward<lVID>( xp.m_fill ) ) {
@@ -168,11 +168,11 @@ private:
 	xp.m_pos = nullptr;
 	xp.m_fill = 0;
     }
-    XPSet( const XPSet & ) = delete;
-    XPSet & operator = ( const XPSet & ) = delete;
+    XPSetBase( const XPSetBase & ) = delete;
+    XPSetBase & operator = ( const XPSetBase & ) = delete;
 
 public:
-    ~XPSet() {
+    ~XPSetBase() {
 	if( m_pos )
 	    delete[] m_pos;
     }
@@ -181,18 +181,17 @@ public:
     // and we are setting up an XPSet to describe its position
     // in the search tree.
     template<typename HGraphTy>
-    static XPSet
-    create_top_level( const HGraphTy & G, lVID v /*, lVID & ne, lVID & ce */ ) {
+    static XPSetBase
+    create_top_level( const HGraphTy & G, lVID v ) {
 	lVID n = G.numVertices();
 	const lVID deg = G.getDegree( v );
 
 	// At top level, deg <= n
-	XPSet xp( n, deg );
+	XPSetBase xp( n, deg );
 
 	if constexpr ( HGraphTy::has_dual_rep ) {
 	    const auto * ngh = G.get_neighbours( v );
 	    for( VID i=0; i < deg; ++i ) {
-		// assert( ngh[i] < n );
 		xp.m_set[i] = ngh[i];
 		xp.m_pos[ngh[i]] = i;
 	    }
@@ -229,11 +228,11 @@ public:
     }
 
     template<typename HGraphTy>
-    static XPSet
+    static XPSetBase
     create_full_set( const HGraphTy & G ) {
 	lVID n = G.numVertices();
 
-	XPSet xp( n, n );
+	XPSetBase xp( n, n );
 
 	for( lVID i=0; i < n; ++i ) {
 	    xp.m_set[i] = i;
@@ -244,27 +243,67 @@ public:
 	return xp;
     }
 
+    // A hash interface supporting contains, multi_contains
+    // that checks for either pos < ne or pos >= ne or pos == ~0
+    // present hash_set-like interface for X set
+    auto X_hash_set( lVID ne ) const {
+	return hash_set_interface<false>( *this, ne );
+    }
+    // present hash_set-like interface for P set
+    auto P_hash_set( lVID ne ) const {
+	return hash_set_interface<true>( *this, ne );
+    }
+
+    // present hash_table-like interface for X and P (vertex ID translation)
+    auto hash_table() const {
+	return hash_table_interface( *this );
+    }
+
+    /*const*/ lVID * get_set() const { return m_set; }
+    lVID at( lVID pos ) const { return m_set[pos]; }
+
+protected:
+    lVID * m_pos;
+    lVID * m_set;
+    lVID m_fill;
+};
+    
+template<typename _lVID = VID>
+class XPSet : public XPSetBase<_lVID> {
+public:
+    using lVID = _lVID;
+
+public:
+    XPSet( VID n, VID ce_max )
+	: XPSetBase<lVID>( n, ce_max ) { }
+protected:
+    XPSet( XPSet && xp )
+	: XPSetBase<lVID>( std::forward<XPSetBase<lVID>>( xp ) ) { }
+    XPSet( const XPSet & ) = delete;
+    XPSet & operator = ( const XPSet & ) = delete;
+
+public:
     template<typename Adj>
     void semisort_pivot( lVID ne, lVID pe, lVID ce, const Adj & padj ) {
-	assert( ce == m_fill );
+	assert( ce == this->m_fill );
 
 	// Semisort P into P\N(pivot) and P\cap N(pivot)
 	// Assumption: pe + |intersect(padj,P)| == ce
 	lVID P_ins = pe;
 	for( lVID i=ne; i < pe; ++i ) {
-	    if( padj.contains( m_set[i] ) ) {
+	    if( padj.contains( this->m_set[i] ) ) {
 		// Find insertion point
-		lVID v = m_set[i];
-		while( padj.contains( m_set[P_ins] ) )
+		lVID v = this->m_set[i];
+		while( padj.contains( this->m_set[P_ins] ) )
 		    P_ins++;
 
 		assert( P_ins < ce );
 		// swap
-		lVID u = m_set[P_ins];
-		m_set[i] = u;
-		m_set[P_ins] = v;
-		m_pos[u] = i;
-		m_pos[v] = P_ins;
+		lVID u = this->m_set[P_ins];
+		this->m_set[i] = u;
+		this->m_set[P_ins] = v;
+		this->m_pos[u] = i;
+		this->m_pos[v] = P_ins;
 		P_ins++;
 
 		// assert( m_pos[u] < m_fill && m_set[m_pos[u]] == u );
@@ -283,37 +322,22 @@ public:
 
 	lVID p_ins = pe, c_ins = ne;
 	for( lVID i=0; i < ne; ++i ) {
-	    m_set[i] = i;
-	    m_pos[i] = i;
+	    this->m_set[i] = i;
+	    this->m_pos[i] = i;
 	}
 	for( lVID i=ne; i < ce; ++i ) {
 	    if( padj.contains( i ) ) {
-		m_set[p_ins] = i;
-		m_pos[i] = p_ins++;
+		this->m_set[p_ins] = i;
+		this->m_pos[i] = p_ins++;
 	    } else {
-		m_set[c_ins] = i;
-		m_pos[i] = c_ins++;
+		this->m_set[c_ins] = i;
+		this->m_pos[i] = c_ins++;
 	    }
 	}
 	assert( c_ins == pe );
 	assert( p_ins == ce );
 
-	m_fill = ce;
-    }
-
-    // A hash interface supporting contains, multi_contains
-    // that checks for either pos < ne or pos >= ne or pos == ~0
-    // present hash_set-like interface for X set
-    auto X_hash_set( lVID ne ) const {
-	return hash_set_interface<false>( *this, ne );
-    }
-    // present hash_set-like interface for P set
-    auto P_hash_set( lVID ne ) const {
-	return hash_set_interface<true>( *this, ne );
-    }
-    // present hash_table-like interface for X and P (vertex ID translation)
-    auto hash_table() const {
-	return hash_table_interface( *this );
+	this->m_fill = ce;
     }
 
     template<typename Adj>
@@ -327,7 +351,7 @@ public:
 	// Intersect both X and P with adj, resulting in X' and P'
 	lVID deg = adj.size();
 	lVID mx = std::min( deg, ce );
-	XPSet ins( n, mx+8 ); // hash_vector requires extra space
+	XPSet ins( n, mx+16 ); // hash_vector requires extra space
 
 	if( ce > 2*deg ) {
 	    // TODO: find split point for X/P to reduce ranges?
@@ -342,9 +366,9 @@ public:
 	} else {
 	    // Note: skip m_set[i] as we know there are no self-loops.
 	    ne_new = graptor::hash_vector::intersect(
-		m_set, m_set+i, adj, ins.m_set ) - ins.m_set;
+		this->m_set, this->m_set+i, adj, ins.m_set ) - ins.m_set;
 	    ce_new = graptor::hash_vector::intersect(
-		m_set+i+1, m_set+ce, adj, ins.m_set+ne_new ) - ins.m_set;
+		this->m_set+i+1, this->m_set+ce, adj, ins.m_set+ne_new ) - ins.m_set;
 	}
 
 	// Construct ins.m_pos 
@@ -388,7 +412,7 @@ public:
 	lVID p_deg = p_adj.size();
 	lVID deg = adj.size();
 	lVID mx = std::min( deg + p_deg, n );
-	XPSet ins( n, mx+8 ); // hash_vector requires extra space
+	XPSet ins( n, mx+16 ); // hash_vector requires extra space
 
 	// X set 1
 	const lVID * const ne_strict_p
@@ -416,18 +440,142 @@ public:
 	return ins;
     }
 
-    /*const*/ lVID * get_set() const { return m_set; }
-    lVID at( lVID pos ) const { return m_set[pos]; }
-
     void sort( lVID ne ) {
-	std::sort( m_set, m_set+ne );
-	std::sort( m_set+ne, m_set+m_fill );
+	std::sort( this->m_set, this->m_set+ne );
+	std::sort( this->m_set+ne, this->m_set+this->m_fill );
+    }
+};
+
+template<typename _lVID = VID>
+class PSet : public XPSetBase<_lVID> {
+public:
+    using lVID = _lVID;
+
+    class p_hash_set_interface {
+    public:
+	p_hash_set_interface( const PSet & xp, lVID ne )
+	    : m_xp( xp ) { }
+
+	bool contains( lVID v ) const {
+	    lVID pos = m_xp.m_pos[v];
+	    if( pos >= m_xp.m_fill ) // not a certificate
+		return false;
+	    if( m_xp.m_set[pos] != v ) // not a valid certificate
+		return false;
+	    return true;
+	}
+
+	template<typename U, unsigned short VL, typename MT>
+	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+			   typename vector_type_traits_vl<U,VL>::mask_type,
+			   typename vector_type_traits_vl<U,VL>::vmask_type>
+	multi_contains( typename vector_type_traits_vl<U,VL>::type
+			index, MT ) const {
+	    static_assert( sizeof( U ) >= sizeof( lVID ) );
+	    using tr = vector_type_traits_vl<U,VL>;
+	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
+	    using vtype = typename tr::type;
+#if __AVX512F__
+	    using mtr = typename tr::mask_traits;
+	    using mkind = target::mt_mask;
+#else
+	    using mtr = typename tr::vmask_traits;
+	    using mkind = target::mt_vmask;
+#endif
+	    using mtype = typename mtr::type;
+
+	    // we silently assume that all values are >= 0
+	    static_assert( std::is_unsigned_v<lVID>,
+			   "arithmetic requires unsigned type" );
+
+	    // load the positions that might be used
+	    vtype pos = tr::gather( m_xp.m_pos, index );
+	    // check if positions are valid
+	    mtype mc = tr::cmplt( pos, tr::set1( m_xp.m_fill ), mkind() );
+	    // load the certificates, if plausible
+	    vtype vc = tr::gather( m_xp.m_set, pos, mc );
+	    // check which certificates are valid
+	    mtype mv = tr::cmpeq( mc, vc, index, mkind() );
+
+	    if constexpr ( std::is_same_v<mkind,MT> )
+		return mv;
+	    else if constexpr ( std::is_same_v<MT,target::mt_mask> )
+		return tr::asmask( mv );
+	    else
+		return tr::asvector( mv );
+	}
+
+    private:
+	const PSet & m_xp;
+    };
+
+public:
+    PSet( VID n, VID ce_max )
+	: XPSetBase<lVID>( n, ce_max ) { }
+protected:
+    PSet( PSet && xp )
+	: XPSetBase<lVID>( std::forward<XPSetBase<lVID>>( xp ) ) { }
+    PSet( const PSet & ) = delete;
+    PSet & operator = ( const PSet & ) = delete;
+
+public:
+    // A hash interface supporting contains, multi_contains
+    auto hash_set() const {
+	return p_hash_set_interface( *this );
     }
 
-private:
-    lVID * m_pos;
-    lVID * m_set;
-    lVID m_fill;
+    // Intersect this with adjacency list, interested only in vertices
+    // that are higher-numbered than i (right-neighbourhood)
+    template<typename Adj>
+    PSet intersect( lVID n, lVID i, lVID ce,
+		    const Adj & adj, const lVID * ngh,
+		    lVID & ce_new ) const {
+	lVID deg = adj.size();
+	lVID mx = std::min( deg, ce );
+	PSet ins( n, mx+16 ); // hash_vector requires extra space
+
+	if( ce > 2*deg ) {
+	    // TODO: find split point for X/P to reduce ranges?
+	    //       or make single traversal and determine X/P on the fly?
+	    //       need to be careful as m_set may not be sorted, and there
+	    //       may exist elements of P that are smaller than some elements
+	    //       of X (due to pivoting)
+	    ce_new = graptor::hash_vector::intersect(
+		ngh, ngh+deg, this->P_hash_set( i ), ins.m_set ) - ins.m_set;
+	} else {
+	    // Note: skip m_set[i] as we know there are no self-loops.
+	    ce_new = graptor::hash_vector::intersect(
+		this->m_set+i+1, this->m_set+ce, adj, ins.m_set ) - ins.m_set;
+	}
+
+	// Construct ins.m_pos 
+	for( lVID i=0; i < ce_new; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
+    static PSet intersect_top_level(
+	lVID n, lVID ne, const lVID * ngh, lVID deg,
+	lVID & ce_new ) {
+	// Determine left vs right neighbourhood
+	const lVID * const r_ngh = std::lower_bound( ngh, ngh+deg, ne );
+	
+	lVID mx = deg - ( r_ngh - ngh );
+	PSet ins( n, mx );
+
+	// P set
+	std::copy( r_ngh, ngh+deg, ins.m_set );
+	ins.m_fill = ce_new = mx;
+
+	// Complete hash info
+	for( lVID i=0; i < ins.m_fill; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	return ins;
+    }
 };
 
 

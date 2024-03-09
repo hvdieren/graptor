@@ -117,6 +117,43 @@ private:
     VID m_start_pos;
 };
 
+template<typename lVID, typename lEID>
+class NeighbourCutOutDegeneracyOrderFiltered {
+public:
+    // For maximal clique enumeration: all vertices regardless of coreness
+    // Sort neighbour list in increasing order
+    template<typename FilterFn>
+    NeighbourCutOutDegeneracyOrderFiltered(
+	const ::GraphCSx & G, lVID v, FilterFn && fn )
+	: NeighbourCutOutDegeneracyOrderFiltered(
+	    G, v, G.getIndex()[v+1] - G.getIndex()[v],
+	    std::forward<FilterFn>( fn ) ) { }
+    template<typename FilterFn>
+    NeighbourCutOutDegeneracyOrderFiltered(
+	const ::GraphCSx & G, lVID v, lVID deg,
+	FilterFn && fn )
+	: m_iset( new lVID[deg] ) {
+	const lVID * const ngh = &G.getEdges()[G.getIndex()[v]];
+	// Skip left neighbourhood
+	const lVID * pos = std::lower_bound( ngh, ngh+deg, v );
+	// Filter remaining vertices
+	lVID * end = std::copy_if( pos, ngh+deg, m_iset,
+				   std::forward<FilterFn>( fn ) );
+	m_num_iset = end - m_iset;
+    }
+
+    ~NeighbourCutOutDegeneracyOrderFiltered() {
+	delete[] m_iset;
+    }
+
+    lVID get_num_vertices() const { return m_num_iset; }
+    const lVID * get_vertices() const { return m_iset; }
+
+private:
+    lVID * m_iset;
+    lVID m_num_iset;
+};
+
 
 } // namespace graph
 

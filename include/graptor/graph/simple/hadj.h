@@ -444,6 +444,84 @@ public:
 	    }
 	}
     }
+    // CSxGraphTy: some kind of graph storing neighbour list
+    // HGraphTy: some kind of hashed graph
+    template<typename CSxGraphTy, typename HGraphTy, typename FilterFn>
+    explicit GraphHAdjPA( const CSxGraphTy & G,
+			  const HGraphTy & H,
+			  const VID * const XP,
+			  VID ce,
+			  numa_allocation && alloc,
+			  FilterFn && fn ) :
+	m_n( ce ),
+	m_adjacency( ce, alloc ) {
+	// Constructor taking cut-out and remapping vertex IDs
+
+	// TODO: allocate using StackLikeAllocator
+	EID h = 0;
+	for( VID su=0; su < ce; ++su ) {
+	    VID u = XP[su];
+	    VID deg = std::min( (VID)G.getDegree( u ), ce );
+	    VID s = get_hash_slots( deg );
+	    if constexpr ( has_dual_rep )
+		h += 2 * s;
+	    else
+		h += s;
+	}
+
+	// Place XP in hash table for fast intersection
+	hash_set_type XP_hash( XP, XP+ce );
+
+	new ( &m_storage ) mm::buffer<VID>( h, alloc );
+
+	VID * hashes = m_storage.get();
+	EID s_next = 0;
+	for( VID su=0; su < ce; ++su ) {
+	    VID u = XP[su];
+	    hash_set_type & a = m_adjacency[su];
+
+	    // Note: ce >> degree( u ). Use dual representation so that the
+	    // main list for iteration can be swapped.
+	    const VID * n = G.get_neighbours( u );
+	    VID deg = G.getDegree( u );
+	    if( ce > 2*deg && n != nullptr ) [[likely]] {
+		// Alternative: first place intersection in sequential storage,
+		// using hash of XP, then translate and insert in adjacency a
+		// Seems best-performing
+		assert( has_dual_rep && "otherwise need temporary space" );
+		VID * arr = &hashes[s_next];
+		VID * e = graptor::hash_scalar::intersect(
+		    n, n+deg, XP_hash, arr );
+		VID logs = get_log_hash_slots( e - arr );
+		VID s = 1 << logs;
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+		s_next += has_dual_rep ? 2*s : s;
+		
+		for( VID * i=arr; i != e; ++i ) {
+		    const VID * pos = std::lower_bound( XP, XP+ce, *i );
+		    assert( *pos == *i );
+		    VID sv = pos - XP;
+		    assert( sv != su );
+		    if constexpr ( has_dual_rep )
+			*i = sv;
+		    a.insert( sv );
+		}
+	    } else {
+		VID sdeg = std::min( deg, ce );
+		VID logs = get_log_hash_slots( sdeg );
+		VID s = 1 << logs;
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+		hash_pa_insert_iterator<dual_rep,true,Hash>
+		    out( a, &hashes[s_next], XP );
+		graptor::hash_scalar::intersect<true>(
+		    XP, XP+ce, H.get_adjacency( u ), out );
+		s_next += has_dual_rep ? 2*s : s;
+	    }
+	}
+    }
+
     GraphHAdjPA( const GraphHAdjPA & ) = delete;
 
     ~GraphHAdjPA() {
