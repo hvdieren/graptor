@@ -121,25 +121,45 @@ inline unsigned int bit_reverse( unsigned int x ) {
 #endif // GG_INLINE
 
 /***********************************************************************
+ * Error reporting: alternative to assert.
+ * Currently assert is used as error reporting mechanism and cannot be
+ * turned off for "production runs". Replacement of assert by following
+ * method(s) should alleviate that when complete.
+ *
+ * Note: code based on assert, as we desire this functionality but
+ *       without NDEBUG turning it off. __PRETTY_FUNCTION__ is gcc-specific.
+ ***********************************************************************/
+[[noreturn]] void inline
+terminal_error_fn( const char * const file, unsigned int lineno,
+		   const char * const cmsg, const char * const msg,
+		   const char * const fn ) {
+    std::cerr << file << ':' << lineno << ": "
+	      << fn << ": " << cmsg << " failed: " << msg << "\n";
+    abort();
+}
+
+#define terminal_error(msg) {						\
+	terminal_error_fn( __FILE__, __LINE__, "[always]", msg,		\
+			   __extension__ __PRETTY_FUNCTION__ );		\
+    }
+
+#define terminal_error_check(cond,msg) {				\
+	( static_cast<bool>(cond)					\
+	  ? void(0)							\
+	  : terminal_error_fn( __FILE__, __LINE__, #cond, msg,		\
+			       __extension__ __PRETTY_FUNCTION__ ) );	\
+    }
+
+/***********************************************************************
  * Switch statement error checking
  ***********************************************************************/
 #define UNREACHABLE_CASE_STATEMENT \
-    assert( 0 && "Control should not reach here" )
+    terminal_error( "Control should not reach here" )
 
 /***********************************************************************
  * Debugging: allows to print types of expressions during compilation to
  * aid with debugging of templated code.
  ***********************************************************************/
-/*
-template<template<typename> class C, typename Expr>
-Expr fail_expose( Expr e ) {
-    // Strangely, if the function has void return type, it is entirely
-    // ignored by the compiler and the assertion is not triggered.
-    static_assert( !C<Expr>::value, "error exposed" );
-    return e;
-}
-*/
-
 template<template<typename> class C, typename Expr>
 std::enable_if_t<!C<Expr>::value> fail_expose( Expr e ) { }
 
