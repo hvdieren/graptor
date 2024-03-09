@@ -76,6 +76,13 @@ struct timer
         else return totalTime;
     }
 
+    double elapsed()
+    {
+        double t = getTime();
+        double td = t - lastTime;
+        return td;
+    }
+
     double next()
     {
         if (!on) return 0.0;
