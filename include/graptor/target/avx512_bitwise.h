@@ -85,6 +85,7 @@ struct avx512_bitwise {
     static type bitwise_or( type a, type b ) { return _mm512_or_si512( a, b ); }
     static type bitwise_xor( type a, type b ) { return _mm512_xor_si512( a, b ); }
     static type bitwise_xnor( type a, type b ) {
+	// TOOD: use ternary
 	return bitwise_xor( bitwise_invert( a ), b );
     }
     static type bitwise_invert( type a ) { return _mm512_andnot_si512( a, setone() ); }
