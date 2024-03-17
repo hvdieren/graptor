@@ -261,6 +261,7 @@ public:
 
     /*const*/ lVID * get_set() const { return m_set; }
     lVID at( lVID pos ) const { return m_set[pos]; }
+    lVID get_fill() const { return m_fill; }
 
 protected:
     lVID * m_pos;
@@ -360,9 +361,9 @@ public:
 	    //       may exist elements of P that are smaller than some elements
 	    //       of X (due to pivoting)
 	    ne_new = graptor::hash_vector::intersect(
-		ngh, ngh+deg, X_hash_set( i ), ins.m_set ) - ins.m_set;
+		ngh, ngh+deg, this->X_hash_set( i ), ins.m_set ) - ins.m_set;
 	    ce_new = graptor::hash_vector::intersect(
-		ngh, ngh+deg, P_hash_set( i ), ins.m_set+ne_new ) - ins.m_set;
+		ngh, ngh+deg, this->P_hash_set( i ), ins.m_set+ne_new ) - ins.m_set;
 	} else {
 	    // Note: skip m_set[i] as we know there are no self-loops.
 	    ne_new = graptor::hash_vector::intersect(
@@ -453,7 +454,7 @@ public:
 
     class p_hash_set_interface {
     public:
-	p_hash_set_interface( const PSet & xp, lVID ne )
+	p_hash_set_interface( const PSet & xp )
 	    : m_xp( xp ) { }
 
 	bool contains( lVID v ) const {
@@ -515,6 +516,8 @@ public:
 protected:
     PSet( PSet && xp )
 	: XPSetBase<lVID>( std::forward<XPSetBase<lVID>>( xp ) ) { }
+    PSet( XPSetBase<lVID> && xp )
+	: XPSetBase<lVID>( std::forward<XPSetBase<lVID>>( xp ) ) { }
     PSet( const PSet & ) = delete;
     PSet & operator = ( const PSet & ) = delete;
 
@@ -557,6 +560,21 @@ public:
 	return ins;
     }
 
+    // Intersect-size PSet with adjacency list.
+    // Consider all vertices.
+    template<typename Adj>
+    lVID intersect_size( const Adj & adj, const lVID * ngh ) const {
+	lVID deg = adj.size();
+
+	if( this->m_fill > 2*deg ) {
+	    return graptor::hash_vector::intersect_size(
+		ngh, ngh+deg, this->hash_set() );
+	} else {
+	    return graptor::hash_vector::intersect_size(
+		this->m_set, this->m_set+this->m_fill, adj );
+	}
+    }
+
     static PSet intersect_top_level(
 	lVID n, lVID ne, const lVID * ngh, lVID deg,
 	lVID & ce_new ) {
@@ -575,6 +593,12 @@ public:
 	    ins.m_pos[ins.m_set[i]] = i;
 
 	return ins;
+    }
+
+    template<typename HGraphTy>
+    static PSet
+    create_full_set( const HGraphTy & G ) {
+	return PSet( std::move( XPSetBase<lVID>::create_full_set( G ) ) );
     }
 };
 
