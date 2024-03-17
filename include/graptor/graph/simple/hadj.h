@@ -446,13 +446,14 @@ public:
     }
     // CSxGraphTy: some kind of graph storing neighbour list
     // HGraphTy: some kind of hashed graph
-    template<typename CSxGraphTy, typename HGraphTy, typename FilterFn>
+    // This constructor constructs a "PSet" only, i.e., does not distinguish
+    // X from P vertices and avoid X-X edges.
+    template<typename CSxGraphTy, typename HGraphTy>
     explicit GraphHAdjPA( const CSxGraphTy & G,
 			  const HGraphTy & H,
 			  const VID * const XP,
 			  VID ce,
-			  numa_allocation && alloc,
-			  FilterFn && fn ) :
+			  numa_allocation && alloc ) :
 	m_n( ce ),
 	m_adjacency( ce, alloc ) {
 	// Constructor taking cut-out and remapping vertex IDs
