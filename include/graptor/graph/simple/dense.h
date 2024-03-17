@@ -853,7 +853,8 @@ public:
 	
 	VID best_size = 0;
 	row_type best_cover = tr::setzero();
-	vck_iterate( m_n, 1, best_size, best_cover );
+	row_type all_vertices = tr::bitwise_invert( get_himask( m_n ) );
+	vck_iterate( m_n, 1, all_vertices, best_size, best_cover );
 
 	// cover vs clique on complement. Invert bitset, mask with valid bits
 	best_cover = tr::bitwise_invert(
@@ -1329,12 +1330,13 @@ private:
 	vc_iterate( v+1, tr::bitwise_or( cin, v_set ), cout, cin_sz+1 );
     }
 
-    bool vck_buss( VID k, VID c, VID & best_size, row_type & best_cover ) {
+    bool vck_buss( VID k, VID c, row_type eligible,
+		   VID & best_size, row_type & best_cover ) {
 	// Set U of vertices of degree higher than k
 	VID u_size = 0;
 	row_type u_set = tr::setzero();
 	for( VID r=0; r < m_n; ++r ) {
-	    if( get_size( get_row( r ) ) > k ) {
+	    if( get_size( get_row( r, eligible ) ) > k ) {
 		++u_size;
 		u_set = tr::bitwise_or( u_set, create_row( r ) );
 	    }
@@ -1350,7 +1352,7 @@ private:
 
 	// Construct G
 	DenseMatrix<Bits,VID,EID> G = filter_vertices( u_set );
-	EID m = G.calculate_num_edges();
+	EID m = G.calculate_num_edges( eligible );
 
 	// If G has more than k(k-|U|) edges, reject
 	if( m > k * ( k - u_size ) )
@@ -1360,7 +1362,9 @@ private:
 	// All vertices with degree > k must be included in the cover
 	VID gp_best_size = best_size + u_size;
 	row_type gp_best_cover = tr::bitwise_or( best_cover, u_set );
-	bool rec = G.vck_iterate( k - u_size, c, gp_best_size, gp_best_cover );
+	row_type gp_eligible = tr::bitwise_andnot( u_set, eligible );
+	bool rec = G.vck_iterate( k - u_size, c, gp_eligible,
+				  gp_best_size, gp_best_cover );
 
 	if( rec ) {
 	    best_size = gp_best_size;
@@ -1376,6 +1380,7 @@ private:
     // For path or cycle
     void
     vck_trace_path( std::vector<char> & visited,
+		    row_type eligible,
 		    VID & best_size,
 		    row_type & best_cover,
 		    VID cur,
@@ -1394,7 +1399,7 @@ private:
 	}
 
 	// Done if nxt is degree-1 vertex
-	row_type nadj = get_row( nxt );
+	row_type nadj = get_row( nxt, eligible );
 	VID ndeg = get_size( nadj );
 	if( ndeg == 2 ) {
 	    // Remove cur from neighbours of nxt
@@ -1402,11 +1407,13 @@ private:
 	    row_type x = tr::bitwise_andnot( cur_row, nadj );
 	    VID ngh = target::alltzcnt<sVID,type,VL>::compute( x );
 
-	    vck_trace_path( visited, best_size, best_cover, nxt, ngh, !incl );
+	    vck_trace_path( visited, eligible,
+			    best_size, best_cover, nxt, ngh, !incl );
 	}
     }
 
-    bool vck_poly( VID k, VID & best_size, row_type & best_cover ) {
+    bool vck_poly( VID k, row_type eligible,
+		   VID & best_size, row_type & best_cover ) {
 	VID n = numVertices();
 
 	std::vector<char> visited( n, false );
@@ -1415,20 +1422,20 @@ private:
 
 	// Find paths
 	for( VID v=0; v < n; ++v ) {
-	    row_type adj = get_row( v );
+	    row_type adj = get_row( v, eligible );
 	    VID deg = get_size( adj );
 	    assert( deg <= 2 );
 	    if( deg == 1 && !visited[v] ) {
 		visited[v] = true;
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, best_size, best_cover,
+		vck_trace_path( visited, eligible, best_size, best_cover,
 				v, ngh, true );
 	    }
 	}
     
 	// Find cycles (uses same auxiliary as paths)
 	for( VID v=0; v < n; ++v ) {
-	    row_type adj = get_row( v );
+	    row_type adj = get_row( v, eligible );
 	    VID deg = get_size( adj );
 	    assert( deg <= 2 );
 	    if( deg == 2 && !visited[v] ) {
@@ -1441,7 +1448,7 @@ private:
 		// std::cout << "tracepath cycle set " << v << "\n";
 
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, best_size, best_cover,
+		vck_trace_path( visited, eligible, best_size, best_cover,
 				v, ngh, false );
 	    }
 	}
@@ -1449,10 +1456,11 @@ private:
 	return best_size - old_best_size <= k;
     }
     
-    bool vck_iterate( VID k, VID c, VID & best_size, row_type & best_cover ) {
+    bool vck_iterate( VID k, VID c, row_type eligible,
+		      VID & best_size, row_type & best_cover ) {
 	VID n = m_n;
 	EID m = m_m;
-	auto [ max_v, max_deg ] = get_max_degree();
+	auto [ max_v, max_deg ] = get_max_degree( eligible );
 
 	// std::cout << "iter k=" << k << " max_v=" << max_v
 		  // << " max_deg=" << max_deg << "\n";
@@ -1460,7 +1468,7 @@ private:
 	assert( best_size == get_size( best_cover ) );
 
 	if( max_deg <= 2 ) {
-	    bool p = vck_poly( k, best_size, best_cover );
+	    bool p = vck_poly( k, eligible, best_size, best_cover );
 	    // std::cout << " poly k=" << k << " ret=" << p
 		      // << " best=" << best_size << ", "
 		      // << std::hex << best_cover << std::dec << "\n";
@@ -1473,7 +1481,7 @@ private:
 
 	if( m/2 > c * k * k && max_deg > k ) {
 	    // replace by Buss kernel
-	    return vck_buss( k, c, best_size, best_cover );
+	    return vck_buss( k, c, eligible, best_size, best_cover );
 	}
 
 	// Must have a vertex with degree >= 3
@@ -1492,14 +1500,17 @@ private:
 	row_type max_v_row = create_row( max_v );
 	row_type rm = get_row( max_v );
 	row_type rmv = tr::bitwise_or( rm, max_v_row );
-	DenseMatrix<Bits,VID,EID> Gx = filter_vertices( rmv );
+	DenseMatrix<Bits,VID,EID> & Gx = *this; // filter_vertices( rmv );
+
+	row_type x_eligible = tr::bitwise_andnot( rmv, eligible );
+	row_type i_eligible = tr::bitwise_andnot( max_v_row, eligible );
 
 	VID x_k = std::min( n-1-max_deg, k-max_deg );
 	bool x_ok = false;
 #if 1
 	// std::cout << " exclude k=" << k << " start\n";
 	if( k >= max_deg )
-	    x_ok = Gx.vck_iterate( x_k, c, x_best_size, x_best_cover );
+	    x_ok = Gx.vck_iterate( x_k, c, x_eligible, x_best_size, x_best_cover );
 
 	// std::cout << " exclude k=" << k << " x_k=" << x_k << " ret=" << x_ok
 		  // << " best=" << x_best_size << ", "
@@ -1511,12 +1522,12 @@ private:
 	// TODO: record set of excluded vertices instead of allocating matrix
 	// TODO: try to avoid Gi call if Gx call allows it (count candidate
 	//       vertices?)
-	DenseMatrix<Bits,VID,EID> Gi = filter_vertex( max_v );
+	DenseMatrix<Bits,VID,EID> & Gi = *this; // filter_vertex( max_v );
 
 	// std::cout << " include k=" << k << " start\n";
 
 	VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
-	bool i_ok = Gi.vck_iterate( i_k, c, i_best_size, i_best_cover );
+	bool i_ok = Gi.vck_iterate( i_k, c, i_eligible, i_best_size, i_best_cover );
 
 	// std::cout << " include k=" << k << " i_k=" << i_k << " ret=" << i_ok
 		  // << " best=" << i_best_size << ", "
@@ -1631,35 +1642,52 @@ private:
     row_type get_row( VID v ) const {
 	return tr::load( &m_matrix[m_words * v] );
     }
+    row_type get_row( VID v, row_type eligible ) const {
+	const row_type r = tr::load( &m_matrix[m_words * v] );
+	return tr::bitwise_and( eligible, r );
+    }
+    row_type get_inv_row( VID v, row_type eligible ) const {
+	const row_type r = tr::load( &m_matrix[m_words * v] );
+	row_type single = create_row( v );
+	row_type rc = tr::bitwise_or( single, r );
+	rc = tr::bitwise_or( rc, get_himask( m_n ) );
+	return tr::bitwise_andnot( rc, eligible );
+    }
     void set_row( VID v, row_type r ) {
 	return tr::store( &m_matrix[m_words * v], r );
     }
 
-    std::pair<VID,VID> get_max_degree() const {
-	VID max_v = 0;
-	VID max_deg = get_size( get_row( 0 ) );
-	for( VID v=1; v < m_n; ++v ) {
-	    VID deg = get_size( get_row( v ) );
-	    if( deg > max_deg ) {
-		max_deg = deg;
-		max_v = v;
+    std::pair<VID,VID> get_max_degree( row_type eligible ) const {
+	VID max_v = target::alltzcnt<VID,type,VL>::compute( eligible );
+	VID max_deg = get_size( get_row( max_v, eligible ) );
+	for( VID v=max_v+1; v < m_n; ++v ) {
+	    row_type rv = create_row( v );
+	    if( !tr::is_bitwise_and_zero( rv, eligible ) ) {
+		VID deg = get_size( get_row( v, eligible ) );
+		if( deg > max_deg ) {
+		    max_deg = deg;
+		    max_v = v;
+		}
 	    }
 	}
 	return { max_v, max_deg };
     }
 
-    EID calculate_num_edges() const {
+    EID calculate_num_edges( row_type eligible ) const {
 	EID m = 0;
-	for( VID v=0; v < m_n; ++v )
-	    m += get_size( get_row( v ) );
+	for( VID v=0; v < m_n; ++v ) {
+	    row_type vr = create_row( v );
+	    if( !tr::is_bitwise_and_zero( vr, eligible ) )
+		m += get_size( tr::bitwise_and( get_row( v ), eligible ) );
+	}
 	return m;
     }
 
-    row_type create_row( VID v ) {
+    static row_type create_row( VID v ) {
 	return tr::setglobaloneval( v );
     }
 
-    row_type get_himask( VID v ) {
+    static row_type get_himask( VID v ) {
 	return tr::himask( v+1 );
     }
 
