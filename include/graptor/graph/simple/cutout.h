@@ -146,6 +146,20 @@ public:
 	delete[] m_iset;
     }
 
+    template<typename FilterFn>
+    void filter( FilterFn && fn ) {
+	// Remove vertices where fn(v) is false. Make sure that at each step,
+	// get_vertices() and get_num_vertices() return correct values.
+	std::make_signed_t<lVID> j = m_num_iset - 1;
+	while( j >= 0 ) {
+	    if( !fn( m_iset[j] ) ) {
+		std::copy( &m_iset[j+1], &m_iset[m_num_iset], &m_iset[j] );
+		--m_num_iset;
+	    }
+	    --j;
+	}
+    }
+
     lVID get_num_vertices() const { return m_num_iset; }
     const lVID * get_vertices() const { return m_iset; }
 
