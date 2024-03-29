@@ -1243,6 +1243,143 @@ private:
     graptor::graph::GraphDoubleIndexCSx<VID,EID> S;
 };
 
+/*======================================================================*
+ * graph matching
+ *======================================================================*/
+
+/**
+ * eligible: constrain matching to edges incident to eligible vertices.
+ *           A vertex v is eligible when eligible[v] == 0.
+ */
+template<typename GraphType>
+std::vector<uint8_t>
+graph_matching_outsiders( GraphType & G ) {
+    // Bool array giving state for each vertex, initially 0
+    VID n = G.numVertices();
+    std::vector<uint8_t> state( n, 0 );
+
+    for( VID u=0; u < n; ++u ) {
+	if( state[u] != 0 )
+	    continue;
+	for( auto I=G.nbegin(u), E=G.nend(u); I != E; ++I ) {
+	    VID v = *I;
+	    if( state[v] == 0 ) {
+		// Match edge
+		state[u] = 1;
+		state[v] = 1;
+		break;
+	    }
+	}
+    }
+
+    return state;
+}
+
+template<typename GraphType>
+std::vector<std::pair<VID,VID>>
+auxiliary_graph_matching( GraphType & G,
+			  const std::vector<uint8_t> & eligible,
+			  std::vector<uint8_t> state ) {
+    // Bool array giving state for each vertex, initially 0
+    VID n = G.numVertices();
+    std::fill( state.begin(), state.end(), uint8_t(0) );
+    std::vector<std::pair<VID,VID>> match;
+
+    for( VID u=0; u < n; ++u ) {
+	if( eligible[u] != 0 )
+	    continue;
+	if( state[u] != 0 )
+	    continue;
+	for( auto I=G.nbegin(u), E=G.nend(u); I != E; ++I ) {
+	    VID v = *I;
+	    if( state[v] == 0 ) {
+		// Match edge
+		match.push_back( { u, v } );
+		state[u] = 1;
+		state[v] = 1;
+		break;
+	    }
+	}
+    }
+
+    return match;
+}
+
+// TODO: as we iterate over M2 frequently, would be useful to explicitly
+// list those edges as they are few compared to all edges in graph.
+template<typename GraphType>
+std::vector<uint8_t>
+crown_kernel( GraphType & G ) {
+    VID n = G.numVertices();
+
+    // Primary and auxiliary matchings
+    // Let O = { M1 == 0 }
+    std::vector<uint8_t> M1 = graph_matching_outsiders( G );
+    std::vector<uint8_t> M2( n );
+    std::vector<std::pair<VID,VID>> Ma = auxiliary_graph_matching( G, M1, M2 );
+
+    std::vector<uint8_t> crown( n, 0 );
+
+    // Check if every vertex in N(O) is matched by M2
+    bool all_ngh_match_M2 = true;
+    for( VID u=0; u < n && all_ngh_match_M2; ++u ) {
+	if( M1[u] != 0 ) // membership O
+	    continue;
+	crown[u] = 1; // I
+	for( auto I=G.nbegin(u), E=G.nend(u); I != E; ++I ) {
+	    VID v = *I;
+	    if( M2[v] == 0 ) { // neighbour not matched
+		all_ngh_match_M2 = false;
+		break;
+	    }
+	    crown[v] = 2; // H
+	}
+    }
+
+    if( all_ngh_match_M2 )
+	return crown;
+
+    std::sort( Ma.begin(), Ma.end() );
+
+    // I0 = { M2 == 0 }
+    for( VID v=0; v < n; ++v )
+	crown[v] = M1[v] == 0 ? 1 : 0; // initial I
+    bool change = true;
+    while( change ) {
+	// Reset H
+	for( VID u=0; u < n; ++u ) {
+	    if( crown[u] == 2 )
+		crown[u] = 0;
+	}
+	
+	// Hn = N(In)
+	for( VID u=0; u < n; ++u ) {
+	    if( crown[u] != 1 ) // membership In
+		continue;
+	    for( auto I=G.nbegin(u), E=G.nend(u); I != E; ++I ) {
+		VID v = *I;
+		// crown[v] == 0 should hold trivially as In is independent set
+		if( crown[v] == 0 )
+		    crown[v] = 2;
+	    }
+	}
+
+	// In+1 = In union N_M2(Hn)
+	change = false;
+	for( auto I=Ma.begin(), E=Ma.end(); I != E; ++I ) {
+	    auto [ u, v ] = *I;
+	    if( crown[u] == 2 && crown[v] != 1 ) { // u in Hn
+		change = true;
+		crown[v] = 1;
+	    } else if( crown[v] == 2 && crown[u] != 1 ) { // v in Hn
+		change = true;
+		crown[u] = 1;
+	    }
+	}
+    }
+
+    return crown;
+}
 
 /*======================================================================*
  * vertex cover
@@ -1390,6 +1527,53 @@ vertex_cover_vc3_buss( volatile bool * terminate,
     return rec;
 }
 
+int
+vertex_cover_vc3_crown( volatile bool * terminate,
+			graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+			VID k,
+			VID c,
+			VID & best_size,
+			VID * best_cover ) {
+    // Compute crown kernel: (I=1,H=2)
+    std::vector<uint8_t> crown = crown_kernel( G );
+
+    // Construct G' by removing all of I and H
+    VID n = G.numVertices();
+    auto chkpt = G.checkpoint();
+    G.disable_incident_edges( [&]( VID v ) {
+	return crown[v] != 0;
+    } );
+    EID m = G.numEdges();
+
+    // All vertices in H are included in cover
+    VID tmp_best_size = best_size;
+    VID h_size = 0, i_size = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( crown[v] == 2 ) {
+	    ++h_size;
+	    best_cover[tmp_best_size++] = v;
+	} else if( crown[v] == 1 )
+	    ++i_size;
+    }
+
+    // Failure to identify crown
+    if( i_size == 0 || h_size == 0 )
+	return 2;
+
+    // Find a cover for the remaining vertices
+    VID gp_best_size = 0;
+    bool rec = vertex_cover_vc3(
+	terminate,
+	G, k - h_size, c,
+	gp_best_size, &best_cover[tmp_best_size] );
+
+    if( rec )
+	best_size = tmp_best_size + gp_best_size;
+
+    G.restore_checkpoint( chkpt );
+
+    return rec;
+}
 
 bool
 vertex_cover_vc3( volatile bool * terminate,
@@ -1415,6 +1599,11 @@ vertex_cover_vc3( volatile bool * terminate,
 
     if( k == 0 )
 	return m == 0;
+
+    int ret
+	= vertex_cover_vc3_crown( terminate, G, k, c, best_size, best_cover );
+    if( ret != 2 )
+	return (bool)ret;
 
     if( m/2 > c * k * k && max_deg > k ) {
 	// replace by Buss kernel
@@ -1740,6 +1929,9 @@ mc_bron_kerbosch_recpar_xps(
 
 	    bk_recursive_call( G, degeneracy, E, xp_new, ce_new, depth+1 );
 	}
+
+	// TODO: if max_clique updated, then refilter candidate list?
+	//       e.g., compare max clique before/after call
     } );
 }
 
@@ -1827,7 +2019,7 @@ void mc_dense_fn(
 
     stats.record_build( tm.next() );
 
-    // IG.mc_search( E );
+    IG.mc_search( E, 1 );
 
     double t0 = tm.next();
 
@@ -1835,17 +2027,25 @@ void mc_dense_fn(
     auto bs = IG.vertex_cover_kernelised();
 
     double t = tm.next();
-    // if( false && t >= 3.0 )
+    if( false && t >= 3.0 )
     {
+	VID n = IG.numVertices();
+	VID m = IG.calculate_num_edges();
+	float d = (float)m / ( (float)n * (float)(n-1) );
+
 	std::cerr << "dense " << Bits << " v=" << v
-		  << " num=" << cut.get_num_vertices()
+		  << " n=" << n
+		  << " m=" << m
+		  << " d=" << d
 	    // << " start=" << cut.get_start_pos()
 		  << " tbk=" << t0
 		  << " tvc=" << t
 		  << "\n";
     }
 
-    E.record( 1 + bs.size() );
+    // Disable when comparing VC vs BK so as to not give BK an advantage as it
+    // comes second
+    // E.record( 1 + bs.size() );
 
     stats.record( t );
 }
@@ -1923,6 +2123,9 @@ void mc_top_level(
     VID degeneracy,
     const VID * const remap_coreness ) {
 
+    timer tm;
+    tm.start();
+
     VID best = E.get_max_clique_size();
 
     // No point analysing a vertex of too low degree
@@ -1936,6 +2139,9 @@ void mc_top_level(
 	cut( G, v, [&]( VID u ) { return remap_coreness[u] > best; } );
 
     VID hn1 = cut.get_num_vertices();
+
+    if( hn1 < best )
+	return;
 
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
@@ -1959,6 +2165,8 @@ void mc_top_level(
     all_variant_statistics & stats = mc_stats.get_statistics();
 
     VID num = cut.get_num_vertices();
+
+    double tf = tm.next();
 
 #if !ABLATION_DISABLE_TOP_TINY
     if( num <= 3 ) [[unlikely]] {
@@ -1985,7 +2193,7 @@ void mc_top_level(
 #endif
     double t2 = tmd.stop();
 
-    timer tm;
+    tm.stop();
     tm.start();
     GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
     const auto & HG = ibuilder.get_graph();
@@ -2002,8 +2210,8 @@ void mc_top_level(
     // histogram
     // Also analyse performance on dense cut-outs
 
-    // volatile bool terminate = false;
-    // clique_via_vc3_top( &terminate, HG, degeneracy, E );
+    volatile bool terminate = false;
+    clique_via_vc3_top( &terminate, HG, degeneracy, E );
 
 /*
     auto alt = make_alternative_selector(
@@ -2025,23 +2233,43 @@ void mc_top_level(
 
     double t1 = tm.stop();
 
-    if constexpr ( true )
+    if /* constexpr */ ( t1 > t0 ) // true )
+    // if constexpr ( true )
     {
 	VID hn = HG.numVertices();
 	EID hm = 0;
 	for( auto I=HG.vbegin(), E=HG.vend(); I != E; ++I )
 	    hm += HG.getDegree( *I );
 	float hd = float(hm) / ( (float)(hn) * (float)(hn-1) );
+	float avg = float(hm) / float(hn);
+
+	VID * deg = new VID[hn];
+	for( VID i=0; i < hn; ++i )
+	    deg[i] = HG.getDegree( i );
+	std::sort( deg, deg+hn );
+
+	float med = *( deg + hn/2 );
+	if( ( hn & 1 ) == 0 )
+	    med = float( *( deg+hn/2-1 ) + *( deg+hn/2 ) ) / 2.0f;
+
 	std::lock_guard<std::mutex> guard( io_mux );
 	std::cout << "v=" << v
 		  << " n1=" << hn1
 		  << " n=" << hn
 		  << " m=" << hm
 		  << " d=" << hd
-		  << " tkb=" << t1
+		  << " davg=" << avg
+		  << " dmed=" << med
+		  << " tbk=" << t1
 		  << " tvc=" << t0
 		  << " tdns=" << t2
-		  << "\n";
+		  << " tf=" << tf
+		  << "deg: {";
+	for( VID i=0; i < hn; ++i )
+	    std::cout << ' ' << deg[hn-i-1];
+	std::cout << " } \n";
+
+	delete[] deg;
     }
 }
 
@@ -2055,17 +2283,25 @@ void leaf_dense_fn(
 	= mc_stats.get_statistics().get_leaf( ilog2( Bits ) );
     timer tm;
     tm.start();
-    DenseMatrix<Bits,VID,EID> D( H, H, xp_set.get_set(), 0, xp_set.get_fill() );
+    DenseMatrix<Bits,VID,VID> D( H, H, xp_set.get_set(), 0, xp_set.get_fill() );
+    // VID n = D.numVertices();
+    // VID m = D.calculate_num_edges();
+    // float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
-    // D.mce_bron_kerbosch( E );
-    auto bs = D.vertex_cover_kernelised();
-    // auto bs = D.vertex_cover();
+
+    // auto bs = D.vertex_cover_kernelised();
+    // float tvc = tm.next();
+    D.mc_search( E, depth );
+    // float tbk = tm.next();
     stats.record( tm.next() );
     // std::cout << "Leaf task: n=" << D.numVertices()
+	      // << " m=" << m << " d=" << d
 	      // << " pset=" << xp_set.get_fill()
 	      // << " mc=" << bs.size() << " depth=" << depth
+	      // << " tbk=" << tbk
+	      // << " tvc=" << tvc
 	      // << "\n";
-    E.record( depth + bs.size() );
+    // E.record( depth + bs.size() );
 }
 
 #if 0
