@@ -150,6 +150,9 @@ public:
     void filter( FilterFn && fn ) {
 	// Remove vertices where fn(v) is false. Make sure that at each step,
 	// get_vertices() and get_num_vertices() return correct values.
+	// Working for the end considers low-degeneracy vertices first, which
+	// are more likely to be pruned away, allowing higher-degeneracy
+	// vertices to be pruned too.
 	std::make_signed_t<lVID> j = m_num_iset - 1;
 	while( j >= 0 ) {
 	    if( !fn( m_iset[j] ) ) {
