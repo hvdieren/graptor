@@ -90,7 +90,6 @@ alignas(64) extern const uint32_t movemask_lut_epi32[16*4];
 
 #include "graptor/target/bitfield.h"
 
-//#include "graptor/target/vt_doubled.h"
 #include "graptor/target/vt_recursive.h"
 
 // #include "graptor/target/pseudo_1x.h"
