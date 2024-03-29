@@ -122,20 +122,12 @@ struct avx2_bitwise {
 	return r;
 #else
 	// This version is wrong as the top bit in the basis is not erased
-	// in case of l multiple of 5
+	// in case of l multiple of 32
 	size_t word = l >> 5;
 	const type * s = reinterpret_cast<const type *>(
 	    &avx512_himask_basis_epi32[31-word] );
 	type b = _mm256_loadu_si256( s );
-	// return _mm256_srai_epi32( b, 31 - ( l & 31 ) );
-	type x = _mm256_srai_epi32( b, 31 - ( l & 31 ) );
-	type v = bitwise_xor( x, w );
-	type e = _mm256_cmpeq_epi32( r, x );
-	if( true || !_mm256_testc_si256( e, setone() ) ) {
-	    static int yy = 0;
-	    ++yy;
-	}
-	return x;
+	return _mm256_srai_epi32( b, 31 - ( l & 31 ) );
 #endif
     }
 };
