@@ -96,7 +96,8 @@
 #if __AVX512F__
 #define USE_512_VECTOR 1
 #else
-#define USE_512_VECTOR 0
+// #define USE_512_VECTOR 0
+#define USE_512_VECTOR 1
 #endif
 #endif
 
@@ -163,7 +164,6 @@ using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 #endif
-// using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 
 using graptor::graph::DenseMatrix;
@@ -194,6 +194,15 @@ static bool verbose = false;
 static std::mutex io_mux;
 static constexpr bool io_trace = false;
 
+enum filter_reason {
+    fr_pset = 0,
+    fr_colour = 1,
+    fr_rdeg = 2,
+    fr_maxdeg = 3,
+    fr_unknown = 4,
+    filter_reason_num = 5
+};
+
 class MC_Enumerator {
 public:
     MC_Enumerator( size_t degen = 0 )
@@ -210,8 +219,13 @@ public:
     }
 
     // Feasability check
-    bool is_feasible( size_t upper_bound ) const {
-	return upper_bound > m_best.load( std::memory_order_relaxed );
+    bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
+	if( upper_bound > m_best.load( std::memory_order_relaxed ) )
+	    return true;
+	else {
+	    ++m_reason[(int)r];
+	    return false;
+	}
     }
 
     size_t get_max_clique_size() const {
@@ -219,7 +233,15 @@ public:
     }
 
     std::ostream & report( std::ostream & os ) const {
-	return os << "Maximum clique size: " << m_best.load() << "\n";
+	os << "Maximum clique size: " << m_best.load() << "\n";
+
+	os << "  filter pset: " << m_reason[(int)fr_pset].load() << "\n";
+	os << "  filter colour: " << m_reason[(int)fr_colour].load() << "\n";
+	os << "  filter rdeg: " << m_reason[(int)fr_rdeg].load() << "\n";
+	os << "  filter maxdeg: " << m_reason[(int)fr_maxdeg].load() << "\n";
+	os << "  filter unknown: " << m_reason[(int)fr_unknown].load() << "\n";
+
+	return os;
     }
 
 private:
@@ -241,6 +263,7 @@ private:
 private:
     size_t m_degeneracy;
     std::atomic<size_t> m_best;
+    std::array<std::atomic<size_t>,filter_reason_num> m_reason;
     timer m_timer;
 };
 
@@ -1279,7 +1302,7 @@ template<typename GraphType>
 std::vector<std::pair<VID,VID>>
 auxiliary_graph_matching( GraphType & G,
 			  const std::vector<uint8_t> & eligible,
-			  std::vector<uint8_t> state ) {
+			  std::vector<uint8_t> & state ) {
     // Bool array giving state for each vertex, initially 0
     VID n = G.numVertices();
     std::fill( state.begin(), state.end(), uint8_t(0) );
@@ -1325,7 +1348,8 @@ crown_kernel( GraphType & G ) {
     for( VID u=0; u < n && all_ngh_match_M2; ++u ) {
 	if( M1[u] != 0 ) // membership O
 	    continue;
-	crown[u] = 1; // I
+	if( G.getDegree( u ) > 0 ) // ignore isolated vertices
+	    crown[u] = 1; // I
 	for( auto I=G.nbegin(u), E=G.nend(u); I != E; ++I ) {
 	    VID v = *I;
 	    if( M2[v] == 0 ) { // neighbour not matched
@@ -1339,11 +1363,10 @@ crown_kernel( GraphType & G ) {
     if( all_ngh_match_M2 )
 	return crown;
 
-    std::sort( Ma.begin(), Ma.end() );
-
-    // I0 = { M2 == 0 }
+    // Initial I: I0 = { M2 == 0 }
+    // Ignore isolated vertices
     for( VID v=0; v < n; ++v )
-	crown[v] = M1[v] == 0 ? 1 : 0; // initial I
+	crown[v] = M1[v] == 0 && M2[v] == 0 && G.getDegree( v ) > 0 ? 1 : 0;
     bool change = true;
     while( change ) {
 	// Reset H
@@ -1382,8 +1405,67 @@ crown_kernel( GraphType & G ) {
 }
 
 /*======================================================================*
+ * Degeneracy (sequential, optimised for small graphs)
+ *======================================================================*/
+template<typename GraphType>
+std::vector<typename GraphType::VID>
+compute_coreness( GraphType & G ) {
+    using VID = typename GraphType::VID;
+    VID n = G.numVertices();
+    std::vector<VID> degree( n );
+    std::vector<VID> coreness( n, 0 );
+    std::vector<VID> pos( n );
+    std::vector<VID> queue( n );
+
+    // Get degrees and construct index of all vertices
+    // Assumes vertices are numbered [0..n)
+    for( auto I=G.vbegin(), E=G.vend(); I != E; ++I ) {
+	VID v = *I;
+	degree[v] = G.getDegree( v );
+	queue[v] = v;
+    }
+
+    // Sort vertices by increasing degree
+    std::sort( queue.begin(), queue.end(),
+	       [&]( VID u, VID v ) { return degree[u] < degree[v]; } );
+
+    // Construct index
+    for( VID p=0; p < n; ++p )
+	pos[queue[p]] = p;
+
+    VID K = 0;
+    for( VID p=0; p < n; ++p ) {
+	VID v = queue[p];
+	if( K < degree[v] )
+	    K = degree[v];
+	coreness[v] = K;
+	for( auto I=G.nbegin(v), E=G.nend(v); I != E; ++I ) {
+	    VID u = *I;
+	    --degree[u];
+	    VID pp = pos[u];
+	    while( pp > p+1 && degree[queue[pp-1]] > degree[u] ) {
+		VID w = queue[pp-1];
+		queue[pp] = w;
+		pos[w] = pp;
+		--pp;
+	    }
+	    pos[u] = pp;
+	    queue[pp] = u;
+	}
+    }
+
+    // Sanity check (have all vertices been visited)
+    for( VID v=0; v < n; ++v ) {
+	assert( coreness[v] != 0 || G.getDegree( v ) == 0 );
+    }
+
+    return coreness;
+}
+
+/*======================================================================*
  * vertex cover
  *======================================================================*/
+template<bool exists>
 bool
 vertex_cover_vc3( volatile bool * terminate,
 		  graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
@@ -1465,6 +1547,7 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     return best_size - old_best_size <= k;
 }
 
+template<bool exists>
 bool
 vertex_cover_vc3_buss( volatile bool * terminate,
 		       graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
@@ -1501,7 +1584,7 @@ vertex_cover_vc3_buss( volatile bool * terminate,
 
     // Find a cover for the remaining vertices
     VID gp_best_size = 0;
-    bool rec = vertex_cover_vc3(
+    bool rec = vertex_cover_vc3<exists>(
 	terminate,
 	G, k - u_size, c,
 	gp_best_size, &best_cover[best_size] );
@@ -1527,6 +1610,7 @@ vertex_cover_vc3_buss( volatile bool * terminate,
     return rec;
 }
 
+template<bool exists>
 int
 vertex_cover_vc3_crown( volatile bool * terminate,
 			graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
@@ -1534,16 +1618,10 @@ vertex_cover_vc3_crown( volatile bool * terminate,
 			VID c,
 			VID & best_size,
 			VID * best_cover ) {
+    VID n = G.numVertices();
+
     // Compute crown kernel: (I=1,H=2)
     std::vector<uint8_t> crown = crown_kernel( G );
-
-    // Construct G' by removing all of I and H
-    VID n = G.numVertices();
-    auto chkpt = G.checkpoint();
-    G.disable_incident_edges( [&]( VID v ) {
-	return crown[v] != 0;
-    } );
-    EID m = G.numEdges();
 
     // All vertices in H are included in cover
     VID tmp_best_size = best_size;
@@ -1552,17 +1630,31 @@ vertex_cover_vc3_crown( volatile bool * terminate,
 	if( crown[v] == 2 ) {
 	    ++h_size;
 	    best_cover[tmp_best_size++] = v;
-	} else if( crown[v] == 1 )
-	    ++i_size;
+	} else if( crown[v] == 1 ) {
+	    if( G.getDegree( v ) == 0 ) // ignore isolated vertices
+		crown[v] = 0;
+	    else
+		++i_size;
+	}
     }
 
     // Failure to identify crown
     if( i_size == 0 || h_size == 0 )
 	return 2;
 
+    if( h_size > k )
+	return false;
+
+    // Construct G' by removing all of I and H
+    auto chkpt = G.checkpoint();
+    G.disable_incident_edges( [&]( VID v ) {
+	return crown[v] != 0;
+    } );
+    EID m = G.numEdges();
+
     // Find a cover for the remaining vertices
     VID gp_best_size = 0;
-    bool rec = vertex_cover_vc3(
+    bool rec = vertex_cover_vc3<exists>(
 	terminate,
 	G, k - h_size, c,
 	gp_best_size, &best_cover[tmp_best_size] );
@@ -1575,6 +1667,7 @@ vertex_cover_vc3_crown( volatile bool * terminate,
     return rec;
 }
 
+template<bool exists>
 bool
 vertex_cover_vc3( volatile bool * terminate,
 		  graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
@@ -1600,15 +1693,17 @@ vertex_cover_vc3( volatile bool * terminate,
     if( k == 0 )
 	return m == 0;
 
+/* in-effective
     int ret
-	= vertex_cover_vc3_crown( terminate, G, k, c, best_size, best_cover );
+	= vertex_cover_vc3_crown<exists>( terminate, G, k, c, best_size, best_cover );
     if( ret != 2 )
 	return (bool)ret;
+*/
 
     if( m/2 > c * k * k && max_deg > k ) {
 	// replace by Buss kernel
-	return vertex_cover_vc3_buss( terminate,
-				      G, k, c, best_size, best_cover );
+	return vertex_cover_vc3_buss<exists>(
+	    terminate, G, k, c, best_size, best_cover );
     }
 
     // Must have a vertex with degree >= 3
@@ -1645,8 +1740,25 @@ vertex_cover_vc3( volatile bool * terminate,
 	    std::cerr << "vc3: n=" << n << " m=" << m
 		      << " vertex " << max_v << " deg " << max_deg
 		      << " excluded k=" << k << "\n";
-	x_ok = vertex_cover_vc3(
+	x_ok = vertex_cover_vc3<exists>(
 	    terminate, G, x_k, c, x_best_size, x_best_cover );
+    }
+
+    if constexpr ( exists ) {
+	if( x_ok ) {
+	    G.restore_checkpoint( chkpt );
+	    assert( x_best_size <= k );
+
+	    for( auto I=NI; I != NE; ++I )
+		best_cover[best_size++] = *I;
+	    for( VID i=0; i < x_best_size; ++i )
+		best_cover[best_size++] = x_best_cover[i];
+	    
+	    delete[] i_best_cover;
+	    delete[] x_best_cover;
+
+	    return true;
+	}
     }
 
     G.restore_checkpoint( chkpti );
@@ -1655,7 +1767,7 @@ vertex_cover_vc3( volatile bool * terminate,
 	std::cerr << "vc3: n=" << n << " m=" << m
 		  << " vertex " << max_v << " deg " << max_deg
 		  << " included k=" << k << "\n";
-    bool i_ok = vertex_cover_vc3(
+    bool i_ok = vertex_cover_vc3<exists>(
 	terminate, G, i_k, c, i_best_size, i_best_cover );
 
     if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
@@ -1674,10 +1786,13 @@ vertex_cover_vc3( volatile bool * terminate,
     // if( i_ok || x_ok )
     // check_cover( G, best_size, best_cover );
 
+    delete[] i_best_cover;
+    delete[] x_best_cover;
+
     return i_ok || x_ok;
 }
 
-bool
+VID
 clique_via_vc3( volatile bool * terminate,
 		const HGraphTy & G,
 		VID degeneracy,
@@ -1697,19 +1812,19 @@ clique_via_vc3( volatile bool * terminate,
     VID cn = CG.numVertices();
     EID cm = CG.numEdges();
 
-    // If no edges remain after pruning, then clique has size 1.
-    // Take any vertex that remains after pruning.
+    // If no edges remain after pruning, then cover has size 0 and
+    // clique has size cn.
     if( cm == 0 ) {
-	E.record( depth+1 );
-	return true;
+	E.record( depth+cn );
+	return depth+cn; // return true;
     }
 
     VID best_size = 0;
     std::vector<VID> best_cover( cn );
 
     VID bc = E.get_max_clique_size();
-    if( bc > cn )
-	return false;
+    if( bc >= cn + depth )
+	return 0; // return false;
 
     // Set initial k on the basis of best known clique by E
     // May need two tries: once with pessimistic but restrictive k asking
@@ -1729,12 +1844,52 @@ clique_via_vc3( volatile bool * terminate,
 	if( vertex_cover_vc3( terminate, CG, cn, 1, best_size, &best_cover[0] ) )
 	    E.record( depth + cn - best_size ); // size of complement
     }
-#else
-    if( vertex_cover_vc3( terminate, CG, cn, 1, best_size, &best_cover[0] ) )
-	E.record( depth + cn - best_size ); // size of complement
-#endif
-
     assert( best_size > 0 );
+#else
+    // looking for a better clique/cover than what we know
+    timer tm;
+    tm.start();
+
+    const VID k_prior = cn + depth - bc;
+    VID k_up = k_prior - 1;
+    VID k_lo = 1;
+    VID k_best_size = k_prior;
+    VID k = k_up;
+    while( true ) {
+	best_size = 0;
+	bool any = vertex_cover_vc3<true>( terminate, CG, k, 1, best_size, &best_cover[0] );
+	std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
+		  << k << ',' << k_up << "] bs=" << best_size
+		  << " ok=" << any
+		  << ' ' << tm.next()
+		  << "\n";
+	if( any ) {
+	    k_best_size = best_size;
+	    // in case we find a better cover than requested
+	    if( k > k_best_size )
+		k = k_best_size;
+	}
+
+	// Determine next k
+	if( any ) // k too high
+	    k_up = k;
+	else
+	    k_lo = k;
+	if( k_up <= k_lo+1 )
+	    break;
+	k = ( k_up + k_lo ) / 2;
+    }
+
+    // TODO: temporarily do not record to enable fair performance
+    //       comparison between cover and clique
+    if( k_best_size < k_prior ) {
+	if( E.is_feasible( depth + cn - k_best_size ) )
+	    std::cout << "clique_via_vc3: max_clique: "
+		      << ( depth + cn - k_best_size )
+		      << " E.best: " << bc << "\n";
+	// E.record( depth + cn - k_best_size ); // size of complement
+    }
+#endif
 
 #if 0
     // Compute complement of set
@@ -1762,17 +1917,17 @@ clique_via_vc3( volatile bool * terminate,
     return rec;
 #endif
 
-    return true;
+    // return true;
+    return depth + cn - k_best_size;
 }
 
-bool
+VID
 clique_via_vc3_top( volatile bool * terminate,
 		    const HGraphTy & G,
 		    VID degeneracy,
 		    MC_Enumerator & E ) {
     PSet<VID> pset = PSet<VID>::create_full_set( G );
-    clique_via_vc3( terminate, G, degeneracy, E, pset, pset.get_fill(), 1 );
-    return true;
+    return clique_via_vc3( terminate, G, degeneracy, E, pset, pset.get_fill(), 1 );
 }
 
 /*======================================================================*
@@ -1791,7 +1946,6 @@ mc_bron_kerbosch_recpar_xps(
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp,
-    VID ce,
     int depth );
 
 bool
@@ -1801,12 +1955,11 @@ mc_bron_kerbosch_recpar_xps_alt(
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp,
-    VID ce,
     int depth ) {
     if( *terminate )
 	throw timeout_exception();
     
-    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, ce, depth );
+    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, depth );
 
     return true;
 }
@@ -1817,11 +1970,12 @@ bk_recursive_call(
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp_new,
-    VID ce_new,
     int depth ) {
+    VID ce_new = xp_new.size();
+    
     // Check if the best possible clique we can construct would improve
     // over the current best known clique.
-    if( !E.is_feasible( depth + ce_new ) )
+    if( !E.is_feasible( depth + ce_new, fr_pset ) )
 	return;
 
     // Reached leaf of search tree
@@ -1844,7 +1998,7 @@ bk_recursive_call(
 	    DenseMatrix<32,VID,EID>
 		D( G, G, xp_new.get_set(), 0, xp_new.get_fill() );
 	    stats.record_build( tm.next() );
-	    auto bs = D.vertex_cover_kernelised();
+	    auto bs = D.vertex_cover_kernelised( D.get_num_vertices() );
 	    stats.record( tm.next() );
 	    std::cout << "Leaf task: n=" << D.numVertices()
 		      << " pset=" << xp_new.get_fill()
@@ -1854,7 +2008,7 @@ bk_recursive_call(
 	    E.record( depth + bs.size() );
 	    VID prior_mc = E.get_max_clique_size();
 
-	    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, ce_new, depth );
+	    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, depth );
 	    VID now_mc = E.get_max_clique_size();
 	    assert( prior_mc == now_mc );
 #endif
@@ -1865,7 +2019,7 @@ bk_recursive_call(
     // Large sub-problem; search recursively
     // Tuning point: do we cut out a subgraph or not?
     // Tuning point: do we proceed with MC or switch to VC?
-    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, ce_new, depth );
+    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, depth );
     // volatile bool terminate = false;
     // clique_via_vc3( &terminate, G, degeneracy, E, xp_new, ce_new, depth );
 
@@ -1878,6 +2032,38 @@ bk_recursive_call(
 */
 }
 
+template<typename VID>
+std::pair<VID,VID>
+count_colours( const HGraphTy & G, const PSet<VID> & xp ) {
+    // Upper bound, loose?
+    // Example: if we have i neighbours in the PSet, we would deduce the need
+    // for colour i, however, if some of those neighbours can have the same
+    // colour, then we don't need colour i.
+    VID n = xp.size();
+    VID c = 1; // number of colours in use
+    VID max_rdeg = 0;
+    for( VID j=1; j < n; ++j ) {
+	VID i = n-1 - j;
+	VID v = xp.at( i );
+	const auto & adj = G.get_adjacency( v );
+	const VID * ngh = G.get_neighbours( v );
+	VID isz = xp.intersect_size_from( adj, ngh, i );
+	// c = std::max( isz, c );
+	// Rationale: if we have as many neighbours as colours already handed
+	// out, we will need an additional colour. If, for instance, we have
+	// 10 neighbours but only 5 colours are used for them, we just need
+	// a 6-th colour, we don't need 10.
+	// What we are not checking is the situation where those 10 neighbours
+	// actually do use all 5 colours. They may be using only 3 among them,
+	// which would not require an additional colour.
+	if( isz >= c )
+	    ++c;
+	if( isz > max_rdeg )
+	    max_rdeg = isz;
+    }
+    return { c, max_rdeg };
+}
+
 // XP may be modified by the method. It is not required to be in sort order.
 void
 mc_bron_kerbosch_recpar_xps(
@@ -1885,8 +2071,9 @@ mc_bron_kerbosch_recpar_xps(
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp,
-    VID ce,
     int depth ) {
+    VID ce = xp.size();
+    
     // Termination condition
     if( 0 == ce ) {
 	E.record( depth );
@@ -1899,10 +2086,32 @@ mc_bron_kerbosch_recpar_xps(
 	std::cout << "XPS loop: ce=" << ce << " depth=" << depth << "\n";
     }
 
-    parallel_loop( (VID)0, ce, (VID)1, [&,ce]( VID i ) {
-	VID v = xp.at( i );
+    if( !E.is_feasible( depth + xp.size(), fr_pset ) )
+	return;
 
-	const auto & adj = G.get_adjacency( v ); 
+    auto [ num_colours, max_rdeg ] = count_colours( G, xp );
+    if( !E.is_feasible( depth + num_colours, fr_colour ) )
+	return;
+    if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
+	return;
+
+    VID pivot = xp.at( 0 );
+    const auto & p_adj = G.get_neighbours_set( pivot );
+
+    PSet<VID> it = xp.remove( n, p_adj );
+    // PSet<VID> it = PSet<VID>::copy( n, xp );
+
+    for( VID i=0; i < it.size(); ++i ) {
+	VID v = it.at( i );
+
+	// if( p_adj.contains( v ) ) // skip neigbours
+	// return;
+	
+	// Marginal performance improvement smaller graphs (< orkut)
+	// if( !E.is_feasible( depth + 1 + G.get_right_degree( v ) ) )
+	// return;
+
+	const auto adj = G.get_neighbours_set( v ); 
 	VID deg = adj.size();
 
 	if constexpr ( io_trace ) {
@@ -1922,17 +2131,20 @@ mc_bron_kerbosch_recpar_xps(
 	    //   i.e., neighbours of pivot, are still in P.
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
-	    const VID * ngh = G.get_neighbours( v ); 
-	    VID ce_new;
-	    PSet<VID> xp_new
-		= xp.intersect( G.numVertices(), i, ce, adj, ngh, ce_new );
+	    // const VID * ngh = G.get_neighbours( v ); 
+	    // VID ce_new;
+	    // PSet<VID> xp_new
+	    // = xp.intersect( G.numVertices(), i, ce, adj.get_hash(), ngh, ce_new );
+	    PSet<VID> xp_new = xp.intersect_validate( n, adj );
 
-	    bk_recursive_call( G, degeneracy, E, xp_new, ce_new, depth+1 );
+	    bk_recursive_call( G, degeneracy, E, xp_new, depth+1 );
 	}
+
+	xp.invalidate( v );
 
 	// TODO: if max_clique updated, then refilter candidate list?
 	//       e.g., compare max clique before/after call
-    } );
+    }
 }
 
 void
@@ -1942,23 +2154,44 @@ mc_bron_kerbosch_recpar_top_xps(
     MC_Enumerator & E ) {
     const VID n = G.numVertices();
 
-    parallel_loop( (VID)0, n, (VID)1, [&,n]( VID v ) {
+    // 1. find pivot, e.g., highest degree
+    VID pivot = 0; // presumed highest degree vertex
+    const auto & p_adj = G.get_neighbours_set( pivot );
+
+    // 2. create iteration set it = all vertices \ ngh(P)
+    auto it = PSet<VID>::create_complement( n, p_adj );
+    
+    // 3. loop over elements it ; initial P is all vertices
+    // 4. remove v iterated over from P (no parallelism)
+    VID it_size = it.size();
+    const VID * it_elm = it.get_set();
+    for( VID i=0; i < it_size; ++i ) {
+	VID v = it_elm[i];
+	// for( VID v=0; v < n; ++v ) {
 	VID deg = G.getDegree( v ); 
 
 	if( deg == 0 ) {
 	    // avoid overheads of copying and cutout
 	    E.record( 1 );
 	} else {
-	    const VID * ngh = G.get_neighbours( v ); 
-	    VID ce_new;
-	    // TODO: cutout must ignore left-neighbourhood
+	    const auto & adj = G.get_neighbours_set( v ); 
+	    // TODO: cutout must ignore left-neighbourhood, except neighbours
+	    //       of the pivot, so simple intersection achieves desired
+	    //       goal as the set it has only left neighbours that are
+	    //       neighbours of the pivot.
 	    // TODO: intersect-and-filter based on largest clique so far
-	    PSet<VID> xp_new
-		= PSet<VID>::intersect_top_level( n, v, ngh, deg, ce_new );
+	    // PSet<VID> xp_new = all.intersect_validate( n, adj );
+	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
+	    // PSet<VID> xp_new = PSet<VID>::intersect_top_level( n, v, adj );
+		// = PSet<VID>::intersect_top_level( n, v, ngh, deg, ce_new );
+		// = PSet<VID>::intersect_top_level_pivot(
+		// n, v, ngh, deg, p_adj, ce_new );
 
-	    bk_recursive_call( G, degeneracy, E, xp_new, ce_new, 2 );
+	    bk_recursive_call( G, degeneracy, E, xp_new, 2 );
+
+	    // all.invalidate_at( i );
 	}
-    } );
+    }
 }
 
 bool
@@ -2017,30 +2250,41 @@ void mc_dense_fn(
     DenseMatrix<Bits,VID,EID>
 	IG( G, H, cut.get_vertices(), 0, cut.get_num_vertices() );
 
-    stats.record_build( tm.next() );
+    double tc = tm.next();
+    stats.record_build( tc );
+
+    VID k_max;
+    {
+	VID n = IG.numVertices();
+	VID bc = E.get_max_clique_size();
+	k_max = n < bc ? 0 : n - bc + 1;
+    }
+    auto bs = IG.vertex_cover_kernelised( k_max );
+
+    double t = tm.next();
 
     IG.mc_search( E, 1 );
 
     double t0 = tm.next();
 
-    // auto bs = IG.vertex_cover();
-    auto bs = IG.vertex_cover_kernelised();
-
-    double t = tm.next();
-    if( false && t >= 3.0 )
+    // if( false && t >= 3.0 )
     {
 	VID n = IG.numVertices();
-	VID m = IG.calculate_num_edges();
-	float d = (float)m / ( (float)n * (float)(n-1) );
+	VID m = IG.calculate_num_edges(); // considers inverted graph
+	float d = 1.0f - ( (float)m / ( (float)n * (float)(n-1) ) );
 
-	std::cerr << "dense " << Bits << " v=" << v
+	std::cout << "v=" << v
+		  << " dense=" << Bits
 		  << " n=" << n
 		  << " m=" << m
 		  << " d=" << d
-	    // << " start=" << cut.get_start_pos()
 		  << " tbk=" << t0
 		  << " tvc=" << t
-		  << "\n";
+		  << " tc=" << tc
+		  << " deg: {";
+	for( VID v=0; v < n; ++v )
+	    std::cout << ' ' << IG.get_degree( v );
+	std::cout << " } " << ( t0<t ? "BK" : "VC" ) << "\n";
     }
 
     // Disable when comparing VC vs BK so as to not give BK an advantage as it
@@ -2115,6 +2359,9 @@ size_t get_size_class( uint32_t v ) {
     return cl;
 }
 
+static size_t num_top_bk = 0;
+static size_t num_top_vc = 0;
+
 void mc_top_level(
     const GraphCSx & G,
     const HFGraphTy & H,
@@ -2143,6 +2390,7 @@ void mc_top_level(
     if( hn1 < best )
 	return;
 
+#if 0
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
     // (using intersect-size-exceeds). If not, throw them out also.
@@ -2153,18 +2401,29 @@ void mc_top_level(
 	    cut.get_vertices()+cut.get_num_vertices(),
 	    G.get_neighbours( u ),
 	    G.get_neighbours( u ) + G.getDegree( u ),
-	    best );
+	    best-1 ); // exceed checks >, we need >= best
 	return d >= best;
-    } );
+    }, best );
 
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out.
     if( cut.get_num_vertices() < best )
 	return;
+#endif
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
     VID num = cut.get_num_vertices();
+
+/*
+    {
+	std::lock_guard<std::mutex> guard( io_mux );
+	std::cout << "v=" << v
+		  << " degeneracy=" << remap_coreness[v] 
+		  << " cutout=" << cut.get_num_vertices()
+		  << " ...\n";
+    }
+*/
 
     double tf = tm.next();
 
@@ -2193,6 +2452,7 @@ void mc_top_level(
 #endif
     double t2 = tmd.stop();
 
+    
     tm.stop();
     tm.start();
     GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
@@ -2201,6 +2461,11 @@ void mc_top_level(
     stats.record_genbuild( tm.stop() );
 
     tm.start();
+
+    std::vector<VID> HG_coreness = compute_coreness( HG );
+    VID pclique = E.get_max_clique_size();
+
+    double tc = tm.next();
 
     // Estimating relative performance of MC vs VC: use fixed parameter of
     // VC, i.e., size of cover, which can be estimated by size of best known
@@ -2211,7 +2476,7 @@ void mc_top_level(
     // Also analyse performance on dense cut-outs
 
     volatile bool terminate = false;
-    clique_via_vc3_top( &terminate, HG, degeneracy, E );
+    VID vc3_best = clique_via_vc3_top( &terminate, HG, degeneracy, E );
 
 /*
     auto alt = make_alternative_selector(
@@ -2233,8 +2498,8 @@ void mc_top_level(
 
     double t1 = tm.stop();
 
-    if /* constexpr */ ( t1 > t0 ) // true )
-    // if constexpr ( true )
+    // if /* constexpr */ ( t1 > t0 ) // true )
+    if constexpr ( true )
     {
 	VID hn = HG.numVertices();
 	EID hm = 0;
@@ -2264,13 +2529,25 @@ void mc_top_level(
 		  << " tvc=" << t0
 		  << " tdns=" << t2
 		  << " tf=" << tf
-		  << "deg: {";
+		  << " tc=" << tc
+		  << " deg: {";
 	for( VID i=0; i < hn; ++i )
 	    std::cout << ' ' << deg[hn-i-1];
-	std::cout << " } \n";
+	std::cout << " } core: {";
+	for( VID i=0; i < hn; ++i )
+	    std::cout << ' ' << HG_coreness[i];
+	std::cout << " } " << ( t1<t0 ? "BK" : "VC" ) << "\n";
+
+	if( t1 < t0 )
+	    ++num_top_bk;
+	else
+	    ++num_top_vc;
 
 	delete[] deg;
     }
+
+    assert( E.get_max_clique_size() == pclique || E.get_max_clique_size() == vc3_best );
+    assert( E.get_max_clique_size() >= vc3_best );
 }
 
 template<unsigned Bits, typename VID, typename EID>
@@ -2283,24 +2560,62 @@ void leaf_dense_fn(
 	= mc_stats.get_statistics().get_leaf( ilog2( Bits ) );
     timer tm;
     tm.start();
+// TODO: Integrate colouring heuristic into cutout (?)
+// or at least track max degree and use this for early filtering
     DenseMatrix<Bits,VID,VID> D( H, H, xp_set.get_set(), 0, xp_set.get_fill() );
     // VID n = D.numVertices();
     // VID m = D.calculate_num_edges();
+    // VID m = D.get_num_edges();
     // float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
 
-    // auto bs = D.vertex_cover_kernelised();
-    // float tvc = tm.next();
+/*
+    if( d < 0.5 )
+	D.mc_search( E, depth );
+    else {
+	auto bs = D.vertex_cover_kernelised();
+	E.record( depth + bs.size() );
+    }
+*/
+    
+    // Maximum clique size is depth (size of R), maximum degree in D
+    // (max number of plausible neighbours), +1 for the vertex whose neighbours
+    // we are checking.
+    if( !E.is_feasible( depth + D.get_max_degree() + 1, fr_maxdeg ) ) {
+/*
+	std::cout << "Leaf task: n=" << D.numVertices()
+		  << " m=" << m << " d=" << d
+		  << " pset=" << xp_set.get_fill()
+		  << " depth=" << depth
+		  << " d_max=" << D.get_max_degree()
+		  << " not feasible\n";
+*/
+	return;
+    }
+
+/*
+    VID init_k = n - ( E.get_max_clique_size() - depth );
+    auto bs = D.vertex_cover_kernelised( init_k );
+    float tvc = tm.next();
+*/
+
     D.mc_search( E, depth );
-    // float tbk = tm.next();
-    stats.record( tm.next() );
-    // std::cout << "Leaf task: n=" << D.numVertices()
-	      // << " m=" << m << " d=" << d
-	      // << " pset=" << xp_set.get_fill()
-	      // << " mc=" << bs.size() << " depth=" << depth
-	      // << " tbk=" << tbk
-	      // << " tvc=" << tvc
-	      // << "\n";
+    float tbk = tm.next();
+
+    stats.record( tbk );
+
+/*
+    std::cout << "Leaf task: n=" << D.numVertices()
+	      << " m=" << m << " d=" << d
+	      << " d_max=" << D.get_max_degree()
+	      << " pset=" << xp_set.get_fill()
+	      << " mc=" << bs.size() << " depth=" << depth
+	      << " tbk=" << tbk
+	      << " tvc=" << tvc
+	      << " bk/vc=" << (tbk/tvc)
+	      << "\n";
+*/
+
     // E.record( depth + bs.size() );
 }
 
@@ -2475,7 +2790,8 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     sort_order( order.get(), rev_order.get(),
-		coreness, n, kcore.getLargestCore() );
+		coreness, n, kcore.getLargestCore(),
+		true ); // reverse sort
     std::cout << "Determining sort order: " << tm.next() << "\n";
 
     mm::buffer<VID> remap_coreness( n, numa_allocation_interleaved() );
@@ -2544,7 +2860,7 @@ int main( int argc, char *argv[] ) {
 
 #if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
-	if( PAPI_OK != PAPI_hl_region_begin( "MCE" ) ) {
+	if( PAPI_OK != PAPI_hl_region_begin( "MC" ) ) {
 	    std::cerr << "Error initialising PAPI\n";
 	    exit(1);
 	}
@@ -2562,12 +2878,54 @@ int main( int argc, char *argv[] ) {
 	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
     } );
 */
+/*
     for( VID v=0; v < n; ++v )
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+*/
+    for( VID w=0; w < n; ++w ) {
+	VID v = n - w - 1;
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+    }
+/*
+*/
+/*
+    VID v = rev_order[42153];
+    std::cout << "v: " << v << "\n";
+    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+*/
+/*
+    for( VID w=0; w < n && remap_coreness[n-w-1] >= 7; ++w ) {
+	VID v = n - w - 1;
+	std::vector<float> timing;
+	VID mc = 0;
+	for( VID c=1; c < 30; ++c ) {
+	    MC_Enumerator E( degeneracy );
+	    E.record( c );
+	    timer tm;
+	    tm.start();
+	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	    float t = tm.stop();
+	    timing.push_back( t );
+	    if( c == 1 ) {
+		mc = E.get_max_clique_size();
+		if( mc < 8 )
+		    break;
+	    }
+	}
+	if( mc >= 8 ) {
+	    std::cout << "VARY v=" << v << ' ' << order[v]
+		      << " d=" << R.getDegree( v )
+		      << " rho=" << remap_coreness[v] << " mc=" << mc;
+	    for( auto I=timing.begin(), E=timing.end(); I != E; ++I )
+		std::cout << ' ' << *I;
+	    std::cout << "\n";
+	}
+    }
+*/
 
 #if PAPI_REGION == 1
     map_workers( [&]( uint32_t t ) {
-	if( PAPI_OK != PAPI_hl_region_end( "MCE" ) ) {
+	if( PAPI_OK != PAPI_hl_region_end( "MC" ) ) {
 	    std::cerr << "Error initialising PAPI\n";
 	    exit(1);
 	}
@@ -2579,7 +2937,7 @@ int main( int argc, char *argv[] ) {
     all_variant_statistics stats = mc_stats.sum();
 
     double duration = tm.total();
-    std::cout << "Completed MCE in " << duration << " seconds\n";
+    std::cout << "Completed MC in " << duration << " seconds\n";
     for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
 	std::cout << (1<<n) << "-bit dense: ";
 	stats.get( n ).print( std::cout ); 
@@ -2604,6 +2962,9 @@ int main( int argc, char *argv[] ) {
 #endif
     std::cout << "generic: ";
     stats.m_gen.print( std::cout );
+
+    std::cout << "times top-level BK faster: " << num_top_bk << "\n";
+    std::cout << "times top-level VC faster: " << num_top_vc << "\n";
 
     E.report( std::cout );
 
