@@ -14,6 +14,8 @@
 #include "graptor/container/range_iterator.h"
 #include "graptor/container/double_index_edge_iterator.h"
 #include "graptor/container/difference_iterator.h"
+#include "graptor/container/array_slice.h"
+#include "graptor/container/dual_set.h"
 
 
 namespace graptor {
@@ -210,9 +212,13 @@ public:
     using self_type = GraphHAdjPA<VID,EID,dual_rep,Hash>;
     using hash_set_type = graptor::hash_set<VID,Hash>;
     using hash_table_type = graptor::hash_table<VID,VID,Hash>;
+    using ngh_set_type = graptor::array_slice<const VID,VID>;
+    using dual_set_type = graptor::dual_set<ngh_set_type,hash_set_type>;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
+    using neighbour_iterator = VID *;
+    using const_neighbour_iterator = const VID *;
 
     static constexpr bool has_dual_rep = dual_rep;
 
@@ -532,6 +538,10 @@ public:
 
     VID numVertices() const { return m_n; }
     VID getDegree( VID v ) const { return get_adjacency( v ).size(); }
+    VID get_right_degree( VID v ) const {
+	auto pos = std::lower_bound( nbegin( v ), nend( v ), v );
+	return std::distance( pos, nend( v ) );
+    }
 
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
     vertex_iterator vbegin() const { return vertex_iterator( 0 ); }
@@ -548,6 +558,25 @@ public:
 	    return m_adjacency[v].get_table() - m_adjacency[v].capacity();
 	else
 	    return nullptr;
+    }
+
+    dual_set_type get_neighbours_set( VID v ) const {
+	return dual_set_type(
+	    ngh_set_type( get_neighbours( v ), getDegree( v ) ),
+	    get_adjacency( v ) );
+    }
+
+    neighbour_iterator nbegin( VID v ) {
+	return get_neighbours( v );
+    }
+    const_neighbour_iterator nbegin( VID v ) const {
+	return get_neighbours( v );
+    }
+    neighbour_iterator nend( VID v ) {
+	return get_neighbours( v ) + getDegree( v );
+    }
+    const_neighbour_iterator nend( VID v ) const {
+	return get_neighbours( v ) + getDegree( v );
     }
 
 /*
