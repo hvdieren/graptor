@@ -141,6 +141,8 @@ public:
     }
 
     bool contains( type value ) const {
+	if( m_elements == 0 ) // avoid infinite loop
+	    return false;
 	size_type index = m_hash( value ) & ( capacity() - 1 );
 	while( m_table[index] != invalid_element && m_table[index] != value )
 	    index = ( index + 1 ) & ( capacity() - 1 );
