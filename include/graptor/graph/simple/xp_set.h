@@ -8,6 +8,41 @@ namespace graptor {
 
 namespace graph {
 
+template<typename HashSet1, typename HashSet2>
+class hash_set_or {
+    using type = typename HashSet1::type;
+    
+public:
+    hash_set_or( const HashSet1 & h1, const HashSet2 & h2 )
+	: m_hash1( h1 ), m_hash2( h2 ) { }
+
+    bool contains( type v ) const {
+	return m_hash1.contains( v ) || m_hash2.contains( v );
+    }
+
+    template<typename U, unsigned short VL, typename MT>
+    std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+		       typename vector_type_traits_vl<U,VL>::mask_type,
+		       typename vector_type_traits_vl<U,VL>::vmask_type>
+    multi_contains( typename vector_type_traits_vl<U,VL>::type
+		    index, MT ) const {
+	using tr = vector_type_traits_vl<U,VL>;
+
+	auto r1 = m_hash1.template multi_contains<U,VL>( index, MT() );
+	auto r2 = m_hash2.template multi_contains<U,VL>( index, MT() );
+
+	if constexpr ( std::is_same_v<MT,target::mt_mask> ) {
+	    using mtr = typename tr::mask_traits;
+	    return mtr::logical_or( r1, r2 );
+	} else
+	    return tr::logical_or( r1, r2 );
+    }
+
+private:
+    const HashSet1 & m_hash1;
+    const HashSet2 & m_hash2;
+};
+
 //! Inspired by Fast Arrays
 // Constant-time initialisation
 template<typename _lVID = VID>
@@ -262,6 +297,7 @@ public:
     /*const*/ lVID * get_set() const { return m_set; }
     lVID at( lVID pos ) const { return m_set[pos]; }
     lVID get_fill() const { return m_fill; }
+    lVID size() const { return m_fill; }
 
 protected:
     lVID * m_pos;
@@ -527,6 +563,14 @@ public:
 	return p_hash_set_interface( *this );
     }
 
+    static PSet copy( lVID n, const PSet & p ) {
+	PSet<lVID> cp( n, p.size() );
+	std::copy( p.m_pos, p.m_pos+n, cp.m_pos );
+	std::copy( p.m_set, p.m_set+p.size(), cp.m_set );
+	cp.m_fill = p.m_fill;
+	return cp;
+    }
+    
     // Intersect this with adjacency list, interested only in vertices
     // that are higher-numbered than i (right-neighbourhood)
     template<typename Adj>
@@ -560,18 +604,201 @@ public:
 	return ins;
     }
 
+    // Intersect this with adjacency list.
+    // Validate all entries in this->m_set.
+    template<typename DualSet>
+    PSet intersect_validate( lVID n, const DualSet & adj ) const {
+	lVID deg = adj.size();
+	lVID ce = this->m_fill;
+	lVID mx = std::min( deg, ce );
+	PSet ins( n, mx+16 ); // hash_vector requires extra space
+	lVID ce_new;
+
+	if( ce > 2*deg || true ) {
+	    // TODO: find split point for X/P to reduce ranges?
+	    //       or make single traversal and determine X/P on the fly?
+	    //       need to be careful as m_set may not be sorted, and there
+	    //       may exist elements of P that are smaller than some elements
+	    //       of X (due to pivoting)
+	    // Validation: hash set lookup always performs validation
+	    //             that m_set and m_pos entries correspond.
+	    ce_new = graptor::hash_vector::intersect(
+		adj.begin(), adj.end(), this->hash_set(),
+		ins.m_set ) - ins.m_set;
+	} else {
+	    // Note: skip m_set[i] as we know there are no self-loops.
+	    // Validation: TODO
+	    assert( 0 && "Need to implement validation" );
+	    ce_new = graptor::hash_vector::intersect(
+		this->m_set, this->m_set+ce, adj.get_hash(),
+		ins.m_set ) - ins.m_set;
+	}
+
+	// Construct ins.m_pos 
+	for( lVID i=0; i < ce_new; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
+    // Invalidate an element by making the hash entry point away.
+    // Any hash set lookup on the element m_set[i] will fail, however,
+    // sequential iteration through m_set will identify the element as
+    // valid.
+    void invalidate_at( lVID i ) {
+	this->m_pos[this->m_set[i]] = this->m_fill;
+    }
+
+    void invalidate( lVID v ) {
+	this->m_pos[v] = this->m_fill;
+    }
+
+    template<typename DualSet>
+    static PSet create_complement( lVID n, const DualSet & adj ) {
+	// Note: could also do merge-like traversal with jumping to
+	//       skip many consecutive elements in adjacency when adjacency
+	//       set size is large proportion of n.
+	PSet co( n, n - adj.size() );
+	lVID k = 0;
+	for( lVID i=0; i < n; ++i )
+	    if( !adj.contains( i ) ) {
+		co.m_pos[i] = k;
+		co.m_set[k++] = i;
+	    }
+	co.m_fill = k;
+
+	return co;
+    }
+
+    template<typename DualSet>
+    static PSet
+    left_union_right( lVID n, lVID v,
+		      const DualSet & l_adj, const DualSet & r_adj ) {
+	// Determine left and right neighbourhoods
+	const lVID * const l_ngh
+	    = std::lower_bound( l_adj.begin(), l_adj.end(), v );
+	const lVID * const r_ngh
+	    = std::upper_bound( r_adj.begin(), r_adj.end(), v );
+
+	const lVID l_len = std::distance( l_adj.begin(), l_ngh );
+	const lVID r_len = std::distance( r_ngh, r_adj.end() );
+
+	PSet lur( n, l_len + r_len );
+	lVID * s = lur.m_set;
+	std::copy( l_adj.begin(), l_ngh, s );
+	std::copy( r_ngh, r_adj.end(), s+l_len );
+
+	// Construct lur.m_pos 
+	for( lVID i=0; i < l_len + r_len; ++i )
+	    lur.m_pos[lur.m_set[i]] = i;
+	lur.m_fill = l_len + r_len;
+
+	return lur;
+    }
+
+    static PSet create_all( lVID n ) {
+	PSet co( n, n );
+	for( lVID i=0; i < n; ++i ) {
+	    co.m_pos[i] = i;
+	    co.m_set[i] = i;
+	}
+	co.m_fill = n;
+
+	return co;
+    }
+
+    template<typename DualSet>
+    PSet remove( lVID n, const DualSet & adj ) const {
+	PSet rm( n, this->size() );
+	lVID k = 0;
+	for( lVID i=0; i < this->m_fill; ++i ) {
+	    lVID v = this->at( i );
+	    if( !adj.contains( v ) ) {
+		rm.m_pos[v] = k;
+		rm.m_set[k++] = v;
+	    }
+	}
+	rm.m_fill = k;
+
+	return rm;
+    }
+
+    // Intersect this with adjacency list, interested only in vertices
+    // that are higher-numbered than i (right-neighbourhood), and the
+    // lower-numbered vertices that are also neighbours of the pivot.
+    // Keep the PSet sorted, if it was sorted.
+    template<typename Adj>
+    PSet intersect_pivot( lVID n, lVID i, lVID ce,
+		    const Adj & adj, const lVID * ngh,
+		    const Adj & p_adj,
+		    lVID & ce_new ) const {
+	const lVID deg = adj.size();
+	const lVID p_deg = p_adj.size();
+	const lVID mx = std::min( deg+p_deg, ce ); // at most i left-ngh of pivot
+	PSet ins( n, mx+16 ); // hash_vector requires extra space
+
+	// Lower-numbered vertices that are neighbours of the pivot
+	lVID * p = ins.m_set;
+	if( i > 0 )
+	    p = graptor::hash_vector::intersect(
+		this->m_set, this->m_set+i-1, p_adj, p );
+	
+	// Note: skip m_set[i] as we know there are no self-loops.
+	hash_set_or<Adj,Adj> both_adj( adj, p_adj );
+	p = graptor::hash_vector::intersect(
+	    this->m_set+i+1, this->m_set+ce, both_adj, p );
+
+	ce_new = p - ins.m_set;
+	assert( ce_new <= mx );
+
+	// Construct ins.m_pos 
+	for( lVID i=0; i < ce_new; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
+
     // Intersect-size PSet with adjacency list.
     // Consider all vertices.
     template<typename Adj>
     lVID intersect_size( const Adj & adj, const lVID * ngh ) const {
+	return intersect_size_until( adj, ngh, this->m_fill );
+    }
+
+    // Intersect-size PSet with adjacency list.
+    // Consider all vertices up to but not including position i.
+    template<typename Adj>
+    lVID intersect_size_until( const Adj & adj, const lVID * ngh, lVID i )
+	const {
 	lVID deg = adj.size();
 
-	if( this->m_fill > 2*deg ) {
+	if( i > 2*deg ) {
 	    return graptor::hash_vector::intersect_size(
-		ngh, ngh+deg, this->hash_set() );
+		ngh, ngh+deg, this->X_hash_set( i ) );
 	} else {
 	    return graptor::hash_vector::intersect_size(
-		this->m_set, this->m_set+this->m_fill, adj );
+		this->m_set, this->m_set+i, adj );
+	}
+    }
+
+    // Intersect-size PSet with adjacency list.
+    // Consider all vertices up to position i.
+    template<typename Adj>
+    lVID intersect_size_from( const Adj & adj, const lVID * ngh, lVID i )
+	const {
+	lVID deg = adj.size();
+
+	if( ( this->m_fill - i - 1 ) > 2*deg ) {
+	    return graptor::hash_vector::intersect_size(
+		ngh, ngh+deg, this->P_hash_set( i+1 ) );
+	} else {
+	    return graptor::hash_vector::intersect_size(
+		this->m_set+i+1, this->m_set+this->m_fill, adj );
 	}
     }
 
@@ -591,6 +818,45 @@ public:
 	// Complete hash info
 	for( lVID i=0; i < ins.m_fill; ++i )
 	    ins.m_pos[ins.m_set[i]] = i;
+
+	return ins;
+    }
+
+    template<typename DualSet>
+    static PSet intersect_top_level( lVID n, lVID ne, const DualSet & set ) {
+	lVID ce_new; // ignored
+	
+	return intersect_top_level( n, ne, set.get_seq().begin(),
+				    set.size(), ce_new );
+    }
+
+    template<typename Adj>
+    static PSet intersect_top_level_pivot(
+	lVID n, lVID ne, const lVID * ngh, lVID deg, const Adj & p_adj,
+	lVID & ce_new ) {
+	// Determine left vs right neighbourhood
+	const lVID * const r_ngh = std::lower_bound( ngh, ngh+deg, ne );
+	
+	// Pset consists of:
+	// 1. right-neighbours of vertex
+	// 2. left-neighbours of vertex that are neighbours of the pivot
+	lVID mx = deg - ( r_ngh - ngh );
+	lVID mp = graptor::hash_vector::intersect_size( ngh, r_ngh, p_adj );
+	PSet ins( n, mx+mp+16 );
+
+	// left-neighbours that are neighbours of the pivot
+	lVID * p =
+	    graptor::hash_vector::intersect( ngh, r_ngh, p_adj, ins.m_set );
+	
+	// P set
+	p = std::copy( r_ngh, ngh+deg, p );
+	ins.m_fill = ce_new = p - ins.m_set;
+
+	// Complete hash info
+	for( lVID i=0; i < ins.m_fill; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	assert( ce_new <= mx+mp );
 
 	return ins;
     }
