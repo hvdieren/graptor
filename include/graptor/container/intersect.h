@@ -746,7 +746,7 @@ private:
 	    std::swap( ld, rd );
 	}
 
-	size_t d = std::min( ld, rd );
+	size_t d = ld; // equals std::min( ld, rd );
 
 	if( d < exceed )
 	    return false;
