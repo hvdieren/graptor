@@ -22,6 +22,9 @@
 #include "graptor/simd/simd.h"
 #include "graptor/dsl/emap/types.h"
 
+// Some variation on reading times
+#define PARAGRAPHER_OPTION 2
+
 #if EXTERNAL_SPTRANS
 #include "../../sptrans/sptrans.h"
 #endif
@@ -238,6 +241,28 @@ inline void parallel_read( int fd, size_t off, void * vptr, size_t len ) {
 	      << delay << " seconds, "
 	      << pretty_size( double(len)/delay ) << "/s\n";
 }
+
+inline void parallel_fault_in( void * vptr, size_t len ) {
+    uint8_t * ptr = reinterpret_cast<uint8_t *>( vptr );
+
+    constexpr size_t PAGE = size_t(4) << 10; // 4 KiB
+    constexpr size_t BLOCK = size_t(128) << 20; // 128 MiB
+    unsigned num_threads = graptor_num_threads();
+    assert( num_threads != 0 && "need some number of threads to succeed..." );
+    size_t nblock = ( len + BLOCK - 1 ) / BLOCK;
+    parallel_loop( (unsigned)0, num_threads, [&]( unsigned t ) { 
+	size_t blk_from = ( nblock * t ) / num_threads;
+	size_t blk_to = ( nblock * (t+1) ) / num_threads;
+	size_t from = blk_from * BLOCK;
+	size_t to = std::min( blk_to * BLOCK, len );
+	uint8_t result = 0;
+	for( size_t b=from; b < to; b += BLOCK ) {
+	    for( uint8_t * p=&ptr[b], * pe=&ptr[b+BLOCK]; p < pe; p += PAGE )
+		result |= *p;
+	}
+    } );
+}
+
 
 template<typename T>
 void write_binary_slab( const std::string & ofile,
@@ -2299,12 +2324,23 @@ public:
 		      << strerror( errno ) << "\n";
 	    exit( 1 );
 	}
+#if PARAGRAPHER_OPTION == 0
+	// mmap, postpone disk transfer until needed
 	new (&index) mm::buffer<EID>( n+1, fd, off_t(0), alloc, "CSx index" );
+#elif PARAGRAPHER_OPTION == 1
+	// mmap and immediately fault in pages
+	new (&index) mm::buffer<EID>( n+1, fd, off_t(0), alloc, "CSx index" );
+	parallel_fault_in( index.get(), sizeof(EID)*(n+1) );
+#elif PARAGRAPHER_OPTION == 2
+	// copy from file
+	new (&index) mm::buffer<EID>( n+1, alloc, "CSx index" );
+	parallel_read( fd, 0, index.get(), sizeof(EID)*(n+1) );
+#endif
 	close( fd );
 	double delay = tm.next();
-	std::cerr << "mmap " << pretty_size( size_t(n+1)*sizeof(VID) ) << " in "
+	std::cerr << "mmap " << pretty_size( size_t(n+1)*sizeof(EID) ) << " in "
 		  << delay << " seconds, "
-		  << pretty_size( double((n+1)*sizeof(VID))/delay ) << "/s\n";
+		  << pretty_size( double((n+1)*sizeof(EID))/delay ) << "/s\n";
 
 	tm.next();
 	if( (fd = open( efile.c_str(), O_RDONLY /*| O_DIRECT*/ )) < 0 ) {
@@ -2312,21 +2348,40 @@ public:
 		      << strerror( errno ) << "\n";
 	    exit( 1 );
 	}
+#if PARAGRAPHER_OPTION == 0
+	// mmap, postpone disk transfer until needed
 	new (&edges) mm::buffer<VID>( m, fd, off_t(0), alloc, "CSx edges" );
+#elif PARAGRAPHER_OPTION == 1
+	// mmap and immediately fault in pages
+	new (&edges) mm::buffer<VID>( m, fd, off_t(0), alloc, "CSx edges" );
+	parallel_fault_in( edges.get(), sizeof(VID)*m );
+#elif PARAGRAPHER_OPTION == 2
+	// copy from file
+	new (&edges) mm::buffer<VID>( m, alloc, "CSx edges" );
+	parallel_read( fd, 0, edges.get(), sizeof(VID)*m );
+#endif
 	close( fd );
 	delay = tm.next();
 	std::cerr << "mmap " << pretty_size( m*sizeof(VID) ) << " in "
 		  << delay << " seconds, "
 		  << pretty_size( double(m*sizeof(VID))/delay ) << "/s\n";
 
-	// Uninitialised for now
-	new (&degree) mm::buffer<VID>( n, alloc, "CSx degree" );
-
-	if( wfile )
-	    readWeightsFromBinaryFile( stem + std::string(root[wfile]), alloc );
-
 	// Build degree array
+	new (&degree) mm::buffer<VID>( n, alloc, "CSx degree" );
 	build_degree();
+	delay = tm.next();
+	std::cerr << "build_degree " << pretty_size( (n+1)*sizeof(VID) )
+		  << " in " << delay << " seconds, "
+		  << pretty_size( double((n+1)*sizeof(VID))/delay ) << "/s\n";
+
+	// Read weights (optional)
+	if( wfile ) {
+	    readWeightsFromBinaryFile( stem + std::string(root[wfile]), alloc );
+	    delay = tm.next();
+	    std::cerr << "read_weights " << pretty_size( n*sizeof(float) )
+		      << " in " << delay << " seconds, "
+		      << pretty_size( double(n*sizeof(float))/delay ) << "/s\n";
+	}
     }
 
     void readWeightsFromBinaryFile( const std::string & wfile,
