@@ -61,7 +61,7 @@
 #endif
 
 #ifndef ABLATION_SORT_ORDER_TIES
-#define ABLATION_SORT_ORDER_TIES 0
+#define ABLATION_SORT_ORDER_TIES 1
 #endif
 
 #ifndef ABLATION_RECPAR_CUTOUT
@@ -2347,7 +2347,7 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
 #if ABLATION_SORT_ORDER_TIES
     sort_order( order.get(), rev_order.get(),
-		coreness.get_ptr(), n, kcore.getLargestCore() );
+		coreness.get_ptr(), n, kcore.getLargestCore(), true );
 #else
     sort_order_ties( order.get(), rev_order.get(),
 		     coreness.get_ptr(), n, kcore.getLargestCore(),
