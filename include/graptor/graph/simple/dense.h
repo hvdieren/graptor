@@ -512,6 +512,7 @@ public:
 	// Place edges
 	VID ni = 0;
 	m_m = 0;
+	m_d_max = 0;
 	m_fully_connected = tr::setzero();
 
 	row_type mn = get_himask( ns );
@@ -558,6 +559,8 @@ public:
 	    m_degree[su] = adeg;
 #endif
 	    m_m += adeg;
+	    if( adeg > m_d_max )
+		m_d_max = adeg;
 	}
 
 	m_n = ns;
@@ -787,9 +790,16 @@ public:
 	m_mc_size = 0;
 
 	row_type mn = get_himask( m_n );
-	row_type allP = tr::bitwise_invert( mn );
+	row_type R = m_fully_connected;
+	// row_type R = tr::setzero();
+	row_type allP = tr::bitwise_andnot( R, tr::bitwise_invert( mn ) );
+	// row_type allP = tr::bitwise_invert( mn );
+
 	// depth is 1 for top-level vertex
-	mc_iterate( E, tr::setzero(), allP, depth );
+	// every fully-connected vertex is automatically included in clique
+	if( !tr::is_zero( R ) )
+	    depth += get_size( R );
+	mc_iterate( E, R, allP, depth );
     }
     
 private:
@@ -846,7 +856,7 @@ public:
     }
 
     bitset<Bits>
-    vertex_cover_kernelised() {
+    vertex_cover_kernelised( VID k_max ) {
 	// Invert matrix
 /*
 	for( VID r=0; r < m_n; ++r ) {
@@ -857,11 +867,128 @@ public:
 	    set_row( r, rc );
 	}
 */
+
+	timer tm;
+	tm.start();
 	
+	// VID best_size = 0;
+	// row_type best_cover = tr::setzero();
+	// Remove fully-connected vertices from the candidate list. They are
+	// automatically not part of the vertex cover as they have zero degree
+	// in the complement graph.
+	row_type all_vertices
+	    = tr::bitwise_andnot( m_fully_connected, m_allv_mask );
+	// vck_iterate<false>( m_n, 1, all_vertices, best_size, best_cover );
+
+	// Attempt to find a vertex cover that is smaller than
+	// the size required to improve on the best known clique.
+	// This is expected to fail. If it does succeed, we continue
+	// searching for smaller covers.
+	if( k_max == 0 )
+	    return bitset<Bits>( tr::setzero() );
+#if 1
+	VID best_size = k_max + 1;
+	row_type best_cover = tr::setzero();
+	VID k_up = k_max - 1;
+	VID k_lo = 1;
+	VID k_best_size = k_max;
+	VID k = k_up;
+	while( true ) {
+	    VID a_best_size = 0;
+	    row_type a_best_cover = tr::setzero();
+	    bool any = vck_iterate<true>( k, 1, all_vertices, a_best_size, a_best_cover );
+	    std::cout << " vck: k_max=" << k_max << " k=[" << k_lo << ','
+		      << k << ',' << k_up << "] bs=" << best_size
+		      << " ok=" << any
+		      << ' ' << tm.next()
+		      << "\n";
+	    if( any ) {
+		best_size = a_best_size;
+		best_cover = a_best_cover;
+		// in case we find a better cover than requested
+		if( k > best_size )
+		    k = best_size;
+	    }
+
+	    // Determine next k
+	    if( any ) // k too high
+		k_up = k;
+	    else
+		k_lo = k;
+	    if( k_up <= k_lo+1 )
+		break;
+	    k = ( k_up + k_lo ) / 2;
+	}
+
+	// If we can't meet the constraint, return something quick and
+	// recognisable as unuseful.
+	if( best_size > k_max )
+	    return bitset<Bits>( tr::setzero() );
+
+#else
+	VID k = k_max - 1;
 	VID best_size = 0;
 	row_type best_cover = tr::setzero();
-	row_type all_vertices = m_allv_mask;
-	vck_iterate( m_n, 1, all_vertices, best_size, best_cover );
+	bool any = vck_iterate<true>( k, 1, all_vertices, best_size, best_cover );
+	if( !any )
+	    return bitset<Bits>( tr::setzero() );
+
+#if 1
+	// greedy_cover( best_size, best_cover );
+	// VID k = std::min( k_max, best_size - 1 );
+	// std::cout << " i=" << 0 << " k=" << k << " sz=" << best_size
+	// << ' ' << tm.next() << "\n";
+
+	int i = 1;
+	while( true ) {
+	    VID a_best_size = 0;
+	    row_type a_best_cover = tr::setzero();
+	    bool any = vck_iterate<true>( k, 1, all_vertices, a_best_size, a_best_cover );
+	    // std::cout << " i=" << i << " k=" << k << " sz=" << best_size
+	    // << " valsz=" << get_size( best_cover )
+	    // << ' ' << tm.next() << "\n";
+	    if( !any )
+		break;
+
+	    best_size = a_best_size;
+	    best_cover = a_best_cover;
+	    k = best_size - 1; // try to find better
+
+	    // k < 0, cannot do better, this graph is a clique
+	    if( best_size == 0 )
+		break;
+
+	    ++i;
+	}
+
+	// If we can't meet the constraint, return something quick and
+	// recognisable as unuseful.
+	if( best_size > k_max )
+	    return bitset<Bits>( tr::setzero() );
+
+#if 0
+	// patch up -- errors!
+	k = best_size-1;
+	best_size = 0;
+	best_cover = tr::setzero();
+	bool b = vck_iterate<false>( k, 1, all_vertices, best_size, best_cover );
+	std::cout << " i=fail" << " k=" << k << " sz=" << best_size
+		  << " valsz=" << get_size( best_cover )
+		  << ' ' << tm.next() << "\n";
+	assert( !b );
+
+	++k;
+	best_size = 0;
+	best_cover = tr::setzero();
+	bool a = vck_iterate<false>( k, 1, all_vertices, best_size, best_cover );
+	std::cout << " i=success" << " k=" << k << " sz=" << best_size
+		  << ' ' << tm.next() << "\n";
+	assert( a );
+#endif
+#else
+	// binary search
+#endif
+#endif
 
 	// cover vs clique on complement. Invert bitset, mask with valid bits
 	// best_cover = tr::bitwise_invert(
@@ -875,13 +1002,8 @@ public:
 	    row_type rr = create_row( r );
 	    row_type rm = get_row( r );
 
-	    // Complement again
+	    // Add self vertex and intersect with cover
 	    row_type rc = tr::bitwise_or( rr, rm );
-/*
-	    row_type rc1 = tr::bitwise_invert( tr::bitwise_or( rc, get_himask( m_n ) ) );
-
-	    row_type rc2 = tr::bitwise_or( rc1, rr );
-*/
 	    row_type ins = tr::bitwise_and( rc, best_cover );
 	    VID sz = get_size( ins );
 
@@ -1340,6 +1462,253 @@ private:
 	vc_iterate( v+1, tr::bitwise_or( cin, v_set ), cout, cin_sz+1 );
     }
 
+    /**
+     * Greedy graph matching
+     *
+     * @return bitmask showing vertices that have been matched
+     */
+    row_type graph_matching_outsiders( row_type eligible ) const {
+	// State: 0 if matched, 1 if unmatched
+	// Reason: feeds into get_inv_row_unc()
+	row_type state = eligible;
+
+	for( VID u=0; u < m_n; ++u ) {
+	    row_type u_row = create_row( u );
+	    if( tr::is_bitwise_and_zero( u_row, state ) ) // already matched
+		continue;
+
+	    // Iterate over neighbours that have not yet been matched
+	    row_type u_ngh = get_inv_row_unc( u, u_row, state );
+	    bitset<Bits> bx( u_ngh );
+	    auto I = bx.begin();
+	    if( I != bx.end() ) { // match one edge
+		// It is implied that v's state is 1, i.e., unmatched
+		VID v = *I;
+		row_type v_row = I.get_mask();
+		assert( !tr::is_bitwise_and_zero( v_row, state ) );
+
+		// Set u and v as matched
+		state = tr::bitwise_andnot( v_row, state );
+		state = tr::bitwise_andnot( u_row, state );
+	    }
+	}
+
+	return tr::bitwise_andnot( state, m_allv_mask );
+    }
+
+    /**
+     * Greedy auxiliary graph matching
+     *
+     * @a 
+     * @return vector of edges in matching, with vertices encoded in row_type
+     */
+    std::vector<std::pair<row_type,row_type>>
+    auxiliary_graph_matching( row_type eligible,
+			      row_type M1,
+			      row_type & state_out )
+	const {
+	row_type state = tr::setzero(); // set of matched vertices
+	std::vector<std::pair<row_type,row_type>> match; // edge list
+
+	// Iterate over all vertices that have not been matched yet,
+	// i.e. all vertices in O, and find one matching edge for them
+	// from among their neighbours.
+	bitset<Bits> bu( tr::bitwise_andnot( M1, eligible ) );
+	bool set_u = false;
+	for( auto Iu = bu.begin(), Eu = bu.end(); Iu != Eu; ++Iu ) {
+	    VID u = *Iu;
+	    row_type u_row = Iu.get_mask();
+
+	    // u already matched
+	    if( !tr::is_bitwise_and_zero( u_row, state ) )
+		continue;
+
+	    row_type not_matched = tr::bitwise_andnot( state, eligible );
+	    if( tr::is_zero( not_matched ) ) // no more vertices to select
+		break;
+	    bitset<Bits> bv( get_inv_row_unc( u, u_row, not_matched ) );
+	    auto Iv = bv.begin();
+	    if( Iv != bv.end() ) { // Match one edge
+		VID v = *Iv;
+		row_type v_row = Iv.get_mask();
+		row_type uv_row = tr::bitwise_or( u_row, v_row );
+		match.push_back( { u_row, v_row } );
+		state = tr::bitwise_or( uv_row, state );
+	    }
+	}
+
+	state_out = state;
+	return match;
+    }
+
+    /**
+     * Compute crown kernel for vertex cover
+     *
+     * @return pair of sets (I,H) such that I is an independent set and
+     *         H is the base of the crown.
+     */
+    std::pair<row_type,row_type>
+    vck_crown_kernel( row_type eligible ) const {
+	// Primary and auxiliary matchings
+	// Let O = { M1 == 0 }
+	row_type M1 = graph_matching_outsiders( eligible );
+	row_type M2;
+	std::vector<std::pair<row_type,row_type>> Ma =
+	    auxiliary_graph_matching( eligible, M1, M2 );
+
+	row_type crown_I = tr::setzero();
+	row_type crown_H = tr::setzero();
+
+	// Check if every vertex in N(O) is matched by M2
+	// Alternatively, could check size of N(O) equals size of I equals
+	// size of matching M2
+	bool all_ngh_match_M2 = true;
+	crown_I = tr::bitwise_andnot( M1, eligible );
+	bitset<Bits> bu( crown_I );
+	for( auto Iu=bu.begin(), Eu=bu.end();
+	     Iu != Eu && all_ngh_match_M2;
+	     ++Iu ) {
+	    VID u = *Iu;
+	    row_type u_row = Iu.get_mask();
+
+	    // Iterate over neighbours of u
+	    row_type u_ngh = get_inv_row_unc( u, u_row, eligible );
+	    bitset<Bits> bx( get_inv_row_unc( u, u_row, eligible ) );
+	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+		VID v = *I;
+		row_type v_row = I.get_mask();
+		if( tr::is_bitwise_and_zero( v_row, M2 ) ) { // v not matched
+		    all_ngh_match_M2 = false;
+		    break;
+		}
+	    }
+	    crown_H = tr::bitwise_or( u_ngh, crown_H );
+	}
+
+	if( all_ngh_match_M2 ) {
+	    // Intersection of I and H should be empty
+	    assert( tr::is_bitwise_and_zero( crown_I, crown_H ) );
+
+	    return { crown_I, crown_H };
+	}
+
+	// I0 = { M2 == 0 }: vertices in O (~M1) that are unmatched by M2
+	crown_I = tr::bitwise_andnot( M2, crown_I );
+	bool change = true;
+	while( change ) {
+	    // Reset H
+	    crown_H = tr::setzero();
+
+	    // Hn = N(In)
+	    bitset<Bits> bx( crown_I );
+	    for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+		VID v = *I;
+		row_type v_row = I.get_mask();
+
+		// crown_I intersect neighbours of v should be empty as
+		// crown_I is an independent set
+		row_type v_ngh = get_inv_row_unc( v, v_row, eligible );
+		assert( tr::is_bitwise_and_zero( v_ngh, crown_I ) );
+		crown_H = tr::bitwise_or( v_ngh, crown_H );
+	    }
+
+	    // In+1 = In union N_M2(Hn)
+	    change = false;
+	    for( auto I=Ma.begin(), E=Ma.end(); I != E; ++I ) {
+		auto [ u_row, v_row ] = *I; // row_types !
+
+		if( !tr::is_bitwise_and_zero( u_row, crown_H )
+		    && tr::is_bitwise_and_zero( v_row, crown_I ) ) {
+		    // u in Hn, v not in In
+		    change = true;
+		    crown_I = tr::bitwise_or( v_row, crown_I );
+		} else if( !tr::is_bitwise_and_zero( v_row, crown_H )
+			   && tr::is_bitwise_and_zero( u_row, crown_I ) ) {
+		    // v in Hn, u not in In
+		    change = true;
+		    crown_I = tr::bitwise_or( u_row, crown_I );
+		}
+	    }
+	    // TODO: always include in I and avoid 1/2 is_zero, check for
+	    // change by comparing pre/post crown_I
+	}
+
+	// Intersection of I and H should be empty
+	assert( tr::is_bitwise_and_zero( crown_I, crown_H ) );
+
+	return { crown_I, crown_H };
+    }
+
+    // A greedy algorithm guaranteeing a 2-approximation
+    void greedy_cover( VID & size, row_type & cover_out ) const {
+	row_type cover = tr::setzero();
+	for( VID v=0; v < m_n; ++v ) {
+	    row_type v_row = create_row( v );
+
+	    // v already covered
+	    if( !tr::is_bitwise_and_zero( v_row, cover ) )
+		continue;
+
+	    row_type v_ngh = get_inv_row_unc( v, v_row, m_allv_mask );
+	    bitset<Bits> bu( v_ngh );
+	    for( auto Iu=bu.begin(), Eu=bu.end(); Iu != Eu; ++Iu ) {
+		VID u = *Iu;
+		row_type u_row = Iu.get_mask();
+
+		// Is u covered?
+		if( !tr::is_bitwise_and_zero( u_row, cover ) )
+		    continue;
+
+		// Add (u,v) to cover
+		cover = tr::bitwise_or( u_row, cover );
+		cover = tr::bitwise_or( v_row, cover );
+		break;
+	    }
+	}
+
+	size = get_size( cover );
+	cover_out = cover;
+
+	assert( ( size % 2 ) == 0 );
+    }
+
+    template<bool exists>
+    int vck_crown( VID k, VID c, row_type eligible,
+		   VID & best_size, row_type & best_cover ) {
+	// Compute crown kernel: (I=1,H=2)
+	auto [ crown_I, crown_H ] = vck_crown_kernel( eligible );
+
+	// Failure to identify crown
+	if( tr::is_zero( crown_I ) || tr::is_zero( crown_H ) )
+	    return -1;
+
+	VID h_size = get_size( crown_H );
+	if( h_size > k )
+	    return 0; // no VC of size k or less
+
+	// All vertices in H are included in cover
+	row_type tmp_best_cover = tr::setzero();
+
+	// All vertices in I and H are no longer selectable
+	row_type crown_IH = tr::bitwise_or( crown_H, crown_I );
+	row_type tmp_eligible = tr::bitwise_andnot( crown_IH, eligible );
+
+	// Find a cover for the remaining vertices
+	VID tmp_best_size = 0;
+	bool rec = vck_iterate<exists>( k - h_size, c, tmp_eligible,
+					tmp_best_size, tmp_best_cover );
+
+	if( rec ) {
+	    best_size += tmp_best_size + h_size;
+	    best_cover =
+		tr::bitwise_or( tmp_best_cover,
+				tr::bitwise_or( crown_H, best_cover ) );
+	}
+
+	return rec ? 1 : 0;
+    }
+
+    template<bool exists>
     bool vck_buss( VID k, VID c, row_type eligible,
 		   VID & best_size, row_type & best_cover ) {
 	// Set U of vertices of degree higher than k
@@ -1374,10 +1743,12 @@ private:
 	VID gp_best_size = best_size + u_size;
 	row_type gp_best_cover = tr::bitwise_or( best_cover, u_set );
 	// row_type gp_eligible = tr::bitwise_andnot( u_set, eligible );
-	bool rec = vck_iterate( k - u_size, c, gp_eligible,
-				gp_best_size, gp_best_cover );
+	bool rec = vck_iterate<exists>( k - u_size, c, gp_eligible,
+					gp_best_size, gp_best_cover );
 
 	if( rec ) {
+	    assert( gp_best_size - best_size <= k );
+
 	    best_size = gp_best_size;
 	    best_cover = gp_best_cover;
 	}
@@ -1429,7 +1800,8 @@ private:
 
 	std::vector<char> visited( n, false ); // TODO: row_type
 
-	VID old_best_size = best_size;
+	VID poly_best_size = 0;
+	row_type poly_best_cover = tr::setzero();
 
 	// Find paths
 #if 0
@@ -1450,7 +1822,8 @@ private:
 	    if( deg == 1 && !visited[v] ) {
 		visited[v] = true;
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, eligible, best_size, best_cover,
+		vck_trace_path( visited, eligible,
+				poly_best_size, poly_best_cover,
 				v, ngh, true );
 	    }
 	}
@@ -1474,45 +1847,54 @@ private:
 		visited[v] = true;
 	
 		// Mark
-		best_size++;
-		best_cover = tr::bitwise_or( best_cover, v_row );
+		poly_best_size++;
+		poly_best_cover = tr::bitwise_or( poly_best_cover, v_row );
 		// std::cout << "tracepath cycle set " << v << "\n";
 
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, eligible, best_size, best_cover,
+		vck_trace_path( visited, eligible,
+				poly_best_size, poly_best_cover,
 				v, ngh, false );
 	    }
 	}
 
-	return best_size - old_best_size <= k;
+	if( poly_best_size <= k ) {
+	    best_size += poly_best_size;
+	    best_cover = tr::bitwise_or( best_cover, poly_best_cover );
+	    return true;
+	} else
+	    return false;
     }
     
+    template<bool exists>
     bool vck_iterate( VID k, VID c, row_type eligible,
 		      VID & best_size, row_type & best_cover ) {
 	VID n = m_n;
-	EID m = m_m;
-	auto [ max_v, max_deg ] = get_max_degree( eligible );
-
-	// std::cout << "iter k=" << k << " max_v=" << max_v
-		  // << " max_deg=" << max_deg << "\n";
-
-	// assert( best_size == get_size( best_cover ) );
-
-	if( max_deg <= 2 ) {
-	    bool p = vck_poly( k, eligible, best_size, best_cover );
-	    // std::cout << " poly k=" << k << " ret=" << p
-		      // << " best=" << best_size << ", "
-		      // << std::hex << best_cover << std::dec << "\n";
-	    // assert( best_size == get_size( best_cover ) );
-	    return p;
-	}
-
+	EID m = calculate_num_edges( eligible );
 	if( k == 0 )
 	    return m == 0;
 
+	auto [ max_v, max_deg ] = get_max_degree( eligible );
+	if( max_deg <= 2 ) {
+	    VID sz = 0;
+	    row_type c = tr::setzero();
+	    bool ret = vck_poly( k, eligible, sz, c );
+	    assert( !ret || sz <= k );
+	    if( ret ) {
+		best_size += sz;
+		best_cover = tr::bitwise_or( best_cover, c );
+	    }
+	    return ret;
+	}	
+
+	// Try crown kernel reduction
+	int ret = vck_crown<exists>( k, c, eligible, best_size, best_cover );
+	if( ret >= 0 )
+	    return (bool)ret;
+
 	if( m/2 > c * k * k && max_deg > k ) {
 	    // replace by Buss kernel
-	    return vck_buss( k, c, eligible, best_size, best_cover );
+	    return vck_buss<exists>( k, c, eligible, best_size, best_cover );
 	}
 
 	// Must have a vertex with degree >= 3
@@ -1534,51 +1916,44 @@ private:
 
 	VID x_k = std::min( n-1-max_deg, k-max_deg );
 	bool x_ok = false;
-	// std::cout << " exclude k=" << k << " start\n";
 	if( k >= max_deg )
-	    x_ok = vck_iterate( x_k, c, x_eligible, x_best_size, x_best_cover );
+	    x_ok = vck_iterate<exists>( x_k, c, x_eligible, x_best_size, x_best_cover );
 
-	// std::cout << " exclude k=" << k << " x_k=" << x_k << " ret=" << x_ok
-		  // << " best=" << x_best_size << ", "
-		  // << std::hex << x_best_cover << std::dec << "\n";
+	// With exists queries, it suffices to answer positively
+	if constexpr ( exists ) {
+	    if( x_ok ) {
+		assert( x_best_size <= x_k );
+		// add max_v, neighbours, and anything in x_best_cover;
+		best_size += max_deg + x_best_size;
+		best_cover = tr::bitwise_or(
+		    best_cover, tr::bitwise_or( x_best_cover, rm ) );
+		assert( best_size <= k );
+		return true;
+	    }
+	}
 
 	// In case v is included, erase only v
 	row_type i_eligible = tr::bitwise_andnot( max_v_row, eligible );
 	VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
-	bool i_ok = vck_iterate( i_k, c, i_eligible, i_best_size, i_best_cover );
+	bool i_ok = vck_iterate<exists>( i_k, c, i_eligible, i_best_size, i_best_cover );
 
-	// std::cout << " include k=" << k << " i_k=" << i_k << " ret=" << i_ok
-		  // << " best=" << i_best_size << ", "
-		  // << std::hex << i_best_cover << std::dec << "\n";
-
-	// std::cout << " iter k=" << k << " max_v=" << max_v
-		  // << " max_deg=" << max_deg
-		  // << " x=" << x_ok
-		  // << " i=" << i_ok
-		  // << "\n";
-
+	VID pre = best_size;
 	if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
+	    assert( i_best_size <= i_k );
+	    assert( 1 + i_best_size <= k );
 	    // add max_v, and anything in i_best_cover;
 	    best_size += 1 + i_best_size;
 	    best_cover = tr::bitwise_or(
 		best_cover, tr::bitwise_or( i_best_cover, max_v_row ) );
-	    // std::cout << " select i best=" << best_size << ", "
-		      // << std::hex << best_cover << std::dec << "\n";
 	} else if( x_ok ) {
+	    assert( max_deg + x_best_size <= k );
 	    // add max_v, neighbours, and anything in x_best_cover;
 	    best_size += max_deg + x_best_size;
 	    best_cover = tr::bitwise_or(
 		best_cover, tr::bitwise_or( x_best_cover, rm ) );
-	    // std::cout << " select x best=" << best_size << ", "
-		      // << std::hex << best_cover << std::dec << "\n";
 	}
 
-	// assert( best_size == get_size( best_cover ) );
-
-	// std::cout << "return k=" << k << " ret=" << ( i_ok || x_ok )
-		  // << " best=" << best_size << ", "
-		  // << std::hex << best_cover << std::dec << "\n";
-
+	assert( !( i_ok || x_ok ) || best_size - pre <= k );
 	return i_ok || x_ok;
     }
 
@@ -1723,9 +2098,14 @@ private:
     }
 
 public:
+    EID get_num_edges() const { return m_m; }
+    VID get_max_degree() const { return m_d_max; }
     EID calculate_num_edges() const {
 	return calculate_num_edges( m_allv_mask );
     }
+    VID get_num_vertices() const { return m_n; }
+    VID get_degree( VID v ) const { return get_size( get_row( v ) ); }
+
 private:
     EID calculate_num_edges( row_type eligible ) const {
 #if 0
@@ -1785,6 +2165,7 @@ private:
     const row_type m_allv_mask;
     VID m_n;
     static constexpr unsigned m_words = VL;
+    VID m_d_max;
     EID m_m;
     type * m_matrix;
     type * m_matrix_alc;
