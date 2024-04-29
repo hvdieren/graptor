@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "graptor/graph/GraphCSx.h"
+#include "graptor/container/array_slice.h"
 
 namespace graptor {
 
@@ -169,6 +170,10 @@ public:
 
     lVID get_num_vertices() const { return m_num_iset; }
     const lVID * get_vertices() const { return m_iset; }
+
+    array_slice<lVID,lVID> get_slice() const {
+	return array_slice<lVID,lVID>( m_iset, m_num_iset );
+    }
 
 private:
     lVID * m_iset;
