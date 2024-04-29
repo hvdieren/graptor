@@ -22,7 +22,7 @@ struct array_slice {
     const type * end() const { return m_end; }
 
 private:
-    T * m_begin, * m_end;
+    type * m_begin, * m_end;
 };
 
 } // namespace graptor
