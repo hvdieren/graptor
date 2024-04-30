@@ -1577,7 +1577,7 @@ vertex_cover_vc3_buss( volatile bool * terminate,
     EID m = G.numEdges();
     
     // If G' has more than k(k-|U|) edges, reject
-    if( m > k * ( k - u_size ) ) {
+    if( m/2 > k * ( k - u_size ) ) {
 	G.restore_checkpoint( chkpt );
 	return false;
     }
@@ -1681,6 +1681,9 @@ vertex_cover_vc3( volatile bool * terminate,
     VID n = G.numVertices();
     EID m = G.numEdges();
 
+    if( k == 0 )
+	return m == 0;
+
     VID max_v, max_deg;
     std::tie( max_v, max_deg ) = G.max_degree();
     if( max_deg <= 2 ) {
@@ -1689,9 +1692,6 @@ vertex_cover_vc3( volatile bool * terminate,
 	// check_cover( G, best_size, best_cover );
 	return ret;
     }
-
-    if( k == 0 )
-	return m == 0;
 
 /* in-effective
     int ret
