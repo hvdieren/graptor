@@ -682,18 +682,22 @@ public:
 	const lVID * const r_ngh
 	    = std::upper_bound( r_adj.begin(), r_adj.end(), v );
 
+	// Length of left neighbourhood is an upper bound as we need to
+	// intersect with r_adj
 	const lVID l_len = std::distance( l_adj.begin(), l_ngh );
 	const lVID r_len = std::distance( r_ngh, r_adj.end() );
 
-	PSet lur( n, l_len + r_len );
+	PSet lur( n, l_len + r_len + 16 );
 	lVID * s = lur.m_set;
-	std::copy( l_adj.begin(), l_ngh, s );
-	std::copy( r_ngh, r_adj.end(), s+l_len );
+	s = graptor::hash_vector::intersect( l_adj.begin(), l_ngh, r_adj, s );
+	s = std::copy( r_ngh, r_adj.end(), s );
 
-	// Construct lur.m_pos 
-	for( lVID i=0; i < l_len + r_len; ++i )
+	// Construct lur.m_pos
+	const lVID len = s - lur.m_set;
+	assert( len <= l_len + r_len );
+	for( lVID i=0; i < len; ++i )
 	    lur.m_pos[lur.m_set[i]] = i;
-	lur.m_fill = l_len + r_len;
+	lur.m_fill = len;
 
 	return lur;
     }
