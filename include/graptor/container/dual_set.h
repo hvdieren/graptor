@@ -51,7 +51,7 @@ struct dual_set {
     hash_type & get_hash() { return m_hash; }
     const hash_type & get_hash() const { return m_hash; }
 
-    bool contains( type value ) const { return m_hash.contains( value ); }
+    auto contains( type value ) const { return m_hash.contains( value ); }
 
     template<typename U, unsigned short VL, typename MT>
     auto
