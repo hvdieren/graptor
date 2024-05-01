@@ -24,8 +24,8 @@ public:
     std::conditional_t<std::is_same_v<MT,target::mt_mask>,
 		       typename vector_type_traits_vl<U,VL>::mask_type,
 		       typename vector_type_traits_vl<U,VL>::vmask_type>
-    multi_contains( typename vector_type_traits_vl<U,VL>::type
-		    index, MT ) const {
+    multi_contains( typename vector_type_traits_vl<U,VL>::type index,
+		    MT ) const {
 	using tr = vector_type_traits_vl<U,VL>;
 
 	auto r1 = m_hash1.template multi_contains<U,VL>( index, MT() );
@@ -53,6 +53,8 @@ public:
     template<bool present_p>
     class hash_set_interface {
     public:
+	using type = lVID;
+	
 	hash_set_interface( const XPSetBase & xp, lVID ne )
 	    : m_xp( xp ), m_ne( ne ) { }
 
@@ -118,6 +120,25 @@ public:
 		return tr::asvector( ret );
 	}
 
+	const lVID * begin() const {
+	    if constexpr ( present_p )
+		return m_xp.begin() + m_ne;
+	    else
+		return m_xp.begin();
+	}
+	const lVID * end() const {
+	    if constexpr ( present_p )
+		return m_xp.end();
+	    else
+		return m_xp.begin() + m_ne;
+	}
+	const lVID size() const {
+	    if constexpr ( present_p )
+		return m_xp.size() - m_ne;
+	    else
+		return m_ne;
+	}
+
     private:
 	const XPSetBase & m_xp;
 	lVID m_ne;
@@ -127,6 +148,8 @@ public:
     // fit in with the intersect template code.
     class hash_table_interface {
     public:
+	using type = lVID;
+	
 	hash_table_interface( const XPSetBase & xp ) : m_xp( xp ) { }
 
 	lVID contains( lVID v ) const {
@@ -183,6 +206,10 @@ public:
 	    vtype inv = tr::setone();
 	    return tr::blend( mv, inv, pos );
 	}
+
+	const lVID * begin() const { return m_xp.begin(); }
+	const lVID * end() const { return m_xp.end(); }
+	const lVID size() const { return m_xp.size(); }
 
     private:
 	const XPSetBase & m_xp;
@@ -298,6 +325,9 @@ public:
     lVID at( lVID pos ) const { return m_set[pos]; }
     lVID get_fill() const { return m_fill; }
     lVID size() const { return m_fill; }
+
+    const lVID * begin() const { return m_set; }
+    const lVID * end() const { return m_set + m_fill; }
 
 protected:
     lVID * m_pos;
@@ -606,6 +636,7 @@ public:
 
     // Intersect this with adjacency list.
     // Validate all entries in this->m_set.
+    // TODO: streamline with dual_set
     template<typename DualSet>
     PSet intersect_validate( lVID n, const DualSet & adj ) const {
 	lVID deg = adj.size();
@@ -614,6 +645,7 @@ public:
 	PSet ins( n, mx+16 ); // hash_vector requires extra space
 	lVID ce_new;
 
+#if 1
 	if( ce > 2*deg || true ) {
 	    // TODO: find split point for X/P to reduce ranges?
 	    //       or make single traversal and determine X/P on the fly?
@@ -633,6 +665,10 @@ public:
 		this->m_set, this->m_set+ce, adj.get_hash(),
 		ins.m_set ) - ins.m_set;
 	}
+#else
+	ce_new = graptor::hash_vector::intersect(
+	    adj, this->hash_set_validate(), ins.m_set ) - ins.m_set;
+#endif
 
 	// Construct ins.m_pos 
 	for( lVID i=0; i < ce_new; ++i )
@@ -792,18 +828,10 @@ public:
 
     // Intersect-size PSet with adjacency list.
     // Consider all vertices up to position i.
-    template<typename Adj>
-    lVID intersect_size_from( const Adj & adj, const lVID * ngh, lVID i )
-	const {
-	lVID deg = adj.size();
-
-	if( ( this->m_fill - i - 1 ) > 2*deg ) {
-	    return graptor::hash_vector::intersect_size(
-		ngh, ngh+deg, this->P_hash_set( i+1 ) );
-	} else {
-	    return graptor::hash_vector::intersect_size(
-		this->m_set+i+1, this->m_set+this->m_fill, adj );
-	}
+    template<typename DualSet>
+    lVID intersect_size_from( const DualSet & set, lVID i ) const {
+	return graptor::hash_vector::intersect_size(
+	    set.begin(), set.end(), this->P_hash_set( i+1 ) ); // TEMP!!!
     }
 
     static PSet intersect_top_level(
