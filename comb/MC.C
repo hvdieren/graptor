@@ -1072,86 +1072,6 @@ auto make_alternative_selector( Fn && ... fn ) {
 template<typename GraphType>
 class GraphBuilderInduced;
 
-// For maximal clique enumeration - all vertices regardless of coreness
-// Sort/relabel vertices by decreasing coreness
-// TODO: make hybrid between hash table / adj list for lowest degrees?
-template<typename VID, typename EID, typename Hash>
-class GraphBuilderInduced<graptor::graph::GraphHAdjTable<VID,EID,Hash>> {
-public:
-    template<typename HGraph>
-    GraphBuilderInduced(
-	const GraphCSx & G,
-	const HGraph & H,
-	VID v,
-	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
-	: S( cut.get_num_vertices() ),
-	  start_pos( cut.get_start_pos() ) {
-	const VID * const s2g = cut.get_vertices();
-	VID n = G.numVertices();
-	EID m = G.numEdges();
-	const EID * const gindex = G.getIndex();
-	const VID * const gedges = G.getEdges();
-
-	// Indices:
-	// global (g): original graph's vertex IDs
-	// short (s): relabeled vertex IDs in induced graph S
-	// neighbours (n): position of vertex in neighbour list, which is
-	//                 sorted by global IDs, facilitating lookup
-	VID ns = cut.get_num_vertices();
-
-	for( VID su=0; su < ns; ++su ) {
-	    VID u = s2g[su];
-	    VID k = 0;
-	    auto & adj = S.get_adjacency( su );
-	    for( EID e=gindex[u], ee=gindex[u+1]; e != ee && k != ns; ++e ) {
-		VID w = gedges[e];
-		while( k != ns && s2g[k] < w )
-		    ++k;
-		if( k == ns )
-		    break;
-		// If neighbour is selected in cut-out, add to induced graph.
-		// Skip self-edges.
-		// Skip edges between vertices in X.
-		if( s2g[k] == w && w != u
-		    && ( su >= start_pos || k >= start_pos ) )
-		    adj.insert( k );
-	    }
-	}
-
-	S.sum_up_edges();
-    }
-    template<typename HGraph>
-    GraphBuilderInduced(
-	const HGraph & H,
-	const VID * const XP,
-	VID ne,
-	VID ce )
-	: S( ce ),
-	  start_pos( ne ) {
-	VID n = H.numVertices();
-
-	for( VID su=0; su < ce; ++su ) {
-	    VID u = XP[su];
-	    VID k = 0;
-	    auto & Hadj = H.get_adjacency( u );
-	    auto & Sadj = S.get_adjacency( su );
-	    graptor::hash_insert_iterator<typename HGraph::hash_set_type>
-		out( Sadj, XP );
-	    graptor::hash_scalar::intersect<true>(
-		su < ne ? XP+ne : XP, XP+ce, Hadj, out );
-	}
-
-	S.sum_up_edges(); // necessary?
-    }
-
-    const auto & get_graph() const { return S; }
-    VID get_start_pos() const { return start_pos; }
-
-private:
-    graptor::graph::GraphHAdjTable<VID,EID,Hash> S;
-    VID start_pos;
-};
-
 template<typename VID, typename EID, bool dual_rep, typename Hash>
 class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash>> {
 public:
@@ -1188,7 +1108,6 @@ public:
 
 private:
     graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash> S;
-    std::vector<VID> s2g;
     VID start_pos;
 };
 
@@ -1812,6 +1731,9 @@ clique_via_vc3( volatile bool * terminate,
     VID cn = CG.numVertices();
     EID cm = CG.numEdges();
 
+    for( VID v=0; v < cn; ++v )
+	assert( CG.getDegree(v) + G.getDegree(v) + 1 == cn );
+
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
@@ -2045,9 +1967,8 @@ count_colours( const HGraphTy & G, const PSet<VID> & xp ) {
     for( VID j=1; j < n; ++j ) {
 	VID i = n-1 - j;
 	VID v = xp.at( i );
-	const auto & adj = G.get_adjacency( v );
-	const VID * ngh = G.get_neighbours( v );
-	VID isz = xp.intersect_size_from( adj, ngh, i );
+	const auto & adj = G.get_neighbours_set( v );
+	VID isz = xp.intersect_size_from( adj, i );
 	// c = std::max( isz, c );
 	// Rationale: if we have as many neighbours as colours already handed
 	// out, we will need an additional colour. If, for instance, we have
@@ -2098,19 +2019,15 @@ mc_bron_kerbosch_recpar_xps(
     VID pivot = xp.at( 0 );
     const auto & p_adj = G.get_neighbours_set( pivot );
 
-    PSet<VID> it = xp.remove( n, p_adj );
-    // PSet<VID> it = PSet<VID>::copy( n, xp );
+    for( VID i=0; i < xp.size(); ++i ) {
+	VID v = xp.at( i );
 
-    for( VID i=0; i < it.size(); ++i ) {
-	VID v = it.at( i );
-
-	// if( p_adj.contains( v ) ) // skip neigbours
-	// return;
+	// Skip neighbours of pivot.
+	// Could remove them explicitly, however, not needed in sequential
+	// execution.
+	if( p_adj.contains( v ) )
+	    continue;
 	
-	// Marginal performance improvement smaller graphs (< orkut)
-	// if( !E.is_feasible( depth + 1 + G.get_right_degree( v ) ) )
-	// return;
-
 	const auto adj = G.get_neighbours_set( v ); 
 	VID deg = adj.size();
 
@@ -2131,19 +2048,12 @@ mc_bron_kerbosch_recpar_xps(
 	    //   i.e., neighbours of pivot, are still in P.
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
-	    // const VID * ngh = G.get_neighbours( v ); 
-	    // VID ce_new;
-	    // PSet<VID> xp_new
-	    // = xp.intersect( G.numVertices(), i, ce, adj.get_hash(), ngh, ce_new );
+	    // TODO: streamline with dual_set
 	    PSet<VID> xp_new = xp.intersect_validate( n, adj );
-
 	    bk_recursive_call( G, degeneracy, E, xp_new, depth+1 );
 	}
 
 	xp.invalidate( v );
-
-	// TODO: if max_clique updated, then refilter candidate list?
-	//       e.g., compare max clique before/after call
     }
 }
 
@@ -2162,34 +2072,21 @@ mc_bron_kerbosch_recpar_top_xps(
     auto it = PSet<VID>::create_complement( n, p_adj );
     
     // 3. loop over elements it ; initial P is all vertices
-    // 4. remove v iterated over from P (no parallelism)
     VID it_size = it.size();
     const VID * it_elm = it.get_set();
     for( VID i=0; i < it_size; ++i ) {
 	VID v = it_elm[i];
-	// for( VID v=0; v < n; ++v ) {
 	VID deg = G.getDegree( v ); 
 
 	if( deg == 0 ) {
 	    // avoid overheads of copying and cutout
+	    // TODO: assume this never happens at top level due to
+	    //       filtering before creating cutout.
 	    E.record( 1 );
 	} else {
-	    const auto & adj = G.get_neighbours_set( v ); 
-	    // TODO: cutout must ignore left-neighbourhood, except neighbours
-	    //       of the pivot, so simple intersection achieves desired
-	    //       goal as the set it has only left neighbours that are
-	    //       neighbours of the pivot.
-	    // TODO: intersect-and-filter based on largest clique so far
-	    // PSet<VID> xp_new = all.intersect_validate( n, adj );
+	    auto adj = G.get_neighbours_set( v ); 
 	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
-	    // PSet<VID> xp_new = PSet<VID>::intersect_top_level( n, v, adj );
-		// = PSet<VID>::intersect_top_level( n, v, ngh, deg, ce_new );
-		// = PSet<VID>::intersect_top_level_pivot(
-		// n, v, ngh, deg, p_adj, ce_new );
-
 	    bk_recursive_call( G, degeneracy, E, xp_new, 2 );
-
-	    // all.invalidate_at( i );
 	}
     }
 }
@@ -2390,17 +2287,14 @@ void mc_top_level(
     if( hn1 < best )
 	return;
 
-#if 0
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
     // (using intersect-size-exceeds). If not, throw them out also.
     // TODO: slightly adapt to abort intersection also if known to be >= target
     cut.filter( [&]( VID u ) {
-	VID d = graptor::merge_vector::intersect_size_exceed(
-	    cut.get_vertices(),
-	    cut.get_vertices()+cut.get_num_vertices(),
-	    G.get_neighbours( u ),
-	    G.get_neighbours( u ) + G.getDegree( u ),
+	VID d = graptor::hash_vector::intersect_size_exceed(
+	    cut.get_slice(),
+	    H.get_neighbours_set( u ),
 	    best-1 ); // exceed checks >, we need >= best
 	return d >= best;
     }, best );
@@ -2409,7 +2303,6 @@ void mc_top_level(
     // in analysing it, nor constructing cut-out.
     if( cut.get_num_vertices() < best )
 	return;
-#endif
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
