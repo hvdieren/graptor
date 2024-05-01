@@ -195,6 +195,24 @@ struct hash_pa_insert_iterator {
 	    *m_list++ = v;
     }
 
+    template<bool rhs>
+    bool record( const VID * p, std::conditional_t<rhs,VID,bool> xlat ) {
+	if constexpr ( rhs ) {
+	    // RHS is XP dual set. xlat contains translated ID
+	    m_table.insert( xlat );
+	    if constexpr ( dual_rep )
+		*m_list++ = xlat;
+	} else {
+	    // RHS is adjacency info. Need to translate using pointer
+	    // arithmetic
+	    VID v = p - m_start;
+	    m_table.insert( v );
+	    if constexpr ( dual_rep )
+		*m_list++ = v;
+	}
+	return true;
+    }
+
 private:
     hash_set<VID,Hash> & m_table;
     VID * m_list;
@@ -476,8 +494,18 @@ public:
 		h += s;
 	}
 
+	// Note: if this is only called from top level, and in this case
+	// elements of XP have been selected down to have degrees only
+	// greater than the size of XP, than XP is always smaller than
+	// the adjacency lists of its elements, except in rare circumstances.
+
 	// Place XP in hash table for fast intersection
-	hash_set_type XP_hash( XP, XP+ce );
+	// hash_set_type XP_hash( XP, XP+ce );
+	// dual_set_type XP_dual_set( ngh_set_type( XP, XP+ce ), XP_hash );
+	hash_table_type XP_hash( ce );
+	for( VID i=0; i < ce; ++i )
+	    XP_hash.insert( XP[i], i );
+	auto XP_dual_set = dual_set<ngh_set_type,hash_table_type>( ngh_set_type( XP, XP+ce ), XP_hash );
 
 	new ( &m_storage ) mm::buffer<VID>( h, alloc );
 
@@ -487,45 +515,28 @@ public:
 	    VID u = XP[su];
 	    hash_set_type & a = m_adjacency[su];
 
-	    // Note: ce >> degree( u ). Use dual representation so that the
+	    // Note: typically degree( u ) >> ce but not always.
+	    // Use dual representation so that the
 	    // main list for iteration can be swapped.
 	    const VID * n = G.get_neighbours( u );
 	    VID deg = G.getDegree( u );
-	    if( ce > 2*deg && n != nullptr ) [[likely]] {
-		// Alternative: first place intersection in sequential storage,
-		// using hash of XP, then translate and insert in adjacency a
-		// Seems best-performing
-		assert( has_dual_rep && "otherwise need temporary space" );
-		VID * arr = &hashes[s_next];
-		VID * e = graptor::hash_scalar::intersect(
-		    n, n+deg, XP_hash, arr );
-		VID logs = get_log_hash_slots( e - arr );
-		VID s = 1 << logs;
-		new ( &a ) hash_set_type(
-		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
-		s_next += has_dual_rep ? 2*s : s;
-		
-		for( VID * i=arr; i != e; ++i ) {
-		    const VID * pos = std::lower_bound( XP, XP+ce, *i );
-		    assert( *pos == *i );
-		    VID sv = pos - XP;
-		    assert( sv != su );
-		    if constexpr ( has_dual_rep )
-			*i = sv;
-		    a.insert( sv );
-		}
-	    } else {
-		VID sdeg = std::min( deg, ce );
-		VID logs = get_log_hash_slots( sdeg );
-		VID s = 1 << logs;
-		new ( &a ) hash_set_type(
-		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
-		hash_pa_insert_iterator<dual_rep,true,Hash>
-		    out( a, &hashes[s_next], XP );
-		graptor::hash_scalar::intersect<true>(
-		    XP, XP+ce, H.get_adjacency( u ), out );
-		s_next += has_dual_rep ? 2*s : s;
-	    }
+	    const auto & u_adj = H.get_neighbours_set( u );
+
+	    // Intersection u_adj and XP_dual_set
+	    // Common elements need to be remapped to position in XP
+	    // If u_adj sequential -> XP as a hash table
+	    // If XP sequential -> u_adj hash set, remap by left (XP) pointer
+	    VID sdeg = std::min( deg, ce );
+	    VID logs = get_log_hash_slots( sdeg );
+	    VID s = 1 << logs;
+	    new ( &a ) hash_set_type(
+		&hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+	    // Remap values: XP[i] -> i, same as hash table mapping
+	    hash_pa_insert_iterator<dual_rep,true,Hash>
+		out( a, &hashes[s_next], XP );
+	    graptor::hash_scalar::intersect_ds(
+		u_adj, XP_dual_set, out );
+	    s_next += has_dual_rep ? 2*s : s;
 	}
     }
 
