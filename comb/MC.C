@@ -19,20 +19,12 @@
 #define ABLATION_HADJPA_DISABLE_XP_HASH 0
 #endif
 
-#ifndef ABLATION_BLOCKED_DISABLE_XP_HASH
-#define ABLATION_BLOCKED_DISABLE_XP_HASH 0
-#endif
-
 #ifndef ABLATION_DENSE_DISABLE_XP_HASH
 #define ABLATION_DENSE_DISABLE_XP_HASH 0
 #endif
 
 #ifndef ABLATION_BITCONSTRUCT_XP_VEC
 #define ABLATION_BITCONSTRUCT_XP_VEC 0
-#endif
-
-#ifndef ABLATION_BLOCKED_EXCEED
-#define ABLATION_BLOCKED_EXCEED 0
 #endif
 
 #ifndef ABLATION_DENSE_EXCEED
@@ -64,32 +56,16 @@
 #define ABLATION_DENSE_NO_PIVOT_TOP 0
 #endif
 
-#ifndef ABLATION_BLOCKED_NO_PIVOT_TOP
-#define ABLATION_BLOCKED_NO_PIVOT_TOP 0
-#endif
-
 #ifndef ABLATION_DENSE_FILTER_FULLY_CONNECTED
 #define ABLATION_DENSE_FILTER_FULLY_CONNECTED 1
-#endif
-
-#ifndef ABLATION_BLOCKED_FILTER_FULLY_CONNECTED
-#define ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 1
 #endif
 
 #ifndef ABLATION_DENSE_ITERATE
 #define ABLATION_DENSE_ITERATE 0
 #endif
 
-#ifndef ABLATION_BLOCKED_ITERATE
-#define ABLATION_BLOCKED_ITERATE 0
-#endif
-
 #ifndef ABLATION_DENSE_PIVOT_FILTER
 #define ABLATION_DENSE_PIVOT_FILTER 0
-#endif
-
-#ifndef ABLATION_BLOCKED_PIVOT_FILTER
-#define ABLATION_BLOCKED_PIVOT_FILTER 0
 #endif
 
 #ifndef USE_512_VECTOR
@@ -133,7 +109,6 @@
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/graph/simple/cutout.h"
 #include "graptor/graph/simple/dense.h"
-#include "graptor/graph/simple/blocked.h"
 #include "graptor/graph/simple/xp_set.h"
 #include "graptor/graph/transform/rmself.h"
 
@@ -158,8 +133,7 @@
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
 
-#if ABLATION_BLOCKED_DISABLE_XP_HASH	\
-    && ABLATION_HADJPA_DISABLE_XP_HASH
+#if ABLATION_HADJPA_DISABLE_XP_HASH
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
@@ -167,27 +141,31 @@ using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
 
 using graptor::graph::DenseMatrix;
-using graptor::graph::BinaryMatrix;
-using graptor::graph::BlockedBinaryMatrix;
 using graptor::graph::PSet;
 
-static constexpr size_t X_MIN_SIZE = 5;
-static constexpr size_t X_DIM = 9 - X_MIN_SIZE + 1;
-static constexpr size_t P_MIN_SIZE = 5;
-static constexpr size_t P_DIM = 9 - P_MIN_SIZE + 1;
 static constexpr size_t N_MIN_SIZE = 5;
 static constexpr size_t N_DIM = 9 - N_MIN_SIZE + 1;
 
 #if USE_512_VECTOR
-static constexpr size_t X_MAX_SIZE = 9;
-static constexpr size_t P_MAX_SIZE = 9;
 static constexpr size_t N_MAX_SIZE = 9;
 #else
-static constexpr size_t X_MAX_SIZE = 8;
-static constexpr size_t P_MAX_SIZE = 8;
 static constexpr size_t N_MAX_SIZE = 8;
 #endif
 
+size_t get_size_class( uint32_t v ) {
+    size_t b = _lzcnt_u32( v-1 );
+    size_t cl = 32 - b;
+    assert( v <= (1<<cl) );
+    if( cl < N_MIN_SIZE )
+	cl = N_MIN_SIZE;
+    return cl;
+}
+
+enum algo_variant {
+    av_bk = 0,
+    av_vc = 1,
+    N_VARIANTS = 2
+};
 
 static bool verbose = false;
 
@@ -308,43 +286,36 @@ struct all_variant_statistics {
     all_variant_statistics
     operator + ( const all_variant_statistics & s ) const {
 	all_variant_statistics sum;
-	for( size_t n=0; n < N_DIM; ++n ) {
-	    sum.m_dense[n] = m_dense[n] + s.m_dense[n];
-	    sum.m_leaf_dense[n] = m_leaf_dense[n] + s.m_leaf_dense[n];
-	}
-	for( size_t x=0; x < X_DIM; ++x )
-	    for( size_t p=0; p < P_DIM; ++p ) {
-		sum.m_blocked[x][p] = m_blocked[x][p] + s.m_blocked[x][p];
-		sum.m_leaf_blocked[x][p]
-		    = m_leaf_blocked[x][p] + s.m_leaf_blocked[x][p];
+	for( size_t v=0; v < N_VARIANTS; ++v ) {
+	    for( size_t n=0; n < N_DIM; ++n ) {
+		sum.m_dense[v][n] = m_dense[v][n] + s.m_dense[v][n];
+		sum.m_leaf_dense[v][n] =
+		    m_leaf_dense[v][n] + s.m_leaf_dense[v][n];
 	    }
+	    sum.m_gen[v] = m_gen[v] + s.m_gen[v];
+	}
 	sum.m_tiny = m_tiny + s.m_tiny;
-	sum.m_gen = m_gen + s.m_gen;
 	return sum;
     }
 
     void record_tiny( double atm ) { m_tiny.record( atm ); }
-    void record_gen( double atm ) { m_gen.record( atm ); }
-    void record_genbuild( double atm ) { m_gen.record_build( atm ); }
+    void record_gen( algo_variant var, double atm ) {
+	m_gen[(size_t)var].record( atm );
+    }
+    void record_genbuild( algo_variant var, double atm ) {
+	m_gen[(size_t)var].record_build( atm );
+    }
 
-    variant_statistics & get( size_t n ) {
-	return m_dense[n-N_MIN_SIZE];
+    variant_statistics & get( algo_variant var, size_t n ) {
+	return m_dense[(size_t)var][n-N_MIN_SIZE];
     }
-    variant_statistics & get_leaf( size_t n ) {
-	return m_leaf_dense[n-N_MIN_SIZE];
-    }
-    variant_statistics & get( size_t x, size_t p ) {
-	return m_blocked[x-X_MIN_SIZE][p-P_MIN_SIZE];
-    }
-    variant_statistics & get_leaf( size_t x, size_t p ) {
-	return m_leaf_blocked[x-X_MIN_SIZE][p-P_MIN_SIZE];
+    variant_statistics & get_leaf( algo_variant var, size_t n ) {
+	return m_leaf_dense[(size_t)var][n-N_MIN_SIZE];
     }
     
-    variant_statistics m_dense[N_DIM];
-    variant_statistics m_blocked[X_DIM][P_DIM];
-    variant_statistics m_leaf_dense[N_DIM];
-    variant_statistics m_leaf_blocked[X_DIM][P_DIM];
-    variant_statistics m_tiny, m_gen;
+    variant_statistics m_dense[N_VARIANTS][N_DIM];
+    variant_statistics m_leaf_dense[N_VARIANTS][N_DIM];
+    variant_statistics m_tiny, m_gen[N_VARIANTS];
 
 };
 
@@ -1386,8 +1357,7 @@ compute_coreness( GraphType & G ) {
  *======================================================================*/
 template<bool exists>
 bool
-vertex_cover_vc3( volatile bool * terminate,
-		  graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		  VID k,
 		  VID c,
 		  VID & best_size,
@@ -1468,15 +1438,11 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 
 template<bool exists>
 bool
-vertex_cover_vc3_buss( volatile bool * terminate,
-		       graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+vertex_cover_vc3_buss( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		       VID k,
 		       VID c,
 		       VID & best_size,
 		       VID * best_cover ) {
-    if( *terminate )
-	throw timeout_exception();
-    
     // Set U of vertices of degree higher than k
     VID u_size = std::count_if( G.dbegin(), G.dend(),
 				[&]( VID deg ) { return deg > k; } );
@@ -1504,7 +1470,6 @@ vertex_cover_vc3_buss( volatile bool * terminate,
     // Find a cover for the remaining vertices
     VID gp_best_size = 0;
     bool rec = vertex_cover_vc3<exists>(
-	terminate,
 	G, k - u_size, c,
 	gp_best_size, &best_cover[best_size] );
 
@@ -1531,8 +1496,7 @@ vertex_cover_vc3_buss( volatile bool * terminate,
 
 template<bool exists>
 int
-vertex_cover_vc3_crown( volatile bool * terminate,
-			graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+vertex_cover_vc3_crown( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 			VID k,
 			VID c,
 			VID & best_size,
@@ -1574,7 +1538,6 @@ vertex_cover_vc3_crown( volatile bool * terminate,
     // Find a cover for the remaining vertices
     VID gp_best_size = 0;
     bool rec = vertex_cover_vc3<exists>(
-	terminate,
 	G, k - h_size, c,
 	gp_best_size, &best_cover[tmp_best_size] );
 
@@ -1588,15 +1551,11 @@ vertex_cover_vc3_crown( volatile bool * terminate,
 
 template<bool exists>
 bool
-vertex_cover_vc3( volatile bool * terminate,
-		  graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 		  VID k,
 		  VID c,
 		  VID & best_size,
 		  VID * best_cover ) {
-    if( *terminate )
-	throw timeout_exception();
-
     VID n = G.numVertices();
     EID m = G.numEdges();
 
@@ -1614,15 +1573,14 @@ vertex_cover_vc3( volatile bool * terminate,
 
 /* in-effective
     int ret
-	= vertex_cover_vc3_crown<exists>( terminate, G, k, c, best_size, best_cover );
+	= vertex_cover_vc3_crown<exists>( G, k, c, best_size, best_cover );
     if( ret != 2 )
 	return (bool)ret;
 */
 
     if( m/2 > c * k * k && max_deg > k ) {
 	// replace by Buss kernel
-	return vertex_cover_vc3_buss<exists>(
-	    terminate, G, k, c, best_size, best_cover );
+	return vertex_cover_vc3_buss<exists>( G, k, c, best_size, best_cover );
     }
 
     // Must have a vertex with degree >= 3
@@ -1659,8 +1617,7 @@ vertex_cover_vc3( volatile bool * terminate,
 	    std::cerr << "vc3: n=" << n << " m=" << m
 		      << " vertex " << max_v << " deg " << max_deg
 		      << " excluded k=" << k << "\n";
-	x_ok = vertex_cover_vc3<exists>(
-	    terminate, G, x_k, c, x_best_size, x_best_cover );
+	x_ok = vertex_cover_vc3<exists>( G, x_k, c, x_best_size, x_best_cover );
     }
 
     if constexpr ( exists ) {
@@ -1687,7 +1644,7 @@ vertex_cover_vc3( volatile bool * terminate,
 		  << " vertex " << max_v << " deg " << max_deg
 		  << " included k=" << k << "\n";
     bool i_ok = vertex_cover_vc3<exists>(
-	terminate, G, i_k, c, i_best_size, i_best_cover );
+	G, i_k, c, i_best_size, i_best_cover );
 
     if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
 	best_cover[best_size++] = max_v;
@@ -1712,8 +1669,7 @@ vertex_cover_vc3( volatile bool * terminate,
 }
 
 VID
-clique_via_vc3( volatile bool * terminate,
-		const HGraphTy & G,
+clique_via_vc3( const HGraphTy & G,
 		VID degeneracy,
 		MC_Enumerator & E,
 		PSet<VID> & pset,
@@ -1761,9 +1717,9 @@ clique_via_vc3( volatile bool * terminate,
     // Don't run search for a 2-clique at the very start - doesn't help as it
     // won't return a no answer for sure.
 #if 0
-    if( bc <= 1 || vertex_cover_vc3( terminate, CG, cn, cn-bc-1, best_size, &best_cover[0] ) ) {
+    if( bc <= 1 || vertex_cover_vc3( CG, cn, cn-bc-1, best_size, &best_cover[0] ) ) {
 	best_size = 0; // reset because used incrementally
-	if( vertex_cover_vc3( terminate, CG, cn, 1, best_size, &best_cover[0] ) )
+	if( vertex_cover_vc3( CG, cn, 1, best_size, &best_cover[0] ) )
 	    E.record( depth + cn - best_size ); // size of complement
     }
     assert( best_size > 0 );
@@ -1777,14 +1733,17 @@ clique_via_vc3( volatile bool * terminate,
     VID k_lo = 1;
     VID k_best_size = k_prior;
     VID k = k_up;
+    bool first_attempt = true;
     while( true ) {
 	best_size = 0;
-	bool any = vertex_cover_vc3<true>( terminate, CG, k, 1, best_size, &best_cover[0] );
-	std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
-		  << k << ',' << k_up << "] bs=" << best_size
-		  << " ok=" << any
-		  << ' ' << tm.next()
-		  << "\n";
+	bool any = vertex_cover_vc3<true>( CG, k, 1, best_size, &best_cover[0] );
+	if( verbose ) {
+	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
+		      << k << ',' << k_up << "] bs=" << best_size
+		      << " ok=" << any
+		      << ' ' << tm.next()
+		      << "\n";
+	}
 	if( any ) {
 	    k_best_size = best_size;
 	    // in case we find a better cover than requested
@@ -1792,24 +1751,34 @@ clique_via_vc3( volatile bool * terminate,
 		k = k_best_size;
 	}
 
-	// Determine next k
+	// Reduce range
 	if( any ) // k too high
 	    k_up = k;
 	else
 	    k_lo = k;
 	if( k_up <= k_lo+1 )
 	    break;
-	k = ( k_up + k_lo ) / 2;
+
+	// Determine next k
+	// On the first attempt, we prefer to drop k just by one as it often
+	// fails at -1. After that, we perform binary search.
+	if( first_attempt ) {
+	    first_attempt = false;
+	    k = k_up - 1;
+	} else
+	    k = ( k_up + k_lo ) / 2;
     }
 
     // TODO: temporarily do not record to enable fair performance
     //       comparison between cover and clique
     if( k_best_size < k_prior ) {
-	if( E.is_feasible( depth + cn - k_best_size ) )
-	    std::cout << "clique_via_vc3: max_clique: "
-		      << ( depth + cn - k_best_size )
-		      << " E.best: " << bc << "\n";
-	// E.record( depth + cn - k_best_size ); // size of complement
+	if( E.is_feasible( depth + cn - k_best_size ) ) {
+	    if( verbose )
+		std::cout << "clique_via_vc3: max_clique: "
+			  << ( depth + cn - k_best_size )
+			  << " E.best: " << bc << "\n";
+	    E.record( depth + cn - k_best_size ); // size of complement
+	}
     }
 #endif
 
@@ -1844,12 +1813,11 @@ clique_via_vc3( volatile bool * terminate,
 }
 
 VID
-clique_via_vc3_top( volatile bool * terminate,
-		    const HGraphTy & G,
+clique_via_vc3_top( const HGraphTy & G,
 		    VID degeneracy,
 		    MC_Enumerator & E ) {
     PSet<VID> pset = PSet<VID>::create_full_set( G );
-    return clique_via_vc3( terminate, G, degeneracy, E, pset, pset.get_fill(), 1 );
+    return clique_via_vc3( G, degeneracy, E, pset, pset.get_fill(), 1 );
 }
 
 /*======================================================================*
@@ -1910,32 +1878,8 @@ bk_recursive_call(
     if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF )
 #endif
     {
-	if( mc_leaf<VID,EID>( G, E, xp_new, depth ) ) {
-#if 0
-	if( ce_new < 32 ) {
-	    variant_statistics & stats
-		= mc_stats.get_statistics().get_leaf( ilog2( 32 ) );
-	    timer tm;
-	    tm.start();
-	    DenseMatrix<32,VID,EID>
-		D( G, G, xp_new.get_set(), 0, xp_new.get_fill() );
-	    stats.record_build( tm.next() );
-	    auto bs = D.vertex_cover_kernelised( D.get_num_vertices() );
-	    stats.record( tm.next() );
-	    std::cout << "Leaf task: n=" << D.numVertices()
-		      << " pset=" << xp_new.get_fill()
-		      << " mc=" << bs.size() << " depth=" << depth
-		      << "\n";
-
-	    E.record( depth + bs.size() );
-	    VID prior_mc = E.get_max_clique_size();
-
-	    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, depth );
-	    VID now_mc = E.get_max_clique_size();
-	    assert( prior_mc == now_mc );
-#endif
+	if( mc_leaf<VID,EID>( G, E, xp_new, depth ) )
 	    return;
-	}
     }
 
     // Large sub-problem; search recursively
@@ -2101,34 +2045,6 @@ mc_bron_kerbosch_recpar_top_xps_alt(
     return true;
 }
 
-#if 0
-
-template<unsigned XBits, unsigned PBits, typename HGraph, typename Enumerator>
-void mc_blocked_fn(
-    const GraphCSx & G,
-    const HGraph & H,
-    Enumerator & E,
-    VID v,
-    const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut,
-    variant_statistics & stats ) {
-
-    timer tm;
-    tm.start();
-
-    // Build induced graph
-    BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	IG( G, H, cut.get_vertices(), cut.get_start_pos(),
-	    cut.get_num_vertices() );
-
-    stats.record_build( tm.next() );
-
-    mce_bron_kerbosch( IG, E );
-
-    stats.record( tm.stop() );
-}
-
-#endif
-
 template<unsigned Bits, typename HGraph, typename Enumerator>
 void mc_dense_fn(
     const GraphCSx & G,
@@ -2136,59 +2052,41 @@ void mc_dense_fn(
     Enumerator & E,
     VID v,
     const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
-    variant_statistics & stats ) {
+    all_variant_statistics & stats ) {
 
     timer tm;
     tm.start();
 
     VID num = cut.get_num_vertices();
+    size_t cl = get_size_class( num );
 
     // Build induced graph
     DenseMatrix<Bits,VID,EID>
 	IG( G, H, cut.get_vertices(), 0, cut.get_num_vertices() );
 
-    double tc = tm.next();
-    stats.record_build( tc );
+    VID n = IG.numVertices();
+    VID m = IG.calculate_num_edges(); // considers inverted graph
+    float d = 1.0f - ( (float)m / ( (float)n * (float)(n-1) ) );
 
-    VID k_max;
-    {
-	VID n = IG.numVertices();
+    double tc = tm.next();
+
+    algo_variant av = av_bk;
+    if( d > 0.9f ) {
 	VID bc = E.get_max_clique_size();
-	k_max = n < bc ? 0 : n - bc + 1;
+	VID k_max = n < bc ? 0 : n - bc + 1;
+
+	auto bs = IG.vertex_cover_kernelised( k_max );
+	E.record( 1 + bs.size() );
+	av = av_vc;
+    } else {
+	IG.mc_search( E, 1 );
     }
-    auto bs = IG.vertex_cover_kernelised( k_max );
 
     double t = tm.next();
 
-    IG.mc_search( E, 1 );
-
-    double t0 = tm.next();
-
-    // if( false && t >= 3.0 )
-    {
-	VID n = IG.numVertices();
-	VID m = IG.calculate_num_edges(); // considers inverted graph
-	float d = 1.0f - ( (float)m / ( (float)n * (float)(n-1) ) );
-
-	std::cout << "v=" << v
-		  << " dense=" << Bits
-		  << " n=" << n
-		  << " m=" << m
-		  << " d=" << d
-		  << " tbk=" << t0
-		  << " tvc=" << t
-		  << " tc=" << tc
-		  << " deg: {";
-	for( VID v=0; v < n; ++v )
-	    std::cout << ' ' << IG.get_degree( v );
-	std::cout << " } " << ( t0<t ? "BK" : "VC" ) << "\n";
-    }
-
-    // Disable when comparing VC vs BK so as to not give BK an advantage as it
-    // comes second
-    // E.record( 1 + bs.size() );
-
-    stats.record( t );
+    variant_statistics & s = stats.get( av, cl );
+    s.record_build( tc );
+    s.record( t );
 }
 
 typedef void (*mc_func)(
@@ -2197,7 +2095,7 @@ typedef void (*mc_func)(
     MC_Enumerator &,
     VID,
     const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
-    variant_statistics & );
+    all_variant_statistics & );
     
 static mc_func mc_dense_func[N_DIM+1] = {
     &mc_dense_fn<32,HFGraphTy,MC_Enumerator>,  // N=32
@@ -2207,57 +2105,56 @@ static mc_func mc_dense_func[N_DIM+1] = {
     &mc_dense_fn<512,HFGraphTy,MC_Enumerator>  // N=512
 };
 
-#if 0
+void mc_top_level_bk(
+    const GraphCSx & G,
+    const HFGraphTy & H,
+    MC_Enumerator & E,
+    VID v,
+    VID degeneracy,
+    const VID * const remap_coreness,
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
 
-static mc_func mc_blocked_func[X_DIM+1][P_DIM+1] = {
-    // X == 2**5
-    { &mc_blocked_fn<32,32,HFGraphTy,MC_Enumerator>,  // X=32, P=32
-      &mc_blocked_fn<32,64,HFGraphTy,MC_Enumerator>,  // X=32, P=64
-      &mc_blocked_fn<32,128,HFGraphTy,MC_Enumerator>, // X=32, P=128
-      &mc_blocked_fn<32,256,HFGraphTy,MC_Enumerator>, // X=32, P=256
-      &mc_blocked_fn<32,512,HFGraphTy,MC_Enumerator>  // X=32, P=512
-    },
-    // X == 2**6
-    { &mc_blocked_fn<64,32,HFGraphTy,MC_Enumerator>,  // X=64, P=32
-      &mc_blocked_fn<64,64,HFGraphTy,MC_Enumerator>,  // X=64, P=64
-      &mc_blocked_fn<64,128,HFGraphTy,MC_Enumerator>, // X=64, P=128
-      &mc_blocked_fn<64,256,HFGraphTy,MC_Enumerator>, // X=64, P=256
-      &mc_blocked_fn<64,512,HFGraphTy,MC_Enumerator>  // X=64, P=512
-    },
-    // X == 2**7
-    { &mc_blocked_fn<128,32,HFGraphTy,MC_Enumerator>,  // X=128, P=32
-      &mc_blocked_fn<128,64,HFGraphTy,MC_Enumerator>,  // X=128, P=64
-      &mc_blocked_fn<128,128,HFGraphTy,MC_Enumerator>, // X=128, P=128
-      &mc_blocked_fn<128,256,HFGraphTy,MC_Enumerator>, // X=128, P=256
-      &mc_blocked_fn<128,512,HFGraphTy,MC_Enumerator>  // X=128, P=512
-    },
-    // X == 2**8
-    { &mc_blocked_fn<256,32,HFGraphTy,MC_Enumerator>,  // X=256, P=32
-      &mc_blocked_fn<256,64,HFGraphTy,MC_Enumerator>,  // X=256, P=64
-      &mc_blocked_fn<256,128,HFGraphTy,MC_Enumerator>, // X=256, P=128
-      &mc_blocked_fn<256,256,HFGraphTy,MC_Enumerator>, // X=256, P=256
-      &mc_blocked_fn<256,512,HFGraphTy,MC_Enumerator>  // X=256, P=512
-    },
-    // X == 2**9
-    { &mc_blocked_fn<512,32,HFGraphTy,MC_Enumerator>,  // X=512, P=32
-      &mc_blocked_fn<512,64,HFGraphTy,MC_Enumerator>,  // X=512, P=64
-      &mc_blocked_fn<512,128,HFGraphTy,MC_Enumerator>, // X=512, P=128
-      &mc_blocked_fn<512,256,HFGraphTy,MC_Enumerator>, // X=512, P=256
-      &mc_blocked_fn<512,512,HFGraphTy,MC_Enumerator>  // X=512, P=512
-    }
-};
+    all_variant_statistics & stats = mc_stats.get_statistics();
 
-#endif
+    timer tm;
+    tm.start();
 
-size_t get_size_class( uint32_t v ) {
-    size_t b = _lzcnt_u32( v-1 );
-    size_t cl = 32 - b;
-    assert( v <= (1<<cl) );
-    return cl;
+    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
+    const auto & HG = ibuilder.get_graph();
+
+    stats.record_genbuild( av_bk, tm.next() );
+
+    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, E );
+
+    stats.record_gen( av_bk, tm.next() );
 }
 
-static size_t num_top_bk = 0;
-static size_t num_top_vc = 0;
+void mc_top_level_vc(
+    const GraphCSx & G,
+    const HFGraphTy & H,
+    MC_Enumerator & E,
+    VID v,
+    VID degeneracy,
+    const VID * const remap_coreness,
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
+
+    all_variant_statistics & stats = mc_stats.get_statistics();
+
+    timer tm;
+    tm.start();
+
+    // TODO: cut out just once, not twice
+    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
+    const auto & HG = ibuilder.get_graph();
+
+    PSet<VID> pset = PSet<VID>::create_full_set( HG );
+
+    stats.record_genbuild( av_vc, tm.next() );
+
+    clique_via_vc3( HG, degeneracy, E, pset, pset.size(), 1 );
+
+    stats.record_gen( av_vc, tm.next() );
+}
 
 void mc_top_level(
     const GraphCSx & G,
@@ -2266,6 +2163,8 @@ void mc_top_level(
     VID v,
     VID degeneracy,
     const VID * const remap_coreness ) {
+
+    all_variant_statistics & stats = mc_stats.get_statistics();
 
     timer tm;
     tm.start();
@@ -2291,11 +2190,14 @@ void mc_top_level(
     // that their common neighbours with the cut-out is at least best
     // (using intersect-size-exceeds). If not, throw them out also.
     // TODO: slightly adapt to abort intersection also if known to be >= target
+    EID m_est = 0;
     cut.filter( [&]( VID u ) {
-	VID d = graptor::set_operations<graptor::hash_vector>::intersect_size_exceed_ds(
-	    cut.get_slice(),
-	    H.get_neighbours_set( u ),
-	    best-1 ); // exceed checks >, we need >= best
+	VID d = graptor::set_operations<graptor::hash_vector>
+	    ::intersect_size_exceed_ds(
+		cut.get_slice(),
+		H.get_neighbours_set( u ),
+		best-1 ); // exceed checks >, we need >= best
+	m_est += d;
 	return d >= best;
     }, best );
 
@@ -2304,19 +2206,7 @@ void mc_top_level(
     if( cut.get_num_vertices() < best )
 	return;
 
-    all_variant_statistics & stats = mc_stats.get_statistics();
-
     VID num = cut.get_num_vertices();
-
-/*
-    {
-	std::lock_guard<std::mutex> guard( io_mux );
-	std::cout << "v=" << v
-		  << " degeneracy=" << remap_coreness[v] 
-		  << " cutout=" << cut.get_num_vertices()
-		  << " ...\n";
-    }
-*/
 
     double tf = tm.next();
 
@@ -2331,67 +2221,23 @@ void mc_top_level(
     }
 #endif
 
-    timer tmd;
-    tmd.start();
+    float d = float(m_est) / ( float(num) * float(num) );
+
 #if !ABLATION_DISABLE_TOP_DENSE
     VID nlg = get_size_class( num );
-    if( nlg < N_MIN_SIZE )
-	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MAX_SIZE ) {
-	return mc_dense_func[nlg-N_MIN_SIZE](
-	    G, H, E, v, cut, stats.get( nlg ) );
+	return mc_dense_func[nlg-N_MIN_SIZE]( G, H, E, v, cut, stats );
     }
 #endif
-    double t2 = tmd.stop();
 
-    
-    tm.stop();
-    tm.start();
-    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
-    const auto & HG = ibuilder.get_graph();
+    if( d > .9f ) {
+	mc_top_level_vc( G, H, E, v, degeneracy, remap_coreness, cut );
+    } else {
+	mc_top_level_bk( G, H, E, v, degeneracy, remap_coreness, cut );
+    }
 
-    stats.record_genbuild( tm.stop() );
-
-    tm.start();
-
-    std::vector<VID> HG_coreness = compute_coreness( HG );
-    VID pclique = E.get_max_clique_size();
-
-    double tc = tm.next();
-
-    // Estimating relative performance of MC vs VC: use fixed parameter of
-    // VC, i.e., size of cover, which can be estimated by size of best known
-    // cover?
-    // Can also look into N(v) vs #V1 vs #V
-    // Can also look into distribution of degrees, e.g., stdev, median,
-    // histogram
-    // Also analyse performance on dense cut-outs
-
-    volatile bool terminate = false;
-    VID vc3_best = clique_via_vc3_top( &terminate, HG, degeneracy, E );
-
-/*
-    auto alt = make_alternative_selector(
-	mc_bron_kerbosch_recpar_top_xps_alt,
-	clique_via_vc3_top );
-
-// TODO: check manual selection rules...
-// TODO: set priority for alt selector based on manual rules...
-// TODO: create concurrent alt selector
-    alt.execute( 60ull, HG, degeneracy, E );
-*/
-
-    // mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, E );
-
-    double t0 = tm.next();
-    stats.record_gen( t0 );
-    
-    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, E );
-
-    double t1 = tm.stop();
-
-    // if /* constexpr */ ( t1 > t0 ) // true )
+#if 0
     if constexpr ( true )
     {
 	VID hn = HG.numVertices();
@@ -2438,9 +2284,7 @@ void mc_top_level(
 
 	delete[] deg;
     }
-
-    assert( E.get_max_clique_size() == pclique || E.get_max_clique_size() == vc3_best );
-    assert( E.get_max_clique_size() >= vc3_best );
+#endif
 }
 
 template<unsigned Bits, typename VID, typename EID>
@@ -2450,7 +2294,7 @@ void leaf_dense_fn(
     const PSet<VID> & xp_set,
     size_t depth ) {
     variant_statistics & stats
-	= mc_stats.get_statistics().get_leaf( ilog2( Bits ) );
+	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
     timer tm;
     tm.start();
 // TODO: Integrate colouring heuristic into cutout (?)
@@ -2512,27 +2356,6 @@ void leaf_dense_fn(
     // E.record( depth + bs.size() );
 }
 
-#if 0
-template<unsigned XBits, unsigned PBits, typename VID, typename EID>
-void leaf_blocked_fn(
-    const HGraphTy & H,
-    MC_Enumerator & E,
-    VID r,
-    const PSet<VID> & xp_set,
-    VID ne,
-    VID ce ) {
-    variant_statistics & stats
-	= mc_stats.get_statistics().get_leaf( ilog2( XBits ), ilog2( PBits ) );
-    timer tm;
-    tm.start();
-    BlockedBinaryMatrix<XBits,PBits,VID,EID>
-	D( H, H, xp_set, ne, ce );
-    stats.record_build( tm.next() );
-    mce_bron_kerbosch( D, E );
-    stats.record( tm.next() );
-}
-#endif
-
 typedef void (*mc_leaf_func)(
     const HGraphTy &,
     MC_Enumerator &,
@@ -2546,46 +2369,6 @@ static mc_leaf_func leaf_dense_func[N_DIM+1] = {
     &leaf_dense_fn<256,VID,EID>, // N=256
     &leaf_dense_fn<512,VID,EID>  // N=512
 };
-
-#if 0
-static mc_leaf_func leaf_blocked_func[X_DIM+1][P_DIM+1] = {
-    // X == 2**5
-    { &leaf_blocked_fn<32,32,VID,EID>,  // X=32, P=32
-      &leaf_blocked_fn<32,64,VID,EID>,  // X=32, P=64
-      &leaf_blocked_fn<32,128,VID,EID>, // X=32, P=128
-      &leaf_blocked_fn<32,256,VID,EID>, // X=32, P=256
-      &leaf_blocked_fn<32,512,VID,EID>  // X=32, P=512
-    },
-    // X == 2**6
-    { &leaf_blocked_fn<64,32,VID,EID>,  // X=64, P=32
-      &leaf_blocked_fn<64,64,VID,EID>,  // X=64, P=64
-      &leaf_blocked_fn<64,128,VID,EID>, // X=64, P=128
-      &leaf_blocked_fn<64,256,VID,EID>, // X=64, P=256
-      &leaf_blocked_fn<64,512,VID,EID>  // X=64, P=512
-    },
-    // X == 2**7
-    { &leaf_blocked_fn<128,32,VID,EID>,  // X=128, P=32
-      &leaf_blocked_fn<128,64,VID,EID>,  // X=128, P=64
-      &leaf_blocked_fn<128,128,VID,EID>, // X=128, P=128
-      &leaf_blocked_fn<128,256,VID,EID>, // X=128, P=256
-      &leaf_blocked_fn<128,512,VID,EID>  // X=128, P=512
-    },
-    // X == 2**8
-    { &leaf_blocked_fn<256,32,VID,EID>,  // X=256, P=32
-      &leaf_blocked_fn<256,64,VID,EID>,  // X=256, P=64
-      &leaf_blocked_fn<256,128,VID,EID>, // X=256, P=128
-      &leaf_blocked_fn<256,256,VID,EID>, // X=256, P=256
-      &leaf_blocked_fn<256,512,VID,EID>  // X=256, P=512
-    },
-    // X == 2**9
-    { &leaf_blocked_fn<512,32,VID,EID>,  // X=512, P=32
-      &leaf_blocked_fn<512,64,VID,EID>,  // X=512, P=64
-      &leaf_blocked_fn<512,128,VID,EID>, // X=512, P=128
-      &leaf_blocked_fn<512,256,VID,EID>, // X=512, P=256
-      &leaf_blocked_fn<512,512,VID,EID>  // X=512, P=512
-    }
-};
-#endif
 
 template<typename VID, typename EID>
 bool mc_leaf(
@@ -2609,28 +2392,6 @@ bool mc_leaf(
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
-
-#if 0
-    if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
-	return true;
-    }
-
-    VID plg = get_size_class( pnum );
-    if( plg < P_MIN_SIZE )
-	plg = P_MIN_SIZE;
-
-    if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
-	return true;
-    }
-
-    if( xlg <= X_MAX_SIZE && plg <= P_MAX_SIZE ) {
-	leaf_blocked_func[xlg-X_MIN_SIZE][plg-P_MIN_SIZE](
-	    H, E, R, r, xp_set, ne, ce );
-	return true;
-    }
-#endif
 
     if( nlg <= N_MAX_SIZE ) {
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, xp_set, depth );
@@ -2703,14 +2464,11 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
 	      << "\n\tABLATION_DENSE_EXCEED=" << ABLATION_DENSE_EXCEED
 	      << "\n\tABLATION_GENERIC_EXCEED=" << ABLATION_GENERIC_EXCEED
-	      << "\n\tABLATION_BLOCKED_EXCEED=" << ABLATION_BLOCKED_EXCEED
 	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
 	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
 	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
 	      << ABLATION_HADJPA_DISABLE_XP_HASH
-	      << "\n\tABLATION_BLOCKED_DISABLE_XP_HASH="
-	      << ABLATION_BLOCKED_DISABLE_XP_HASH
 	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
 	      << ABLATION_DENSE_DISABLE_XP_HASH
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
@@ -2721,26 +2479,14 @@ int main( int argc, char *argv[] ) {
 	      << DENSE_THRESHOLD_SEQUENTIAL
 	      << "\n\tDENSE_THRESHOLD_DENSITY="
 	      << DENSE_THRESHOLD_DENSITY
-	      << "\n\tBLOCKED_THRESHOLD_SEQUENTIAL_PBITS="
-	      << BLOCKED_THRESHOLD_SEQUENTIAL_PBITS
-	      << "\n\tBLOCKED_THRESHOLD_SEQUENTIAL="
-	      << BLOCKED_THRESHOLD_SEQUENTIAL
-	      << "\n\tBLOCKED_THRESHOLD_DENSITY="
-	      << BLOCKED_THRESHOLD_DENSITY
 	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
 	      << ABLATION_DENSE_NO_PIVOT_TOP
 	      << "\n\tABLATION_DENSE_FILTER_FULLY_CONNECTED="
 	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
-	      << "\n\tABLATION_BLOCKED_FILTER_FULLY_CONNECTED="
-	      << ABLATION_BLOCKED_FILTER_FULLY_CONNECTED 
 	      << "\n\tABLATION_DENSE_ITERATE="
 	      <<  ABLATION_DENSE_ITERATE
-	      << "\n\tABLATION_BLOCKED_ITERATE="
-	      <<  ABLATION_BLOCKED_ITERATE
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
-	      << "\n\tABLATION_BLOCKED_PIVOT_FILTER="
-	      <<  ABLATION_BLOCKED_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR="
 	      <<  USE_512_VECTOR
 	      << '\n';
@@ -2832,32 +2578,15 @@ int main( int argc, char *argv[] ) {
     double duration = tm.total();
     std::cout << "Completed MC in " << duration << " seconds\n";
     for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
-	std::cout << (1<<n) << "-bit dense: ";
-	stats.get( n ).print( std::cout ); 
+	std::cout << (1<<n) << "-bit dense BK: ";
+	stats.get( av_bk, n ).print( std::cout ); 
+	std::cout << (1<<n) << "-bit dense VC: ";
+	stats.get( av_vc, n ).print( std::cout ); 
     }
-#if 0
-    for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
-	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
-	    std::cout << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
-	    stats.get( x, p ).print( std::cout );
-	}
-    for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
-	std::cout << "leaf-" << (1<<n) << "-bit dense: ";
-	stats.get_leaf( n ).print( std::cout ); 
-    }
-    for( size_t x=X_MIN_SIZE; x <= X_MAX_SIZE; ++x )
-	for( size_t p=P_MIN_SIZE; p <= P_MAX_SIZE; ++p ) {
-	    std::cout << "leaf-" << (1<<x) << ',' << (1<<p) << "-bit blocked: ";
-	    stats.get_leaf( x, p ).print( std::cout );
-	}
-    std::cout << "tiny: ";
-    stats.m_tiny.print( std::cout );
-#endif
-    std::cout << "generic: ";
-    stats.m_gen.print( std::cout );
-
-    std::cout << "times top-level BK faster: " << num_top_bk << "\n";
-    std::cout << "times top-level VC faster: " << num_top_vc << "\n";
+    std::cout << "generic BK: ";
+    stats.m_gen[av_bk].print( std::cout );
+    std::cout << "generic VC: ";
+    stats.m_gen[av_vc].print( std::cout );
 
     E.report( std::cout );
 
