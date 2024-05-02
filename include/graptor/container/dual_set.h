@@ -15,6 +15,16 @@ template<typename S>
 constexpr bool is_hash_set_v = is_hash_set<S>::value;
 
 template<typename S>
+struct is_hash_table {
+    static constexpr bool value = requires( const S & s ) {
+	s.lookup( typename S::type(0) );
+    };
+};
+
+template<typename S>
+constexpr bool is_hash_table_v = is_hash_table<S>::value;
+
+template<typename S>
 struct is_multi_hash_set {
     static constexpr bool value = requires( const S & s ) {
 	s.template multi_contains<typename S::type,8,target::mt_vmask>(
@@ -25,6 +35,17 @@ struct is_multi_hash_set {
 
 template<typename S>
 constexpr bool is_multi_hash_set_v = is_multi_hash_set<S>::value;
+
+template<typename S>
+struct is_multi_hash_table {
+    static constexpr bool value = requires( const S & s ) {
+	s.template multi_lookup<typename S::type,8>(
+	    vector_type_traits_vl<typename S::type,8>::setzero() );
+    };
+};
+
+template<typename S>
+constexpr bool is_multi_hash_table_v = is_multi_hash_table<S>::value;
 
 // A dual representation of a set as a sequential collection Seq
 // and a hash set Hash.
@@ -37,7 +58,7 @@ struct dual_set {
     using hash_type = Hash;
     using type = std::remove_cv_t<typename seq_type::type>;
 
-    dual_set( seq_type seq, hash_type & hash )
+    dual_set( seq_type seq, const hash_type & hash )
 	: m_seq( seq ), m_hash( hash ) { }
 
     auto size() const { return m_seq.size(); }
@@ -48,10 +69,11 @@ struct dual_set {
     const auto end() const { return m_seq.end(); }
 
     seq_type get_seq() const { return m_seq; }
-    hash_type & get_hash() { return m_hash; }
     const hash_type & get_hash() const { return m_hash; }
 
-    auto contains( type value ) const { return m_hash.contains( value ); }
+    bool contains( type value ) const { return m_hash.contains( value ); }
+
+    type lookup( type value ) const { return m_hash.lookup( value ); }
 
     template<typename U, unsigned short VL, typename MT>
     auto
@@ -60,10 +82,25 @@ struct dual_set {
 	return m_hash.template multi_contains<U,VL,MT>( index, mt );
     }
 
+    template<typename U, unsigned short VL>
+    auto
+    multi_lookup( typename vector_type_traits_vl<U,VL>::type index ) const {
+	return m_hash.template multi_lookup<U,VL>( index );
+    }
+
+    dual_set<seq_type,hash_type> trim_r( const type * r ) const {
+	return dual_set<seq_type,hash_type>( m_seq.trim_r( r ), m_hash );
+    }
+
 private:
     seq_type m_seq;
-    hash_type & m_hash;
+    const hash_type & m_hash;
 };
+
+template<typename Seq, typename Hash>
+auto make_dual_set( Seq && seq, const Hash & hash ) {
+    return dual_set<Seq,Hash>( seq, hash );
+}
 
 } // namespace graptor
 
