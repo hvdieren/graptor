@@ -2292,7 +2292,7 @@ void mc_top_level(
     // (using intersect-size-exceeds). If not, throw them out also.
     // TODO: slightly adapt to abort intersection also if known to be >= target
     cut.filter( [&]( VID u ) {
-	VID d = graptor::hash_vector::intersect_size_exceed(
+	VID d = graptor::set_operations<graptor::hash_vector>::intersect_size_exceed_ds(
 	    cut.get_slice(),
 	    H.get_neighbours_set( u ),
 	    best-1 ); // exceed checks >, we need >= best
