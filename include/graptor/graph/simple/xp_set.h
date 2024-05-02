@@ -43,12 +43,55 @@ private:
     const HashSet2 & m_hash2;
 };
 
+template<typename HashSet1, typename HashSet2>
+class hash_set_and {
+    using type = typename HashSet1::type;
+    
+public:
+    hash_set_and( const HashSet1 & h1, const HashSet2 & h2 )
+	: m_hash1( h1 ), m_hash2( h2 ) { }
+
+    bool contains( type v ) const {
+	return m_hash1.contains( v ) && m_hash2.contains( v );
+    }
+
+    template<typename U, unsigned short VL, typename MT>
+    std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+		       typename vector_type_traits_vl<U,VL>::mask_type,
+		       typename vector_type_traits_vl<U,VL>::vmask_type>
+    multi_contains( typename vector_type_traits_vl<U,VL>::type index,
+		    MT ) const {
+	using tr = vector_type_traits_vl<U,VL>;
+
+	// TODO: invalidate lanes in lookup in hash2 based on r1 result
+	auto r1 = m_hash1.template multi_contains<U,VL>( index, MT() );
+	auto r2 = m_hash2.template multi_contains<U,VL>( index, MT() );
+
+	if constexpr ( std::is_same_v<MT,target::mt_mask> ) {
+	    using mtr = typename tr::mask_traits;
+	    return mtr::logical_and( r1, r2 );
+	} else
+	    return tr::logical_and( r1, r2 );
+    }
+
+private:
+    const HashSet1 & m_hash1;
+    const HashSet2 & m_hash2;
+};
+
+template<typename HashSet1, typename HashSet2>
+auto make_hash_set_and( const HashSet1 & hset1,
+			const HashSet2 & hset2 ) {
+    return hash_set_and<HashSet1,HashSet2>( hset1, hset2 );
+}
+
 //! Inspired by Fast Arrays
 // Constant-time initialisation
 template<typename _lVID = VID>
 class XPSetBase {
 public:
     using lVID = _lVID;
+    using type = _lVID;
 
     template<bool present_p>
     class hash_set_interface {
@@ -152,7 +195,16 @@ public:
 	
 	hash_table_interface( const XPSetBase & xp ) : m_xp( xp ) { }
 
-	lVID contains( lVID v ) const {
+	bool contains( lVID v ) const {
+	    lVID pos = m_xp.m_pos[v];
+	    if( pos >= m_xp.m_fill ) // not a certificate
+		return false;
+	    if( m_xp.m_set[pos] != v ) // not a valid certificate
+		return false;
+	    return true;
+	}
+
+	lVID lookup( lVID v ) const {
 	    lVID pos = m_xp.m_pos[v];
 	    if( pos >= m_xp.m_fill ) // not a certificate
 		return ~lVID(0);
@@ -162,16 +214,54 @@ public:
 	}
 
 	template<typename U, unsigned short VL, typename MT>
-	typename vector_type_traits_vl<U,VL>::type
+	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+			   typename vector_type_traits_vl<U,VL>::mask_type,
+			   typename vector_type_traits_vl<U,VL>::vmask_type>
 	multi_contains(
 	    typename vector_type_traits_vl<U,VL>::type index,
 	    MT ) const {
-	    return multi_contains<U,VL>( index );
+	    static_assert( sizeof( U ) >= sizeof( lVID ) );
+	    using tr = vector_type_traits_vl<U,VL>;
+	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
+	    using vtype = typename tr::type;
+#if __AVX512F__
+	    using mtr = typename tr::mask_traits;
+	    using mkind = target::mt_mask;
+#else
+	    using mtr = typename tr::vmask_traits;
+	    using mkind = target::mt_vmask;
+#endif
+	    using mtype = typename mtr::type;
+
+	    mtype present;
+	    vtype value;
+	    std::tie( present, value ) = multi_helper<U,VL>( index );
+
+	    if constexpr ( std::is_same_v<mkind,MT> )
+		return present;
+	    else if constexpr ( std::is_same_v<MT,target::mt_mask> )
+		return tr::asmask( present );
+	    else
+		return tr::asvector( present );
 	}
 
 	template<typename U, unsigned short VL>
-	typename vector_type_traits_vl<U,VL>::type
-	multi_contains(
+	std::pair<typename vector_type_traits_vl<U,VL>::mask_type,
+		  typename vector_type_traits_vl<U,VL>::type>
+	multi_lookup(
+	    typename vector_type_traits_vl<U,VL>::type index ) const {
+	    return multi_helper<U,VL>;
+	}
+	    
+	const lVID * begin() const { return m_xp.begin(); }
+	const lVID * end() const { return m_xp.end(); }
+	const lVID size() const { return m_xp.size(); }
+
+    private:
+	template<typename U, unsigned short VL>
+	std::pair<typename vector_type_traits_vl<U,VL>::mask_type,
+		  typename vector_type_traits_vl<U,VL>::type>
+	multi_helper(
 	    typename vector_type_traits_vl<U,VL>::type index ) const {
 	    static_assert( sizeof( U ) >= sizeof( lVID ) );
 	    using tr = vector_type_traits_vl<U,VL>;
@@ -199,17 +289,8 @@ public:
 	    // check which certificates are valid
 	    mtype mv = tr::cmpeq( mc, vc, index, mkind() );
 
-	    // determine presence of vertices in either X or P
-	    // in AVX2, unsigned cmplt/gt is cheaper than ge/le
-	    // use signed comparison as only interested in valid positions
-	    // which can be assumed to fit in signed quantities
-	    vtype inv = tr::setone();
-	    return tr::blend( mv, inv, pos );
+	    return std::make_pair( mv, pos );
 	}
-
-	const lVID * begin() const { return m_xp.begin(); }
-	const lVID * end() const { return m_xp.end(); }
-	const lVID size() const { return m_xp.size(); }
 
     private:
 	const XPSetBase & m_xp;
@@ -520,6 +601,8 @@ public:
 
     class p_hash_set_interface {
     public:
+	using type = _lVID;
+
 	p_hash_set_interface( const PSet & xp )
 	    : m_xp( xp ) { }
 
@@ -571,6 +654,11 @@ public:
 	    else
 		return tr::asvector( mv );
 	}
+
+	size_t size() const { return m_xp.get_fill(); }
+
+	const lVID * begin() const { return m_xp.begin(); }
+	const lVID * end() const { return m_xp.end(); }
 
     private:
 	const PSet & m_xp;
@@ -643,32 +731,19 @@ public:
 	lVID ce = this->m_fill;
 	lVID mx = std::min( deg, ce );
 	PSet ins( n, mx+16 ); // hash_vector requires extra space
-	lVID ce_new;
 
-#if 1
-	if( ce > 2*deg || true ) {
-	    // TODO: find split point for X/P to reduce ranges?
-	    //       or make single traversal and determine X/P on the fly?
-	    //       need to be careful as m_set may not be sorted, and there
-	    //       may exist elements of P that are smaller than some elements
-	    //       of X (due to pivoting)
-	    // Validation: hash set lookup always performs validation
-	    //             that m_set and m_pos entries correspond.
-	    ce_new = graptor::hash_vector::intersect(
-		adj.begin(), adj.end(), this->hash_set(),
-		ins.m_set ) - ins.m_set;
-	} else {
-	    // Note: skip m_set[i] as we know there are no self-loops.
-	    // Validation: TODO
-	    assert( 0 && "Need to implement validation" );
-	    ce_new = graptor::hash_vector::intersect(
-		this->m_set, this->m_set+ce, adj.get_hash(),
-		ins.m_set ) - ins.m_set;
-	}
-#else
-	ce_new = graptor::hash_vector::intersect(
-	    adj, this->hash_set_validate(), ins.m_set ) - ins.m_set;
-#endif
+	// Validation: hash set lookup always performs validation
+	//             that m_set and m_pos entries correspond.
+	// When looking up values in the adjacency hash set, we need to
+	// additionally validate the values are present in the Pset
+	auto & adj_h = adj.get_hash();
+	auto xp_h = this->hash_set();
+	auto validate_h = make_hash_set_and( xp_h, adj_h );
+	auto validate_ds = make_dual_set( adj.get_seq(), validate_h );
+
+	lVID ce_new =
+	    graptor::set_operations<graptor::hash_vector>::intersect_ds(
+		validate_ds, xp_h, ins.m_set ) - ins.m_set;
 
 	// Construct ins.m_pos 
 	for( lVID i=0; i < ce_new; ++i )
@@ -725,7 +800,8 @@ public:
 
 	PSet lur( n, l_len + r_len + 16 );
 	lVID * s = lur.m_set;
-	s = graptor::hash_vector::intersect( l_adj.begin(), l_ngh, r_adj, s );
+	s = graptor::set_operations<graptor::hash_vector>::intersect_ds(
+	    l_adj.trim_r( l_ngh ), r_adj, s );
 	s = std::copy( r_ngh, r_adj.end(), s );
 
 	// Construct lur.m_pos
