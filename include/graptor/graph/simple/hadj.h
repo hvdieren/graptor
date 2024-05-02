@@ -195,16 +195,30 @@ struct hash_pa_insert_iterator {
 	    *m_list++ = v;
     }
 
+    //! record function used in case of merge_scalar 
     template<bool rhs>
-    bool record( const VID * p, std::conditional_t<rhs,VID,bool> xlat ) {
+    bool record( const VID * l, const VID * r ) {
+	// rhs == true: l points into adjacency, r points into XP
+	// rhs == false: l points into XP, r points into adjacency
+	VID v = ( rhs ? r : l ) - m_start;
+	m_table.insert( v );
+	if constexpr ( dual_rep )
+	    *m_list++ = v;
+
+	return true;
+    }
+
+    //! record function used in case of scalar
+    template<bool rhs>
+    bool record( const VID * p, VID xlat ) {
 	if constexpr ( rhs ) {
 	    // RHS is XP dual set. xlat contains translated ID
 	    m_table.insert( xlat );
 	    if constexpr ( dual_rep )
 		*m_list++ = xlat;
 	} else {
-	    // RHS is adjacency info. Need to translate using pointer
-	    // arithmetic
+	    // RHS is adjacency info. xlat is 0/1 value indicating presence.
+	    // Need to translate using pointer arithmetic
 	    VID v = p - m_start;
 	    m_table.insert( v );
 	    if constexpr ( dual_rep )
@@ -212,6 +226,8 @@ struct hash_pa_insert_iterator {
 	}
 	return true;
     }
+
+    bool terminated() const { return false; }
 
 private:
     hash_set<VID,Hash> & m_table;
@@ -230,7 +246,7 @@ public:
     using self_type = GraphHAdjPA<VID,EID,dual_rep,Hash>;
     using hash_set_type = graptor::hash_set<VID,Hash>;
     using hash_table_type = graptor::hash_table<VID,VID,Hash>;
-    using ngh_set_type = graptor::array_slice<const VID,VID>;
+    using ngh_set_type = graptor::array_slice<VID,VID>;
     using dual_set_type = graptor::dual_set<ngh_set_type,hash_set_type>;
 
     using vertex_iterator = range_iterator<VID>;
@@ -496,16 +512,9 @@ public:
 
 	// Note: if this is only called from top level, and in this case
 	// elements of XP have been selected down to have degrees only
-	// greater than the size of XP, than XP is always smaller than
+	// greater than the size of XP, than XP is smaller than
 	// the adjacency lists of its elements, except in rare circumstances.
-
-	// Place XP in hash table for fast intersection
-	// hash_set_type XP_hash( XP, XP+ce );
-	// dual_set_type XP_dual_set( ngh_set_type( XP, XP+ce ), XP_hash );
-	hash_table_type XP_hash( ce );
-	for( VID i=0; i < ce; ++i )
-	    XP_hash.insert( XP[i], i );
-	auto XP_dual_set = dual_set<ngh_set_type,hash_table_type>( ngh_set_type( XP, XP+ce ), XP_hash );
+	auto XP_slice = ngh_set_type( XP, XP+ce );
 
 	new ( &m_storage ) mm::buffer<VID>( h, alloc );
 
@@ -515,17 +524,12 @@ public:
 	    VID u = XP[su];
 	    hash_set_type & a = m_adjacency[su];
 
-	    // Note: typically degree( u ) >> ce but not always.
-	    // Use dual representation so that the
-	    // main list for iteration can be swapped.
 	    const VID * n = G.get_neighbours( u );
 	    VID deg = G.getDegree( u );
 	    const auto & u_adj = H.get_neighbours_set( u );
 
-	    // Intersection u_adj and XP_dual_set
+	    // Intersection u_adj and XP_slice
 	    // Common elements need to be remapped to position in XP
-	    // If u_adj sequential -> XP as a hash table
-	    // If XP sequential -> u_adj hash set, remap by left (XP) pointer
 	    VID sdeg = std::min( deg, ce );
 	    VID logs = get_log_hash_slots( sdeg );
 	    VID s = 1 << logs;
@@ -534,8 +538,8 @@ public:
 	    // Remap values: XP[i] -> i, same as hash table mapping
 	    hash_pa_insert_iterator<dual_rep,true,Hash>
 		out( a, &hashes[s_next], XP );
-	    graptor::hash_scalar::intersect_ds(
-		u_adj, XP_dual_set, out );
+	    graptor::set_operations<graptor::hash_scalar>::intersect_ds(
+		u_adj, XP_slice, out );
 	    s_next += has_dual_rep ? 2*s : s;
 	}
     }
