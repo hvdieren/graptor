@@ -893,6 +893,7 @@ public:
 	VID k_lo = 1;
 	VID k_best_size = k_max;
 	VID k = k_up;
+	bool first_attempt = true;
 	while( true ) {
 	    VID a_best_size = 0;
 	    row_type a_best_cover = tr::setzero();
@@ -910,14 +911,20 @@ public:
 		    k = best_size;
 	    }
 
-	    // Determine next k
+	    // Reduce range for k
 	    if( any ) // k too high
 		k_up = k;
 	    else
 		k_lo = k;
 	    if( k_up <= k_lo+1 )
 		break;
-	    k = ( k_up + k_lo ) / 2;
+
+	    // Determine next k
+	    if( first_attempt ) {
+		first_attempt = false;
+		k = k_up - 1;
+	    } else
+		k = ( k_up + k_lo ) / 2;
 	}
 
 	// If we can't meet the constraint, return something quick and
