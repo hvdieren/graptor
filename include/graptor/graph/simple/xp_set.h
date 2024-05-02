@@ -741,6 +741,8 @@ public:
 	auto validate_h = make_hash_set_and( xp_h, adj_h );
 	auto validate_ds = make_dual_set( adj.get_seq(), validate_h );
 
+	// Note: need to use a hash-based intersection as it will trigger
+	//       validation. Merge-based intersection will not validate.
 	lVID ce_new =
 	    graptor::set_operations<graptor::hash_vector>::intersect_ds(
 		validate_ds, xp_h, ins.m_set ) - ins.m_set;
