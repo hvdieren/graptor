@@ -77,6 +77,10 @@
 #endif
 #endif
 
+#ifndef OUTER_ORDER
+#define OUTER_ORDER 4
+#endif
+
 #ifndef PAPI_REGION
 #define PAPI_REGION 0
 #endif
@@ -190,10 +194,10 @@ public:
     }
 
     // Record solution
-    void record( size_t s ) {
+    void record( size_t s, VID top_vertex ) {
 	assert( s <= m_degeneracy+1 );
 	if( s > m_best )
-	    update_best( s );
+	    update_best( s, top_vertex );
     }
 
     // Feasability check
@@ -211,7 +215,9 @@ public:
     }
 
     std::ostream & report( std::ostream & os ) const {
-	os << "Maximum clique size: " << m_best.load() << "\n";
+	os << "Maximum clique size: " << m_best.load()
+	   << " from top-vertex " << m_top_vertex
+	   << "\n";
 
 	os << "  filter pset: " << m_reason[(int)fr_pset].load() << "\n";
 	os << "  filter colour: " << m_reason[(int)fr_colour].load() << "\n";
@@ -223,7 +229,7 @@ public:
     }
 
 private:
-    void update_best( size_t s ) {
+    void update_best( size_t s, VID top_vertex ) {
 	size_t prior = m_best.load( std::memory_order_relaxed );
 	while( s > prior )  {
 	    if( m_best.compare_exchange_weak(
@@ -231,7 +237,10 @@ private:
 		    std::memory_order_release,
 		    std::memory_order_relaxed ) ) {
 		std::cout << "max_clique: " << s << " at "
-			  << m_timer.elapsed() << '\n';
+			  << m_timer.elapsed()
+			  << " from top-vertex " << top_vertex
+			  << '\n';
+		m_top_vertex = top_vertex;
 		break;
 	    }
 	    prior = m_best.load( std::memory_order_relaxed );
@@ -243,6 +252,7 @@ private:
     std::atomic<size_t> m_best;
     std::array<std::atomic<size_t>,filter_reason_num> m_reason;
     timer m_timer;
+    VID m_top_vertex; // not thread-safe
 };
 
 struct variant_statistics {
@@ -364,25 +374,26 @@ mc_tiny(
     const VID * const ngh,
     const VID start_pos,
     const VID num,
+    const VID v,
     MC_Enumerator & E ) {
     if( num == 0 ) {
-	E.record( 0 );
+	E.record( 0, v );
     } else if( num == 1 ) {
 	if( start_pos == 0 )
-	    E.record( 2 ); // v, 0
+	    E.record( 2, v ); // v, 0
     } else if( num == 2 ) {
 	bool n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] );
 	if( start_pos == 0 ) {
 	    if( n01 ) // Two neighbours of v are neighbours themselves
-		E.record( 3 ); // v, 0, 1
+		E.record( 3, v ); // v, 0, 1
 	    else {
-		E.record( 2 ); // v, 0
-		E.record( 2 ); // v, 1
+		E.record( 2, v ); // v, 0
+		E.record( 2, v ); // v, 1
 	    }
 	} else if( start_pos == 1 ) {
 	    // No maximal clique in case start_pos == 1
 	    if( !n01 ) // triangle v, 0, 1 does not exist
-		E.record( 2 ); // v, 1
+		E.record( 2, v ); // v, 1
 	}
     } else if( num == 3 ) {
 	int n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] ) ? 1 : 0;
@@ -391,17 +402,17 @@ mc_tiny(
 	if( start_pos == 0 ) {
 	    // v < ngh[0] < ngh[1] < ngh[2]
 	    if( n01 + n02 + n12 == 3 )
-		E.record( 4 );
+		E.record( 4, v );
 	    else if( n01 + n02 + n12 == 2 ) {
-		E.record( 3 );
-		E.record( 3 );
+		E.record( 3, v );
+		E.record( 3, v );
 	    } else if( n01 + n02 + n12 == 1 ) {
-		E.record( 3 );
-		E.record( 2 );
+		E.record( 3, v );
+		E.record( 2, v );
 	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 2 );
-		E.record( 2 );
-		E.record( 2 );
+		E.record( 2, v );
+		E.record( 2, v );
+		E.record( 2, v );
 	    }
 	} else if( start_pos == 1 ) {
 	    // ngh[0] < v < ngh[1] < ngh[2]
@@ -409,22 +420,22 @@ mc_tiny(
 		; // duplicate
 	    else if( n01 + n02 + n12 == 2 ) { // wedge
 		if( n12 == 1 )
-		    E.record( 3 );
+		    E.record( 3, v );
 	    } else if( n01 + n02 + n12 == 1 ) {
 		if( n12 == 1 )
-		    E.record( 3 ); // v, 1, 2
+		    E.record( 3, v ); // v, 1, 2
 		else if( n01 == 1 )
-		    E.record( 2 ); // v, 2
+		    E.record( 2, v ); // v, 2
 		else if( n02 == 1 )
-		    E.record( 2 ); // v, 1
+		    E.record( 2, v ); // v, 1
 	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 2 ); // v, 1
-		E.record( 2 ); // v, 2
+		E.record( 2, v ); // v, 1
+		E.record( 2, v ); // v, 2
 	    }
 	} else if( start_pos == 2 ) {
 	    // ngh[0] < ngh[1] < v < ngh[2]
 	    if( n02 + n12 == 0 ) // not part of a triangle or more
-		E.record( 2 );
+		E.record( 2, v );
 	}
     }
 }    
@@ -1670,6 +1681,7 @@ vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 
 VID
 clique_via_vc3( const HGraphTy & G,
+		VID v,
 		VID degeneracy,
 		MC_Enumerator & E,
 		PSet<VID> & pset,
@@ -1693,7 +1705,7 @@ clique_via_vc3( const HGraphTy & G,
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
-	E.record( depth+cn );
+	E.record( depth+cn, v );
 	return depth+cn; // return true;
     }
 
@@ -1720,7 +1732,7 @@ clique_via_vc3( const HGraphTy & G,
     if( bc <= 1 || vertex_cover_vc3( CG, cn, cn-bc-1, best_size, &best_cover[0] ) ) {
 	best_size = 0; // reset because used incrementally
 	if( vertex_cover_vc3( CG, cn, 1, best_size, &best_cover[0] ) )
-	    E.record( depth + cn - best_size ); // size of complement
+	    E.record( depth + cn - best_size, v ); // size of complement
     }
     assert( best_size > 0 );
 #else
@@ -1777,7 +1789,7 @@ clique_via_vc3( const HGraphTy & G,
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
-	    E.record( depth + cn - k_best_size ); // size of complement
+	    E.record( depth + cn - k_best_size, v ); // size of complement
 	}
     }
 #endif
@@ -1812,14 +1824,6 @@ clique_via_vc3( const HGraphTy & G,
     return depth + cn - k_best_size;
 }
 
-VID
-clique_via_vc3_top( const HGraphTy & G,
-		    VID degeneracy,
-		    MC_Enumerator & E ) {
-    PSet<VID> pset = PSet<VID>::create_full_set( G );
-    return clique_via_vc3( G, degeneracy, E, pset, pset.get_fill(), 1 );
-}
-
 /*======================================================================*
  * recursively parallel version of Bron-Kerbosch w/ pivoting
  *======================================================================*/
@@ -1828,35 +1832,22 @@ bool mc_leaf(
     const HGraphTy & H,
     MC_Enumerator & E,
     const PSet<VID> & xp_set,
-    size_t depth );
+    size_t depth,
+    VID top_v );
 
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
+    VID top_v,
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp,
     int depth );
 
-bool
-mc_bron_kerbosch_recpar_xps_alt(
-    volatile bool * terminate,
-    const HGraphTy & G,
-    VID degeneracy,
-    MC_Enumerator & E,
-    PSet<VID> & xp,
-    int depth ) {
-    if( *terminate )
-	throw timeout_exception();
-    
-    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp, depth );
-
-    return true;
-}
-
 void
 bk_recursive_call(
     const HGraphTy & G,
+    VID top_v,
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp_new,
@@ -1870,7 +1861,7 @@ bk_recursive_call(
 
     // Reached leaf of search tree
     if( ce_new == 0 ) {
-	E.record( depth );
+	E.record( depth, top_v );
 	return;
     }
 
@@ -1878,14 +1869,14 @@ bk_recursive_call(
     if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF )
 #endif
     {
-	if( mc_leaf<VID,EID>( G, E, xp_new, depth ) )
+	if( mc_leaf<VID,EID>( G, E, xp_new, depth, top_v ) )
 	    return;
     }
 
     // Large sub-problem; search recursively
     // Tuning point: do we cut out a subgraph or not?
     // Tuning point: do we proceed with MC or switch to VC?
-    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, xp_new, depth );
+    mc_bron_kerbosch_recpar_xps( G, top_v, degeneracy, E, xp_new, depth );
     // volatile bool terminate = false;
     // clique_via_vc3( &terminate, G, degeneracy, E, xp_new, ce_new, depth );
 
@@ -1933,6 +1924,7 @@ count_colours( const HGraphTy & G, const PSet<VID> & xp ) {
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
+    VID top_v,
     VID degeneracy,
     MC_Enumerator & E,
     PSet<VID> & xp,
@@ -1941,7 +1933,7 @@ mc_bron_kerbosch_recpar_xps(
     
     // Termination condition
     if( 0 == ce ) {
-	E.record( depth );
+	E.record( depth, top_v );
 	return;
     }
     const VID n = G.numVertices();
@@ -1983,7 +1975,7 @@ mc_bron_kerbosch_recpar_xps(
 
 	if( deg == 0 ) [[unlikely]] { // implies ne == ce == 0
 	    // avoid overheads of copying and cutout
-	    E.record( depth+1 );
+	    E.record( depth+1, top_v );
 	} else {
 	    // Some complexity:
 	    // + Need to consider all vertices prior to v in XP are now
@@ -1994,7 +1986,7 @@ mc_bron_kerbosch_recpar_xps(
 	    //   however in parallel execution we cannot.
 	    // TODO: streamline with dual_set
 	    PSet<VID> xp_new = xp.intersect_validate( n, adj );
-	    bk_recursive_call( G, degeneracy, E, xp_new, depth+1 );
+	    bk_recursive_call( G, top_v, degeneracy, E, xp_new, depth+1 );
 	}
 
 	xp.invalidate( v );
@@ -2004,6 +1996,7 @@ mc_bron_kerbosch_recpar_xps(
 void
 mc_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
+    VID top_v,
     VID degeneracy,
     MC_Enumerator & E ) {
     const VID n = G.numVertices();
@@ -2026,23 +2019,13 @@ mc_bron_kerbosch_recpar_top_xps(
 	    // avoid overheads of copying and cutout
 	    // TODO: assume this never happens at top level due to
 	    //       filtering before creating cutout.
-	    E.record( 1 );
+	    E.record( 1, top_v );
 	} else {
 	    auto adj = G.get_neighbours_set( v ); 
 	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
-	    bk_recursive_call( G, degeneracy, E, xp_new, 2 );
+	    bk_recursive_call( G, top_v, degeneracy, E, xp_new, 2 );
 	}
     }
-}
-
-bool
-mc_bron_kerbosch_recpar_top_xps_alt(
-    volatile bool * terminate,
-    const HGraphTy & G,
-    VID degeneracy,
-    MC_Enumerator & E ) {
-    mc_bron_kerbosch_recpar_top_xps( G, degeneracy, E );
-    return true;
 }
 
 template<unsigned Bits, typename HGraph, typename Enumerator>
@@ -2076,10 +2059,10 @@ void mc_dense_fn(
 	VID k_max = n < bc ? 0 : n - bc + 1;
 
 	auto bs = IG.vertex_cover_kernelised( k_max );
-	E.record( 1 + bs.size() );
+	E.record( 1 + bs.size(), v );
 	av = av_vc;
     } else {
-	IG.mc_search( E, 1 );
+	IG.mc_search( E, 1, v );
     }
 
     double t = tm.next();
@@ -2124,7 +2107,7 @@ void mc_top_level_bk(
 
     stats.record_genbuild( av_bk, tm.next() );
 
-    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, E );
+    mc_bron_kerbosch_recpar_top_xps( HG, v, degeneracy, E );
 
     stats.record_gen( av_bk, tm.next() );
 }
@@ -2151,7 +2134,7 @@ void mc_top_level_vc(
 
     stats.record_genbuild( av_vc, tm.next() );
 
-    clique_via_vc3( HG, degeneracy, E, pset, pset.size(), 1 );
+    clique_via_vc3( HG, v, degeneracy, E, pset, pset.size(), 1 );
 
     stats.record_gen( av_vc, tm.next() );
 }
@@ -2292,7 +2275,8 @@ void leaf_dense_fn(
     const HGraphTy & H,
     MC_Enumerator & E,
     const PSet<VID> & xp_set,
-    size_t depth ) {
+    size_t depth,
+    VID top_v ) {
     variant_statistics & stats
 	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
     timer tm;
@@ -2336,7 +2320,7 @@ void leaf_dense_fn(
     float tvc = tm.next();
 */
 
-    D.mc_search( E, depth );
+    D.mc_search( E, depth, top_v );
     float tbk = tm.next();
 
     stats.record( tbk );
@@ -2360,7 +2344,8 @@ typedef void (*mc_leaf_func)(
     const HGraphTy &,
     MC_Enumerator &,
     const PSet<VID> &,
-    size_t );
+    size_t,
+    VID );
     
 static mc_leaf_func leaf_dense_func[N_DIM+1] = {
     &leaf_dense_fn<32,VID,EID>,  // N=32
@@ -2375,7 +2360,8 @@ bool mc_leaf(
     const HGraphTy & H,
     MC_Enumerator & E,
     const PSet<VID> & xp_set,
-    size_t depth ) {
+    size_t depth,
+    VID top_v ) {
 #if ABLATION_DISABLE_LEAF
     return false;
 #else
@@ -2384,17 +2370,19 @@ bool mc_leaf(
     // VID pnum = ce - ne;
     VID * XP = xp_set.get_set();
 
+/*
     if( false && ce <= 3 ) { // TODO
 	mc_tiny( H, XP, 0, ce, E );
 	return true;
     }
+*/
 
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MAX_SIZE ) {
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, xp_set, depth );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, xp_set, depth, top_v );
 	return true;
     }
 
@@ -2406,6 +2394,7 @@ int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue("-s");
     VID npart = P.getOptionLongValue( "-c", 256 );
+    VID pre = P.getOptionLongValue( "-pre", -1 );
     verbose = P.getOptionValue("-v");
     const char * ifile = P.getOptionValue( "-i" );
 
@@ -2443,9 +2432,11 @@ int main( int argc, char *argv[] ) {
 
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
-    sort_order( order.get(), rev_order.get(),
-		coreness, n, kcore.getLargestCore(),
-		true ); // reverse sort
+    VID K = kcore.getLargestCore();
+    std::vector<VID> histo; histo.resize( K+1 );
+    sort_order_ties( order.get(), rev_order.get(),
+		     coreness, n, K, &histo[0], G.getDegree(),
+		     true ); // reverse sort
     std::cout << "Determining sort order: " << tm.next() << "\n";
 
     mm::buffer<VID> remap_coreness( n, numa_allocation_interleaved() );
@@ -2487,8 +2478,8 @@ int main( int argc, char *argv[] ) {
 	      <<  ABLATION_DENSE_ITERATE
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
-	      << "\n\tUSE_512_VECTOR="
-	      <<  USE_512_VECTOR
+	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
+	      << "\n\tOUTER_ORDER=" <<  OUTER_ORDER
 	      << '\n';
     
     system( "hostname" );
@@ -2521,46 +2512,129 @@ int main( int argc, char *argv[] ) {
     for( VID v=0; v < n; ++v )
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
 */
-    for( VID w=0; w < n; ++w ) {
-	VID v = n - w - 1;
+
+    /*! Traversal orders
+     * 1. SOTA: sort by decreasing degree, visit low to high degree.
+     * 2. SOTA: sort by decreasing degeneracy, visit low to high degeneracy.
+     * 3. sort by decreasing degeneracy, visit high to low degeneracy.
+     *  + 1 and 2 tie in sort order with left/right order which determines
+     *    the maximum size of the candidate set, which effects efficiency of
+     *    search.
+     *  + The best left/right order, assuming candidate sets are drawn from
+     *    "the right", i.e., higher-numbered vertices, assumes vertices are
+     *    sorted in order of decreasing degeneracy. We maintain this, but
+     *    decouple the outer-loop (but not inner loop) traversal order.
+     *  + We enhance this by skipping in the outer loop entire batches of
+     *    of vertices with the same degeneracy if that degeneracy is
+     *    insufficient to improve the maximum clique
+     * 4. For each degeneracy level, from high to low, pick the vertex with
+     *    the highest degree and evaluate this. Following on, perform 3.
+     */
+
+    if( pre != ~(VID)0 ) {
+	VID v = pre;
+	std::cout << "pre-trial vertex v=" << v
+		  << " deg=" << H.getDegree( v )
+		  << " rho=" << remap_coreness[v]
+		  << "\n";
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
     }
-/*
-*/
-/*
-    VID v = rev_order[42153];
-    std::cout << "v: " << v << "\n";
-    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-*/
-/*
-    for( VID w=0; w < n && remap_coreness[n-w-1] >= 7; ++w ) {
-	VID v = n - w - 1;
-	std::vector<float> timing;
-	VID mc = 0;
-	for( VID c=1; c < 30; ++c ) {
-	    MC_Enumerator E( degeneracy );
-	    E.record( c );
-	    timer tm;
-	    tm.start();
+
+#if OUTER_ORDER == 1
+    /* 1. low to high degree order */
+
+#elif OUTER_ORDER == 2
+    /* 2. low to high degeneracy order */
+    for( VID w=0; w < n; ++w ) {
+	VID v = w;
+	// std::cout << "w=" << w << " v=" << v
+	// << " deg=" << H.getDegree( v )
+	// << " rho=" << remap_coreness[v]
+	// << "\n";
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+    }
+
+#elif OUTER_ORDER == 3
+    /* 3. high to low degeneracy order */
+    for( VID w=0; w < n; ++w ) {
+	VID v = n - 1 - w;
+	// std::cout << "w=" << w << " v=" << v
+	// << " deg=" << H.getDegree( v )
+	// << " rho=" << remap_coreness[v]
+	// << "\n";
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+    }
+
+#elif OUTER_ORDER == 4
+    /* 4. first evaluate highest-degree vertex per degeneracy level, then 3. */
+    for( VID c=0; c <= K; ++c ) {
+	VID c_up = histo[c];
+	VID c_lo = c == K ? 0 : histo[c+1];
+	if( c_up == c_lo )
+	    continue;
+
+	VID v = c_lo;
+	// std::cout << "c=" << c << " v=" << v
+	// << " deg=" << H.getDegree( v )
+	// << " rho=" << remap_coreness[v]
+	// << "\n";
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+
+	if( !E.is_feasible( K-c+1 ) )
+	    break;
+    }
+	    
+    for( VID cc=0; cc <= K; ++cc ) {
+	VID c = K - cc;
+	VID c_up = histo[c];
+	VID c_lo = c == K ? 0 : histo[c+1];
+	if( !E.is_feasible( K-c+1 ) )
+	    continue;
+	for( VID v=c_lo; v < c_up; ++v ) {
+	    // std::cout << "c=" << c << " v=" << v
+	    // << " deg=" << H.getDegree( v )
+	    // << " rho=" << remap_coreness[v]
+	    // << "\n";
 	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-	    float t = tm.stop();
-	    timing.push_back( t );
-	    if( c == 1 ) {
-		mc = E.get_max_clique_size();
-		if( mc < 8 )
-		    break;
-	    }
-	}
-	if( mc >= 8 ) {
-	    std::cout << "VARY v=" << v << ' ' << order[v]
-		      << " d=" << R.getDegree( v )
-		      << " rho=" << remap_coreness[v] << " mc=" << mc;
-	    for( auto I=timing.begin(), E=timing.end(); I != E; ++I )
-		std::cout << ' ' << *I;
-	    std::cout << "\n";
+	    if( !E.is_feasible( K-c+1 ) )
+		break;
 	}
     }
-*/
+#elif OUTER_ORDER == 5
+    /* 5. Preamble as with 4, then process in order of decreasing degeneracy. */
+    for( VID c=0; c <= K; ++c ) {
+	VID c_up = histo[c];
+	VID c_lo = c == K ? 0 : histo[c+1];
+	if( c_up == c_lo )
+	    continue;
+
+	VID v = c_lo;
+	// std::cout << "c=" << c << " v=" << v
+	// << " deg=" << H.getDegree( v )
+	// << " rho=" << remap_coreness[v]
+	// << "\n";
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+
+	if( !E.is_feasible( K-c+1 ) )
+	    break;
+    }
+	    
+    for( VID c=0; c <= K; ++c ) {
+	VID c_up = histo[c];
+	VID c_lo = c == K ? 0 : histo[c+1];
+	if( !E.is_feasible( K-c+1 ) ) // decreasing degeneracy -> done
+	    break;
+	for( VID v=c_lo; v < c_up; ++v ) {
+	    // std::cout << "c=" << c << " v=" << v
+	    // << " deg=" << H.getDegree( v )
+	    // << " rho=" << remap_coreness[v]
+	    // << "\n";
+	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	    if( !E.is_feasible( K-c+1 ) )
+		break;
+	}
+    }
+#endif
 
 #if PAPI_REGION == 1
     map_workers( [&]( uint32_t t ) {
@@ -2588,6 +2662,7 @@ int main( int argc, char *argv[] ) {
     std::cout << "generic VC: ";
     stats.m_gen[av_vc].print( std::cout );
 
+    // Note: reported top-level vertex not translated back after reordering
     E.report( std::cout );
 
     remap_coreness.del();
