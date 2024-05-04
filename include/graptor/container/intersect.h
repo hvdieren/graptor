@@ -87,10 +87,12 @@ struct intersection_collector {
     // \tparam otype Type of the xlat argument.
     // \arg l Pointer to the common element in the left-hand collection
     // \arg r Pointer to the common element in the right-hand collection
+    // \arg ins True when the value should be inserted
     // \return Boolean that is false when intersection should be aborted.
     template<bool rhs>
-    bool record( const type * l, const type * r ) {
-	*m_pointer++ = *l;
+    bool record( const type * l, const type * r, bool ins ) {
+	if( ins )
+	    *m_pointer++ = *l;
 	return true;
     }
 
@@ -102,10 +104,12 @@ struct intersection_collector {
     // \tparam otype Type of the xlat argument.
     // \arg l Pointer to the common element in the left-hand collection
     // \arg value The value to be stored, possibly translated
+    // \arg ins True when the value should be inserted
     // \return Boolean that is false when intersection should be aborted.
     template<bool rhs>
-    bool record( const type * l, type value ) {
-	*m_pointer++ = value;
+    bool record( const type * l, type value, bool ins ) {
+	if( ins )
+	    *m_pointer++ = value;
 	return true;
     }
 
@@ -155,14 +159,27 @@ struct intersection_size {
     intersection_size() : m_size( 0 ) { }
 
     template<bool rhs>
-    bool record( const type * l, const type * r ) {
-	++m_size;
+    bool record( const type * l, const type * r, bool ins ) {
+	if( ins )
+	    ++m_size;
 	return true;
     }
 
     template<bool rhs>
-    bool record( const type * l, type value ) {
-	++m_size;
+    bool record( const type * l, type value, bool ins ) {
+	if( ins )
+	    ++m_size;
+	return true;
+    }
+
+    template<bool rhs, typename U, unsigned short VL>
+    bool
+    multi_record( const U * p,
+		  typename vector_type_traits_vl<U,VL>::type index,
+		  typename vector_type_traits_vl<U,VL>::mask_type mask ) {
+	using tr = vector_type_traits_vl<U,VL>;
+	size_t present = tr::mask_traits::popcnt( mask );
+	m_size += present;
 	return true;
     }
 
@@ -184,25 +201,34 @@ struct intersection_size_exceed {
 	  m_exceed( exceed ),
 	  m_terminated( min_arg_size <= exceed ) { }
 
+    // This code currently only works with rhs == true
+    // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
     intersection_size_exceed( LSet && lset, RSet && rset, size_t exceed )
-	: intersection_size_exceed( std::min( lset.size(), rset.size() ),
+	: intersection_size_exceed( lset.size(), // iterated set!
+				    // std::min( lset.size(), rset.size() ),
 				    exceed ) { }
 
     template<bool rhs>
-    bool record( const type * l, const type * r ) {
-	if( --m_options <= 0 ) [[unlikely]]
-	    return m_terminated = true;
-	else
-	    return false;
+    bool record( const type * l, const type * r, bool ins ) {
+	if( !ins ) {
+	    if( --m_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	}
+	return true;
     }
 
     template<bool rhs>
-    bool record( const type * l, type value ) {
-	if( --m_options <= 0 ) [[unlikely]]
-	    return m_terminated = true;
-	else
-	    return false;
+    bool record( const type * l, type value, bool ins ) {
+	if( !ins ) {
+	    if( --m_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	}
+	return true;
     }
 
     template<bool rhs, typename U, unsigned short VL>
@@ -213,10 +239,11 @@ struct intersection_size_exceed {
 	using tr = vector_type_traits_vl<U,VL>;
 	size_t absent = VL - tr::mask_traits::popcnt( mask );
 	m_options -= absent;
-	if( m_options <= 0 ) // < or <= ?
-	    return m_terminated = true;
-	else
+	if( m_options <= 0 ) {
+	    m_terminated = true;
 	    return false;
+	} else
+	    return true;
     }
 
     size_t return_value() const {
@@ -230,6 +257,17 @@ private:
     size_t m_exceed;
     bool m_terminated;
 };
+
+template<typename S>
+struct is_intersection_size_exceed : public std::false_type { };
+
+template<typename T>
+struct is_intersection_size_exceed<intersection_size_exceed<T>>
+    : public std::true_type { };
+
+template<typename S>
+constexpr bool is_intersection_size_exceed_v =
+    is_intersection_size_exceed<S>::value;
 
 template<typename so_traits>
 struct set_operations {
@@ -330,10 +368,10 @@ struct merge_scalar {
 	    return std::make_pair( lb, rb );
 
 	while( lb != le && rb != re ) {
+	    // translation not supported
+	    if( !out.template record<rhs>( lb, rb, *lb == *rb ) )
+		break;
 	    if( *lb == *rb ) {
-		// translation not supported
-		if( !out.template record<rhs>( lb, rb ) )
-		    break;
 		++lb;
 		++rb;
 	    } else if( *lb < *rb )
@@ -470,9 +508,9 @@ struct merge_jump {
 	    return std::make_pair( lb, rb );
 
 	while( lb != le && rb != re ) {
+	    if( !out.template record<rhs>( lb, rb, *lb == *rb ) )
+		break;
 	    if( *lb == *rb ) {
-		if( !out.template record<rhs>( lb, rb ) )
-		    break;
 		++lb;
 		++rb;
 	    } else if( *lb < *rb ) {
@@ -666,11 +704,11 @@ struct hash_scalar {
 	    if constexpr ( so == so_intersect_xlat ) {
 		auto rc = rset.lookup( v );
 		// all 1s indicates invalid/absent value
-		if( ~rc != 0 && !out.template record<rhs>( lb, rc ) )
+		if( ~rc != 0 && !out.template record<rhs>( lb, rc, true ) )
 		    break;
 	    } else {
 		auto rc = rset.contains( v );
-		if( rc && !out.template record<rhs>( lb, *lb ) )
+		if( !out.template record<rhs>( lb, *lb, rc ) )
 		    break;
 	    }
 	    ++lb;
@@ -689,42 +727,6 @@ struct hash_scalar {
 	intersect_task<so,rhs>( lb, le, rset, out );
     }
 
-    template<typename LSet, typename RSet, typename Collector>
-    static
-    auto
-    intersect_ds( LSet && lset, RSet && rset, Collector & out ) {
-	// Collector is of type pointer to element of set
-	// Construct custom collector object to have unified code base
-	// for storing intersection with pointer or with a custom class.
-	if constexpr ( std::is_same_v<std::decay_t<Collector>,
-		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
-	    intersection_collector<false,typename std::decay_t<LSet>::type>
-		cout( out );
-	    apply<so_intersect>( lset, rset, cout );
-	    return cout.return_value();
-	} else {
-	    apply<so_intersect>( lset, rset, out );
-	    return out;
-	}
-    }
-    template<typename LSet, typename RSet>
-    static
-    size_t
-    intersect_size_ds( LSet && lset, RSet && rset ) {
-	intersection_size<typename std::decay_t<LSet>::type> out;
-	apply<so_intersect_size>( lset, rset, out );
-	return out.return_value();
-    }
-    template<typename LSet, typename RSet>
-    static
-    size_t
-    intersect_size_exceed_ds( LSet && lset, RSet && rset, size_t exceed ) {
-	intersection_size_exceed<typename std::decay_t<LSet>::type>
-	    out( lset, rset, exceed );
-	apply<so_intersect_size_exceed>( lset, rset, out );
-	return out.return_value();
-    }
-
     template<set_operation so,
 	     typename LSet, typename RSet, typename Collector>
     static
@@ -738,7 +740,8 @@ struct hash_scalar {
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		       && is_hash_set_v<std::decay_t<RSet>> ) {
+		       && is_hash_set_v<std::decay_t<RSet>>
+		       && !is_intersection_size_exceed_v<Collector> ) {
 	    if( lset.size() < rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
 	    else
@@ -746,6 +749,8 @@ struct hash_scalar {
 	} else if constexpr ( !is_hash_set_v<std::decay_t<LSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
+	    static_assert( !is_intersection_size_exceed_v<Collector>,
+			   "RHS must be hashable in intersection_size_exceed" );
 	    return intersect_task<so,false>( rset, lset, out );
 	}
     }
@@ -1248,61 +1253,6 @@ public:
 	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
     }
 
-    template<typename LSet, typename RSet, typename Collector>
-    static
-    auto
-    intersect_ds( LSet && lset, RSet && rset, Collector & out ) {
-	// Collector is of type pointer to element of set
-	// Construct custom collector object to have unified code base
-	// for storing intersection with pointer or with a custom class.
-	if constexpr ( std::is_same_v<std::decay_t<Collector>,
-		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
-	    intersection_collector<false, typename std::decay_t<LSet>::type>
-		cout( out );
-	    apply<so_intersect>( lset, rset, cout );
-	    return cout.return_value();
-	} else {
-	    apply<so_intersect>( lset, rset, out );
-	    return out;
-	}
-    }
-    template<typename LSet, typename RSet, typename Collector>
-    static
-    auto
-    intersect_xlat_ds( LSet && lset, RSet && rset, Collector & out ) {
-	// Collector is of type pointer to element of set
-	// Construct custom collector object to have unified code base
-	// for storing intersection with pointer or with a custom class.
-	if constexpr ( std::is_same_v<std::decay_t<Collector>,
-		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
-	    intersection_collector<true, typename std::decay_t<LSet>::type>
-		cout( out );
-	    apply<so_intersect_xlat>( lset, rset, cout );
-	    return cout.return_value();
-	} else {
-	    apply<so_intersect_xlat>( lset, rset, out );
-	    return out;
-	}
-    }
-
-    template<typename LSet, typename RSet>
-    static
-    size_t
-    intersect_size_ds( LSet && lset, RSet && rset ) {
-	intersection_size<typename std::decay_t<LSet>::type> out;
-	apply<so_intersect_size>( lset, rset, out );
-	return out.return_value();
-    }
-    template<typename LSet, typename RSet>
-    static
-    size_t
-    intersect_size_exceed_ds( LSet && lset, RSet && rset, size_t exceed ) {
-	intersection_size_exceed<typename std::decay_t<LSet>::type>
-	    out( lset, rset, exceed );
-	apply<so_intersect_size_exceed>( lset, rset, out );
-	return out.return_value();
-    }
-
     template<set_operation so,
 	     typename LSet, typename RSet, typename Collector>
     static
@@ -1314,7 +1264,8 @@ public:
 	// static_assert( is_multi_collector_v<std::decay_t<Collector>>,
 		//        "collector must accept vectors of values" );
 	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
-		       && is_multi_hash_set_v<std::decay_t<RSet>> ) {
+		       && is_multi_hash_set_v<std::decay_t<RSet>>
+		       && !is_intersection_size_exceed_v<Collector> ) {
 	    if( lset.size() < rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
 	    else
@@ -1322,6 +1273,8 @@ public:
 	} else if constexpr ( !is_hash_set_v<std::decay_t<LSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
+	    static_assert( !is_intersection_size_exceed_v<Collector>,
+			   "RHS must be hashable in intersection_size_exceed" );
 	    return intersect_task<so,false>( rset, lset, out );
 	}
     }

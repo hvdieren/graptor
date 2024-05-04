@@ -741,8 +741,6 @@ public:
 	auto validate_h = make_hash_set_and( xp_h, adj_h );
 	auto validate_ds = make_dual_set( adj.get_seq(), validate_h );
 
-	// Note: need to use a hash-based intersection as it will trigger
-	//       validation. Merge-based intersection will not validate.
 	lVID ce_new =
 	    graptor::set_operations<graptor::hash_vector>::intersect_ds(
 		validate_ds, xp_h, ins.m_set ) - ins.m_set;
@@ -883,92 +881,26 @@ public:
 
     // Intersect-size PSet with adjacency list.
     // Consider all vertices.
-    template<typename Adj>
-    lVID intersect_size( const Adj & adj, const lVID * ngh ) const {
-	return intersect_size_until( adj, ngh, this->m_fill );
+    template<typename DualSet>
+    lVID intersect_size( const DualSet & adj ) const {
+	return graptor::set_operations<graptor::hash_vector>
+	    ::intersect_size_ds( adj, this->P_hash_set( 0 ) );
     }
 
-    // Intersect-size PSet with adjacency list.
-    // Consider all vertices up to but not including position i.
-    template<typename Adj>
-    lVID intersect_size_until( const Adj & adj, const lVID * ngh, lVID i )
-	const {
-	lVID deg = adj.size();
-
-	if( i > 2*deg ) {
-	    return graptor::hash_vector::intersect_size(
-		ngh, ngh+deg, this->X_hash_set( i ) );
-	} else {
-	    return graptor::hash_vector::intersect_size(
-		this->m_set, this->m_set+i, adj );
-	}
+    // Intersect-size-exceed PSet with adjacency list.
+    // Consider all vertices.
+    template<typename DualSet>
+    lVID intersect_size_exceed( const DualSet & adj, lVID x ) const {
+	return graptor::set_operations<graptor::hash_vector>
+	    ::intersect_size_exceed_ds( adj, this->P_hash_set( 0 ), x );
     }
 
     // Intersect-size PSet with adjacency list.
     // Consider all vertices up to position i.
     template<typename DualSet>
     lVID intersect_size_from( const DualSet & set, lVID i ) const {
-	return graptor::hash_vector::intersect_size(
-	    set.begin(), set.end(), this->P_hash_set( i+1 ) ); // TEMP!!!
-    }
-
-    static PSet intersect_top_level(
-	lVID n, lVID ne, const lVID * ngh, lVID deg,
-	lVID & ce_new ) {
-	// Determine left vs right neighbourhood
-	const lVID * const r_ngh = std::lower_bound( ngh, ngh+deg, ne );
-	
-	lVID mx = deg - ( r_ngh - ngh );
-	PSet ins( n, mx );
-
-	// P set
-	std::copy( r_ngh, ngh+deg, ins.m_set );
-	ins.m_fill = ce_new = mx;
-
-	// Complete hash info
-	for( lVID i=0; i < ins.m_fill; ++i )
-	    ins.m_pos[ins.m_set[i]] = i;
-
-	return ins;
-    }
-
-    template<typename DualSet>
-    static PSet intersect_top_level( lVID n, lVID ne, const DualSet & set ) {
-	lVID ce_new; // ignored
-	
-	return intersect_top_level( n, ne, set.get_seq().begin(),
-				    set.size(), ce_new );
-    }
-
-    template<typename Adj>
-    static PSet intersect_top_level_pivot(
-	lVID n, lVID ne, const lVID * ngh, lVID deg, const Adj & p_adj,
-	lVID & ce_new ) {
-	// Determine left vs right neighbourhood
-	const lVID * const r_ngh = std::lower_bound( ngh, ngh+deg, ne );
-	
-	// Pset consists of:
-	// 1. right-neighbours of vertex
-	// 2. left-neighbours of vertex that are neighbours of the pivot
-	lVID mx = deg - ( r_ngh - ngh );
-	lVID mp = graptor::hash_vector::intersect_size( ngh, r_ngh, p_adj );
-	PSet ins( n, mx+mp+16 );
-
-	// left-neighbours that are neighbours of the pivot
-	lVID * p =
-	    graptor::hash_vector::intersect( ngh, r_ngh, p_adj, ins.m_set );
-	
-	// P set
-	p = std::copy( r_ngh, ngh+deg, p );
-	ins.m_fill = ce_new = p - ins.m_set;
-
-	// Complete hash info
-	for( lVID i=0; i < ins.m_fill; ++i )
-	    ins.m_pos[ins.m_set[i]] = i;
-
-	assert( ce_new <= mx+mp );
-
-	return ins;
+	return graptor::set_operations<graptor::hash_vector>::intersect_size_ds(
+	    set, this->P_hash_set( i+1 ) );
     }
 
     template<typename HGraphTy>
