@@ -1865,6 +1865,33 @@ mc_get_pivot(
     return std::make_pair( ~v_max == 0 ? XP[0] : v_max, tv_max );
 }
 
+template<typename HGraph>
+std::pair<VID,VID>
+__attribute__((noinline))
+get_max_degree_vertex( const HGraph & G ) {
+
+    const VID n = G.get_num_vertices();
+
+    if( n <= 3 )
+	return std::make_pair( 0, 0 );
+
+    VID v_max = 0;
+    VID tv_max = std::numeric_limits<VID>::min();
+
+    for( VID v=0; v < n; ++v ) {
+	auto & hadj = G.get_adjacency( v );
+	VID deg = hadj.size();
+	if( deg > tv_max ) {
+	    tv_max = deg;
+	    v_max = v;
+	}
+    }
+
+    // return first element of P if nothing good found
+    return std::make_pair( v_max, tv_max );
+}
+
+
 void
 bk_recursive_call(
     const HGraphTy & G,
@@ -1973,7 +2000,8 @@ mc_bron_kerbosch_recpar_xps(
     if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
 	return;
 
-    VID pivot = xp.at( 0 );
+    // VID pivot = xp.at( 0 );
+    VID pivot = mc_get_pivot( G, xp ).first;
     const auto & p_adj = G.get_neighbours_set( pivot );
 
     for( VID i=0; i < xp.size(); ++i ) {
@@ -2023,7 +2051,8 @@ mc_bron_kerbosch_recpar_top_xps(
     const VID n = G.numVertices();
 
     // 1. find pivot, e.g., highest degree
-    VID pivot = 0; // presumed highest degree vertex
+    // VID pivot = 0; // presumed highest degree vertex
+    VID pivot = get_max_degree_vertex( G ).first;
     const auto & p_adj = G.get_neighbours_set( pivot );
 
     // 2. create iteration set it = all vertices \ ngh(P)
