@@ -27,14 +27,6 @@
 #define ABLATION_BITCONSTRUCT_XP_VEC 0
 #endif
 
-#ifndef ABLATION_DENSE_EXCEED
-#define ABLATION_DENSE_EXCEED 0
-#endif
-
-#ifndef ABLATION_GENERIC_EXCEED
-#define ABLATION_GENERIC_EXCEED 0
-#endif
-
 #ifndef ABLATION_DISABLE_LEAF
 #define ABLATION_DISABLE_LEAF 0
 #endif
@@ -54,14 +46,6 @@
 
 #ifndef ABLATION_DENSE_NO_PIVOT_TOP
 #define ABLATION_DENSE_NO_PIVOT_TOP 0
-#endif
-
-#ifndef ABLATION_DENSE_FILTER_FULLY_CONNECTED
-#define ABLATION_DENSE_FILTER_FULLY_CONNECTED 1
-#endif
-
-#ifndef ABLATION_DENSE_ITERATE
-#define ABLATION_DENSE_ITERATE 0
 #endif
 
 #ifndef ABLATION_DENSE_PIVOT_FILTER
@@ -1116,8 +1100,7 @@ public:
 	    VID v = pset.at( p );
 
 	    // Degree of vertex
-	    VID deg = pset.intersect_size(
-		G.get_adjacency( v ), G.get_neighbours( v ) );
+	    VID deg = pset.intersect_size( G.get_neighbours_set( v ) );
 
 	    tmp_index[p] = EID(ns) - 1 - deg;
 	}
@@ -1844,6 +1827,44 @@ mc_bron_kerbosch_recpar_xps(
     PSet<VID> & xp,
     int depth );
 
+template<typename HGraph>
+std::pair<VID,VID>
+__attribute__((noinline))
+mc_get_pivot(
+    const HGraph & G,
+    const PSet<VID> & pset ) {
+
+    const VID * const XP = pset.get_set();
+    const VID ce = pset.get_fill();
+
+    // Tunable (|P| and selecting vertex from X or P)
+    if( ce <= 3 )
+	return std::make_pair( XP[0], 0 );
+
+    VID v_max = ~VID(0);
+    VID tv_max = std::numeric_limits<VID>::min();
+
+    for( VID i=0; i < ce; ++i ) {
+	VID v = XP[i];
+	auto & hadj = G.get_adjacency( v );
+	VID deg = hadj.size();
+	if( deg <= tv_max )
+	    continue;
+
+	// Abort during intersection_size if size will be less than tv_max
+	// Note: hash_vector is much slower in this instance
+	size_t tv = pset.intersect_size_exceed(
+	    G.get_neighbours_set( v ), tv_max );
+	if( tv > tv_max ) {
+	    tv_max = tv;
+	    v_max = v;
+	}
+    }
+
+    // return first element of P if nothing good found
+    return std::make_pair( ~v_max == 0 ? XP[0] : v_max, tv_max );
+}
+
 void
 bk_recursive_call(
     const HGraphTy & G,
@@ -2172,7 +2193,13 @@ void mc_top_level(
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
     // (using intersect-size-exceeds). If not, throw them out also.
-    // TODO: slightly adapt to abort intersection also if known to be >= target
+    // Could adapt to abort intersection also if known that intersection
+    // is larger than target (vertex is eligible), however, we use the
+    // intersection size now to estimate the density of the cutout graph.
+    // The estimate may be wrong (over-estimated) if some vertices are
+    // removed during this filtering step. It is expected that the error
+    // will be small as the removed vertices have a relatively low degree
+    // and we expect that not many vertices will be removed.
     EID m_est = 0;
     cut.filter( [&]( VID u ) {
 	VID d = graptor::set_operations<graptor::hash_vector>
@@ -2453,8 +2480,6 @@ int main( int argc, char *argv[] ) {
 
     std::cout << "Options:"
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
-	      << "\n\tABLATION_DENSE_EXCEED=" << ABLATION_DENSE_EXCEED
-	      << "\n\tABLATION_GENERIC_EXCEED=" << ABLATION_GENERIC_EXCEED
 	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
 	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
@@ -2472,10 +2497,6 @@ int main( int argc, char *argv[] ) {
 	      << DENSE_THRESHOLD_DENSITY
 	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
 	      << ABLATION_DENSE_NO_PIVOT_TOP
-	      << "\n\tABLATION_DENSE_FILTER_FULLY_CONNECTED="
-	      << ABLATION_DENSE_FILTER_FULLY_CONNECTED 
-	      << "\n\tABLATION_DENSE_ITERATE="
-	      <<  ABLATION_DENSE_ITERATE
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
@@ -2588,6 +2609,7 @@ int main( int argc, char *argv[] ) {
 	VID c = K - cc;
 	VID c_up = histo[c];
 	VID c_lo = c == K ? 0 : histo[c+1];
+	++c_lo; // already did c_lo in preamble
 	if( !E.is_feasible( K-c+1 ) )
 	    continue;
 	for( VID v=c_lo; v < c_up; ++v ) {
@@ -2622,6 +2644,7 @@ int main( int argc, char *argv[] ) {
     for( VID c=0; c <= K; ++c ) {
 	VID c_up = histo[c];
 	VID c_lo = c == K ? 0 : histo[c+1];
+	++c_lo; // already did c_lo in preamble
 	if( !E.is_feasible( K-c+1 ) ) // decreasing degeneracy -> done
 	    break;
 	for( VID v=c_lo; v < c_up; ++v ) {
