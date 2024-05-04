@@ -23,6 +23,10 @@ int main( int argc, char *argv[] ) {
     char * buf = new char[SIZE];
 
     FILE *fp = fopen( ifile, "r" );
+    if( fp == nullptr ) {
+	std::cerr << "Error opening file '" << ifile << "'\n";
+	return 1;
+    }
 
     if( fgets( buf, SIZE, fp ) == nullptr ) {
 	std::cerr << "Error reading header line\n";
@@ -40,6 +44,9 @@ int main( int argc, char *argv[] ) {
 	    weighted = true;
 	} else if( !strncmp( token, "matrix", 6 ) ) {
 	    // nothing to do
+	} else if( !strncmp( token, "pattern", 6 ) ) {
+	    std::cerr << "option: pattern matrix\n";
+	    weighted = false;
 	} else if( !strncmp( token, "symmetric", 9 ) ) {
 	    symmetric = true;
 	    std::cerr << "option: symmetric\n";
@@ -89,6 +96,12 @@ int main( int argc, char *argv[] ) {
     float * wght = weighted ? G.getWeights() : nullptr;
     EID enxt = 0;
 
+    // Skip over dimensions line
+    if( fgets( buf, SIZE, fp ) == nullptr ) {
+	std::cerr << "Error reading file\n";
+	return 1;
+    }
+
     // buf currently holds first line
     char * q, * qq, * qqq;
     do {
@@ -101,10 +114,10 @@ int main( int argc, char *argv[] ) {
 	dst[enxt] = strtoull( q, &qq, 10 ) - vdown;
 	assert( dst[enxt] < n );
 	assert( q != qq );
-	assert( *qq == ' ' || *qq == '\t' );
-	++qq;
 
 	if( weighted ) {
+	    assert( *qq == ' ' || *qq == '\t' );
+	    ++qq;
 	    wght[enxt] = strtof( qq, &qqq );
 	} else
 	    qqq = qq;
