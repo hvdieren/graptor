@@ -1184,7 +1184,8 @@ private:
 	row_type pivot_ngh, x;
 
 	while( true ) {
-	    pivot = target::alltzcnt<sVID,type,VL>::compute( P );
+	    // pivot = target::alltzcnt<sVID,type,VL>::compute( P );
+	    pivot = mc_get_pivot( P );
 	    pivot_ngh = get_row( pivot );
 	    x = tr::bitwise_andnot( pivot_ngh, P );
 	    nset = get_size( x );
@@ -1411,6 +1412,38 @@ private:
 	// assert( p_best < m_n );
 	return p_best;
     }
+
+    VID mc_get_pivot( row_type r ) {
+	bitset<Bits> b( r );
+
+	auto I = b.begin();
+	VID p_best = *I;
+
+	// Avoid complexities if there is not much choice
+	if( get_size( r ) <= 3 )
+	    return p_best;
+
+	++I;
+	row_type p_row = tr::bitwise_and( r, get_row( p_best ) );
+	VID p_ins = get_size( p_row );
+	
+	for( auto E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type v_ngh = get_row( v );
+	    row_type pv_ins = tr::bitwise_and( r, v_ngh );
+	    // Only compute allpopcnt if pv_ins is not subset of p_row
+	    if( !tr::is_zero( tr::bitwise_andnot( p_row, pv_ins ) ) ) {
+		VID ins = get_size( pv_ins );
+		if( ins > p_ins ) {
+		    p_best = v;
+		    p_ins = ins;
+		    p_row = pv_ins;
+		}
+	    }
+	}
+	return p_best;
+    }
+
 
     // cin is a bitmask indicating which vertices are in the cover.
     // It is filled up only up to vertex v. Remaining bits are zero.
