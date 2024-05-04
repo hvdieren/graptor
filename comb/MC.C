@@ -173,8 +173,14 @@ class MC_Enumerator {
 public:
     MC_Enumerator( size_t degen = 0 )
 	: m_degeneracy( degen ),
-	  m_best( degen > 0 ? 1 : 0 ) {
+	  m_best( degen > 0 ? 1 : 0 ),
+	  m_top_vertex( ~(VID)0 ) {
 	m_timer.start();
+    }
+
+    void reset() {
+	m_best = m_degeneracy > 0 ? 1 : 0;
+	m_top_vertex = ~(VID)0;
     }
 
     // Record solution
@@ -2451,6 +2457,7 @@ int main( int argc, char *argv[] ) {
     bool symmetric = P.getOptionValue("-s");
     VID npart = P.getOptionLongValue( "-c", 256 );
     VID pre = P.getOptionLongValue( "-pre", -1 );
+    VID what_if = P.getOptionLongValue( "-what-if", -1 );
     verbose = P.getOptionValue("-v");
     const char * ifile = P.getOptionValue( "-i" );
 
@@ -2588,6 +2595,23 @@ int main( int argc, char *argv[] ) {
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+    }
+
+    if( what_if != ~(VID)0 ) {
+	// For highest-degree vertex with maximum degeneracy, try setting
+	// a strong precedent for the clique size
+	E.record( what_if, ~(VID)0 );
+	VID v = histo[1];
+	std::cout << "what-if clique=" << what_if << " vertex v=" << v
+		  << " deg=" << H.getDegree( v )
+		  << " rho=" << remap_coreness[v]
+		  << "\n";
+	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+
+	// Successfully found a clique larger than postulated size?
+	// If not, erase result.
+	if( E.get_max_clique_size() <= what_if )
+	    E.reset();
     }
 
 #if OUTER_ORDER == 1
