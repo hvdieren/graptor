@@ -79,6 +79,16 @@ struct intersection_collector {
     //               consecutively from this address.
     intersection_collector( type * _pointer ) : m_pointer( _pointer ) { }
 
+    //! \brief Indicate reversal of LHS and RHS arguments in intersection
+    //
+    // \tparam LSet left hand side set type
+    // \tparam RSet right hand side set type
+    //
+    // \arg lset left hand side set
+    // \arg rset right hand side set
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) { }
+
     //! \brief Record one element of the intersection.
     //
     // \tparam rhs True if the right-hand side in the intersection is the same
@@ -158,6 +168,9 @@ struct intersection_size {
 
     intersection_size() : m_size( 0 ) { }
 
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) { }
+
     template<bool rhs>
     bool record( const type * l, const type * r, bool ins ) {
 	if( ins )
@@ -206,8 +219,12 @@ struct intersection_size_exceed {
     template<typename LSet, typename RSet>
     intersection_size_exceed( LSet && lset, RSet && rset, size_t exceed )
 	: intersection_size_exceed( lset.size(), // iterated set!
-				    // std::min( lset.size(), rset.size() ),
 				    exceed ) { }
+
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) {
+	m_options = lset.size();
+    }
 
     template<bool rhs>
     bool record( const type * l, const type * r, bool ins ) {
@@ -740,17 +757,17 @@ struct hash_scalar {
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		       && is_hash_set_v<std::decay_t<RSet>>
-		       && !is_intersection_size_exceed_v<Collector> ) {
+		       && is_hash_set_v<std::decay_t<RSet>> ) {
 	    if( lset.size() < rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
-	    else
+	    else {
+		out.swap( rset, lset );
 		return intersect_task<so,false>( rset, lset, out );
-	} else if constexpr ( !is_hash_set_v<std::decay_t<LSet>> ) {
+	    }
+	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
-	    static_assert( !is_intersection_size_exceed_v<Collector>,
-			   "RHS must be hashable in intersection_size_exceed" );
+	    out.swap( rset, lset );
 	    return intersect_task<so,false>( rset, lset, out );
 	}
     }
@@ -1264,17 +1281,17 @@ public:
 	// static_assert( is_multi_collector_v<std::decay_t<Collector>>,
 		//        "collector must accept vectors of values" );
 	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
-		       && is_multi_hash_set_v<std::decay_t<RSet>>
-		       && !is_intersection_size_exceed_v<Collector> ) {
+		       && is_multi_hash_set_v<std::decay_t<RSet>> ) {
 	    if( lset.size() < rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
-	    else
+	    else {
+		out.swap( rset, lset );
 		return intersect_task<so,false>( rset, lset, out );
-	} else if constexpr ( !is_hash_set_v<std::decay_t<LSet>> ) {
+	    }
+	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
-	    static_assert( !is_intersection_size_exceed_v<Collector>,
-			   "RHS must be hashable in intersection_size_exceed" );
+	    out.swap( rset, lset );
 	    return intersect_task<so,false>( rset, lset, out );
 	}
     }

@@ -188,6 +188,9 @@ struct hash_pa_insert_iterator {
 	hash_set<VID,Hash> & table, VID * list, const VID * start )
 	: m_table( table ), m_list( list ), m_start( start ) { }
 
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) { }
+
     void push_back( const VID * lt, const VID * rt = nullptr ) {
 	VID v = ( left_base ? lt : rt ) - m_start;
 	m_table.insert( v );
@@ -197,32 +200,36 @@ struct hash_pa_insert_iterator {
 
     //! record function used in case of merge_scalar 
     template<bool rhs>
-    bool record( const VID * l, const VID * r ) {
+    bool record( const VID * l, const VID * r, bool ins ) {
 	// rhs == true: l points into adjacency, r points into XP
 	// rhs == false: l points into XP, r points into adjacency
-	VID v = ( rhs ? r : l ) - m_start;
-	m_table.insert( v );
-	if constexpr ( dual_rep )
-	    *m_list++ = v;
+	if( ins ) {
+	    VID v = ( rhs ? r : l ) - m_start;
+	    m_table.insert( v );
+	    if constexpr ( dual_rep )
+		*m_list++ = v;
+	}
 
 	return true;
     }
 
     //! record function used in case of scalar
     template<bool rhs>
-    bool record( const VID * p, VID xlat ) {
-	if constexpr ( rhs ) {
-	    // RHS is XP dual set. xlat contains translated ID
-	    m_table.insert( xlat );
-	    if constexpr ( dual_rep )
-		*m_list++ = xlat;
-	} else {
-	    // RHS is adjacency info. xlat is 0/1 value indicating presence.
-	    // Need to translate using pointer arithmetic
-	    VID v = p - m_start;
-	    m_table.insert( v );
-	    if constexpr ( dual_rep )
-		*m_list++ = v;
+    bool record( const VID * p, VID xlat, bool ins ) {
+	if( ins ) {
+	    if constexpr ( rhs ) {
+		// RHS is XP dual set. xlat contains translated ID
+		m_table.insert( xlat );
+		if constexpr ( dual_rep )
+		    *m_list++ = xlat;
+	    } else {
+		// RHS is adjacency info. xlat is 0/1 value indicating presence.
+		// Need to translate using pointer arithmetic
+		VID v = p - m_start;
+		m_table.insert( v );
+		if constexpr ( dual_rep )
+		    *m_list++ = v;
+	    }
 	}
 	return true;
     }
@@ -552,6 +559,7 @@ public:
     }
 
     VID numVertices() const { return m_n; }
+    VID get_num_vertices() const { return m_n; }
     VID getDegree( VID v ) const { return get_adjacency( v ).size(); }
     VID get_right_degree( VID v ) const {
 	auto pos = std::lower_bound( nbegin( v ), nend( v ), v );
@@ -560,8 +568,8 @@ public:
 
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
     vertex_iterator vbegin() const { return vertex_iterator( 0 ); }
-    vertex_iterator vend() { return vertex_iterator( numVertices() ); }
-    vertex_iterator vend() const { return vertex_iterator( numVertices() ); }
+    vertex_iterator vend() { return vertex_iterator( get_num_vertices() ); }
+    vertex_iterator vend() const { return vertex_iterator( get_num_vertices() ); }
 
     hash_set_type & get_adjacency( VID v ) const {
 	return const_cast<self_type *>( this )->get_adjacency( v );
