@@ -171,6 +171,8 @@ public:
     lVID get_num_vertices() const { return m_num_iset; }
     const lVID * get_vertices() const { return m_iset; }
 
+    lVID at( lVID pos ) const { return m_iset[pos]; }
+
     array_slice<lVID,lVID> get_slice() const {
 	return array_slice<lVID,lVID>( m_iset, m_num_iset );
     }
