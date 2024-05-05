@@ -785,7 +785,7 @@ public:
 
     template<typename Enumerate>
     void
-    mc_search( Enumerate && E, size_t depth, VID top_v ) {
+    mc_search( Enumerate && E, size_t depth ) {
 	m_mc = tr::setzero();
 	m_mc_size = 0;
 
@@ -799,7 +799,7 @@ public:
 	// every fully-connected vertex is automatically included in clique
 	if( !tr::is_zero( R ) )
 	    depth += get_size( R );
-	mc_iterate( E, R, allP, depth, top_v );
+	mc_iterate( E, R, allP, depth );
     }
     
 private:
@@ -1170,13 +1170,14 @@ private:
 
     template<typename Enumerate>
     void mc_iterate(
-	Enumerate && EE, row_type R, row_type P, unsigned int depth,
-	VID top_v ) {
+	Enumerate && EE,
+	row_type R, row_type P, unsigned int depth ) {
 	if( depth + get_size( P ) < EE.get_max_clique_size() )
 	    return;
 	
 	if( tr::is_zero( P ) ) {
-	    EE.record( depth, top_v );
+	    bitset<Bits> b( R );
+	    EE.record( depth, b.begin(), b.end() );
 	    return;
 	}
 
@@ -1207,7 +1208,8 @@ private:
 		++depth;
 
 		if( tr::is_zero( P ) ) {
-		    EE.record( depth, top_v );
+		    bitset<Bits> b( R );
+		    EE.record( depth, b.begin(), b.end() );
 		    return;
 		}
 	    } else
@@ -1221,7 +1223,7 @@ private:
 
 	    row_type Pv = tr::bitwise_andnot( u_done, P, u_ngh );
 	    row_type Rv = tr::bitwise_or( R, u_only );
-	    mc_iterate( EE, Rv, Pv, depth+1, top_v );
+	    mc_iterate( EE, Rv, Pv, depth+1 );
 	};
 	
 	bitset<Bits> bx( x );

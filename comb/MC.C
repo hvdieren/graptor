@@ -103,6 +103,8 @@
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/intersect.h"
+#include "graptor/container/transform_iterator.h"
+#include "graptor/container/concatenate_iterator.h"
 
 #ifndef TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 #define TUNABLE_SMALL_AVOID_CUTOUT_LEAF 0
@@ -170,25 +172,75 @@ enum filter_reason {
     filter_reason_num = 6
 };
 
+template<typename T>
+class clique_set {
+public:
+    clique_set( T val, const clique_set * next = nullptr ) :
+	m_value( val ), m_next( next ) { }
+
+    class iterator {
+    public:
+	using type = T;
+
+	// iterator traits
+	using iterator_category = std::input_iterator_tag;
+	using value_type = T;
+	using difference_type = std::intptr_t;
+	using pointer = const T *;
+	using reference = const T &;
+
+    public:
+	explicit iterator( const clique_set * cs ) : m_set( cs ) { }
+	iterator& operator++() { m_set = m_set->get_next(); return *this; }
+	iterator operator++( int ) {
+	    iterator retval = *this; ++(*this); return retval;
+	}
+	bool operator == ( iterator other ) const {
+	    return m_set == other.m_set;
+	}
+	bool operator != ( iterator other ) const {
+	    return !( *this == other );
+	}
+	const typename iterator::reference operator*() const {
+	    return m_set->get_reference();
+	}
+
+    private:
+	const clique_set * m_set;
+    };
+
+    iterator begin() const { return iterator( this ); }
+    iterator end() const { return iterator( nullptr ); }
+
+    T get_value() const { return m_value; }
+    const T & get_reference() const { return m_value; }
+    const clique_set * get_next() const { return m_next; }
+    
+private:
+    const T m_value; //!< value in this link list element
+    const clique_set * m_next; //!< previously selected element in clique
+};
+
 class MC_Enumerator {
 public:
-    MC_Enumerator( size_t degen = 0 )
+    MC_Enumerator( size_t degen, const VID * const order )
 	: m_degeneracy( degen ),
 	  m_best( degen > 0 ? 1 : 0 ),
-	  m_top_vertex( ~(VID)0 ) {
+	  m_order( order ) {
 	m_timer.start();
     }
 
     void reset() {
 	m_best = m_degeneracy > 0 ? 1 : 0;
-	m_top_vertex = ~(VID)0;
+	m_max_clique.clear();
     }
 
     // Record solution
-    void record( size_t s, VID top_vertex ) {
+    template<typename It>
+    void record( size_t s, VID top_v, It && begin, It && end ) {
 	assert( s <= m_degeneracy+1 );
 	if( s > m_best )
-	    update_best( s, top_vertex );
+	    update_best( s, top_v, begin, end );
     }
 
     // Feasability check
@@ -205,10 +257,20 @@ public:
 	return m_best.load( std::memory_order_relaxed );
     }
 
-    std::ostream & report( std::ostream & os ) const {
+    // Modifies m_max_clique to adjust sort order
+    std::ostream & report( std::ostream & os ) {
 	os << "Maximum clique size: " << m_best.load()
-	   << " from top-vertex " << m_top_vertex
+	   << " from top-vertex " << m_max_clique[0]
 	   << "\n";
+
+	// Sort clique, except top-level vertex
+	if( !m_max_clique.empty() )
+	    std::sort( std::next( m_max_clique.begin() ), m_max_clique.end() );
+
+	os << "Maximum clique:";
+	for( auto v : m_max_clique )
+	    os << ' ' << v;
+	os << "\n";
 
 	os << "  filter pset: " << m_reason[(int)fr_pset].load() << "\n";
 	os << "  filter colour-ub: " << m_reason[(int)fr_colour_ub].load() << "\n";
@@ -222,7 +284,8 @@ public:
     }
 
 private:
-    void update_best( size_t s, VID top_vertex ) {
+    template<typename It>
+    void update_best( size_t s, VID top_v, It && begin, It && end ) {
 	size_t prior = m_best.load( std::memory_order_relaxed );
 	while( s > prior )  {
 	    if( m_best.compare_exchange_weak(
@@ -231,9 +294,15 @@ private:
 		    std::memory_order_relaxed ) ) {
 		std::cout << "max_clique: " << s << " at "
 			  << m_timer.elapsed()
-			  << " from top-vertex " << top_vertex
+			  << " top-level vertex: " << top_v
 			  << '\n';
-		m_top_vertex = top_vertex;
+
+		// TODO: concurrency concerns!
+		m_max_clique.clear();
+		m_max_clique.push_back( m_order[top_v] );
+		for( It b=begin; b != end; ++b )
+		    m_max_clique.push_back( m_order[*b] );
+
 		break;
 	    }
 	    prior = m_best.load( std::memory_order_relaxed );
@@ -245,8 +314,81 @@ private:
     std::atomic<size_t> m_best;
     std::array<std::atomic<size_t>,filter_reason_num> m_reason;
     timer m_timer;
-    VID m_top_vertex; // not thread-safe
+    const VID * const m_order; //!< to translate IDs back to input file IDs
+    std::vector<VID> m_max_clique; //!< max clique contents, not thread-safe
 };
+
+class MC_CutOutEnumerator {
+public:
+    MC_CutOutEnumerator( MC_Enumerator & E, VID top_v, const VID * const order )
+	: m_E( E ), m_top_vertex( top_v ), m_order( order ) { }
+
+    // Record solution
+    template<typename It>
+    void record( size_t s, It && begin, It && end ) {
+	auto fn = [&]( VID v ) { return m_order[v]; };
+	m_E.record( s, m_top_vertex,
+		    graptor::make_transform_iterator( begin, fn ),
+		    graptor::make_transform_iterator( end, fn ) );
+    }
+
+    // Feasability check
+    bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
+	return m_E.is_feasible( upper_bound, r );
+    }
+
+    size_t get_max_clique_size() const {
+	return m_E.get_max_clique_size();
+    }
+
+private:
+    MC_Enumerator & m_E;
+    VID m_top_vertex;
+    const VID * const m_order;
+};
+
+
+class MC_DenseEnumerator {
+public:
+    MC_DenseEnumerator( MC_CutOutEnumerator & E,
+			const clique_set<VID> * R,
+			const VID * const remap = nullptr )
+	: m_E( E ), m_R( R ), m_remap( remap ) { }
+
+    // Record solution
+    template<typename It>
+    void record( size_t s, It && begin, It && end ) {
+	if( m_remap ) {
+	    auto fn = [&]( VID v ) { return m_remap[v]; };
+	    auto b = graptor::make_transform_iterator( begin, fn );
+	    auto e = graptor::make_transform_iterator( end, fn );
+	    m_E.record(
+		s,
+		graptor::make_concatenate_iterator( b, e, m_R->begin() ),
+		graptor::make_concatenate_iterator( e, e, m_R->end() ) );
+	} else {
+	    m_E.record(
+		s,
+		graptor::make_concatenate_iterator( begin, end, m_R->begin() ),
+		graptor::make_concatenate_iterator( end, end, m_R->end() ) );
+	}
+    }
+
+    // Feasability check
+    bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
+	return m_E.is_feasible( upper_bound, r );
+    }
+
+    size_t get_max_clique_size() const {
+	return m_E.get_max_clique_size();
+    }
+
+private:
+    MC_CutOutEnumerator & m_E;
+    const clique_set<VID> * const m_R;
+    const VID * const m_remap;
+};
+
 
 struct variant_statistics {
     variant_statistics()
@@ -360,6 +502,7 @@ per_thread_statistics mc_stats;
  * HGraph is a graph type that supports a get_adjacency(VID) method that returns
  * a type with contains method.
  */
+#if 0
 template<typename HGraph>
 void
 mc_tiny(
@@ -432,170 +575,6 @@ mc_tiny(
 	}
     }
 }    
-
-bool is_member( VID v, VID C_size, const VID * C_set ) {
-    const VID * const pos = std::lower_bound( C_set, C_set+C_size, v );
-    if( pos == C_set+C_size || *pos != v )
-	return false;
-    return true;
-}
-
-#if 0
-#if 0
-class StackLikeAllocator {
-public:
-    StackLikeAllocator( size_t min_chunk_size = 0 ) { }
-
-    template<typename T>
-    T * allocate( size_t n_elements ) {
-	return new T[n_elements];
-    }
-    template<typename T>
-    void deallocate_to( T * p ) {
-	delete[] p;
-    }
-};
-#else
-class StackLikeAllocator {
-    static constexpr size_t PAGE_SIZE = size_t(1) << 20; // 1MiB
-    struct chunk_t {
-	static constexpr size_t MAX_BYTES =
-	    ( size_t(1) << (8*sizeof(uint32_t)) ) - 2 * sizeof( uint32_t );
-
-	chunk_t( size_t sz ) : m_size( sz ), m_end( 0 ) {
-	    assert( sz <= MAX_BYTES );
-	    // assert( sz == (size_t)m_size );
-	    // assert( (size_t)m_size >= PAGE_SIZE );
-	}
-
-	char * allocate( size_t sz ) {
-	    // assert( (size_t)m_size >= PAGE_SIZE );
-	    // assert( sz <= MAX_BYTES );
-	    // assert( m_end + sz <= m_size );
-	    char * p = get_ptr() + m_end;
-	    m_end += sz;
-	    return p;
-	}
-
-	bool has_available_space( size_t sz ) const {
-	    // assert( (size_t)m_size >= PAGE_SIZE );
-	    // assert( sz <= MAX_BYTES );
-	    uint32_t new_end = m_end + sz;
-	    return new_end - m_end == sz && new_end <= m_size;
-	    
-	}
-
-	char * get_ptr() const {
-	    char * me = const_cast<char *>(
-		reinterpret_cast<const char *>( this ) );
-	    me += sizeof( m_size );
-	    me += sizeof( m_end );
-	    return me;
-	}
-
-	bool release_to( char * p ) {
-	    // assert( (size_t)m_size >= PAGE_SIZE );
-	    char * q = get_ptr();
-	    if( q <= p && p < q+m_end ) {
-		m_end = p - q;
-		return true;
-	    } else {
-		m_end = 0;
-		return false;
-	    }
-	}
-
-    private:
-	uint32_t m_size;
-	uint32_t m_end;
-    };
-
-public:
-    StackLikeAllocator( size_t min_chunk_size = PAGE_SIZE )
-	: m_min_chunk_size( min_chunk_size ), m_current( 0 ) {
-	// if( verbose )
-	// std::cerr << "sla " << this << ": constructor\n";
-    }
-    ~StackLikeAllocator() {
-	for( chunk_t * c : m_chunks ) {
-	    // if( verbose )
-	    // std::cerr << "sla " << this << ": delete chunk "
-	    // << c << "\n";
-	    delete[] reinterpret_cast<char *>( c );
-	}
-	// if( verbose )
-	// std::cerr << "sla " << this << ": destructor done\n";
-    }
-
-    template<typename T>
-    T * allocate( size_t n_elements ) {
-	size_t sz = n_elements * sizeof(T);
-	sz = ( sz + 3 ) & ~size_t(3); // multiple of 4 bytes
-	T * p = reinterpret_cast<T*>( allocate_private( sz ) );
-	// if( verbose )
-	// std::cerr << "sla " << this << ": allocate " << n_elements
-	// << ' ' << (void *)p << "\n";
-	return p;
-    }
-    template<typename T>
-    void deallocate_to( T * p ) {
-	// if( verbose )
-	// std::cerr << "sla " << this << ": deallocate-to "
-	// << (void *)p << "\n";
-	release_chunks( reinterpret_cast<char *>( p ) );
-    }
-
-private:
-    char * allocate_private( size_t nbytes ) {
-	// Do we have any available chunks?
-	if( m_chunks.empty() )
-	    return allocate_from_new_chunk( nbytes );
-	
-	// Check if any free chunk has sufficient space
-	// Might be better to insert a larger chunk in the sequence if
-	// the current cannot hold it, as future calls will require smaller
-	// allocations which may be served from the available chunks
-	do {
-	    chunk_t * c = m_chunks[m_current];
-	    if( c->has_available_space( nbytes ) )
-		return c->allocate( nbytes );
-	} while( ++m_current < m_chunks.size() );
-
-	// No chunk can hold this
-	return allocate_from_new_chunk( nbytes );
-    }
-
-    char * allocate_from_new_chunk( size_t nbytes ) {
-	size_t sz = std::max( nbytes, m_min_chunk_size );
-	sz = ( sz + PAGE_SIZE - 1 ) & ~( PAGE_SIZE - 1 );
-	// assert( sz >= nbytes );
-	char * cc = new char[sz];
-	chunk_t * c = new ( cc ) chunk_t( sz );
-	m_chunks.push_back( c );
-	m_current = m_chunks.size() - 1;
-	// if( verbose )
-	// std::cerr << "sla " << this << ": new chunk " << c << "\n";
-	return c->allocate( nbytes );
-    }
-
-    void release_chunks( char * p ) {
-	for( size_t i=0; i <= m_current; ++i ) {
-	    size_t j = m_current - i;
-	    chunk_t * const c = m_chunks[j];
-	    if( c->release_to( p ) ) {
-		m_current = j;
-		return;
-	    }
-	}
-	assert( false && "deallocation error - should not reach here" );
-    }
-    
-private:
-    std::vector<chunk_t *> m_chunks;
-    size_t m_min_chunk_size;
-    size_t m_current;
-};
-#endif
 #endif
 
 /*======================================================================*
@@ -1675,7 +1654,7 @@ VID
 clique_via_vc3( const HGraphTy & G,
 		VID v,
 		VID degeneracy,
-		MC_Enumerator & E,
+		MC_CutOutEnumerator & E,
 		PSet<VID> & pset,
 		VID ce,
 		int depth ) {
@@ -1697,7 +1676,7 @@ clique_via_vc3( const HGraphTy & G,
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
-	E.record( depth+cn, v );
+	E.record( depth+cn, pset.begin(), pset.end() );
 	return depth+cn; // return true;
     }
 
@@ -1720,14 +1699,6 @@ clique_via_vc3( const HGraphTy & G,
     // of k=1; in fact should fail faster in general?
     // Don't run search for a 2-clique at the very start - doesn't help as it
     // won't return a no answer for sure.
-#if 0
-    if( bc <= 1 || vertex_cover_vc3( CG, cn, cn-bc-1, best_size, &best_cover[0] ) ) {
-	best_size = 0; // reset because used incrementally
-	if( vertex_cover_vc3( CG, cn, 1, best_size, &best_cover[0] ) )
-	    E.record( depth + cn - best_size, v ); // size of complement
-    }
-    assert( best_size > 0 );
-#else
     // looking for a better clique/cover than what we know
     timer tm;
     tm.start();
@@ -1773,44 +1744,26 @@ clique_via_vc3( const HGraphTy & G,
 	    k = ( k_up + k_lo ) / 2;
     }
 
-    // TODO: temporarily do not record to enable fair performance
-    //       comparison between cover and clique
+    // Record clique
     if( k_best_size < k_prior ) {
 	if( E.is_feasible( depth + cn - k_best_size ) ) {
 	    if( verbose )
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
-	    E.record( depth + cn - k_best_size, v ); // size of complement
+	    // Create complement set
+	    std::vector<VID> clique( depth + cn - k_best_size );
+	    std::sort( best_cover.begin(), best_cover.end() );
+	    for( VID i=0, j=0; i < cn; ++i ) {
+		if( best_cover[j] == i )
+		    ++j;
+		else
+		    clique.push_back( i );
+	    }
+	    E.record( depth + cn - k_best_size,
+		      clique.begin(), clique.end() ); // size of complement
 	}
     }
-#endif
-
-#if 0
-    // Compute complement of set
-    std::vector<VID> c( cn );
-    std::iota( c.begin(), c.end(), 0 );
-    std::for_each( &best_cover[0], &best_cover[best_size],
-		   [&]( VID v ) {
-		       c[v] = ~(VID)0; // remove vertex to obtain complement
-		   } );
-
-    // Compact list of vertices
-    // j always runs behind i
-    auto j = c.begin();
-    for( auto i=c.begin(), e=c.end(); i != e; ++i ) {
-	if( ~*i != 0 )
-	    *j++ = cbuilder.get_s2g()[*i];
-    }
-    // Cut of array
-    c.resize( std::distance( c.begin(), j ) );
-
-    assert( c.size() + best_size == cn );
-
-    RecFn rec( cn );
-    rec.record( c );
-    return rec;
-#endif
 
     // return true;
     return depth + cn - k_best_size;
@@ -1822,17 +1775,17 @@ clique_via_vc3( const HGraphTy & G,
 template<typename VID, typename EID>
 bool mc_leaf(
     const HGraphTy & H,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     const PSet<VID> & xp_set,
-    size_t depth,
-    VID top_v );
+    size_t depth );
 
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
-    VID top_v,
     VID degeneracy,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     PSet<VID> & xp,
     int depth );
 
@@ -1904,9 +1857,9 @@ get_max_degree_vertex( const HGraph & G ) {
 void
 bk_recursive_call(
     const HGraphTy & G,
-    VID top_v,
     VID degeneracy,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     PSet<VID> & xp_new,
     int depth ) {
     VID ce_new = xp_new.size();
@@ -1918,7 +1871,7 @@ bk_recursive_call(
 
     // Reached leaf of search tree
     if( ce_new == 0 ) {
-	E.record( depth, top_v );
+	E.record( depth, R->begin(), R->end() );
 	return;
     }
 
@@ -1926,24 +1879,14 @@ bk_recursive_call(
     if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF )
 #endif
     {
-	if( mc_leaf<VID,EID>( G, E, xp_new, depth, top_v ) )
+	if( mc_leaf<VID,EID>( G, E, R, xp_new, depth ) )
 	    return;
     }
 
     // Large sub-problem; search recursively
     // Tuning point: do we cut out a subgraph or not?
     // Tuning point: do we proceed with MC or switch to VC?
-    mc_bron_kerbosch_recpar_xps( G, top_v, degeneracy, E, xp_new, depth );
-    // volatile bool terminate = false;
-    // clique_via_vc3( &terminate, G, degeneracy, E, xp_new, ce_new, depth );
-
-/*
-    auto alt = make_alternative_selector(
-	mc_bron_kerbosch_recpar_xps_alt,
-	clique_via_vc3 );
-
-    alt.execute( 60ull, G, degeneracy, E, xp_new, ce_new, depth );
-*/
+    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, R, xp_new, depth );
 }
 
 template<typename VID>
@@ -2031,16 +1974,16 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp ) {
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
-    VID top_v,
     VID degeneracy,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     PSet<VID> & xp,
     int depth ) {
     VID ce = xp.size();
     
     // Termination condition
     if( 0 == ce ) {
-	E.record( depth, top_v );
+	E.record( depth, R->begin(), R->end() );
 	return;
     }
     const VID n = G.numVertices();
@@ -2076,6 +2019,8 @@ mc_bron_kerbosch_recpar_xps(
 	const auto adj = G.get_neighbours_set( v ); 
 	VID deg = adj.size();
 
+	clique_set<VID> R_new( v, R );
+
 	if constexpr ( io_trace ) {
 	    std::lock_guard<std::mutex> guard( io_mux );
 	    std::cout << "XP2: X=" << i << " P=" << (ce - (i+1)) << " adj="
@@ -2084,7 +2029,7 @@ mc_bron_kerbosch_recpar_xps(
 
 	if( deg == 0 ) [[unlikely]] { // implies ne == ce == 0
 	    // avoid overheads of copying and cutout
-	    E.record( depth+1, top_v );
+	    E.record( depth+1, R_new.begin(), R_new.end() );
 	} else {
 	    // Some complexity:
 	    // + Need to consider all vertices prior to v in XP are now
@@ -2095,7 +2040,7 @@ mc_bron_kerbosch_recpar_xps(
 	    //   however in parallel execution we cannot.
 	    // TODO: streamline with dual_set
 	    PSet<VID> xp_new = xp.intersect_validate( n, adj );
-	    bk_recursive_call( G, top_v, degeneracy, E, xp_new, depth+1 );
+	    bk_recursive_call( G, degeneracy, E, &R_new, xp_new, depth+1 );
 	}
 
 	xp.invalidate( v );
@@ -2105,9 +2050,9 @@ mc_bron_kerbosch_recpar_xps(
 void
 mc_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
-    VID top_v,
     VID degeneracy,
-    MC_Enumerator & E ) {
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R ) {
     const VID n = G.numVertices();
 
     // 1. find pivot, e.g., highest degree
@@ -2124,16 +2069,17 @@ mc_bron_kerbosch_recpar_top_xps(
     for( VID i=0; i < it_size; ++i ) {
 	VID v = it_elm[i];
 	VID deg = G.getDegree( v ); 
+	clique_set<VID> R_new( v, R );
 
 	if( deg == 0 ) {
 	    // avoid overheads of copying and cutout
 	    // TODO: assume this never happens at top level due to
 	    //       filtering before creating cutout.
-	    E.record( 1, top_v );
+	    E.record( 1, R_new.begin(), R_new.end() );
 	} else {
 	    auto adj = G.get_neighbours_set( v ); 
 	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
-	    bk_recursive_call( G, top_v, degeneracy, E, xp_new, 2 );
+	    bk_recursive_call( G, degeneracy, E, &R_new, xp_new, 2 );
 	}
     }
 }
@@ -2169,10 +2115,12 @@ void mc_dense_fn(
 	VID k_max = n < bc ? 0 : n - bc + 1;
 
 	auto bs = IG.vertex_cover_kernelised( k_max );
-	E.record( 1 + bs.size(), v );
+	E.record( 1 + bs.size(), bs.begin(), bs.end() );
 	av = av_vc;
     } else {
-	IG.mc_search( E, 1, v );
+	clique_set<VID> R( v );
+	MC_DenseEnumerator DE( E, &R );
+	IG.mc_search( DE, 1 );
     }
 
     double t = tm.next();
@@ -2185,17 +2133,17 @@ void mc_dense_fn(
 typedef void (*mc_func)(
     const GraphCSx &, 
     const HFGraphTy &,
-    MC_Enumerator &,
+    MC_CutOutEnumerator &,
     VID,
     const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
     all_variant_statistics & );
     
 static mc_func mc_dense_func[N_DIM+1] = {
-    &mc_dense_fn<32,HFGraphTy,MC_Enumerator>,  // N=32
-    &mc_dense_fn<64,HFGraphTy,MC_Enumerator>,  // N=64
-    &mc_dense_fn<128,HFGraphTy,MC_Enumerator>, // N=128
-    &mc_dense_fn<256,HFGraphTy,MC_Enumerator>, // N=256
-    &mc_dense_fn<512,HFGraphTy,MC_Enumerator>  // N=512
+    &mc_dense_fn<32,HFGraphTy,MC_CutOutEnumerator>,  // N=32
+    &mc_dense_fn<64,HFGraphTy,MC_CutOutEnumerator>,  // N=64
+    &mc_dense_fn<128,HFGraphTy,MC_CutOutEnumerator>, // N=128
+    &mc_dense_fn<256,HFGraphTy,MC_CutOutEnumerator>, // N=256
+    &mc_dense_fn<512,HFGraphTy,MC_CutOutEnumerator>  // N=512
 };
 
 void mc_top_level_bk(
@@ -2217,7 +2165,9 @@ void mc_top_level_bk(
 
     stats.record_genbuild( av_bk, tm.next() );
 
-    mc_bron_kerbosch_recpar_top_xps( HG, v, degeneracy, E );
+    clique_set<VID> R( v );
+    MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
+    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE, &R );
 
     stats.record_gen( av_bk, tm.next() );
 }
@@ -2244,7 +2194,8 @@ void mc_top_level_vc(
 
     stats.record_genbuild( av_vc, tm.next() );
 
-    clique_via_vc3( HG, v, degeneracy, E, pset, pset.size(), 1 );
+    MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
+    clique_via_vc3( HG, v, degeneracy, CE, pset, pset.size(), 1 );
 
     stats.record_gen( av_vc, tm.next() );
 }
@@ -2326,7 +2277,8 @@ void mc_top_level(
     VID nlg = get_size_class( num );
 
     if( nlg <= N_MAX_SIZE ) {
-	return mc_dense_func[nlg-N_MIN_SIZE]( G, H, E, v, cut, stats );
+	MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
+	return mc_dense_func[nlg-N_MIN_SIZE]( G, H, CE, v, cut, stats );
     }
 #endif
 
@@ -2389,10 +2341,10 @@ void mc_top_level(
 template<unsigned Bits, typename VID, typename EID>
 void leaf_dense_fn(
     const HGraphTy & H,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     const PSet<VID> & xp_set,
-    size_t depth,
-    VID top_v ) {
+    size_t depth ) {
     variant_statistics & stats
 	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
     timer tm;
@@ -2436,7 +2388,8 @@ void leaf_dense_fn(
     float tvc = tm.next();
 */
 
-    D.mc_search( E, depth, top_v );
+    MC_DenseEnumerator DE( E, R, xp_set.get_set() );
+    D.mc_search( DE, depth );
     float tbk = tm.next();
 
     stats.record( tbk );
@@ -2458,10 +2411,10 @@ void leaf_dense_fn(
 
 typedef void (*mc_leaf_func)(
     const HGraphTy &,
-    MC_Enumerator &,
+    MC_CutOutEnumerator &,
+    const clique_set<VID> *,
     const PSet<VID> &,
-    size_t,
-    VID );
+    size_t );
     
 static mc_leaf_func leaf_dense_func[N_DIM+1] = {
     &leaf_dense_fn<32,VID,EID>,  // N=32
@@ -2474,10 +2427,10 @@ static mc_leaf_func leaf_dense_func[N_DIM+1] = {
 template<typename VID, typename EID>
 bool mc_leaf(
     const HGraphTy & H,
-    MC_Enumerator & E,
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * R,
     const PSet<VID> & xp_set,
-    size_t depth,
-    VID top_v ) {
+    size_t depth ) {
 #if ABLATION_DISABLE_LEAF
     return false;
 #else
@@ -2498,7 +2451,7 @@ bool mc_leaf(
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MAX_SIZE ) {
-	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, xp_set, depth, top_v );
+	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, xp_set, depth );
 	return true;
     }
 
@@ -2611,7 +2564,7 @@ int main( int argc, char *argv[] ) {
 #endif
 
     VID degeneracy = kcore.getLargestCore();
-    MC_Enumerator E( degeneracy );
+    MC_Enumerator E( degeneracy, order.get() );
 
     /*! Traversal orders
      * 1. SOTA: sort by decreasing degree, visit low to high degree.
@@ -2643,7 +2596,8 @@ int main( int argc, char *argv[] ) {
     if( what_if != ~(VID)0 ) {
 	// For highest-degree vertex with maximum degeneracy, try setting
 	// a strong precedent for the clique size
-	E.record( what_if, ~(VID)0 );
+	std::vector<VID> empty;
+	E.record( what_if, what_if, empty.begin(), empty.end() );
 	VID v = histo[1];
 	std::cout << "what-if clique=" << what_if << " vertex v=" << v
 		  << " deg=" << H.getDegree( v )
