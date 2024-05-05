@@ -580,7 +580,8 @@ void
 sort_order( VID * order, VID * rev_order,
 	    const VID * const coreness,
 	    VID n,
-	    VID K ) {
+	    VID K,
+	    bool reverse = false ) {
     VID * histo = new VID[K+1];
     std::fill( &histo[0], &histo[K+1], 0 );
 
@@ -592,7 +593,11 @@ sort_order( VID * order, VID * rev_order,
     }
 
     // Prefix sum
-    VID sum = sequence::plusScan( histo, histo, K+1 );
+    // Note: require int variables as the code checks >= 0 which is futile
+    //       with unsigned int
+    VID sum = sequence::scan( histo, (int)0, (int)K+1, addF<VID>(),
+			      sequence::getA<VID,int>( histo ),
+			      (VID)0, false, reverse );
 
     // Place in order
     for( VID v=0; v < n; ++v ) {
@@ -606,13 +611,25 @@ sort_order( VID * order, VID * rev_order,
 }
 
 //! Auxiliary method for downstream tasks
+template<typename T, typename U, short AID, typename Encoding, bool NT>
+void
+sort_order( VID * order, VID * rev_order,
+	    const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
+	    VID n,
+	    VID K,
+	    bool reverse = false ) {
+    return sort_order( order, rev_order, coreness.get_ptr(), n, K, reverse );
+}
+
+//! Auxiliary method for downstream tasks
 void
 sort_order_ties( VID * order, VID * rev_order,
 		 const VID * const coreness,
 		 VID n,
 		 VID K,
-		 const VID * const degree ) {
-    VID * histo = new VID[K+1];
+		 VID * histo, // array of length K+1
+		 const VID * const degree,
+		 bool reverse = false ) {
     std::fill( &histo[0], &histo[K+1], 0 );
 
     // Histogram
@@ -623,8 +640,11 @@ sort_order_ties( VID * order, VID * rev_order,
     }
 
     // Prefix sum
-    VID sum = sequence::plusScan( histo, histo, K+1 );
-
+    // Note: require int variables as the code checks >= 0 which is futile
+    //       with unsigned int
+    VID sum = sequence::scan( histo, (int)0, (int)K+1, addF<VID>(),
+			      sequence::getA<VID,int>( histo ),
+			      (VID)0, false, reverse );
     // Place in order
     for( VID v=0; v < n; ++v ) {
 	VID c = coreness[v];
@@ -633,19 +653,38 @@ sort_order_ties( VID * order, VID * rev_order,
 	// rev_order[v] = pos;
     }
 
-    // Degree sorting (crude)
-    parallel_loop( (VID)0, K+1, [&]( VID c ) {
-	std::sort( &order[c==0?0:histo[c-1]], &order[c==K?n:histo[c]] );
-    } );
+    // Degree sorting (crude), decreasing order
+    if( reverse ) {
+	parallel_loop( (VID)0, K+1, [&]( VID c ) {
+	    std::sort( &order[c==K?0:histo[c+1]], &order[histo[c]],
+		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
+	} );
+    } else {
+	parallel_loop( (VID)0, K+1, [&]( VID c ) {
+	    std::sort( &order[c==0?0:histo[c-1]], &order[c==K?n:histo[c]],
+		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
+	} );
+    }
 
     // Construct reverse order
     parallel_loop( (VID)0, n, [&]( VID pos ) {
 	rev_order[order[pos]] = pos;
     } );
-
-    delete[] histo;
 }
 
+//! Auxiliary method for downstream tasks
+template<typename T, typename U, short AID, typename Encoding, bool NT>
+void
+sort_order_ties( VID * order, VID * rev_order,
+		 const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
+		 VID n,
+		 VID K,
+		 VID * histo, // array of length K+1
+		 const VID * const degree,
+		 bool reverse = false ) {
+    return sort_order_ties( order, rev_order, coreness.get_ptr(), n, K,
+			    histo, degree, reverse );
+}
 
 #ifndef NOBENCH
 template <class GraphType>
