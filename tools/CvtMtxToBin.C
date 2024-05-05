@@ -79,6 +79,9 @@ int main( int argc, char *argv[] ) {
 	return 1;
     }
 
+    if( symmetric )
+	m *= 2;
+
     assert( nr != 0 && nc != 0 );
 
     if( nr != nc )
@@ -127,6 +130,16 @@ int main( int argc, char *argv[] ) {
 	assert( *qqq == '\n' );
 
 	++enxt;
+
+	// Need to mirror edges
+	if( symmetric ) {
+	    src[enxt] = dst[enxt-1];
+	    dst[enxt] = src[enxt-1];
+	    if( weighted )
+		wght[enxt] = wght[enxt-1];
+	    ++enxt;
+	}
+
 	if( enxt == m )
 	    break;
     } while( (q = fgets( buf, SIZE, fp )) != nullptr );
