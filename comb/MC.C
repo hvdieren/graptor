@@ -273,7 +273,8 @@ public:
 	os << "\n";
 
 	os << "  filter pset: " << m_reason[(int)fr_pset].load() << "\n";
-	os << "  filter colour-ub: " << m_reason[(int)fr_colour_ub].load() << "\n";
+	os << "  filter colour-ub: "
+	   << m_reason[(int)fr_colour_ub].load() << "\n";
 	os << "  filter colour-greedy: "
 	   << m_reason[(int)fr_colour_greedy].load() << "\n";
 	os << "  filter rdeg: " << m_reason[(int)fr_rdeg].load() << "\n";
