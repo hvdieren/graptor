@@ -37,7 +37,7 @@ public:
 	return !( *this == other );
     }
     typename conditional_iterator::reference operator*() const {
-	return m_it;
+	return *m_it;
     }
 
 private:
