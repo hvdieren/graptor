@@ -162,11 +162,12 @@ static constexpr bool io_trace = false;
 
 enum filter_reason {
     fr_pset = 0,
-    fr_colour = 1,
-    fr_rdeg = 2,
-    fr_maxdeg = 3,
-    fr_unknown = 4,
-    filter_reason_num = 5
+    fr_colour_ub = 1,
+    fr_colour_greedy = 2,
+    fr_rdeg = 3,
+    fr_maxdeg = 4,
+    fr_unknown = 5,
+    filter_reason_num = 6
 };
 
 class MC_Enumerator {
@@ -210,7 +211,9 @@ public:
 	   << "\n";
 
 	os << "  filter pset: " << m_reason[(int)fr_pset].load() << "\n";
-	os << "  filter colour: " << m_reason[(int)fr_colour].load() << "\n";
+	os << "  filter colour-ub: " << m_reason[(int)fr_colour_ub].load() << "\n";
+	os << "  filter colour-greedy: "
+	   << m_reason[(int)fr_colour_greedy].load() << "\n";
 	os << "  filter rdeg: " << m_reason[(int)fr_rdeg].load() << "\n";
 	os << "  filter maxdeg: " << m_reason[(int)fr_maxdeg].load() << "\n";
 	os << "  filter unknown: " << m_reason[(int)fr_unknown].load() << "\n";
@@ -1945,7 +1948,7 @@ bk_recursive_call(
 
 template<typename VID>
 std::pair<VID,VID>
-count_colours( const HGraphTy & G, const PSet<VID> & xp ) {
+count_colours_ub( const HGraphTy & G, const PSet<VID> & xp ) {
     // Upper bound, loose?
     // Example: if we have i neighbours in the PSet, we would deduce the need
     // for colour i, however, if some of those neighbours can have the same
@@ -1974,6 +1977,56 @@ count_colours( const HGraphTy & G, const PSet<VID> & xp ) {
     return { c, max_rdeg };
 }
 
+template<typename VID>
+std::pair<VID,VID>
+count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp ) {
+    // Upper bound, loose?
+    // Example: if we have i neighbours in the PSet, we would deduce the need
+    // for colour i, however, if some of those neighbours can have the same
+    // colour, then we don't need colour i.
+    VID n = G.numVertices();
+    VID s = xp.size();
+    std::vector<VID> colour( n );
+    std::vector<VID> histo( s );
+    VID c = 1; // number of colours in use
+    VID max_col = 0;
+    VID max_rdeg = 0;
+    for( VID j=0; j < s; ++j ) {
+	VID i = s-1 - j;
+	VID v = xp.at( i );
+	const auto & adj = G.get_neighbours_set( v );
+	std::fill( histo.begin(), histo.end(), 0 );
+
+	// Right-degree
+	auto nb = adj.begin();
+	auto ne = adj.end();
+	nb = std::upper_bound( nb, ne, i );
+	VID rdeg = std::distance( nb, ne );
+	if( rdeg > max_rdeg )
+	    max_rdeg = rdeg;
+
+	// Intersect and check colours
+	const VID * pb = xp.get_set() + i + 1;
+	const VID * pe = xp.get_set() + s;
+	if( ne != nb )
+	    pe = std::upper_bound( pb, pe, *(ne-1) );
+	for( ; pb != pe; ++pb ) {
+	    if( adj.contains( *pb ) )
+		histo[colour[*nb]] = 1;
+	}
+		
+	for( VID c=0; c < n; ++c ) {
+	    if( histo[c] == 0 ) {
+		colour[i] = c;
+		if( c > max_col )
+		    max_col = c;
+		break;
+	    }
+	}
+    }
+    return { max_col, max_rdeg };
+}
+
 // XP may be modified by the method. It is not required to be in sort order.
 void
 mc_bron_kerbosch_recpar_xps(
@@ -2000,8 +2053,9 @@ mc_bron_kerbosch_recpar_xps(
     if( !E.is_feasible( depth + xp.size(), fr_pset ) )
 	return;
 
-    auto [ num_colours, max_rdeg ] = count_colours( G, xp );
-    if( !E.is_feasible( depth + num_colours, fr_colour ) )
+    // auto [ num_colours, max_rdeg ] = count_colours_ub( G, xp );
+    auto [ num_colours, max_rdeg ] = count_colours_greedy( G, xp );
+    if( !E.is_feasible( depth + num_colours, fr_colour_greedy ) )
 	return;
     if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
 	return;
@@ -2486,6 +2540,8 @@ int main( int argc, char *argv[] ) {
 	      << " davg=" << davg
 	      << std::endl;
 
+    // Number of partitions is tunable. A fairly large number is helpful
+    // to help load balancing.
     GraphCSRAdaptor GA( G, npart );
     KCv<GraphCSRAdaptor> kcore( GA, P );
     kcore.run();
@@ -2556,19 +2612,6 @@ int main( int argc, char *argv[] ) {
 
     VID degeneracy = kcore.getLargestCore();
     MC_Enumerator E( degeneracy );
-
-    // Number of partitions is tunable. A fairly large number is helpful
-    // to help load balancing.
-/*
-    parallel_loop( VID(0), npart, 1, [&,npart,degeneracy,n]( VID p ) {
-	for( VID v=p; v < n; v += npart )
-	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-    } );
-*/
-/*
-    for( VID v=0; v < n; ++v )
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-*/
 
     /*! Traversal orders
      * 1. SOTA: sort by decreasing degree, visit low to high degree.
