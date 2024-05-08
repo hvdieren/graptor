@@ -2391,61 +2391,30 @@ void leaf_dense_fn(
 // TODO: Integrate colouring heuristic into cutout (?)
 // or at least track max degree and use this for early filtering
     DenseMatrix<Bits,VID,VID> D( H, H, xp_set.get_set(), 0, xp_set.get_fill() );
-    // VID n = D.numVertices();
+    VID n = D.numVertices();
     // VID m = D.calculate_num_edges();
-    // VID m = D.get_num_edges();
-    // float d = (float)m / ( (float)n * (float)(n-1) );
+    VID m = D.get_num_edges();
+    float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
 
-/*
-    if( d < 0.5 )
-	D.mc_search( E, depth );
-    else {
-	auto bs = D.vertex_cover_kernelised();
-	E.record( depth + bs.size() );
-    }
-*/
-    
     // Maximum clique size is depth (size of R), maximum degree in D
     // (max number of plausible neighbours), +1 for the vertex whose neighbours
     // we are checking.
     if( !E.is_feasible( depth + D.get_max_degree() + 1, fr_maxdeg ) ) {
-/*
-	std::cout << "Leaf task: n=" << D.numVertices()
-		  << " m=" << m << " d=" << d
-		  << " pset=" << xp_set.get_fill()
-		  << " depth=" << depth
-		  << " d_max=" << D.get_max_degree()
-		  << " not feasible\n";
-*/
 	return;
     }
 
-/*
-    VID init_k = n - ( E.get_max_clique_size() - depth );
-    auto bs = D.vertex_cover_kernelised( init_k );
-    float tvc = tm.next();
-*/
-
     MC_DenseEnumerator DE( E, R, xp_set.get_set() );
-    D.mc_search( DE, depth );
+    if( d > 0.9f ) {
+	VID init_k = n - ( E.get_max_clique_size() - depth );
+	auto bs = D.vertex_cover_kernelised( init_k );
+	DE.record( depth + bs.size(), bs.begin(), bs.end() );
+    } else {
+	D.mc_search( DE, depth );
+    }
+
     float tbk = tm.next();
-
     stats.record( tbk );
-
-/*
-    std::cout << "Leaf task: n=" << D.numVertices()
-	      << " m=" << m << " d=" << d
-	      << " d_max=" << D.get_max_degree()
-	      << " pset=" << xp_set.get_fill()
-	      << " mc=" << bs.size() << " depth=" << depth
-	      << " tbk=" << tbk
-	      << " tvc=" << tvc
-	      << " bk/vc=" << (tbk/tvc)
-	      << "\n";
-*/
-
-    // E.record( depth + bs.size() );
 }
 
 typedef void (*mc_leaf_func)(
