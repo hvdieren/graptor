@@ -1957,9 +1957,7 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 	auto nb = adj.begin();
 	auto ne = adj.end();
 	nb = std::upper_bound( nb, ne, v );
-	VID rdeg = std::distance( nb, ne );
-	if( rdeg > max_rdeg )
-	    max_rdeg = rdeg;
+	VID rdeg = 0;
 
 	// Intersect and check colours
 	const VID * pb = xp.get_set() + i + 1;
@@ -1967,9 +1965,14 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 	if( ne != nb )
 	    pe = std::upper_bound( pb, pe, *(ne-1) );
 	for( ; pb != pe; ++pb ) {
-	    if( adj.contains( *pb ) )
+	    if( adj.contains( *pb ) ) {
 		histo[colour[*pb]] = 1;
+		++rdeg;
+	    }
 	}
+
+	if( rdeg > max_rdeg )
+	    max_rdeg = rdeg;
 		
 	for( VID c=0; c < n; ++c ) {
 	    if( histo[c] == 0 ) {
