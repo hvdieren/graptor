@@ -106,10 +106,6 @@
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
 
-#ifndef TUNABLE_SMALL_AVOID_CUTOUT_LEAF
-#define TUNABLE_SMALL_AVOID_CUTOUT_LEAF 0
-#endif
-
 #define NOBENCH
 #define MD_ORDERING 0
 #define VARIANT 11
@@ -169,7 +165,9 @@ enum filter_reason {
     fr_rdeg = 3,
     fr_maxdeg = 4,
     fr_unknown = 5,
-    filter_reason_num = 6
+    fr_cover = 6,
+    fr_outer = 7,
+    filter_reason_num = 8
 };
 
 template<typename T>
@@ -244,13 +242,15 @@ public:
     }
 
     // Feasability check
-    bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
-	if( upper_bound > m_best.load( std::memory_order_relaxed ) )
-	    return true;
-	else {
+    bool is_feasible_bool( bool cond, filter_reason r = fr_unknown ) {
+	if( !cond )
 	    ++m_reason[(int)r];
-	    return false;
-	}
+	return cond;
+    }
+
+    bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
+	return is_feasible_bool(
+	    upper_bound > m_best.load( std::memory_order_relaxed ), r );
     }
 
     size_t get_max_clique_size() const {
@@ -280,6 +280,8 @@ public:
 	os << "  filter rdeg: " << m_reason[(int)fr_rdeg].load() << "\n";
 	os << "  filter maxdeg: " << m_reason[(int)fr_maxdeg].load() << "\n";
 	os << "  filter unknown: " << m_reason[(int)fr_unknown].load() << "\n";
+	os << "  filter cover: " << m_reason[(int)fr_cover].load() << "\n";
+	os << "  filter outer: " << m_reason[(int)fr_outer].load() << "\n";
 
 	return os;
     }
@@ -337,6 +339,9 @@ public:
     bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
 	return m_E.is_feasible( upper_bound, r );
     }
+    bool is_feasible_bool( bool cond, filter_reason r = fr_unknown ) {
+	return m_E.is_feasible_bool( cond, r );
+    }
 
     size_t get_max_clique_size() const {
 	return m_E.get_max_clique_size();
@@ -378,6 +383,9 @@ public:
     // Feasability check
     bool is_feasible( size_t upper_bound, filter_reason r = fr_unknown ) {
 	return m_E.is_feasible( upper_bound, r );
+    }
+    bool is_feasible_bool( bool cond, filter_reason r = fr_unknown ) {
+	return m_E.is_feasible_bool( cond, r );
     }
 
     size_t get_max_clique_size() const {
@@ -1682,6 +1690,7 @@ clique_via_vc3( const HGraphTy & G,
     }
 
     VID best_size = 0;
+    std::vector<VID> cover( cn );
     std::vector<VID> best_cover( cn );
 
     VID bc = E.get_max_clique_size();
@@ -1712,7 +1721,7 @@ clique_via_vc3( const HGraphTy & G,
     bool first_attempt = true;
     while( true ) {
 	best_size = 0;
-	bool any = vertex_cover_vc3<true>( CG, k, 1, best_size, &best_cover[0] );
+	bool any = vertex_cover_vc3<true>( CG, k, 1, best_size, &cover[0] );
 	if( verbose ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
@@ -1725,6 +1734,7 @@ clique_via_vc3( const HGraphTy & G,
 	    // in case we find a better cover than requested
 	    if( k > k_best_size )
 		k = k_best_size;
+	    std::copy( &cover[0], &cover[best_size], best_cover.begin() );
 	}
 
 	// Reduce range
@@ -1747,19 +1757,20 @@ clique_via_vc3( const HGraphTy & G,
 
     // Record clique
     if( k_best_size < k_prior ) {
-	if( E.is_feasible( depth + cn - k_best_size ) ) {
+	if( E.is_feasible( depth + cn - k_best_size, fr_cover ) ) {
 	    if( verbose )
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
 	    // Create complement set
 	    std::vector<VID> clique( depth + cn - k_best_size );
-	    std::sort( best_cover.begin(), best_cover.end() );
-	    for( VID i=0, j=0; i < cn; ++i ) {
-		if( best_cover[j] == i )
-		    ++j;
-		else
-		    clique.push_back( i );
+	    std::sort( &best_cover[0], &best_cover[k_best_size] );
+	    for( VID i=0, j=0, k=0; i < cn; ++i ) {
+		if( best_cover[j] == i ) {
+		    if( j < k_best_size-1 )
+			++j;
+		} else
+		    clique[k++] = i;
 	    }
 	    E.record( depth + cn - k_best_size,
 		      clique.begin(), clique.end() ); // size of complement
@@ -1781,6 +1792,7 @@ bool mc_leaf(
     const PSet<VID> & xp_set,
     size_t depth );
 
+template<bool allow_dense>
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
@@ -1855,6 +1867,7 @@ get_max_degree_vertex( const HGraph & G ) {
 }
 
 
+template<bool allow_dense>
 void
 bk_recursive_call(
     const HGraphTy & G,
@@ -1876,10 +1889,7 @@ bk_recursive_call(
 	return;
     }
 
-#if TUNABLE_SMALL_AVOID_CUTOUT_LEAF != 0
-    if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF )
-#endif
-    {
+    if constexpr ( allow_dense ) {
 	if( mc_leaf<VID,EID>( G, E, R, xp_new, depth ) )
 	    return;
     }
@@ -1887,7 +1897,8 @@ bk_recursive_call(
     // Large sub-problem; search recursively
     // Tuning point: do we cut out a subgraph or not?
     // Tuning point: do we proceed with MC or switch to VC?
-    mc_bron_kerbosch_recpar_xps( G, degeneracy, E, R, xp_new, depth );
+    mc_bron_kerbosch_recpar_xps<allow_dense>(
+	G, degeneracy, E, R, xp_new, depth );
 }
 
 template<typename VID>
@@ -1923,7 +1934,8 @@ count_colours_ub( const HGraphTy & G, const PSet<VID> & xp ) {
 
 template<typename VID>
 std::pair<VID,VID>
-count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp ) {
+count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
+		      VID exceed ) {
     // Upper bound, loose?
     // Example: if we have i neighbours in the PSet, we would deduce the need
     // for colour i, however, if some of those neighbours can have the same
@@ -1944,7 +1956,7 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp ) {
 	// Right-degree
 	auto nb = adj.begin();
 	auto ne = adj.end();
-	nb = std::upper_bound( nb, ne, i );
+	nb = std::upper_bound( nb, ne, v );
 	VID rdeg = std::distance( nb, ne );
 	if( rdeg > max_rdeg )
 	    max_rdeg = rdeg;
@@ -1956,22 +1968,44 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp ) {
 	    pe = std::upper_bound( pb, pe, *(ne-1) );
 	for( ; pb != pe; ++pb ) {
 	    if( adj.contains( *pb ) )
-		histo[colour[*nb]] = 1;
+		histo[colour[*pb]] = 1;
 	}
 		
 	for( VID c=0; c < n; ++c ) {
 	    if( histo[c] == 0 ) {
-		colour[i] = c;
-		if( c > max_col )
+		colour[v] = c;
+		if( c > max_col ) {
 		    max_col = c;
+		    if( max_col+1 > exceed ) // stop early and accept solution
+			return { max_col+1, max_rdeg };
+		}
 		break;
 	    }
 	}
     }
-    return { max_col, max_rdeg };
+
+#if 0
+    for( VID j=0; j < s; ++j ) {
+	VID i = s-1 - j;
+	VID v = xp.at( i );
+	const auto & adj = G.get_neighbours_set( v );
+
+	const VID * pb = xp.get_set();
+	const VID * pe = xp.get_set() + s;
+	for( ; pb != pe; ++pb ) {
+	    if( adj.contains( *pb ) )
+		assert( colour[*pb] != colour[v] );
+	}
+    }
+#endif
+    
+    // Add one to the maximum colour in use as colours are numbered [0,max_col]
+    // and thus the number of colours is max_col+1
+    return { max_col+1, max_rdeg };
 }
 
 // XP may be modified by the method. It is not required to be in sort order.
+template<bool allow_dense>
 void
 mc_bron_kerbosch_recpar_xps(
     const HGraphTy & G,
@@ -1997,9 +2031,15 @@ mc_bron_kerbosch_recpar_xps(
     if( !E.is_feasible( depth + xp.size(), fr_pset ) )
 	return;
 
+    // Instruct count_colours to abort procedure if a sufficient
+    // number of colours is reached to make the set feasible.
+    // Note trickiness with feasibility check as the max clique may have
+    // improved since initiating the call to the colouring routine, which means
+    // it may have stopped early and found a size that is insufficient.
+    VID target = E.get_max_clique_size();
     // auto [ num_colours, max_rdeg ] = count_colours_ub( G, xp );
-    auto [ num_colours, max_rdeg ] = count_colours_greedy( G, xp );
-    if( !E.is_feasible( depth + num_colours, fr_colour_greedy ) )
+    auto [ num_colours, max_rdeg ] = count_colours_greedy( G, xp, target - depth );
+    if( !E.is_feasible_bool( depth + num_colours > target, fr_colour_greedy ) )
 	return;
     if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
 	return;
@@ -2017,10 +2057,11 @@ mc_bron_kerbosch_recpar_xps(
 	if( p_adj.contains( v ) )
 	    continue;
 	
-	const auto adj = G.get_neighbours_set( v ); 
-	VID deg = adj.size();
-
+	// Add vertex v to running clique
 	clique_set<VID> R_new( v, R );
+
+	// Get neighbours of v
+	const auto adj = G.get_neighbours_set( v ); 
 
 	if constexpr ( io_trace ) {
 	    std::lock_guard<std::mutex> guard( io_mux );
@@ -2028,21 +2069,17 @@ mc_bron_kerbosch_recpar_xps(
 		      << adj.size() << " depth=" << depth << "\n";
 	}
 
-	if( deg == 0 ) [[unlikely]] { // implies ne == ce == 0
-	    // avoid overheads of copying and cutout
-	    E.record( depth+1, R_new.begin(), R_new.end() );
-	} else {
-	    // Some complexity:
-	    // + Need to consider all vertices prior to v in XP are now
-	    //   in the X set. Could set ne to i, however:
-	    // + Vertices that are filtered due to pivoting,
-	    //   i.e., neighbours of pivot, are still in P.
-	    // + In sequential execution, we can update XP incrementally,
-	    //   however in parallel execution we cannot.
-	    // TODO: streamline with dual_set
-	    PSet<VID> xp_new = xp.intersect_validate( n, adj );
-	    bk_recursive_call( G, degeneracy, E, &R_new, xp_new, depth+1 );
-	}
+	// Some complexity:
+	// + Need to consider all vertices prior to v in XP are now
+	//   in the X set. Could set ne to i, however:
+	// + Vertices that are filtered due to pivoting,
+	//   i.e., neighbours of pivot, are still in P.
+	// + In sequential execution, we can update XP incrementally,
+	//   however in parallel execution we cannot.
+	// TODO: streamline with dual_set
+	PSet<VID> xp_new = xp.intersect_validate( n, adj );
+	bk_recursive_call<allow_dense>(
+	    G, degeneracy, E, &R_new, xp_new, depth+1 );
 
 	xp.invalidate( v );
     }
@@ -2052,8 +2089,7 @@ void
 mc_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
     VID degeneracy,
-    MC_CutOutEnumerator & E,
-    const clique_set<VID> * R ) {
+    MC_CutOutEnumerator & E ) {
     const VID n = G.numVertices();
 
     // 1. find pivot, e.g., highest degree
@@ -2070,7 +2106,7 @@ mc_bron_kerbosch_recpar_top_xps(
     for( VID i=0; i < it_size; ++i ) {
 	VID v = it_elm[i];
 	VID deg = G.getDegree( v ); 
-	clique_set<VID> R_new( v, R );
+	clique_set<VID> R_new( v );
 
 	if( deg == 0 ) {
 	    // avoid overheads of copying and cutout
@@ -2080,7 +2116,7 @@ mc_bron_kerbosch_recpar_top_xps(
 	} else {
 	    auto adj = G.get_neighbours_set( v ); 
 	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
-	    bk_recursive_call( G, degeneracy, E, &R_new, xp_new, 2 );
+	    bk_recursive_call<true>( G, degeneracy, E, &R_new, xp_new, 2 );
 	}
     }
 }
@@ -2166,9 +2202,8 @@ void mc_top_level_bk(
 
     stats.record_genbuild( av_bk, tm.next() );
 
-    clique_set<VID> R( v );
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE, &R );
+    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE );
 
     stats.record_gen( av_bk, tm.next() );
 }
@@ -2533,8 +2568,6 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_HADJPA_DISABLE_XP_HASH
 	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
 	      << ABLATION_DENSE_DISABLE_XP_HASH
-	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
-	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL_BITS="
 	      << DENSE_THRESHOLD_SEQUENTIAL_BITS
 	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
@@ -2652,7 +2685,7 @@ int main( int argc, char *argv[] ) {
 	// << "\n";
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
 
-	if( !E.is_feasible( K-c+1 ) )
+	if( !E.is_feasible( K-c+1, fr_outer ) )
 	    break;
     }
 	    
@@ -2661,7 +2694,7 @@ int main( int argc, char *argv[] ) {
 	VID c_up = histo[c];
 	VID c_lo = c == K ? 0 : histo[c+1];
 	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( K-c+1 ) )
+	if( !E.is_feasible( K-c+1, fr_outer ) )
 	    continue;
 	for( VID v=c_lo; v < c_up; ++v ) {
 	    // std::cout << "c=" << c << " v=" << v
@@ -2669,7 +2702,7 @@ int main( int argc, char *argv[] ) {
 	    // << " rho=" << remap_coreness[v]
 	    // << "\n";
 	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-	    if( !E.is_feasible( K-c+1 ) )
+	    if( !E.is_feasible( K-c+1, fr_outer ) )
 		break;
 	}
     }
@@ -2688,7 +2721,7 @@ int main( int argc, char *argv[] ) {
 	// << "\n";
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
 
-	if( !E.is_feasible( K-c+1 ) )
+	if( !E.is_feasible( K-c+1, fr_outer ) )
 	    break;
     }
 	    
@@ -2696,7 +2729,7 @@ int main( int argc, char *argv[] ) {
 	VID c_up = histo[c];
 	VID c_lo = c == K ? 0 : histo[c+1];
 	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( K-c+1 ) ) // decreasing degeneracy -> done
+	if( !E.is_feasible( K-c+1, fr_outer ) ) // decreasing degeneracy -> done
 	    break;
 	for( VID v=c_lo; v < c_up; ++v ) {
 	    // std::cout << "c=" << c << " v=" << v
@@ -2704,7 +2737,7 @@ int main( int argc, char *argv[] ) {
 	    // << " rho=" << remap_coreness[v]
 	    // << "\n";
 	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-	    if( !E.is_feasible( K-c+1 ) )
+	    if( !E.is_feasible( K-c+1, fr_outer ) )
 		break;
 	}
     }
