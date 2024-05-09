@@ -2290,7 +2290,7 @@ void mc_top_level(
     // and we expect that not many vertices will be removed.
     EID m_est = 0;
     cut.filter( [&]( VID u ) {
-	VID d = graptor::set_operations<graptor::hash_vector>
+	VID d = graptor::set_operations<graptor::adaptive_intersect>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
@@ -2501,7 +2501,7 @@ void heuristic_expand(
 
     std::vector<VID> ins( std::distance( P_begin, P_end-1 ) );
     VID * out = &ins[0];
-    size_t sz = graptor::set_operations<graptor::hash_vector>::intersect_ds(
+    size_t sz = graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
 	s, v_adj, out ) - out;
 
     heuristic_expand( H, &R_new, v, &ins[0], &ins[sz], E, depth+1 );
