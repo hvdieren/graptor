@@ -449,6 +449,8 @@ struct all_variant_statistics {
 	    sum.m_gen[v] = m_gen[v] + s.m_gen[v];
 	}
 	sum.m_tiny = m_tiny + s.m_tiny;
+	sum.m_filter = m_filter + s.m_filter;
+	sum.m_heuristic = m_heuristic + s.m_heuristic;
 	return sum;
     }
 
@@ -459,6 +461,8 @@ struct all_variant_statistics {
     void record_genbuild( algo_variant var, double atm ) {
 	m_gen[(size_t)var].record_build( atm );
     }
+    void record_filter( double atm ) { m_filter.record( atm ); }
+    void record_heuristic( double atm ) { m_heuristic.record( atm ); }
 
     variant_statistics & get( algo_variant var, size_t n ) {
 	return m_dense[(size_t)var][n-N_MIN_SIZE];
@@ -470,6 +474,7 @@ struct all_variant_statistics {
     variant_statistics m_dense[N_VARIANTS][N_DIM];
     variant_statistics m_leaf_dense[N_VARIANTS][N_DIM];
     variant_statistics m_tiny, m_gen[N_VARIANTS];
+    variant_statistics m_filter, m_heuristic;
 
 };
 
@@ -2255,8 +2260,10 @@ void mc_top_level(
     VID best = E.get_max_clique_size();
 
     // No point analysing a vertex of too low degree
-    if( remap_coreness[v] < best )
+    if( remap_coreness[v] < best ) {
+	stats.record_filter( tm.stop() );
 	return;
+    }
 
     // Filter out vertices where degree in main graph < best.
     // With degree == best, we can make a clique of size best+1 at best.
@@ -2266,8 +2273,10 @@ void mc_top_level(
 
     VID hn1 = cut.get_num_vertices();
 
-    if( hn1 < best )
+    if( hn1 < best ) {
+	stats.record_filter( tm.stop() );
 	return;
+    }
 
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
@@ -2292,8 +2301,12 @@ void mc_top_level(
 
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out.
-    if( cut.get_num_vertices() < best )
+    if( cut.get_num_vertices() < best ) {
+	stats.record_filter( tm.stop() );
 	return;
+    }
+
+    stats.record_filter( tm.stop() );
 
     VID num = cut.get_num_vertices();
 
@@ -2467,13 +2480,77 @@ bool mc_leaf(
 #endif // ABLATION_DISABLE_LEAF
 }
 
+void heuristic_expand(
+    const HFGraphTy & H,
+    const clique_set<VID> * R,
+    VID top_v,
+    const VID * P_begin,
+    const VID * P_end,
+    MC_Enumerator & E,
+    size_t depth ) {
+
+    if( P_begin == P_end ) {
+	E.record( depth, top_v, R->begin(), R->end() );
+	return;
+    }
+
+    VID v = *(P_end-1); // Highest-core vertex is first in sorted list
+    const auto & v_adj = H.get_neighbours_set( v );
+    clique_set<VID> R_new( v, R );
+    graptor::array_slice<VID,size_t> s( P_begin, P_end-1 );
+
+    std::vector<VID> ins( std::distance( P_begin, P_end-1 ) );
+    VID * out = &ins[0];
+    size_t sz = graptor::set_operations<graptor::hash_vector>::intersect_ds(
+	s, v_adj, out ) - out;
+
+    heuristic_expand( H, &R_new, v, &ins[0], &ins[sz], E, depth+1 );
+}
+
+/*! Heuristic search method for maximum clique
+ */
+void heuristic_search(
+    const HFGraphTy & H,
+    MC_Enumerator & E,
+    VID v,
+    const VID * const coreness ) {
+
+    timer tm;
+    tm.start();
+
+    all_variant_statistics & stats = mc_stats.get_statistics();
+
+    const auto & adj = H.get_neighbours_set( v );
+    // auto begin = adj.begin();
+    // auto end = adj.end();
+
+    std::vector<VID> pset;
+    pset.resize( adj.size() );
+
+    // Only interested in vertices that can make a clique larger than th
+    VID th = E.get_max_clique_size();
+    for( auto v : adj )
+	if( coreness[v] >= th ) 
+	    pset.push_back( v );
+
+    // Heuristically expand a clique. Assume highest-core vertices have
+    // smaller vertex ID.
+    clique_set<VID> R( v );
+    heuristic_expand( H, &R, v, &pset[0], &pset[pset.size()-1], E, 1 );
+
+    stats.record_heuristic( tm.stop() );
+}
+
+/*! Main method for maximum clique search
+ */
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
-    bool symmetric = P.getOptionValue("-s");
+    bool symmetric = P.getOptionValue( "-s" );
+    int heuristic = P.getOptionLongValue( "-h", 0);
     VID npart = P.getOptionLongValue( "-c", 256 );
     VID pre = P.getOptionLongValue( "-pre", -1 );
     VID what_if = P.getOptionLongValue( "-what-if", -1 );
-    verbose = P.getOptionValue("-v");
+    verbose = P.getOptionValue( "-v" );
     const char * ifile = P.getOptionValue( "-i" );
 
     timer tm;
@@ -2530,6 +2607,9 @@ int main( int argc, char *argv[] ) {
 
     HFGraphTy H( R, numa_allocation_interleaved() );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
+
+    std::cout << "Sort order check: coreness[0]=" << remap_coreness[0]
+	      << " coreness[n-1]=" << remap_coreness[n-1] << "\n";
 
     std::cout << "Options:"
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
@@ -2615,6 +2695,31 @@ int main( int argc, char *argv[] ) {
 	// If not, erase result.
 	if( E.get_max_clique_size() <= what_if )
 	    E.reset();
+    }
+
+    if( heuristic == 1 ) {
+	// Heuristic 1: explore all vertices in a greedy manner, finding one
+	// clique per vertex. Traverse from high to low degeneracy.
+	for( VID w=0; w < n; ++w ) {
+	    VID v = n - 1 - w;
+	    heuristic_search( H, E, v, remap_coreness.get() );
+	    if( !E.is_feasible( remap_coreness[v], fr_outer ) )
+		break;
+	}
+    } else if( heuristic == 2 ) {
+	// Heuristic 2: explore selected vertices, one per core number.
+	for( VID c=0; c <= K; ++c ) {
+	    VID c_up = histo[c];
+	    VID c_lo = c == K ? 0 : histo[c+1];
+	    if( c_up == c_lo )
+		continue;
+
+	    VID v = c_lo;
+	    heuristic_search( H, E, v, remap_coreness.get() );
+
+	    if( !E.is_feasible( K-c+1, fr_outer ) )
+		break;
+	}
     }
 
 #if OUTER_ORDER == 1
@@ -2740,6 +2845,10 @@ int main( int argc, char *argv[] ) {
     stats.m_gen[av_bk].print( std::cout );
     std::cout << "generic VC: ";
     stats.m_gen[av_vc].print( std::cout );
+    std::cout << "filter: ";
+    stats.m_filter.print( std::cout );
+    std::cout << "heuristic: ";
+    stats.m_heuristic.print( std::cout );
 
     // Note: reported top-level vertex not translated back after reordering
     E.report( std::cout );
