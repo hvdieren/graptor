@@ -182,6 +182,11 @@ public:
 		return m_ne;
 	}
 
+	const hash_set_interface & trim_range( lVID lo, lVID hi ) const {
+	    // TODO: trim P or X range; may adjust ne to accomplish this
+	    return *this;
+	}
+
     private:
 	const XPSetBase & m_xp;
 	lVID m_ne;
@@ -660,6 +665,11 @@ public:
 	const lVID * begin() const { return m_xp.begin(); }
 	const lVID * end() const { return m_xp.end(); }
 
+	const p_hash_set_interface & trim_range( lVID lo, lVID hi ) const {
+	    // TODO: trim range
+	    return *this;
+	}
+
     private:
 	const PSet & m_xp;
     };
@@ -742,7 +752,7 @@ public:
 	auto validate_ds = make_dual_set( adj.get_seq(), validate_h );
 
 	lVID ce_new =
-	    graptor::set_operations<graptor::hash_vector>::intersect_ds(
+	    graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
 		validate_ds, xp_h, ins.m_set ) - ins.m_set;
 
 	// Construct ins.m_pos 
@@ -800,7 +810,7 @@ public:
 
 	PSet lur( n, l_len + r_len + 16 );
 	lVID * s = lur.m_set;
-	s = graptor::set_operations<graptor::hash_vector>::intersect_ds(
+	s = graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
 	    l_adj.trim_r( l_ngh ), r_adj, s );
 	s = std::copy( r_ngh, r_adj.end(), s );
 
@@ -846,6 +856,7 @@ public:
     // lower-numbered vertices that are also neighbours of the pivot.
     // Keep the PSet sorted, if it was sorted.
     template<typename Adj>
+    [[deprecated]]
     PSet intersect_pivot( lVID n, lVID i, lVID ce,
 		    const Adj & adj, const lVID * ngh,
 		    const Adj & p_adj,
@@ -883,7 +894,7 @@ public:
     // Consider all vertices.
     template<typename DualSet>
     lVID intersect_size( const DualSet & adj ) const {
-	return graptor::set_operations<graptor::hash_vector>
+	return graptor::set_operations<graptor::adaptive_intersect>
 	    ::intersect_size_ds( adj, this->P_hash_set( 0 ) );
     }
 
@@ -891,7 +902,7 @@ public:
     // Consider all vertices.
     template<typename DualSet>
     lVID intersect_size_exceed( const DualSet & adj, lVID x ) const {
-	return graptor::set_operations<graptor::hash_vector>
+	return graptor::set_operations<graptor::adaptive_intersect>
 	    ::intersect_size_exceed_ds( adj, this->P_hash_set( 0 ), x );
     }
 
@@ -899,7 +910,7 @@ public:
     // Consider all vertices up to position i.
     template<typename DualSet>
     lVID intersect_size_from( const DualSet & set, lVID i ) const {
-	return graptor::set_operations<graptor::hash_vector>::intersect_size_ds(
+	return graptor::set_operations<graptor::adaptive_intersect>::intersect_size_ds(
 	    set, this->P_hash_set( i+1 ) );
     }
 

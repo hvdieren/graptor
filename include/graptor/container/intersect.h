@@ -13,6 +13,7 @@
 
 #include "graptor/target/vector.h"
 #include "graptor/container/dual_set.h"
+#include "graptor/container/array_slice.h"
 
 namespace graptor {
 
@@ -37,7 +38,8 @@ struct is_multi_collector {
 	c.template multi_record<true,typename C::type,8>(
 	    static_cast<typename C::type *>( nullptr ),
 	    vector_type_traits_vl<typename C::type,8>::setzero(),
-	    vector_type_traits_vl<typename C::type,8>::mask_traits::setzero() );
+	    vector_type_traits_vl<typename C::type,8>::mask_traits::setzero(),
+	    size_t(0) );
     };
 };
 
@@ -123,6 +125,14 @@ struct intersection_collector {
 	return true;
     }
 
+    //! \brief register remaining unprocessed elements.
+    //
+    // \tparam rhs True if right-hand side remained as requested.
+    // \arg l Number of elemetns remaining on LHS.
+    // \arg r Number of elemetns remaining on RHS.
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) { }
+
     //! \brief Record multiple elements in the vector.
     //
     // The elements are captured in a vector of length VL. A mask of the same
@@ -135,12 +145,14 @@ struct intersection_collector {
     // \arg p Pointer to values in left-hand side argument to intersection.
     // \arg value Vector of VL values or translated values to store.
     // \arg mask Vector of VL mask bits indicating valid values in value.
+    // \arg vl Only lower vl lanes are set in mask; others are invalid.
     // \return Boolean that is false when intersection should be aborted.
     template<bool rhs, typename U, unsigned short VL, typename M>
     bool
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type value,
-		  M mask ) {
+		  M mask,
+		  size_t vl ) {
 	using tr = vector_type_traits_vl<U,VL>;
 
 	m_pointer = tr::cstoreu_p( m_pointer, mask, value );
@@ -185,11 +197,15 @@ struct intersection_size {
 	return true;
     }
 
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) { }
+
     template<bool rhs, typename U, unsigned short VL>
     bool
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type index,
-		  typename vector_type_traits_vl<U,VL>::mask_type mask ) {
+		  typename vector_type_traits_vl<U,VL>::mask_type mask,
+		  size_t vl ) {
 	using tr = vector_type_traits_vl<U,VL>;
 	size_t present = tr::mask_traits::popcnt( mask );
 	m_size += present;
@@ -223,12 +239,13 @@ struct intersection_size_exceed {
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_options = lset.size();
+	m_options = lset.size() - m_exceed;
     }
 
+    // Version called by merge
     template<bool rhs>
     bool record( const type * l, const type * r, bool ins ) {
-	if( !ins ) {
+	if( *l < *r ) { // lhs not present
 	    if( --m_options <= 0 ) [[unlikely]] {
 		m_terminated = true;
 		return false;
@@ -237,6 +254,7 @@ struct intersection_size_exceed {
 	return true;
     }
 
+    // Version called by hash
     template<bool rhs>
     bool record( const type * l, type value, bool ins ) {
 	if( !ins ) {
@@ -248,13 +266,22 @@ struct intersection_size_exceed {
 	return true;
     }
 
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) {
+	// We could flag m_terminated if m_options drops below zero,
+	// however, this is not necessary as a correct intersection size
+	// will be returned.
+	m_options -= l;
+    }
+
     template<bool rhs, typename U, unsigned short VL>
     bool
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type index,
-		  typename vector_type_traits_vl<U,VL>::mask_type mask ) {
+		  typename vector_type_traits_vl<U,VL>::mask_type mask,
+		  size_t vl ) {
 	using tr = vector_type_traits_vl<U,VL>;
-	size_t absent = VL - tr::mask_traits::popcnt( mask );
+	size_t absent = vl - tr::mask_traits::popcnt( mask );
 	m_options -= absent;
 	if( m_options <= 0 ) {
 	    m_terminated = true;
@@ -285,6 +312,14 @@ struct is_intersection_size_exceed<intersection_size_exceed<T>>
 template<typename S>
 constexpr bool is_intersection_size_exceed_v =
     is_intersection_size_exceed<S>::value;
+
+/*! \section Intersection approaches
+ */
+struct hash_scalar;
+struct hash_vector;
+struct merge_scalar;
+struct merge_vector;
+struct merge_jump;
 
 template<typename so_traits>
 struct set_operations {
@@ -396,6 +431,8 @@ struct merge_scalar {
 	    else
 		++rb;
 	}
+
+	out.template remainder<rhs>( le - lb, re - rb );
 
 	return std::make_pair( lb, rb );
     }
@@ -524,6 +561,8 @@ struct merge_jump {
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
 
+	size_t lrem = 0, rrem = 0;
+
 	while( lb != le && rb != re ) {
 	    if( !out.template record<rhs>( lb, rb, *lb == *rb ) )
 		break;
@@ -532,12 +571,18 @@ struct merge_jump {
 		++rb;
 	    } else if( *lb < *rb ) {
 		++lb;
-		lb = jump( lb, le, *rb );
+		LIt lj = jump( lb, le, *rb );
+		lrem += std::distance( lb, lj );
+		lb = lj;
 	    } else {
 		++rb;
-		rb = jump( rb, re, *lb );
+		RIt rj = jump( rb, re, *lb );
+		rrem += std::distance( rb, rj );
+		rb = rj;
 	    }
 	}
+
+	out.template remainder<rhs>( lrem + ( le - lb ), rrem + ( re - rb ) );
 
 	return std::make_pair( lb, rb );
     }
@@ -758,7 +803,7 @@ struct hash_scalar {
 		       "at least one of arguments should be hash set" );
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       && is_hash_set_v<std::decay_t<RSet>> ) {
-	    if( lset.size() < rset.size() )
+	    if( lset.size() <= rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
 	    else {
 		out.swap( rset, lset );
@@ -1241,7 +1286,7 @@ public:
 		    v, target::mt_mask() );
 
 		// Record / count common values
-		if( !out.template multi_record<rhs,T,VL>( lb, v, m ) )
+		if( !out.template multi_record<rhs,T,VL>( lb, v, m, VL ) )
 		    break;
 	    }
 
@@ -1282,7 +1327,7 @@ public:
 		//        "collector must accept vectors of values" );
 	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
 		       && is_multi_hash_set_v<std::decay_t<RSet>> ) {
-	    if( lset.size() < rset.size() )
+	    if( lset.size() <= rset.size() )
 		return intersect_task<so,true>( lset, rset, out );
 	    else {
 		out.swap( rset, lset );
@@ -1335,19 +1380,24 @@ struct merge_vector {
 
 	    mask_type ma = tr::intersect( vl, rb );
 
-	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma ) )
-		break;
-
 	    type lf = tr::set1( lb[VL-1] );
 	    type rf = tr::set1( rb[VL-1] );
 
 	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
 	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
+	    size_t la = rt_ilog2( ((uint64_t)ladv) + 1 );
+	    size_t ra = rt_ilog2( ((uint64_t)radv) + 1 );
 
-	    lb += rt_ilog2( ((uint64_t)ladv) + 1 );
-	    rb += rt_ilog2( ((uint64_t)radv) + 1 );
+	    lb += la;
+	    rb += ra;
+
+	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la ) )
+		break;
 	}
 
+	if( lb+VL == le && rb+VL == re )
+	    out.template remainder<rhs>( le - lb, re - rb );
+	
 	return std::make_pair( lb, rb );
     }
 
@@ -1711,6 +1761,59 @@ struct merge_partitioned {
 		    mid, hi, lidx, ridx, exceed-sz0 );
 	    return sz0 + sz1;
 	}
+    }
+};
+
+struct adaptive_intersect {
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return;
+	
+#if 1
+	// Trim ranges
+	auto llo = *lset.begin();
+	auto lhi = *std::prev( lset.end() );
+	auto rlo = *rset.begin();
+	auto rhi = *std::prev( rset.end() );
+
+	auto tlset = lset.trim_range( rlo, rhi );
+	auto trset = rset.trim_range( llo, lhi );
+
+#if 0
+	int lcat = rt_ilog2( tlset.size()/2 );
+	int rcat = rt_ilog2( trset.size()/2 );
+
+	if constexpr ( so == so_intersect || so == so_intersect_xlat ) {
+	    if( lcat != rcat || std::max( lcat, rcat ) >= 5 )
+		return hash_vector::template apply<so>( tlset, trset, out );
+	    else
+		return merge_vector::template apply<so>( tlset, trset, out );
+	} else if constexpr ( so == so_intersect_size ) {
+	    if( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 )
+		return hash_vector::template apply<so>( tlset, trset, out );
+	    else
+		return merge_vector::template apply<so>( tlset, trset, out );
+	} else if constexpr ( so == so_intersect_size_exceed ) {
+	    if( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 )
+		return hash_vector::template apply<so>( tlset, trset, out );
+	    else
+		return merge_vector::template apply<so>( tlset, trset, out );
+	} else {
+	    // Intersection operation
+	    return merge_vector::template apply<so>( tlset, trset, out );
+	}
+#else
+	// Intersection operation
+	return merge_vector::template apply<so>( tlset, trset, out );
+#endif
+#else
+	return merge_vector::template apply<so>( lset, rset, out );
+#endif
     }
 };
 
