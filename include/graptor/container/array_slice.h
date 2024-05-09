@@ -4,7 +4,7 @@
 
 namespace graptor {
 
-template<typename T, typename I>
+template<typename T, typename I = size_t>
 struct array_slice {
     using type = T;
     using index_type = I;
@@ -23,9 +23,20 @@ struct array_slice {
 	return array_slice<T,I>( m_begin, r );
     }
 
+    array_slice<T,I> trim_range( type lo, type hi ) const {
+	auto b = std::lower_bound( begin(), end(), lo );
+	auto e = std::upper_bound( b, end(), hi );
+	return array_slice<T,I>( b, e );
+    }
+
 private:
     const type * m_begin, * m_end;
 };
+
+template<typename T, typename I = size_t>
+array_slice<T,I> make_array_slice( const T * b, const T * e ) {
+    return array_slice<T,I>( b, e );
+}
 
 } // namespace graptor
 

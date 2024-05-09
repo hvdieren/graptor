@@ -92,6 +92,11 @@ struct dual_set {
 	return dual_set<seq_type,hash_type>( m_seq.trim_r( r ), m_hash );
     }
 
+    dual_set<seq_type,hash_type> trim_range( type lo, type hi ) const {
+	return dual_set<seq_type,hash_type>( m_seq.trim_range( lo, hi ),
+					     m_hash );
+    }
+
 private:
     seq_type m_seq;
     const hash_type & m_hash;
