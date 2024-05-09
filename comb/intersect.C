@@ -43,7 +43,7 @@ using hash_fn = graptor::rand_hash<uint32_t>;
 
 /*! Enumeration of algorithmic variants
  */
-enum variant {
+enum ins_variant {
     var_merge_scalar = 0,	/**< merge-based, scalar */
     var_merge_vector = 1,	/**< merge-based, vector */
     var_merge_jump = 2,		/**< merge-based, scalar and jumping ahead */
@@ -66,7 +66,7 @@ enum operation {
 
 /*! Print an algorithmic variant in human-readable form
  */
-std::ostream & operator << ( ostream & os, variant v ) {
+std::ostream & operator << ( ostream & os, ins_variant v ) {
     switch( v ) {
     case var_merge_scalar: return os << "merge_scalar";
     case var_merge_vector: return os << "merge_vector";
@@ -110,7 +110,7 @@ exceed_threshold( const VID * lb, const VID * le,
     return std::max( (3*d)/4, (size_t)1 );
 }
 
-template<variant>
+template<ins_variant>
 struct intersect_traits;
 
 template<>
@@ -174,7 +174,7 @@ static mmap_ptr<VID> prestudy;
  * The main purpose of this method and its specialisations is to provide
  * a common interface to call all methods.
  */
-template<variant var, operation op>
+template<ins_variant var, operation op>
 auto
 bench( const VID * lb, const VID * le,
        const VID * rb, const VID * re,
@@ -218,7 +218,7 @@ bench( const VID * lb, const VID * le,
     }
 }
 
-template<variant var, operation op>
+template<ins_variant var, operation op>
 double
 bench( VID lv, VID rv,
        const VID * lb, const VID * le,
@@ -255,7 +255,7 @@ static std::mutex timings_mux;
 static graptor::distribution_timing timings[var_N][MAX_CLASS][MAX_CLASS];
 
 void
-record( size_t l, size_t r, double tm, variant var, operation op ) {
+record( size_t l, size_t r, double tm, ins_variant var, operation op ) {
     size_t cl = ilog2( l ) / 2;
     if( cl >= MAX_CLASS )
 	cl = MAX_CLASS-1;
@@ -321,8 +321,8 @@ void report_difference( int compare0, int compare1 ) {
 	assert( 0 <= compare0 && compare0 < var_N );
 	assert( 0 <= compare1 && compare1 < var_N );
 	
-	std::cerr << "mean difference " << (variant)compare0
-		  << " and " << (variant)compare1 << ":\n";
+	std::cerr << "mean difference " << (ins_variant)compare0
+		  << " and " << (ins_variant)compare1 << ":\n";
 	for( size_t l=0; l < MAX_CLASS; ++l )
 	    for( size_t r=0; r < MAX_CLASS; ++r )
 		std::cerr
@@ -448,7 +448,7 @@ int main( int argc, char *argv[] ) {
     std::cerr << "Results:\n";
 
     for( int var=0; var < var_N; ++var ) {
-	std::cerr << "Results for variant " << (variant)var << ":\n";
+	std::cerr << "Results for variant " << (ins_variant)var << ":\n";
 	for( size_t l=0; l < MAX_CLASS; ++l )
 	    for( size_t r=0; r < MAX_CLASS; ++r )
 		std::cerr
