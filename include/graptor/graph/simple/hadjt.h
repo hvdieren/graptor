@@ -11,6 +11,8 @@
 #include "graptor/container/generic_edge_iterator.h"
 #include "graptor/container/hash_set.h"
 #include "graptor/container/difference_iterator.h"
+#include "graptor/container/array_slice.h"
+#include "graptor/container/dual_set.h"
 
 namespace graptor {
 
@@ -22,6 +24,10 @@ public:
     using VID = lVID;
     using EID = lEID;
     using Hash = lHash;
+
+    using hash_set_type = graptor::hash_set<VID,Hash>;
+    using ngh_set_type = graptor::array_slice<VID,VID>;
+    using dual_set_type = graptor::dual_set<ngh_set_type,hash_set_type>;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
@@ -72,13 +78,19 @@ public:
 	m_m = m;
     }
 
-    VID getDegree( VID v ) { return m_hashes[v].size(); }
+    VID getDegree( VID v ) const { return m_hashes[v].size(); }
     hash_set<VID,Hash> & get_adjacency( VID v ) { return m_hashes[v]; }
     const hash_set<VID,Hash> & get_adjacency( VID v ) const {
 	return m_hashes[v];
     }
 
     const VID * get_neighbours( VID v ) const { return nullptr; }
+
+    dual_set_type get_neighbours_set( VID v ) const {
+	return dual_set_type(
+	    ngh_set_type( get_neighbours( v ), getDegree( v ) ),
+	    get_adjacency( v ) );
+    }
 
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
     vertex_iterator vbegin() const { return vertex_iterator( 0 ); }
