@@ -14,6 +14,7 @@
 #include "graptor/container/range_iterator.h"
 #include "graptor/container/double_index_edge_iterator.h"
 #include "graptor/container/difference_iterator.h"
+#include "graptor/container/generic_edge_iterator.h"
 #include "graptor/container/array_slice.h"
 #include "graptor/container/dual_set.h"
 
@@ -22,6 +23,7 @@ namespace graptor {
 
 namespace graph {
 
+#if 0
 /*!======================================================================*
  * GraphHadj: A graph data structure that represents adjacency lists as
  * hash tables using a single pre-allocated amount of memory.
@@ -181,6 +183,7 @@ private:
     mm::buffer<VID> m_hashes;
     mm::buffer<Hash> m_hash_fn;
 };
+#endif
 
 template<bool dual_rep, bool left_base, typename Hash>
 struct hash_pa_insert_iterator {
