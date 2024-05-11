@@ -577,10 +577,10 @@ private:
 
 //! Auxiliary method for downstream tasks
 void
-sort_order( VID * order, VID * rev_order,
-	    const VID * const coreness,
-	    VID n,
+sort_order( VID n,
 	    VID K,
+	    const VID * const coreness,
+	    VID * order, VID * rev_order,
 	    bool reverse = false ) {
     VID * histo = new VID[K+1];
     std::fill( &histo[0], &histo[K+1], 0 );
@@ -613,30 +613,72 @@ sort_order( VID * order, VID * rev_order,
 //! Auxiliary method for downstream tasks
 template<typename T, typename U, short AID, typename Encoding, bool NT>
 void
-sort_order( VID * order, VID * rev_order,
-	    const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
-	    VID n,
+sort_order( VID n,
 	    VID K,
+	    const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
+	    VID * order, VID * rev_order,
 	    bool reverse = false ) {
-    return sort_order( order, rev_order, coreness.get_ptr(), n, K, reverse );
+    return sort_order( n, K, coreness.get_ptr(), order, rev_order, reverse );
 }
 
-//! Auxiliary method for downstream tasks
+//! \brief Sort vertices by coreness and by degree for equal coreness
+//
+// Auxiliary method for downstream tasks.
+// Given a graph with \p n vertices in the range [0,\p n), and their degrees
+// given in \p degree and coreness in \p coreness, sort the vertices in
+// ascending (\p reverse == false) or descending order (\p reverse == true).
+// Vertices are primarily sorted by coreness, and those with equal coreness
+// are sorted by degree.
+// The array \p order lists the vertex IDs in sort order; \p rev_order makes
+// the reverse mapping. \p order is indexed by the remapped IDs whereas
+// \p rev_order is ordered by original vertex IDs
+// \p histo contains the partitions of the sort order such that vertices
+// with coreness \c k are found in the range \c [histo[k],histo[k+1]) in the
+// \p order array if \p reverse is false. When \p reverse is true, then the
+// vertices with degeneracy \c k are ound in the range \c [histo[k+1],histo[k]).
+// \p histo must be of length at least \p K+2.
+//
+// \param[in] n Number of vertices
+// \param[in] K maximum coreness (\p K inclusive)
+// \param[in] coreness Coreness of the vertices
+// \param[in] degree Degree of vertices
+// \param[out] order Order in which vertices are processed. Members of this
+//                   array are VIDs in the original graph
+// \param[out] rev_order Reverse order. Members of this array are remapped VIDs
+// \param[out] histo Partition of order array by vertices with equal coreness
+// \param[in] reverse_core Sort ascending (false) or descending (true) coreness
+// \param[in] reverse_deg Sort ascending (false) or descending (true) degree
+//
+// \post
+//   0 <= order[r] < n for any r in [0,n).
+//   0 <= rev_order[v] < n for any v in [0,n).
+//   rev_order[order[r]] == r.
+//   order[rev_order[v]] == v.
+//   coreness[order[histo[k]]] > coreness[order[histo[l]]] if k > l
+//       and reverse is false.
+//   degree[order[r]] > degree[order[s]] if r > s
+//       and coreness[order[r]] == coreness[order[s]] and reverse is false.
+//   coreness[order[histo[k]]] < coreness[order[histo[l]]] if k > l
+//       and reverse is true.
+//   degree[order[r]] < degree[order[s]] if r > s
+//       and coreness[order[r]] == coreness[order[s]] and reverse is true.
 void
-sort_order_ties( VID * order, VID * rev_order,
-		 const VID * const coreness,
-		 VID n,
+sort_order_ties( VID n,
 		 VID K,
-		 VID * histo, // array of length K+1
 		 const VID * const degree,
-		 bool reverse = false ) {
+		 const VID * const coreness,
+		 VID * order,
+		 VID * rev_order,
+		 VID * histo, // array of length K+2
+		 bool reverse_core = false,
+		 bool reverse_deg = false ) {
     std::fill( &histo[0], &histo[K+1], 0 );
 
     // Histogram
     for( VID v=0; v < n; ++v ) {
 	VID c = coreness[v];
 	assert( c <= K );
-	histo[K-c]++;
+	histo[c]++;
     }
 
     // Prefix sum
@@ -644,27 +686,42 @@ sort_order_ties( VID * order, VID * rev_order,
     //       with unsigned int
     VID sum = sequence::scan( histo, (int)0, (int)K+1, addF<VID>(),
 			      sequence::getA<VID,int>( histo ),
-			      (VID)0, false, reverse );
+			      (VID)0, false, reverse_core );
+    
     // Place in order
     for( VID v=0; v < n; ++v ) {
 	VID c = coreness[v];
-	VID pos = histo[K-c]++;
+	VID pos = histo[c]++;
 	order[pos] = v;
-	// rev_order[v] = pos;
+    }
+
+    // Restore histo
+    if( reverse_core ) {
+	for( VID c=1; c <= K; ++c )
+	    histo[c] = histo[c+1];
+	histo[0] = n;
+	histo[K+1] = 0;
+    } else {
+	for( VID c=0; c <= K; ++c )
+	    histo[K-c+1] = histo[K-c];
+	histo[0] = 0;
     }
 
     // Degree sorting (crude), decreasing order
-    if( reverse ) {
-	parallel_loop( (VID)0, K+1, [&]( VID c ) {
-	    std::sort( &order[c==K?0:histo[c+1]], &order[histo[c]],
+    // Check reverse inside loop to reduce code size.
+    parallel_loop( (VID)0, K+1, [&]( VID c ) {
+	VID c_lo = histo[c];
+	VID c_up = histo[c+1];
+	if( reverse_core )
+	    std::swap( c_lo, c_up );
+	if( reverse_deg ) {
+	    std::sort( &order[c_lo], &order[c_up],
 		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
-	} );
-    } else {
-	parallel_loop( (VID)0, K+1, [&]( VID c ) {
-	    std::sort( &order[c==0?0:histo[c-1]], &order[c==K?n:histo[c]],
-		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
-	} );
-    }
+	} else {
+	    std::sort( &order[c_lo], &order[c_up],
+		       [&]( VID a, VID b ) { return degree[a] < degree[b]; } );
+	}
+    } );
 
     // Construct reverse order
     parallel_loop( (VID)0, n, [&]( VID pos ) {
@@ -672,18 +729,23 @@ sort_order_ties( VID * order, VID * rev_order,
     } );
 }
 
-//! Auxiliary method for downstream tasks
+//! \brief Sort vertices by coreness and by degree for equal coreness
+//
+//  Auxiliary method for downstream tasks
 template<typename T, typename U, short AID, typename Encoding, bool NT>
 void
-sort_order_ties( VID * order, VID * rev_order,
-		 const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
-		 VID n,
+sort_order_ties( VID n,
 		 VID K,
-		 VID * histo, // array of length K+1
 		 const VID * const degree,
-		 bool reverse = false ) {
-    return sort_order_ties( order, rev_order, coreness.get_ptr(), n, K,
-			    histo, degree, reverse );
+		 const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
+		 VID * order,
+		 VID * rev_order,
+		 VID * histo, // array of length K+1
+		 bool reverse_core = false,
+		 bool reverse_deg = false ) {
+    return sort_order_ties( n, K, degree, coreness.get_ptr(),
+			    order, rev_order, histo,
+			    reverse_core, reverse_deg );
 }
 
 #ifndef NOBENCH

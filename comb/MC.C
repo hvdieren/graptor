@@ -61,8 +61,12 @@
 #endif
 #endif
 
-#ifndef OUTER_ORDER
-#define OUTER_ORDER 4
+#ifndef SORT_ORDER
+#define SORT_ORDER 5
+#endif
+
+#ifndef TRAVERSAL_ORDER
+#define TRAVERSAL_ORDER 1
 #endif
 
 #ifndef PAPI_REGION
@@ -2590,10 +2594,36 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     VID K = kcore.getLargestCore();
-    std::vector<VID> histo; histo.resize( K+1 );
-    sort_order_ties( order.get(), rev_order.get(),
-		     coreness, n, K, &histo[0], G.getDegree(),
-		     true ); // reverse sort
+#if SORT_ORDER == 0
+    // Increasing degree
+    sort_order_ties( n, K, G.getDegree(), order.get(), rev_order.get(), false );
+#elif SORT_ORDER == 1
+    // Decreasing degree
+    sort_order_ties( n, K, G.getDegree(), order.get(), rev_order.get(), true );
+#elif SORT_ORDER == 2
+    // Increasing degeneracy
+    sort_order_ties( n, K, coreness, order.get(), rev_order.get(), false );
+#elif SORT_ORDER == 3
+    // Decreasing degeneracy
+    sort_order_ties( n, K, coreness, order.get(), rev_order.get(), true );
+#elif SORT_ORDER == 4
+    std::vector<VID> histo; histo.resize( K+2 );
+    sort_order_ties( n, K, G.getDegree(), coreness,
+		     order.get(), rev_order.get(), &histo[0],
+		     false, false );
+#elif SORT_ORDER == 5
+    std::vector<VID> histo; histo.resize( K+2 );
+    // Sort by increasing coreness, and decreasing degree per coreness.
+    // This place high-coreness vertices to "the right", resulting in
+    // right-hand neighbourhoods containing only higher-degeneracy vertices.
+    // The sorting by decreasing degree ensures that high-degree vertices
+    // are visited first, for instance, in computation of the pivot.
+    sort_order_ties( n, K, G.getDegree(), coreness,
+		     order.get(), rev_order.get(), &histo[0],
+		     false, true );
+#else
+#error "SORT_ORDER must be in range [0,5]"
+#endif
     std::cout << "Determining sort order: " << tm.next() << "\n";
 
     mm::buffer<VID> remap_coreness( n, numa_allocation_interleaved() );
@@ -2631,7 +2661,8 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
-	      << "\n\tOUTER_ORDER=" <<  OUTER_ORDER
+	      << "\n\tSORT_ORDER=" << SORT_ORDER
+	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << '\n';
     
     system( "hostname" );
@@ -2684,7 +2715,7 @@ int main( int argc, char *argv[] ) {
 	// a strong precedent for the clique size
 	std::vector<VID> empty;
 	E.record( what_if, what_if, empty.begin(), empty.end() );
-	VID v = histo[1];
+	VID v = 0;
 	std::cout << "what-if clique=" << what_if << " vertex v=" << v
 		  << " deg=" << H.getDegree( v )
 		  << " rho=" << remap_coreness[v]
@@ -2707,87 +2738,55 @@ int main( int argc, char *argv[] ) {
 		break;
 	}
     } else if( heuristic == 2 ) {
+#if SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
-	for( VID c=0; c <= K; ++c ) {
-	    VID c_up = histo[c];
-	    VID c_lo = c == K ? 0 : histo[c+1];
+	for( VID cc=0; cc <= K; ++cc ) {
+	    VID c = K - cc;
+	    VID c_up = histo[c+1];
+	    VID c_lo = histo[c];
 	    if( c_up == c_lo )
 		continue;
 
 	    VID v = c_lo;
 	    heuristic_search( H, E, v, remap_coreness.get() );
 
-	    if( !E.is_feasible( K-c+1, fr_outer ) )
+	    if( !E.is_feasible( c+1, fr_outer ) )
 		break;
 	}
+#else
+	std::cerr << "Heuristic 2 not supported if sort order does not "
+		  << "partition vertex range by equal degeneracy\n";
+	return -1;
+#endif
     }
 
-#if OUTER_ORDER == 1
-    /* 1. low to high degree order */
-
-#elif OUTER_ORDER == 2
+#if SORT_ORDER < 4
+    /* 0. low to high degree order */
+    /* 1. high to low degree order */
     /* 2. low to high degeneracy order */
-    for( VID w=0; w < n; ++w ) {
-	VID v = w;
-	// std::cout << "w=" << w << " v=" << v
-	// << " deg=" << H.getDegree( v )
-	// << " rho=" << remap_coreness[v]
-	// << "\n";
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-    }
-
-#elif OUTER_ORDER == 3
     /* 3. high to low degeneracy order */
     for( VID w=0; w < n; ++w ) {
-	VID v = n - 1 - w;
-	// std::cout << "w=" << w << " v=" << v
-	// << " deg=" << H.getDegree( v )
-	// << " rho=" << remap_coreness[v]
-	// << "\n";
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	VID v = w;
+#else
+	VID v = n-1-w;
+#endif
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
     }
 
-#elif OUTER_ORDER == 4
-    /* 4. first evaluate highest-degree vertex per degeneracy level, then 3. */
-    for( VID c=0; c <= K; ++c ) {
-	VID c_up = histo[c];
-	VID c_lo = c == K ? 0 : histo[c+1];
-	if( c_up == c_lo )
-	    continue;
-
-	VID v = c_lo;
-	// std::cout << "c=" << c << " v=" << v
-	// << " deg=" << H.getDegree( v )
-	// << " rho=" << remap_coreness[v]
-	// << "\n";
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-
-	if( !E.is_feasible( K-c+1, fr_outer ) )
-	    break;
-    }
-	    
+#elif SORT_ORDER == 4 || SORT_ORDER == 5
+    /* 4. first evaluate highest-degree vertex per degeneracy level, then
+     *    iterate by decreasing coreness, increasing degree. */
+    /* 5. first evaluate highest-degree vertex per degeneracy level, then
+     *    iterate by decreasing coreness, decreasing degree. */
     for( VID cc=0; cc <= K; ++cc ) {
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	VID c = cc;
+#else
 	VID c = K - cc;
-	VID c_up = histo[c];
-	VID c_lo = c == K ? 0 : histo[c+1];
-	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( K-c+1, fr_outer ) )
-	    continue;
-	for( VID v=c_lo; v < c_up; ++v ) {
-	    // std::cout << "c=" << c << " v=" << v
-	    // << " deg=" << H.getDegree( v )
-	    // << " rho=" << remap_coreness[v]
-	    // << "\n";
-	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-	    if( !E.is_feasible( K-c+1, fr_outer ) )
-		break;
-	}
-    }
-#elif OUTER_ORDER == 5
-    /* 5. Preamble as with 4, then process in order of decreasing degeneracy. */
-    for( VID c=0; c <= K; ++c ) {
-	VID c_up = histo[c];
-	VID c_lo = c == K ? 0 : histo[c+1];
+#endif
+	VID c_up = histo[c+1];
+	VID c_lo = histo[c];
 	if( c_up == c_lo )
 	    continue;
 
@@ -2798,26 +2797,42 @@ int main( int argc, char *argv[] ) {
 	// << "\n";
 	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
 
-	if( !E.is_feasible( K-c+1, fr_outer ) )
+#if ( TRAVERSAL_ORDER & 1 ) != 0
+	if( !E.is_feasible( c+1, fr_outer ) )
 	    break;
+#endif
     }
 	    
-    for( VID c=0; c <= K; ++c ) {
-	VID c_up = histo[c];
-	VID c_lo = c == K ? 0 : histo[c+1];
+    for( VID cc=0; cc <= K; ++cc ) { // decreasing degeneracy
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	VID c = cc;
+#else
+	VID c = K - cc;
+#endif
+	VID c_up = histo[c+1];
+	VID c_lo = histo[c];
+	if( c_up == c_lo )
+	    continue;
 	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( K-c+1, fr_outer ) ) // decreasing degeneracy -> done
+	if( !E.is_feasible( c+1, fr_outer ) ) // decreasing degeneracy -> done
 	    break;
-	for( VID v=c_lo; v < c_up; ++v ) {
+	for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
+#if ( TRAVERSAL_ORDER & 2 ) == 0
+	    VID v = w;
+#else
+	    VID v = c_up - ( w - c_lo ) - 1;
+#endif
 	    // std::cout << "c=" << c << " v=" << v
 	    // << " deg=" << H.getDegree( v )
 	    // << " rho=" << remap_coreness[v]
 	    // << "\n";
 	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
-	    if( !E.is_feasible( K-c+1, fr_outer ) )
+	    if( !E.is_feasible( c+1, fr_outer ) )
 		break;
 	}
     }
+#else
+#error "SORT_ORDER must be in range [0,5]"
 #endif
 
 #if PAPI_REGION == 1
