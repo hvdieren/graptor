@@ -61,8 +61,12 @@
 #endif
 #endif
 
+/* (SORT,TRAVERSAL) execution time findings (<: clearly faster;
+ * ~< sometimes marginally faster):
+ * (4,1) ~< (4,3) < (5,1)
+ */
 #ifndef SORT_ORDER
-#define SORT_ORDER 5
+#define SORT_ORDER 4
 #endif
 
 #ifndef TRAVERSAL_ORDER
@@ -1731,7 +1735,7 @@ clique_via_vc3( const HGraphTy & G,
     while( true ) {
 	best_size = 0;
 	bool any = vertex_cover_vc3<true>( CG, k, 1, best_size, &cover[0] );
-	if( verbose ) {
+	if( true || verbose ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
 		      << " ok=" << any
@@ -1767,7 +1771,7 @@ clique_via_vc3( const HGraphTy & G,
     // Record clique
     if( k_best_size < k_prior ) {
 	if( E.is_feasible( depth + cn - k_best_size, fr_cover ) ) {
-	    if( verbose )
+	    if( true || verbose )
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
@@ -2231,6 +2235,8 @@ void mc_top_level_vc(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
+    std::cout << "top-level generic VC: v=" << v << "\n";
+    
     timer tm;
     tm.start();
 
@@ -2638,8 +2644,14 @@ int main( int argc, char *argv[] ) {
     HFGraphTy H( R, numa_allocation_interleaved() );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
-    std::cout << "Sort order check: coreness[0]=" << remap_coreness[0]
-	      << " coreness[n-1]=" << remap_coreness[n-1] << "\n";
+    // Cleanup original graph now; we won't need it any more.
+    G.del();
+
+    std::cout << "Sort order check:\n\tcoreness[0]=" << remap_coreness[0]
+	      << " coreness[n-1]=" << remap_coreness[n-1]
+	      << "\n\tdegree[0]=" << H.getDegree(0)
+	      << " degree[n-1]=" << H.getDegree(n-1)
+	      << "\n";
 
     std::cout << "Options:"
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
@@ -2737,6 +2749,7 @@ int main( int argc, char *argv[] ) {
 	    if( !E.is_feasible( remap_coreness[v], fr_outer ) )
 		break;
 	}
+	std::cout << "heuristic 1 done\n";
     } else if( heuristic == 2 ) {
 #if SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
@@ -2753,6 +2766,7 @@ int main( int argc, char *argv[] ) {
 	    if( !E.is_feasible( c+1, fr_outer ) )
 		break;
 	}
+	std::cout << "heuristic 2 done\n";
 #else
 	std::cerr << "Heuristic 2 not supported if sort order does not "
 		  << "partition vertex range by equal degeneracy\n";
@@ -2814,8 +2828,13 @@ int main( int argc, char *argv[] ) {
 	if( c_up == c_lo )
 	    continue;
 	++c_lo; // already did c_lo in preamble
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	if( !E.is_feasible( c+1, fr_outer ) ) // increasing degeneracy -> skip
+	    continue;
+#else
 	if( !E.is_feasible( c+1, fr_outer ) ) // decreasing degeneracy -> done
 	    break;
+#endif
 	for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
 #if ( TRAVERSAL_ORDER & 2 ) == 0
 	    VID v = w;
@@ -2871,7 +2890,6 @@ int main( int argc, char *argv[] ) {
     remap_coreness.del();
     rev_order.del();
     order.del();
-    G.del();
 
     return 0;
 }
