@@ -1784,32 +1784,37 @@ struct adaptive_intersect {
 	auto tlset = lset.trim_range( rlo, rhi );
 	auto trset = rset.trim_range( llo, lhi );
 
-#if 0
+	out.swap( tlset, trset );
+
+#if 1
 	int lcat = rt_ilog2( tlset.size()/2 );
 	int rcat = rt_ilog2( trset.size()/2 );
 
+	bool do_hash = true;
+
 	if constexpr ( so == so_intersect || so == so_intersect_xlat ) {
-	    if( lcat != rcat || std::max( lcat, rcat ) >= 5 )
-		return hash_vector::template apply<so>( tlset, trset, out );
-	    else
-		return merge_vector::template apply<so>( tlset, trset, out );
+	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
+	    do_hash = std::abs( lcat - rcat ) > 1; // rule2
+	    // do_hash = std::abs( lcat - rcat ) > 0; // rule5
+	    // do_hash = ( lcat != rcat || std::max( lcat, rcat ) >= 5 ); // rule6
 	} else if constexpr ( so == so_intersect_size ) {
-	    if( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 )
-		return hash_vector::template apply<so>( tlset, trset, out );
-	    else
-		return merge_vector::template apply<so>( tlset, trset, out );
+	    // do_hash = ( lcat != rcat );
+	    do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	} else if constexpr ( so == so_intersect_size_exceed ) {
-	    if( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 )
-		return hash_vector::template apply<so>( tlset, trset, out );
-	    else
-		return merge_vector::template apply<so>( tlset, trset, out );
-	} else {
-	    // Intersection operation
-	    return merge_vector::template apply<so>( tlset, trset, out );
+	    // do_hash = ( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 ); // rule1
+	    // do_hash = ( lcat != rcat ); // ne
+	    // do_hash = std::abs( lcat - rcat ) > 1; // rule2
+	    do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
+	    // do_hash = ( lcat + rcat >= 4 && std::abs( lcat - rcat ) > 1 ); // rule4
 	}
+
+	if( do_hash )
+	    return hash_vector::template apply<so>( tlset, trset, out );
+	else
+	    return merge_vector::template apply<so>( tlset, trset, out );
 #else
 	// Intersection operation
-	return merge_vector::template apply<so>( tlset, trset, out );
+	return hash_vector::template apply<so>( tlset, trset, out );
 #endif
 #else
 	return merge_vector::template apply<so>( lset, rset, out );
