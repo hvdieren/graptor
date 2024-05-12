@@ -1774,7 +1774,7 @@ struct adaptive_intersect {
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return;
 	
-#if 1
+#if 0
 	// Trim ranges
 	auto llo = *lset.begin();
 	auto lhi = *std::prev( lset.end() );
@@ -1792,6 +1792,7 @@ struct adaptive_intersect {
 
 	bool do_hash = true;
 
+#if 0
 	if constexpr ( so == so_intersect || so == so_intersect_xlat ) {
 	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	    do_hash = std::abs( lcat - rcat ) > 1; // rule2
@@ -1812,12 +1813,15 @@ struct adaptive_intersect {
 	    return hash_vector::template apply<so>( tlset, trset, out );
 	else
 	    return merge_vector::template apply<so>( tlset, trset, out );
+#endif
+	return hash_scalar::template apply<so>( tlset, trset, out );
 #else
 	// Intersection operation
 	return hash_vector::template apply<so>( tlset, trset, out );
 #endif
 #else
-	return merge_vector::template apply<so>( lset, rset, out );
+	// return merge_vector::template apply<so>( lset, rset, out );
+	return merge_jump::template apply<so>( lset, rset, out );
 #endif
     }
 };
