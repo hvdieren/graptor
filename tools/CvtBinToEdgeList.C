@@ -42,7 +42,11 @@ int main( int argc, char *argv[] ) {
     std::stringstream buffer;
 
     if( mtx_mkt ) {
-	buffer << "%%MatrixMarket matrix coordinate real ";
+	    buffer << "%%MatrixMarket matrix coordinate ";
+	if( weights )
+	    buffer << "real ";
+	else
+	    buffer << "pattern ";
 	if( !symmetric )
 	    buffer << "un";
 	buffer << "symmetric\n";
@@ -62,8 +66,10 @@ int main( int argc, char *argv[] ) {
 
 	    if( mtx_mkt ) {
 		if( u > v ) {
-		    buffer << u << ' ' << v
-			   << ' ' << ( weights ? weights[e] : -1.0f ) << '\n';
+		    buffer << (u+1) << ' ' << (v+1);
+		    if( weights )
+			buffer << ' ' << weights[e];
+		    buffer << '\n';
 		}
 	    } else {
 		buffer << u << ' ' << v;
