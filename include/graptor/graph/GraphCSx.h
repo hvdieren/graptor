@@ -21,6 +21,7 @@
 #include "graptor/graph/remap.h"
 #include "graptor/simd/simd.h"
 #include "graptor/dsl/emap/types.h"
+#include "graptor/container/array_slice.h"
 
 // Some variation on reading times
 #define PARAGRAPHER_OPTION 2
@@ -584,6 +585,100 @@ public:
 	std::cerr << "GraphCSx::import_expand: building degree[]: "
 		  << tm.next() << "\n";
     }
+
+    // All vertices whose remapped ID is ~(VID)0 are omitted fromt the graph,
+    // along with all incident edges.
+    template<typename Remapper>
+    void import_select( const GraphCSx & Gcsr, Remapper remap ) {
+	timer tm;
+	tm.start();
+	std::cerr << "GraphCSx::import_select...\n";
+
+	symmetric = Gcsr.isSymmetric();
+
+	const bool has_weights = weights != nullptr;
+	float * const Tweights = has_weights ? weights->get() : nullptr;
+	assert( ( ( Gcsr.getWeights() != nullptr ) || !has_weights )
+		&& "expecting weights in graph" );
+	float * const Gweights = Gcsr.getWeights()
+	    ? Gcsr.getWeights()->get() : nullptr;
+
+	// 1. Build array for each v its degree (in parallel)
+	parallel_loop( (VID)0, n, [&]( VID v ) { 
+	    VID w = remap.origID( v );
+	    EID js = Gcsr.index[w];
+	    EID je = Gcsr.index[w+1];
+	    EID cnt = 0;
+	    for( EID j=js; j < je; ++j ) {
+		VID u = remap.remapID( Gcsr.edges[j] );
+		if( u != ~(VID) 0 )
+		    ++cnt;
+	    }
+	    index[v] = cnt;
+	} );
+	index[n] = m;
+
+	// 2. Prefix-sum (parallel) => index array
+	EID mm = sequence::plusScan( index.get(), index.get(), n );
+	assert( mm == m && "Index array count mismatch" );
+
+	std::cerr << "GraphCSx::import_select: init and remapped index[]: "
+		  << tm.next() << "\n";
+	
+	// 3. Fill out edge array (parallel)
+	if( has_weights ) {
+	    // Rather than copying weights prior to paired_sort, could also
+	    // merge into the remapping step in paired_sort to avoid the
+	    // additional copy.
+	    // Warning: UNTESTED
+	    parallel_loop( (VID)0, n, [&]( VID v ) { 
+		VID w = remap.origID( v );
+		EID nxt = index[v];
+		EID js = Gcsr.index[w];
+		EID je = Gcsr.index[w+1];
+		EID deg = je - js;
+		assert( deg <= n );
+		if( deg > 0 )
+		    std::copy( &Gweights[js], &Gweights[je],
+			       &Tweights[nxt] );
+		for( EID j=js; j < je; ++j ) {
+		    VID u = remap.remapID( Gcsr.edges[j] );
+		    if( u != ~(VID) 0 ) {
+			Tweights[nxt++] = Gweights[j];
+			edges[nxt++] = u;
+		    }
+		}
+		
+		paired_sort( &edges[index[v]], &edges[nxt],
+			     &Tweights[index[v]] );
+	    } );
+	} else {
+	    parallel_loop( (VID)0, n, [&]( VID v ) { 
+		VID w = remap.origID( v );
+		EID nxt = index[v];
+		EID js = Gcsr.index[w];
+		EID je = Gcsr.index[w+1];
+		EID deg = je - js;
+		for( EID j=js; j < je; ++j ) {
+		    VID u = remap.remapID( Gcsr.edges[j] );
+		    if( u != ~(VID) 0 )
+			edges[nxt++] = u;
+		}
+		if( nxt > index[v] )
+		    std::sort( &edges[index[v]], &edges[nxt] );
+	    } );
+	}
+
+	std::cerr << "GraphCSx::import_select: remapping edges and weights: "
+		  << tm.next() << "\n";
+	
+	build_degree();
+
+	std::cerr << "GraphCSx::import_select: building degree[]: "
+		  << tm.next() << "\n";
+    }
+
+
     void import_transpose( const GraphCSx & Gcsr ) {
 	const VID P = atoi( getenv( "GRAPTOR_P" ) ); // 128;
 
@@ -2716,6 +2811,12 @@ public:
 
     const VID * get_neighbours( VID v ) const {
 	return &getEdges()[getIndex()[v]];
+    }
+
+    graptor::array_slice<VID> get_neighbours_set( VID v ) const {
+	return graptor::array_slice<VID>(
+	    &getEdges()[getIndex()[v]],
+	    &getEdges()[getIndex()[v+1]] );
     }
 
     VID numVertices() const { return n; }
