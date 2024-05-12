@@ -453,13 +453,21 @@ public:
     }
     void import( const GraphCSx & Gcsr,
 		 std::pair<const VID *, const VID *> remap ) {
+	import( Gcsr, RemapVertex( remap.first, remap.second ) );
+    }
+    template<typename Remapper>
+    void import( const GraphCSx & Gcsr, Remapper remap ) {
+	timer tm;
+	tm.start();
+	std::cerr << "GraphCSx::import (remap)...\n";
+
 	// In w = remap.first[v], v is the new vertex ID, w is the old one
 	// In v = remap.second[w], v is the new vertex ID, w is the old one
 	assert( n == Gcsr.n && m == Gcsr.m );
 
 	// 1. Build array for each v its degree (in parallel)
 	parallel_loop( (VID)0, n, [&]( VID v ) { 
-	    VID w = remap.first[v];
+	    VID w = remap.origID(v);
 	    index[v] = Gcsr.index[w+1] - Gcsr.index[w];
 	} );
 	index[n] = m;
@@ -475,13 +483,16 @@ public:
 	const float * const Gweights = Gcsr.getWeights()
 	    ? Gcsr.getWeights()->get() : nullptr;
 
+	std::cerr << "GraphCSx::import (remap): init and remapped index[]: "
+		  << tm.next() << "\n";
+	
 	// 3. Fill out edge array (parallel)
 	parallel_loop( (VID)0, n, [&]( VID v ) { 
-	    VID w = remap.first[v];
+	    VID w = remap.origID(v);
 	    EID nxt = index[v];
 	    VID deg = Gcsr.index[w+1] - Gcsr.index[w];
 	    for( VID j=0; j < deg; ++j ) {
-		edges[nxt] = remap.second[Gcsr.edges[Gcsr.index[w]+j]];
+		edges[nxt] = remap.remapID(Gcsr.edges[Gcsr.index[w]+j]);
 		if( has_weights )
 		    Tweights[nxt] = Gweights[Gcsr.index[w]+j];
 		++nxt;
@@ -492,7 +503,14 @@ public:
 	    else
 		std::sort( &edges[index[v]], &edges[nxt] );
 	} );
+
+	std::cerr << "GraphCSx::import (remap): remapping edges and weights: "
+		  << tm.next() << "\n";
+	
 	build_degree();
+
+	std::cerr << "GraphCSx::import (remap): building degree[]: "
+		  << tm.next() << "\n";
     }
     template<typename Remapper>
     void import_expand( const GraphCSx & Gcsr,
@@ -590,6 +608,11 @@ public:
     // along with all incident edges.
     template<typename Remapper>
     void import_select( const GraphCSx & Gcsr, Remapper remap ) {
+	if( n == Gcsr.n && m == Gcsr.m ) {
+	    import( Gcsr, remap );
+	    return;
+	}
+	
 	timer tm;
 	tm.start();
 	std::cerr << "GraphCSx::import_select...\n";
