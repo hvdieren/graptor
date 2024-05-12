@@ -100,7 +100,7 @@ public:
 
     struct stat { };
 
-    void run() {
+    void run( VID min_degree = ~(VID)0 ) {
 	const partitioner &part = GA.get_partitioner();
 	VID n = GA.numVertices();
 	EID m = GA.numEdges();
@@ -111,17 +111,44 @@ public:
 	// Initialise arrays
 	frontier ftrue = frontier::all_true( n, m );
 	frontier nonzero;
-	make_lazy_executor( part )
-	    .vertex_filter(
-		GA, 	 	 	// graph
-		ftrue,
-		nonzero,  	// record new frontier
-		[&]( auto v ) {
-		    return expr::make_seq(
-			coreness[v] = a_degrees_ro[v],
-			a_degrees_ro[v] > _0 );
+
+	if( min_degree == ~(VID)0 ) { // no pruning
+	    make_lazy_executor( part )
+		.vertex_filter(
+		    GA, 	 	 	// graph
+		    ftrue,
+		    nonzero,  	// record new frontier
+		    [&]( auto v ) {
+			return expr::make_seq(
+			    coreness[v] = a_degrees_ro[v],
+			    a_degrees_ro[v] > _0 );
+		    } )
+		.materialize();
+	} else { // prune away all vertices with degree < min_degree
+	    // Count number of neighbours with degree >= min_degree
+	    // This will be our initial coreness value. Nonzero captures
+	    // all vertices who have sufficient degree and at least one
+	    // neighbour with sufficient degree.
+	    clear_by_partition( part, coreness.get_ptr() );
+	    api::edgemap(
+		GA,
+		api::relax( [&]( auto s, auto d, auto e ) {
+		    // Note: constant_val copies over the mask of s
+		    auto th = expr::constant_val( s, min_degree );
+		    return coreness[d] +=
+			iif( a_degrees_ro[d] < th || a_degrees_ro[s] < th,
+			     _1(coreness[d]), _0 );
 		} )
-	    .materialize();
+		)
+		.vertex_filter(
+		    GA, 	 	 	// graph
+		    ftrue,
+		    nonzero,  	// record new frontier
+		    [&]( auto v ) {
+			return coreness[v] > _0;
+		    } )
+		.materialize();
+	}
 
 	VID K = 0;
 	VID L = 0;
@@ -747,6 +774,83 @@ sort_order_ties( VID n,
 			    order, rev_order, histo,
 			    reverse_core, reverse_deg );
 }
+
+void
+sort_order_ties_pruned( VID n,
+			VID K,
+			const VID * const degree,
+			const VID * const coreness,
+			VID min_degree,
+			VID * order,
+			VID * rev_order,
+			VID * histo, // array of length K+2
+			bool reverse_core = false,
+			bool reverse_deg = false ) {
+    std::fill( &histo[0], &histo[K+1], 0 );
+
+    // Histogram
+    for( VID v=0; v < n; ++v ) {
+	if( degree[v] >= min_degree ) {
+	    VID c = coreness[v];
+	    assert( c <= K );
+	    histo[c]++;
+	}
+    }
+
+    // Prefix sum
+    // Note: require int variables as the code checks >= 0 which is futile
+    //       with unsigned int
+    VID sum = sequence::scan( histo, (int)0, (int)K+1, addF<VID>(),
+			      sequence::getA<VID,int>( histo ),
+			      (VID)0, false, reverse_core );
+    VID pn = sum; // Number of vertices retained
+    
+    // Place in order
+    for( VID v=0; v < n; ++v ) {
+	if( degree[v] >= min_degree ) {
+	    VID c = coreness[v];
+	    VID pos = histo[c]++;
+	    order[pos] = v;
+	}
+    }
+
+    // Restore histo
+    if( reverse_core ) {
+	for( VID c=1; c <= K; ++c )
+	    histo[c] = histo[c+1];
+	histo[0] = pn;
+	histo[K+1] = 0;
+    } else {
+	for( VID c=0; c <= K; ++c )
+	    histo[K-c+1] = histo[K-c];
+	histo[0] = 0;
+    }
+
+    // Degree sorting (crude), decreasing order
+    // Check reverse inside loop to reduce code size.
+    parallel_loop( (VID)0, K+1, [&]( VID c ) {
+	VID c_lo = histo[c];
+	VID c_up = histo[c+1];
+	if( reverse_core )
+	    std::swap( c_lo, c_up );
+	if( reverse_deg ) {
+	    std::sort( &order[c_lo], &order[c_up],
+		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
+	} else {
+	    std::sort( &order[c_lo], &order[c_up],
+		       [&]( VID a, VID b ) { return degree[a] < degree[b]; } );
+	}
+    } );
+
+    // Construct reverse order
+    parallel_loop( (VID)0, n, [&,min_degree]( VID pos ) {
+	rev_order[pos] = ~(VID)0;
+    } );
+    parallel_loop( (VID)0, pn, [&,min_degree]( VID pos ) {
+	rev_order[order[pos]] = pos;
+    } );
+}
+
 
 #ifndef NOBENCH
 template <class GraphType>
