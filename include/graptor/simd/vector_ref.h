@@ -272,7 +272,7 @@ public:
 		n = static_cast<stored_type>(
 		    static_cast<member_type>( o ) + d );
 	    } while( !(r = encoding::template cas<vector_traits>(
-			   &m_addr[m_sidx], o, n )) );
+			   m_addr, m_sidx, o, n )) );
 	}
 	using L = typename add_logical<member_type>::type;
 	// TODO: just return true_mask() case?
