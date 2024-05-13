@@ -648,6 +648,16 @@ sort_order( VID n,
     return sort_order( n, K, coreness.get_ptr(), order, rev_order, reverse );
 }
 
+void
+sort_order_pruned( VID n,
+		   VID K,
+		   const VID * const coreness,
+		   VID prune_th,
+		   VID * order, VID * rev_order,
+		   bool reverse = false ) {
+    assert( 0 && "NYI" );
+}
+
 //! \brief Sort vertices by coreness and by degree for equal coreness
 //
 // Auxiliary method for downstream tasks.
