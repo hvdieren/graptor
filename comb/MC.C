@@ -101,6 +101,7 @@
 
 #include "graptor/graph/simple/csx.h"
 #include "graptor/graph/simple/dicsx.h"
+#include "graptor/graph/simple/csxd.h"
 #include "graptor/graph/simple/hadj.h"
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/graph/simple/cutout.h"
@@ -245,6 +246,8 @@ public:
     void rebase( size_t degen, const VID * const order ) {
 	m_degeneracy = degen;
 	m_order = order;
+	if( m_best == 0 && degen > 0 )
+	    m_best = 1;
     }
 
     void reset() {
@@ -1177,6 +1180,79 @@ private:
     graptor::graph::GraphDoubleIndexCSx<VID,EID> S;
 };
 
+template<typename lVID, typename lEID>
+class GraphBuilderInducedComplement<
+    graptor::graph::GraphCSxDepth<lVID,lEID>> {
+public:
+    template<typename HGraph>
+    GraphBuilderInducedComplement(
+	const HGraph & G,
+	const PSet<VID> & pset ) {
+	using gVID = typename HGraph::VID;
+	using gEID = typename HGraph::EID;
+	
+	gVID n = G.numVertices();
+	lVID ns = pset.get_fill();
+
+	// Count induced edges
+	std::vector<lEID> tmp_index( ns+1 );
+	for( lVID p=0; p < ns; ++p ) {
+	    VID v = pset.at( p );
+
+	    // Degree of vertex
+	    lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+
+	    tmp_index[p] = ns - 1 - deg;
+	}
+	std::exclusive_scan( &tmp_index[0], &tmp_index[ns+1],
+			     &tmp_index[0], 0 );
+
+	// Construct selected graph
+	// Edges: complement, not including diagonal
+	lEID ms = tmp_index[ns];
+	new ( &S ) graptor::graph::GraphCSxDepth(
+	    ns, ms /*, numa_allocation_unbound()*/ );
+	lEID * index = S.getIndex();
+	lVID * edges = S.getEdges();
+	lVID * depth = S.getDepth();
+	lVID * degree = S.getDegree();
+
+	// Set up index array
+	std::copy( &tmp_index[0], &tmp_index[ns+1], index );
+	index[ns] = ms;
+
+	// Set edges
+	for( lVID vs=0; vs < ns; ++vs ) {
+	    gVID v = pset.at( vs );
+	    lEID e = index[vs];
+	    const gVID * gedges = G.get_neighbours( v );
+	    gVID deg = G.getDegree( v );
+	    gVID ge = 0, gee = deg;
+
+	    for( gVID us=0; us < ns; ++us ) {
+		lVID u = pset.at( us );
+		while( ge != gee && gedges[ge] < u )
+		    ++ge;
+		assert( ge == gee || gedges[ge] >= u );
+		if( ( ge == gee || u != gedges[ge] )
+		    && us != vs ) // no self-edges
+		    edges[e++] = us;
+	    }
+	    assert( ge == gee || ge == gee-1 );
+	    assert( e == index[vs+1] );
+
+	    degree[vs] = index[vs+1] - index[vs];
+	    depth[vs] = S.initial_depth;
+	}
+    }
+
+    auto & get_graph() { return S; }
+
+private:
+    graptor::graph::GraphCSxDepth<lVID,lEID> S;
+};
+
+
 /*======================================================================*
  * graph matching
  *======================================================================*/
@@ -1376,27 +1452,23 @@ compute_coreness( GraphType & G ) {
 /*======================================================================*
  * vertex cover
  *======================================================================*/
-template<bool exists>
+template<bool exists, typename GraphType, typename lVID>
 bool
-vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-		  VID k,
-		  VID c,
-		  VID & best_size,
-		  VID * best_cover );
-
-void
-mark( VID & best_size, VID * best_cover, VID v ) {
-    best_cover[best_size++] = v;
-}
+vertex_cover_vc3( GraphType & G,
+		  lVID k,
+		  lVID c,
+		  lVID & best_size,
+		  lVID * best_cover );
 
 // For path or cycle
+template<typename GraphType, typename lVID>
 void
-trace_path( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
+trace_path( const GraphType & G,
 	    bool * visited,
-	    VID & best_size,
-	    VID * best_cover,
-	    VID cur,
-	    VID nxt,
+	    lVID & best_size,
+	    lVID * best_cover,
+	    lVID cur,
+	    lVID nxt,
 	    bool incl ) {
     if( visited[nxt] )
 	return;
@@ -1404,36 +1476,38 @@ trace_path( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     visited[nxt] = true;
 
     if( incl )
-	mark( best_size, best_cover, nxt );
+	best_cover[best_size++] = nxt; // mark
 
-    const EID * const index = G.getBeginIndex();
-    const VID * const edges = G.getEdges();
+    // const EID * const index = G.getBeginIndex();
+    // const VID * const edges = G.getEdges();
 
     // Done if nxt is degree-1 vertex
     if( G.getDegree( nxt ) == 2 ) {
-	VID ngh1 = edges[index[nxt]];
-	VID ngh2 = edges[index[nxt]+1];
+	auto ni = G.nbegin( nxt );
+	lVID ngh1 = *ni; // edges[index[nxt]];
+	lVID ngh2 = *++ni; // edges[index[nxt]+1];
 
-	VID ngh = ngh1 == cur ? ngh2 : ngh1;
+	lVID ngh = ngh1 == cur ? ngh2 : ngh1;
 
 	trace_path( G, visited, best_size, best_cover, nxt, ngh, !incl );
     }
 }
 
+template<typename GraphType, typename lVID>
 bool
-vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-		   VID k,
-		   VID & best_size,
-		   VID * best_cover ) {
-    VID n = G.numVertices();
+vertex_cover_poly( const GraphType & G,
+		   lVID k,
+		   lVID & best_size,
+		   lVID * best_cover ) {
+    lVID n = G.numVertices();
 
     std::vector<char> visited( n, false );
 
     VID old_best_size = best_size;
 
     // Find paths
-    for( VID v=0; v < n; ++v ) {
-	VID deg = G.getDegree( v );
+    for( lVID v=0; v < n; ++v ) {
+	lVID deg = G.getDegree( v );
 	assert( deg <= 2 );
 	if( deg == 1 && !visited[v] ) {
 	    visited[v] = true;
@@ -1443,12 +1517,12 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     }
     
     // Find cycles (uses same auxiliary as paths)
-    for( VID v=0; v < n; ++v ) {
-	VID deg = G.getDegree( v );
+    for( lVID v=0; v < n; ++v ) {
+	lVID deg = G.getDegree( v );
 	assert( deg <= 2 );
 	if( deg == 2 && !visited[v] ) {
 	    visited[v] = true;
-	    mark( best_size, best_cover, v );
+	    best_cover[best_size++] = v; // mark
 	    trace_path( G, (bool*)&visited[0], best_size, best_cover,
 			v, *G.nbegin( v ), false );
 	}
@@ -1457,16 +1531,18 @@ vertex_cover_poly( const graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     return best_size - old_best_size <= k;
 }
 
-template<bool exists>
+template<bool exists, typename GraphType, typename lVID>
 bool
-vertex_cover_vc3_buss( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-		       VID k,
-		       VID c,
-		       VID & best_size,
-		       VID * best_cover ) {
+vertex_cover_vc3_buss( GraphType & G,
+		       lVID k,
+		       lVID c,
+		       lVID & best_size,
+		       lVID * best_cover ) {
+    using lEID = typename GraphType::EID;
+    
     // Set U of vertices of degree higher than k
-    VID u_size = std::count_if( G.dbegin(), G.dend(),
-				[&]( VID deg ) { return deg > k; } );
+    lVID u_size = std::count_if( G.dbegin(), G.dend(),
+				 [&]( lVID deg ) { return deg > k; } );
 
     // If |U| > k, then there exists no cover of size k
     if( u_size > k )
@@ -1475,35 +1551,41 @@ vertex_cover_vc3_buss( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     assert( u_size > 0 );
     
     // Construct G'
-    VID n = G.numVertices();
+    lVID n = G.numVertices();
     auto chkpt = G.checkpoint();
-    G.disable_incident_edges( [&]( VID v ) {
-	return chkpt.get_degree( v ) > k;
-    } );
-    EID m = G.numEdges();
+    std::vector<lVID> ugt( u_size );
+    lVID pos = 0;
+    for( lVID v=0; v < n; ++v )
+	if( G.getDegree( v ) > k )
+	    ugt[pos++] = v;
+    G.disable_incident_edges( ugt.begin(), ugt.end() );
+    // G.disable_incident_edges( [&]( lVID v ) {
+	// return chkpt.get_degree( v ) > k;
+    // } );
+    auto m = G.numEdges();
     
     // If G' has more than k(k-|U|) edges, reject
-    if( m/2 > k * ( k - u_size ) ) {
+    if( m/2 > lEID(k) * lEID( k - u_size ) ) {
 	G.restore_checkpoint( chkpt );
 	return false;
     }
 
     // Find a cover for the remaining vertices
-    VID gp_best_size = 0;
+    lVID gp_best_size = 0;
     bool rec = vertex_cover_vc3<exists>(
-	G, k - u_size, c,
+	G, lVID( k - u_size ), c,
 	gp_best_size, &best_cover[best_size] );
 
     if( rec ) {
 	// Debug
 	// check_cover( G, gp_best_size, &best_cover[best_size] );
 
-	// for( VID i=0; i < gp_best_size; ++i )
+	// for( lVID i=0; i < gp_best_size; ++i )
 	// best_cover[best_size+i] = gp_xlat[best_cover[best_size+i]];
 	best_size += gp_best_size;
 
 	// All vertices with degree > k must be included in the cover
-	for( VID v=0; v < n; ++v )
+	for( lVID v=0; v < n; ++v )
 	    if( chkpt.get_degree( v ) > k )
 		best_cover[best_size++] = v;
 
@@ -1515,22 +1597,23 @@ vertex_cover_vc3_buss( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     return rec;
 }
 
-template<bool exists>
+#if 0
+template<bool exists, typename GraphType, typename lVID>
 int
-vertex_cover_vc3_crown( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-			VID k,
-			VID c,
-			VID & best_size,
-			VID * best_cover ) {
-    VID n = G.numVertices();
+vertex_cover_vc3_crown( GraphType & G,
+			lVID k,
+			lVID c,
+			lVID & best_size,
+			lVID * best_cover ) {
+    lVID n = G.numVertices();
 
     // Compute crown kernel: (I=1,H=2)
     std::vector<uint8_t> crown = crown_kernel( G );
 
     // All vertices in H are included in cover
-    VID tmp_best_size = best_size;
-    VID h_size = 0, i_size = 0;
-    for( VID v=0; v < n; ++v ) {
+    lVID tmp_best_size = best_size;
+    lVID h_size = 0, i_size = 0;
+    for( lVID v=0; v < n; ++v ) {
 	if( crown[v] == 2 ) {
 	    ++h_size;
 	    best_cover[tmp_best_size++] = v;
@@ -1551,13 +1634,13 @@ vertex_cover_vc3_crown( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 
     // Construct G' by removing all of I and H
     auto chkpt = G.checkpoint();
-    G.disable_incident_edges( [&]( VID v ) {
+    G.disable_incident_edges( [&]( lVID v ) {
 	return crown[v] != 0;
     } );
-    EID m = G.numEdges();
+    typename Graphtype::EID lEID m = G.numEdges();
 
     // Find a cover for the remaining vertices
-    VID gp_best_size = 0;
+    lVID gp_best_size = 0;
     bool rec = vertex_cover_vc3<exists>(
 	G, k - h_size, c,
 	gp_best_size, &best_cover[tmp_best_size] );
@@ -1569,21 +1652,24 @@ vertex_cover_vc3_crown( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 
     return rec;
 }
+#endif
 
-template<bool exists>
+template<bool exists, typename GraphType, typename lVID>
 bool
-vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
-		  VID k,
-		  VID c,
-		  VID & best_size,
-		  VID * best_cover ) {
-    VID n = G.numVertices();
-    EID m = G.numEdges();
+vertex_cover_vc3( GraphType & G,
+		  lVID k,
+		  lVID c,
+		  lVID & best_size,
+		  lVID * best_cover ) {
+    using lEID = typename GraphType::EID;
+    
+    lVID n = G.numVertices();
+    lEID m = G.numEdges();
 
     if( k == 0 )
 	return m == 0;
 
-    VID max_v, max_deg;
+    lVID max_v, max_deg;
     std::tie( max_v, max_deg ) = G.max_degree();
     if( max_deg <= 2 ) {
 	bool ret = vertex_cover_poly( G, k, best_size, best_cover );
@@ -1608,30 +1694,66 @@ vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     assert( max_deg >= 3 );
 
     // Create two subproblems ; branch on max_v
-    VID i_best_size = 0;
-    VID * i_best_cover = new VID[n-1];
-    VID x_best_size = 0;
-    VID * x_best_cover = new VID[n-1-max_deg];
+    lVID i_best_size = 0;
+    lVID * i_best_cover = new lVID[n-1];
+    lVID x_best_size = 0;
+    lVID * x_best_cover = new lVID[n-1-max_deg];
+
+// TODO: store first explored cover in best_cover, if success -> return success
+// if fail -> overwrite with alternative.
+// do differently if !exists
+
+    // TODO: track number of non-zero-degree vertices and if
+    //       less than k, declare success (not searching best option...).
+    //       actually, look at vertices with degree > 1 (paths/cycles)?
 
     // Neighbour list of max_v, retained by disable_incident_edges
-    G.sort_neighbours( max_v );
-    auto NI = G.nbegin( max_v );
-    auto NE = G.nend( max_v );
+    // G.sort_neighbours( max_v );
 
     // In case v is included, erase only v
-    auto chkpt = G.checkpoint();
-    G.disable_incident_edges( [=]( VID v ) { return v == max_v; } );
+    // auto chkpt = G.checkpoint();
+    // G.disable_incident_edges( [=]( lVID v ) { return v == max_v; } );
+    auto chkpt = G.disable_incident_edges_for( max_v );
+
+    // VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
+    lVID i_k = k-1;
+    if( verbose )
+	std::cerr << "vc3: n=" << n << " m=" << m
+		  << " vertex " << max_v << " deg " << max_deg
+		  << " included k=" << k << "\n";
+    bool i_ok = vertex_cover_vc3<exists>(
+	G, i_k, c, i_best_size, i_best_cover );
+
+    if constexpr ( exists ) {
+	if( i_ok ) {
+	    G.restore_checkpoint( chkpt );
+	    assert( i_best_size <= k );
+
+	    best_cover[best_size++] = max_v;
+	    for( lVID i=0; i < i_best_size; ++i )
+		best_cover[best_size++] = i_best_cover[i];
+
+	    delete[] i_best_cover;
+	    delete[] x_best_cover;
+
+	    return true;
+	}
+    }
+    auto NI = G.nbegin( max_v );
+    auto NE = G.nend( max_v );
 
     // In case v is excluded, erase v (previous step) and all its neighbours
     // Make sure our neighbours are sorted. Iterators remain valid after
     // erasing incident edges.
-    auto chkpti = G.checkpoint();
-    G.disable_incident_edges( [=]( VID v ) {
-	auto pos = std::lower_bound( NI, NE, v );
-	return pos != NE && *pos == v;
-    } );
+    // auto chkpti = G.checkpoint();
+    // G.disable_incident_edges( [=]( VID v ) {
+	// auto pos = std::lower_bound( NI, NE, v );
+	// return pos != NE && *pos == v;
+    // } );
+    auto chkpti = G.disable_incident_edges( NI, NE );
 
-    VID x_k = std::min( n-1-max_deg, k-max_deg );
+    lVID x_k = std::min( n-1-max_deg, k-max_deg );
+    // VID x_k = i_ok ? std::min( max_deg+i_best_size, k-1 ) : k-1;
     bool x_ok = false;
     if( k >= max_deg ) {
 	if( verbose )
@@ -1641,6 +1763,9 @@ vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 	x_ok = vertex_cover_vc3<exists>( G, x_k, c, x_best_size, x_best_cover );
     }
 
+    G.restore_checkpoint( chkpti );
+
+/*
     if constexpr ( exists ) {
 	if( x_ok ) {
 	    G.restore_checkpoint( chkpt );
@@ -1657,24 +1782,16 @@ vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
 	    return true;
 	}
     }
-
-    G.restore_checkpoint( chkpti );
-    VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
-    if( verbose )
-	std::cerr << "vc3: n=" << n << " m=" << m
-		  << " vertex " << max_v << " deg " << max_deg
-		  << " included k=" << k << "\n";
-    bool i_ok = vertex_cover_vc3<exists>(
-	G, i_k, c, i_best_size, i_best_cover );
+*/
 
     if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
 	best_cover[best_size++] = max_v;
-	for( VID i=0; i < i_best_size; ++i )
+	for( lVID i=0; i < i_best_size; ++i )
 	    best_cover[best_size++] = i_best_cover[i];
     } else if( x_ok ) {
 	for( auto I=NI; I != NE; ++I )
 	    best_cover[best_size++] = *I;
-	for( VID i=0; i < x_best_size; ++i )
+	for( lVID i=0; i < x_best_size; ++i )
 	    best_cover[best_size++] = x_best_cover[i];
     }
 
@@ -1689,27 +1806,30 @@ vertex_cover_vc3( graptor::graph::GraphDoubleIndexCSx<VID,EID> & G,
     return i_ok || x_ok;
 }
 
-VID
+template<typename lVID, typename lEID, typename HGraphTy>
+lVID
 clique_via_vc3( const HGraphTy & G,
-		VID v,
-		VID degeneracy,
+		lVID v,
+		lVID degeneracy,
 		MC_CutOutEnumerator & E,
-		PSet<VID> & pset,
-		VID ce,
 		int depth ) {
+    PSet<VID> pset = PSet<VID>::create_full_set( G );
+    lVID ce = pset.size();
+    
     // TODO: potentially apply more filtering using up-to-date best
     //       might do conditionally on improvement of best since
     //       previous cut-out
     // Note: when called from top-level, the pset contains all vertices and
     //       no further filtering is applied.
     assert( ce == pset.get_fill() );
-    GraphBuilderInducedComplement<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
+    // GraphBuilderInducedComplement<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
+    GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<lVID,lEID>>
 	cbuilder( G, pset );
     auto & CG = cbuilder.get_graph();
-    VID cn = CG.numVertices();
-    EID cm = CG.numEdges();
+    lVID cn = CG.numVertices();
+    lEID cm = CG.numEdges();
 
-    for( VID v=0; v < cn; ++v )
+    for( lVID v=0; v < cn; ++v )
 	assert( CG.getDegree(v) + G.getDegree(v) + 1 == cn );
 
     // If no edges remain after pruning, then cover has size 0 and
@@ -1719,11 +1839,11 @@ clique_via_vc3( const HGraphTy & G,
 	return depth+cn; // return true;
     }
 
-    VID best_size = 0;
-    std::vector<VID> cover( cn );
-    std::vector<VID> best_cover( cn );
+    lVID best_size = 0;
+    std::vector<lVID> cover( cn );
+    std::vector<lVID> best_cover( cn );
 
-    VID bc = E.get_max_clique_size();
+    lVID bc = E.get_max_clique_size();
     if( bc >= cn + depth )
 	return 0; // return false;
 
@@ -1743,15 +1863,16 @@ clique_via_vc3( const HGraphTy & G,
     timer tm;
     tm.start();
 
-    const VID k_prior = cn + depth - bc;
-    VID k_up = k_prior - 1;
-    VID k_lo = 1;
-    VID k_best_size = k_prior;
-    VID k = k_up;
+    const lVID k_prior = cn + depth - bc;
+    lVID k_up = k_prior - 1;
+    lVID k_lo = 1;
+    lVID k_best_size = k_prior;
+    lVID k = k_up;
     bool first_attempt = true;
     while( true ) {
+	constexpr lVID c = 1;
 	best_size = 0;
-	bool any = vertex_cover_vc3<true>( CG, k, 1, best_size, &cover[0] );
+	bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
 	if( true || verbose ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
@@ -1793,9 +1914,9 @@ clique_via_vc3( const HGraphTy & G,
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
 	    // Create complement set
-	    std::vector<VID> clique( depth + cn - k_best_size );
+	    std::vector<lVID> clique( depth + cn - k_best_size );
 	    std::sort( &best_cover[0], &best_cover[k_best_size] );
-	    for( VID i=0, j=0, k=0; i < cn; ++i ) {
+	    for( lVID i=0, j=0, k=0; i < cn; ++i ) {
 		if( best_cover[j] == i ) {
 		    if( j < k_best_size-1 )
 			++j;
@@ -2261,12 +2382,14 @@ void mc_top_level_vc(
     GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
-    PSet<VID> pset = PSet<VID>::create_full_set( HG );
-
     stats.record_genbuild( av_vc, tm.next() );
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-    clique_via_vc3( HG, v, degeneracy, CE, pset, pset.size(), 1 );
+    if( HG.get_num_vertices() < VID(1) << 16 ) {
+	clique_via_vc3<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
+    } else {
+	clique_via_vc3<VID,EID>( HG, v, degeneracy, CE, 1 );
+    }
 
     stats.record_gen( av_vc, tm.next() );
 }
@@ -2317,6 +2440,8 @@ void mc_top_level(
     // and we expect that not many vertices will be removed.
     EID m_est = 0;
     cut.filter( [&]( VID u ) {
+	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
+	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
 	VID d = graptor::set_operations<graptor::adaptive_intersect>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
@@ -2328,7 +2453,7 @@ void mc_top_level(
 
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out.
-    if( cut.get_num_vertices() < best ) {
+    if( cut.get_num_vertices() < best || cut.get_num_vertices() == 0 ) {
 	stats.record_filter( tm.stop() );
 	return;
     }
@@ -2669,17 +2794,19 @@ int main( int argc, char *argv[] ) {
 #if SORT_ORDER == 0
     // Increasing degree
     if( early_pruning )
-	sort_order_pruned( n, K, G.getDegree(), prune_th,
+	sort_order_pruned( n, dmax, G.getDegree(), prune_th,
 			   order.get(), rev_order.get(), false );
     else
-	sort_order( n, K, G.getDegree(), order.get(), rev_order.get(), false );
+	sort_order( n, dmax, G.getDegree(), order.get(), rev_order.get(),
+		    false );
 #elif SORT_ORDER == 1
     // Decreasing degree
     if( early_pruning )
-	sort_order_pruned( n, K, G.getDegree(), prune_th,
+	sort_order_pruned( n, dmax, G.getDegree(), prune_th,
 			   order.get(), rev_order.get(), true );
     else
-	sort_order( n, K, G.getDegree(), order.get(), rev_order.get(), true );
+	sort_order( n, dmax, G.getDegree(), order.get(), rev_order.get(),
+		    true );
 #elif SORT_ORDER == 2
     // Increasing degeneracy
     if( early_pruning )
