@@ -159,6 +159,9 @@ public:
 	erase_incident_edges( to_remove );
     }
 
+    // TODO: optimised variant for erasing a single vertex, where we
+    //       do direct lookup of its neighbours to remove edges in both
+    //       directions.
     template<typename Fn>
     void erase_incident_edges( Fn && to_remove ) {
 	EID new_m = 0;
