@@ -151,11 +151,13 @@ public:
     void filter( FilterFn && fn, lVID min_size = 0 ) {
 	// Remove vertices where fn(v) is false. Make sure that at each step,
 	// get_vertices() and get_num_vertices() return correct values.
-	// Working for the end considers low-degeneracy vertices first, which
+	// Working from the start considers low-degeneracy vertices first, which
 	// are more likely to be pruned away, allowing higher-degeneracy
 	// vertices to be pruned too.
-	std::make_signed_t<lVID> j = m_num_iset - 1;
-	while( j >= 0 ) {
+	// std::make_signed_t<lVID> j = m_num_iset - 1;
+	// while( j >= 0 ) {
+	lVID j = 0;
+	while( j < m_num_iset ) {
 	    if( !fn( m_iset[j] ) ) {
 		std::copy( &m_iset[j+1], &m_iset[m_num_iset], &m_iset[j] );
 		--m_num_iset;
@@ -164,7 +166,9 @@ public:
 		if( m_num_iset < min_size )
 		    break;
 	    }
-	    --j;
+	    // --j;
+	    else
+		++j;
 	}
     }
 
