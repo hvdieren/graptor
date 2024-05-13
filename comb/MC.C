@@ -1671,12 +1671,8 @@ vertex_cover_vc3( GraphType & G,
 
     lVID max_v, max_deg;
     std::tie( max_v, max_deg ) = G.max_degree();
-    if( max_deg <= 2 ) {
-	bool ret = vertex_cover_poly( G, k, best_size, best_cover );
-	// if( ret )
-	// check_cover( G, best_size, best_cover );
-	return ret;
-    }
+    if( max_deg <= 2 )
+	return vertex_cover_poly( G, k, best_size, best_cover );
 
 /* in-effective
     int ret
@@ -1690,120 +1686,129 @@ vertex_cover_vc3( GraphType & G,
 	return vertex_cover_vc3_buss<exists>( G, k, c, best_size, best_cover );
     }
 
-    // Must have a vertex with degree >= 3
-    assert( max_deg >= 3 );
+    // Must have a vertex with degree >= 3 (trivial given check for poly)
+    // assert( max_deg >= 3 );
 
-    // Create two subproblems ; branch on max_v
+    // Create two subproblems ; branch on max_v.
+    // Try the first subproblem (include vertex in cover). As we pick high-
+    // degree vertices first, it makes sense to try the included case first
+    // as including high-degree vertices helps to minimise the cover size.
+
+    // Erase the selected vertex
+    auto chkptv = G.disable_incident_edges_for( max_v );
+
+    // The first subproblem is stored direct in the best_cover storage space.
+    // Tentatively add vertex to cover
+    best_cover[best_size] = max_v;
+
+    // First subproblem includes max_v, reduces target k by one
+    lVID i_k = k-1;
     lVID i_best_size = 0;
-    lVID * i_best_cover = new lVID[n-1];
-    lVID x_best_size = 0;
-    lVID * x_best_cover = new lVID[n-1-max_deg];
+    bool i_ok = vertex_cover_vc3<exists>(
+	G, i_k, c, i_best_size, &best_cover[best_size+1] ); // +1 for max_v
 
-// TODO: store first explored cover in best_cover, if success -> return success
-// if fail -> overwrite with alternative.
-// do differently if !exists
+    if constexpr ( exists ) {
+	if( i_ok ) {
+	    G.restore_checkpoint( chkptv );
+	    // assert( i_best_size <= k );
+	    best_size += i_best_size + 1;
+	    return true;
+	}
+    }
+    
+    // The first subproblem did not provide a solution (exists=true) or
+    // we are looking for the best possible solution (exists=false).
+    // Store the second subproblem in best_cover (exists=true) or create
+    // new storage space (exists=false).
+    lVID x_best_size = 0;
+    lVID * x_best_cover = nullptr;
+    if constexpr ( exists ) {
+	// The first subproblem has failed, overwrite space. Discard max_v.
+	x_best_cover = &best_cover[best_size];
+    } else {
+	if( i_ok )
+	    // Retain the first subproblem, we will pick the best one later.
+	    x_best_cover = new lVID[n-1-max_deg];
+	else
+	    // Overwrite the solution to the first subproblem as it is invalid.
+	    x_best_cover = &best_cover[best_size];
+    }
+
+    // In case v is excluded, erase v (previous step) and all its neighbours.
+    // Create a checkpoint. Note that max_v has been removed and remains
+    // removed at this stage.
+    auto NI = G.nbegin( max_v );
+    auto NE = G.nend( max_v );
+    auto chkptn = G.disable_incident_edges( NI, NE );
+
+    // The k value to aim for.
+    lVID x_k = std::min( n-1-max_deg, k-max_deg );
+    // If the first subproblem succeeded, tighten k to find only a better
+    // solution. We have a solution of size i_best_size+1 (including max_v);
+    // look for at most k = i_best_size+1-1.
+    if( !exists && i_ok )
+	x_k = std::min( x_k, i_best_size );
+
+    bool x_ok = false;
+    if( k >= max_deg )
+	x_ok = vertex_cover_vc3<exists>( G, x_k, c, x_best_size, x_best_cover );
+
+    // Restore checkpoints on the graph, putting back neighbours
+    // as well as max_v
+    G.restore_checkpoint( chkptn );
+    G.restore_checkpoint( chkptv );
+
+    // Check if a solution was found
+    if constexpr ( exists ) {
+	// Inclusive subproblem had failed. Overwritten existing space in
+	// best_cover.
+	if( x_ok ) {
+	    // Add neighbours of excluded vertex (max_v) to the cover.
+	    best_size += x_best_size;
+	    for( auto I=NI; I != NE; ++I )
+		best_cover[best_size++] = *I;
+
+	    return true;
+	} else
+	    return false;
+    } else {
+	if( !i_ok ) {
+	    if( x_ok ) {
+		// Inclusive subproblem had failed. Overwritten existing
+		// space in best_cover.
+		// Add neighbours of excluded vertex (max_v) to the cover.
+		best_size += x_best_size;
+		std::copy( NI, NE, &best_cover[best_size] );
+		best_size += max_deg;
+
+		return true;
+	    } else {
+		// Both subproblems failed.
+		return false;
+	    }
+	} else { // i_ok
+	    // Take best of two solutions,
+	    // or first subproblem succeeded while second did not improve.
+	    if( !x_ok || i_best_size+1 <= x_best_size+max_deg ) {
+		// Retain first solution
+		delete[] x_best_cover;
+		best_size += i_best_size + 1;
+		return true;
+	    } else {
+		// Retain second solution.
+		std::copy( NI, NE, &best_cover[best_size] );
+		std::copy( &x_best_cover[0], &x_best_cover[x_best_size],
+			   &best_cover[best_size+max_deg] );
+		best_size += x_best_size + max_deg;
+		delete[] x_best_cover;
+		return true;
+	    }
+	}
+    }
 
     // TODO: track number of non-zero-degree vertices and if
     //       less than k, declare success (not searching best option...).
     //       actually, look at vertices with degree > 1 (paths/cycles)?
-
-    // Neighbour list of max_v, retained by disable_incident_edges
-    // G.sort_neighbours( max_v );
-
-    // In case v is included, erase only v
-    // auto chkpt = G.checkpoint();
-    // G.disable_incident_edges( [=]( lVID v ) { return v == max_v; } );
-    auto chkpt = G.disable_incident_edges_for( max_v );
-
-    // VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
-    lVID i_k = k-1;
-    if( verbose )
-	std::cerr << "vc3: n=" << n << " m=" << m
-		  << " vertex " << max_v << " deg " << max_deg
-		  << " included k=" << k << "\n";
-    bool i_ok = vertex_cover_vc3<exists>(
-	G, i_k, c, i_best_size, i_best_cover );
-
-    if constexpr ( exists ) {
-	if( i_ok ) {
-	    G.restore_checkpoint( chkpt );
-	    assert( i_best_size <= k );
-
-	    best_cover[best_size++] = max_v;
-	    for( lVID i=0; i < i_best_size; ++i )
-		best_cover[best_size++] = i_best_cover[i];
-
-	    delete[] i_best_cover;
-	    delete[] x_best_cover;
-
-	    return true;
-	}
-    }
-    auto NI = G.nbegin( max_v );
-    auto NE = G.nend( max_v );
-
-    // In case v is excluded, erase v (previous step) and all its neighbours
-    // Make sure our neighbours are sorted. Iterators remain valid after
-    // erasing incident edges.
-    // auto chkpti = G.checkpoint();
-    // G.disable_incident_edges( [=]( VID v ) {
-	// auto pos = std::lower_bound( NI, NE, v );
-	// return pos != NE && *pos == v;
-    // } );
-    auto chkpti = G.disable_incident_edges( NI, NE );
-
-    lVID x_k = std::min( n-1-max_deg, k-max_deg );
-    // VID x_k = i_ok ? std::min( max_deg+i_best_size, k-1 ) : k-1;
-    bool x_ok = false;
-    if( k >= max_deg ) {
-	if( verbose )
-	    std::cerr << "vc3: n=" << n << " m=" << m
-		      << " vertex " << max_v << " deg " << max_deg
-		      << " excluded k=" << k << "\n";
-	x_ok = vertex_cover_vc3<exists>( G, x_k, c, x_best_size, x_best_cover );
-    }
-
-    G.restore_checkpoint( chkpti );
-
-/*
-    if constexpr ( exists ) {
-	if( x_ok ) {
-	    G.restore_checkpoint( chkpt );
-	    assert( x_best_size <= k );
-
-	    for( auto I=NI; I != NE; ++I )
-		best_cover[best_size++] = *I;
-	    for( VID i=0; i < x_best_size; ++i )
-		best_cover[best_size++] = x_best_cover[i];
-	    
-	    delete[] i_best_cover;
-	    delete[] x_best_cover;
-
-	    return true;
-	}
-    }
-*/
-
-    if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
-	best_cover[best_size++] = max_v;
-	for( lVID i=0; i < i_best_size; ++i )
-	    best_cover[best_size++] = i_best_cover[i];
-    } else if( x_ok ) {
-	for( auto I=NI; I != NE; ++I )
-	    best_cover[best_size++] = *I;
-	for( lVID i=0; i < x_best_size; ++i )
-	    best_cover[best_size++] = x_best_cover[i];
-    }
-
-    G.restore_checkpoint( chkpt );
-
-    // if( i_ok || x_ok )
-    // check_cover( G, best_size, best_cover );
-
-    delete[] i_best_cover;
-    delete[] x_best_cover;
-
-    return i_ok || x_ok;
 }
 
 template<typename lVID, typename lEID, typename HGraphTy>
