@@ -2310,7 +2310,7 @@ void mc_dense_fn(
 	VID bc = E.get_max_clique_size();
 	VID k_max = n < bc ? 0 : n - bc + 1;
 
-	auto bs = IG.vertex_cover_kernelised( k_max );
+	auto bs = IG.clique_via_vertex_cover( k_max );
 	E.record( 1 + bs.size(), bs.begin(), bs.end() );
 	av = av_vc;
     } else {
@@ -2577,7 +2577,7 @@ void leaf_dense_fn(
     MC_DenseEnumerator DE( E, R, xp_set.get_set() );
     if( d > 0.9f ) {
 	VID init_k = n - ( E.get_max_clique_size() - depth );
-	auto bs = D.vertex_cover_kernelised( init_k );
+	auto bs = D.clique_via_vertex_cover( init_k );
 	DE.record( depth + bs.size(), bs.begin(), bs.end() );
     } else {
 	D.mc_search( DE, depth );

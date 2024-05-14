@@ -855,38 +855,33 @@ public:
 	return bitset<Bits>( m_mc );
     }
 
-    bitset<Bits>
+    /*! \brief compute minimal vertex cover
+     *
+     * \tparam co true if operating on complement of stored graph
+     * \param k_max find a cover of size k_max or less
+     */
+    template<bool co>
+    std::pair<bitset<Bits>,VID>
     vertex_cover_kernelised( VID k_max ) {
-	// Invert matrix
-/*
-	for( VID r=0; r < m_n; ++r ) {
-	    row_type rr = create_row( r );
-	    row_type rm = get_row( r );
-	    row_type rc = tr::bitwise_or( rr, rm );
-	    rc = tr::bitwise_invert( tr::bitwise_or( rc, get_himask( m_n ) ) );
-	    set_row( r, rc );
-	}
-*/
-
 	timer tm;
 	tm.start();
 	
-	// VID best_size = 0;
-	// row_type best_cover = tr::setzero();
+	// Complement graph:
 	// Remove fully-connected vertices from the candidate list. They are
 	// automatically not part of the vertex cover as they have zero degree
 	// in the complement graph.
-	row_type all_vertices
-	    = tr::bitwise_andnot( m_fully_connected, m_allv_mask );
-	// vck_iterate<false>( m_n, 1, all_vertices, best_size, best_cover );
+	row_type all_vertices;
+	if constexpr ( co )
+	    all_vertices = tr::bitwise_andnot( m_fully_connected, m_allv_mask );
+	else
+	    all_vertices = m_allv_mask;
 
 	// Attempt to find a vertex cover that is smaller than
 	// the size required to improve on the best known clique.
 	// This is expected to fail. If it does succeed, we continue
 	// searching for smaller covers.
 	if( k_max == 0 )
-	    return bitset<Bits>( tr::setzero() );
-#if 1
+	    return std::make_pair( bitset<Bits>( tr::setzero() ), 0 );
 	VID best_size = k_max + 1;
 	row_type best_cover = tr::setzero();
 	VID k_up = k_max - 1;
@@ -897,7 +892,8 @@ public:
 	while( true ) {
 	    VID a_best_size = 0;
 	    row_type a_best_cover = tr::setzero();
-	    bool any = vck_iterate<true>( k, 1, all_vertices, a_best_size, a_best_cover );
+	    bool any = vck_iterate<true,co>(
+		k, 1, all_vertices, a_best_size, a_best_cover );
 	    std::cout << " vck: k_max=" << k_max << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
 		      << " ok=" << any
@@ -930,72 +926,19 @@ public:
 	// If we can't meet the constraint, return something quick and
 	// recognisable as unuseful.
 	if( best_size > k_max )
-	    return bitset<Bits>( tr::setzero() );
+	    return std::make_pair( bitset<Bits>( tr::setzero() ), 0 );
 
-#else
-	VID k = k_max - 1;
-	VID best_size = 0;
-	row_type best_cover = tr::setzero();
-	bool any = vck_iterate<true>( k, 1, all_vertices, best_size, best_cover );
-	if( !any )
-	    return bitset<Bits>( tr::setzero() );
+	return std::make_pair( bitset<Bits>( best_cover ), best_size );
+    }
 
-#if 1
-	// greedy_cover( best_size, best_cover );
-	// VID k = std::min( k_max, best_size - 1 );
-	// std::cout << " i=" << 0 << " k=" << k << " sz=" << best_size
-	// << ' ' << tm.next() << "\n";
-
-	int i = 1;
-	while( true ) {
-	    VID a_best_size = 0;
-	    row_type a_best_cover = tr::setzero();
-	    bool any = vck_iterate<true>( k, 1, all_vertices, a_best_size, a_best_cover );
-	    // std::cout << " i=" << i << " k=" << k << " sz=" << best_size
-	    // << " valsz=" << get_size( best_cover )
-	    // << ' ' << tm.next() << "\n";
-	    if( !any )
-		break;
-
-	    best_size = a_best_size;
-	    best_cover = a_best_cover;
-	    k = best_size - 1; // try to find better
-
-	    // k < 0, cannot do better, this graph is a clique
-	    if( best_size == 0 )
-		break;
-
-	    ++i;
-	}
-
-	// If we can't meet the constraint, return something quick and
-	// recognisable as unuseful.
-	if( best_size > k_max )
-	    return bitset<Bits>( tr::setzero() );
-
-#if 0
-	// patch up -- errors!
-	k = best_size-1;
-	best_size = 0;
-	best_cover = tr::setzero();
-	bool b = vck_iterate<false>( k, 1, all_vertices, best_size, best_cover );
-	std::cout << " i=fail" << " k=" << k << " sz=" << best_size
-		  << " valsz=" << get_size( best_cover )
-		  << ' ' << tm.next() << "\n";
-	assert( !b );
-
-	++k;
-	best_size = 0;
-	best_cover = tr::setzero();
-	bool a = vck_iterate<false>( k, 1, all_vertices, best_size, best_cover );
-	std::cout << " i=success" << " k=" << k << " sz=" << best_size
-		  << ' ' << tm.next() << "\n";
-	assert( a );
-#endif
-#else
-	// binary search
-#endif
-#endif
+    bitset<Bits>
+    clique_via_vertex_cover( VID k_max ) {
+	auto r = vertex_cover_kernelised<true>( k_max );
+	if( r.second == 0 )
+	    return r.first;
+	
+	row_type best_cover = r.first;
+	VID best_size = r.second;
 
 	// cover vs clique on complement. Invert bitset, mask with valid bits
 	// best_cover = tr::bitwise_invert(
@@ -1003,8 +946,7 @@ public:
 	best_cover = tr::bitwise_andnot( best_cover, m_allv_mask );
 	best_size = m_n - best_size; // for completeness; unused hereafter
 
-
-	// Check for clique
+	// Check for clique (debugging)
 	for( VID r=0; r < m_n; ++r ) {
 	    row_type rr = create_row( r );
 	    row_type rm = get_row( r );
@@ -1715,9 +1657,11 @@ private:
 	assert( ( size % 2 ) == 0 );
     }
 
-    template<bool exists>
+    template<bool exists, bool co>
     int vck_crown( VID k, VID c, row_type eligible,
 		   VID & best_size, row_type & best_cover ) {
+	static_assert( co, "not yet adapted for co == false case" );
+
 	// Compute crown kernel: (I=1,H=2)
 	auto [ crown_I, crown_H ] = vck_crown_kernel( eligible );
 
@@ -1738,8 +1682,8 @@ private:
 
 	// Find a cover for the remaining vertices
 	VID tmp_best_size = 0;
-	bool rec = vck_iterate<exists>( k - h_size, c, tmp_eligible,
-					tmp_best_size, tmp_best_cover );
+	bool rec = vck_iterate<exists,co>( k - h_size, c, tmp_eligible,
+					   tmp_best_size, tmp_best_cover );
 
 	if( rec ) {
 	    best_size += tmp_best_size + h_size;
@@ -1751,7 +1695,7 @@ private:
 	return rec ? 1 : 0;
     }
 
-    template<bool exists>
+    template<bool exists, bool co>
     bool vck_buss( VID k, VID c, row_type eligible,
 		   VID & best_size, row_type & best_cover ) {
 	// Set U of vertices of degree higher than k
@@ -1759,7 +1703,7 @@ private:
 	row_type u_set = tr::setzero();
 	for( VID r=0; r < m_n; ++r ) {
 	    row_type rr = create_row( r );
-	    if( get_size( get_inv_row( r, rr, eligible ) ) > k ) {
+	    if( get_size( co_get_row<co>( r, rr, eligible ) ) > k ) {
 		++u_size;
 		u_set = tr::bitwise_or( u_set, rr );
 	    }
@@ -1775,7 +1719,7 @@ private:
 
 	// Calculate eligible vertices
 	row_type gp_eligible = tr::bitwise_andnot( u_set, eligible );
-	EID m = calculate_num_edges( gp_eligible );
+	EID m = std::get<2>( co_analyse<co>( gp_eligible ) );
 
 	// If G has more than k(k-|U|) edges, reject
 	if( m > k * ( k - u_size ) )
@@ -1786,8 +1730,8 @@ private:
 	VID gp_best_size = best_size + u_size;
 	row_type gp_best_cover = tr::bitwise_or( best_cover, u_set );
 	// row_type gp_eligible = tr::bitwise_andnot( u_set, eligible );
-	bool rec = vck_iterate<exists>( k - u_size, c, gp_eligible,
-					gp_best_size, gp_best_cover );
+	bool rec = vck_iterate<exists,co>( k - u_size, c, gp_eligible,
+					   gp_best_size, gp_best_cover );
 
 	if( rec ) {
 	    assert( gp_best_size - best_size <= k );
@@ -1803,6 +1747,7 @@ private:
     }
 
     // For path or cycle
+    template<bool co>
     void
     vck_trace_path( std::vector<char> & visited,
 		    row_type eligible,
@@ -1824,7 +1769,7 @@ private:
 	}
 
 	// Done if nxt is degree-1 vertex
-	row_type nadj = get_inv_row( nxt, nxt_row, eligible );
+	row_type nadj = co_get_row<co>( nxt, nxt_row, eligible );
 	VID ndeg = get_size( nadj );
 	if( ndeg == 2 ) {
 	    // Remove cur from neighbours of nxt
@@ -1832,11 +1777,12 @@ private:
 	    row_type x = tr::bitwise_andnot( cur_row, nadj );
 	    VID ngh = target::alltzcnt<sVID,type,VL>::compute( x );
 
-	    vck_trace_path( visited, eligible,
-			    best_size, best_cover, nxt, ngh, !incl );
+	    vck_trace_path<co>( visited, eligible,
+				best_size, best_cover, nxt, ngh, !incl );
 	}
     }
 
+    template<bool co>
     bool vck_poly( VID k, row_type eligible,
 		   VID & best_size, row_type & best_cover ) {
 	VID n = numVertices();
@@ -1847,17 +1793,11 @@ private:
 	row_type poly_best_cover = tr::setzero();
 
 	// Find paths
-#if 0
-	for( VID v=0; v < n; ++v ) {
-	    row_type v_row = create_row( v );
-	    row_type adj = get_inv_row( v, v_row, eligible );
-#else
 	bitset<Bits> bx( eligible );
 	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 	    VID v = *I;
 	    row_type v_row = I.get_mask();
-	    row_type adj = get_inv_row_unc( v, v_row, eligible );
-#endif
+	    row_type adj = co_get_row_unc<co>( v, v_row, eligible );
 	    if( tr::is_zero( adj ) )
 		continue;
 	    VID deg = get_size( adj );
@@ -1865,23 +1805,17 @@ private:
 	    if( deg == 1 && !visited[v] ) {
 		visited[v] = true;
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, eligible,
-				poly_best_size, poly_best_cover,
-				v, ngh, true );
+		vck_trace_path<co>( visited, eligible,
+				    poly_best_size, poly_best_cover,
+				    v, ngh, true );
 	    }
 	}
     
 	// Find cycles (uses same auxiliary as paths)
-#if 0
-	for( VID v=0; v < n; ++v ) {
-	    row_type v_row = create_row( v );
-	    row_type adj = get_inv_row( v, v_row, eligible );
-#else
 	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
 	    VID v = *I;
 	    row_type v_row = I.get_mask();
-	    row_type adj = get_inv_row_unc( v, v_row, eligible );
-#endif
+	    row_type adj = co_get_row_unc<co>( v, v_row, eligible );
 	    if( tr::is_zero( adj ) )
 		continue;
 	    VID deg = get_size( adj );
@@ -1895,9 +1829,9 @@ private:
 		// std::cout << "tracepath cycle set " << v << "\n";
 
 		VID ngh = target::alltzcnt<sVID,type,VL>::compute( adj );
-		vck_trace_path( visited, eligible,
-				poly_best_size, poly_best_cover,
-				v, ngh, false );
+		vck_trace_path<co>( visited, eligible,
+				    poly_best_size, poly_best_cover,
+				    v, ngh, false );
 	    }
 	}
 
@@ -1909,19 +1843,18 @@ private:
 	    return false;
     }
     
-    template<bool exists>
+    template<bool exists, bool co>
     bool vck_iterate( VID k, VID c, row_type eligible,
 		      VID & best_size, row_type & best_cover ) {
 	VID n = m_n;
-	EID m = calculate_num_edges( eligible );
+	auto [ max_v, max_deg, m ] = co_analyse<co>( eligible );
 	if( k == 0 )
 	    return m == 0;
 
-	auto [ max_v, max_deg ] = get_max_degree( eligible );
 	if( max_deg <= 2 ) {
 	    VID sz = 0;
 	    row_type c = tr::setzero();
-	    bool ret = vck_poly( k, eligible, sz, c );
+	    bool ret = vck_poly<co>( k, eligible, sz, c );
 	    assert( !ret || sz <= k );
 	    if( ret ) {
 		best_size += sz;
@@ -1931,13 +1864,15 @@ private:
 	}	
 
 	// Try crown kernel reduction
-	int ret = vck_crown<exists>( k, c, eligible, best_size, best_cover );
-	if( ret >= 0 )
-	    return (bool)ret;
+	if constexpr ( co == true ) { // co == false NYI
+	    int ret = vck_crown<exists,co>( k, c, eligible, best_size, best_cover );
+	    if( ret >= 0 )
+		return (bool)ret;
+	}
 
 	if( m/2 > c * k * k && max_deg > k ) {
 	    // replace by Buss kernel
-	    return vck_buss<exists>( k, c, eligible, best_size, best_cover );
+	    return vck_buss<exists,co>( k, c, eligible, best_size, best_cover );
 	}
 
 	// Must have a vertex with degree >= 3
@@ -1953,14 +1888,14 @@ private:
 	// Make sure our neighbours are sorted. Iterators remain valid after
 	// erasing incident edges.
 	row_type max_v_row = create_row( max_v );
-	row_type rm = get_inv_row( max_v, max_v_row, eligible );
+	row_type rm = co_get_row<co>( max_v, max_v_row, eligible );
 	row_type rmv = tr::bitwise_or( rm, max_v_row );
 	row_type x_eligible = tr::bitwise_andnot( rmv, eligible );
 
 	VID x_k = std::min( n-1-max_deg, k-max_deg );
 	bool x_ok = false;
 	if( k >= max_deg )
-	    x_ok = vck_iterate<exists>( x_k, c, x_eligible, x_best_size, x_best_cover );
+	    x_ok = vck_iterate<exists,co>( x_k, c, x_eligible, x_best_size, x_best_cover );
 
 	// With exists queries, it suffices to answer positively
 	if constexpr ( exists ) {
@@ -1978,7 +1913,7 @@ private:
 	// In case v is included, erase only v
 	row_type i_eligible = tr::bitwise_andnot( max_v_row, eligible );
 	VID i_k = x_ok ? std::min( max_deg+x_best_size, k-1 ) : k-1;
-	bool i_ok = vck_iterate<exists>( i_k, c, i_eligible, i_best_size, i_best_cover );
+	bool i_ok = vck_iterate<exists,co>( i_k, c, i_eligible, i_best_size, i_best_cover );
 
 	VID pre = best_size;
 	if( i_ok && ( !x_ok || i_best_size+1 < x_best_size+max_deg ) ) {
@@ -2087,12 +2022,27 @@ private:
 	row_type rc = tr::bitwise_or( v_single, r );
 	return tr::bitwise_andnot( rc, m_allv_mask );
     }
+    template<bool co>
+    row_type co_get_row( VID v, row_type v_single, row_type eligible ) const {
+	if constexpr ( co )
+	    return get_inv_row( v, v_single, eligible );
+	else
+	    return get_row( v, eligible );
+    }
     row_type get_inv_row( VID v, row_type v_single, row_type eligible ) const {
 	if( tr::is_bitwise_and_zero( v_single, eligible ) )
 	    return tr::setzero();
 	const row_type r = tr::load( &m_matrix[m_words * v] );
 	row_type rc = tr::bitwise_or( v_single, r );
 	return tr::bitwise_andnot( rc, eligible );
+    }
+    template<bool co>
+    row_type co_get_row_unc( VID v, row_type v_single, row_type eligible )
+	const {
+	if constexpr ( co )
+	    return get_inv_row_unc( v, v_single, eligible );
+	else
+	    return get_row( v, eligible );
     }
     row_type get_inv_row_unc( VID v, row_type v_single, row_type eligible )
 	const {
@@ -2105,22 +2055,6 @@ private:
     }
 
     std::pair<VID,VID> get_max_degree( row_type eligible ) const {
-#if 0
-	VID max_v = target::alltzcnt<VID,type,VL>::compute( eligible );
-	VID max_deg = get_size( get_inv_row( max_v, create_row( max_v ), eligible ) );
-	for( VID v=max_v+1; v < m_n; ++v ) {
-	    row_type rv = create_row( v );
-	    row_type adj = get_inv_row( v, rv, eligible );
-	    if( !tr::is_zero( adj ) ) {
-		VID deg = get_size( adj );
-		if( deg > max_deg ) {
-		    max_deg = deg;
-		    max_v = v;
-		}
-	    }
-	}
-	return { max_v, max_deg };
-#else
 	bitset<Bits> bx( eligible );
 	VID max_v = 0;
 	VID max_deg = 0;
@@ -2137,7 +2071,6 @@ private:
 	    }
 	}
 	return { max_v, max_deg };
-#endif
     }
 
 public:
@@ -2150,17 +2083,30 @@ public:
     VID get_degree( VID v ) const { return get_size( get_row( v ) ); }
 
 private:
-    EID calculate_num_edges( row_type eligible ) const {
-#if 0
+    // Returns max-degree-vertex, its degree, number of edges in graph
+    template<bool co>
+    std::tuple<VID,VID,EID> co_analyse( row_type eligible ) const {
 	EID m = 0;
-	for( VID v=0; v < m_n; ++v ) {
-	    row_type vr = create_row( v );
-	    row_type adj = get_inv_row( v, vr, eligible );
-	    if( !tr::is_zero( adj ) )
-		m += get_size( adj );
+	VID max_v = 0;
+	VID max_deg = 0;
+	bitset<Bits> bx( eligible );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type vr = I.get_mask();
+	    row_type adj = co_get_row<co>( v, vr, eligible );
+	    if( !tr::is_zero( adj ) ) { // cheap check to filter out zero-degree
+		VID deg = get_size( adj );
+		m += deg;
+		if( deg > max_deg ) {
+		    max_deg = deg;
+		    max_v = v;
+		}
+	    }
 	}
-	return m;
-#else
+	return { max_v, max_deg, m };
+    }
+    
+    EID calculate_num_edges( row_type eligible ) const {
 	EID m = 0;
 	bitset<Bits> bx( eligible );
 	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
@@ -2171,7 +2117,6 @@ private:
 		m += get_size( adj );
 	}
 	return m;
-#endif
     }
 
     static row_type create_row( VID v ) {
