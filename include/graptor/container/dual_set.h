@@ -95,11 +95,11 @@ constexpr bool is_multi_hash_table_v = is_multi_hash_table<S>::value;
  *         and a hash set Hash.
  *
  * The sequence is copied (by value) as it is small and assumed not to
- * own its content (e.g., \sa array_slice). The hash set is assumed to
+ * own its content (e.g., \p array_slice). The hash set is assumed to
  * own its content, so a reference is kept.
  *
  * If the sequence should not be copied, it is possible to instantiate this
- * type such that the type \sa Seq is a reference type.
+ * type such that the type \p Seq is a reference type.
  *
  * The hashed representation may also be a hash table, which is considered
  * as a set of key-value pairs, with unique keys. In this case, the sequential
@@ -114,6 +114,8 @@ constexpr bool is_multi_hash_table_v = is_multi_hash_table<S>::value;
  *
  * The \a Seq type must have a member-type called \c type that identifies the
  * type of the values held.
+ *
+ * \sa make_dual_set
  */
 template<typename Seq, typename Hash>
 struct dual_set {
@@ -151,6 +153,8 @@ struct dual_set {
 
     /*! Checks if set contains an element.
      *
+     * Requires is_hash_set_v<hash_type>.
+     *
      * The hashed representation is used as this should be more efficient.
      * \param value The value checked for presence
      * \return True if the value is a member of the set; false otherwise.
@@ -159,16 +163,20 @@ struct dual_set {
 
     /*! Performs a lookup on a hash table.
      *
+     * Requires is_hash_table_v<hash_type>.
+     *
      * Where the hashed set is also a hash table (the set contains key-value
      * pairs with unique keys), return the value component.
      * \param value The value checked for presence
      * \return The corresponding value stored by the hash table.
      */
-    type lookup( type value ) const { return m_hash.lookup( value ); }
+    auto lookup( type value ) const { return m_hash.lookup( value ); }
 
     /*! Checks if a number of elements are stored in the hash set.
      *
-     * \tparam U The type of the elements, normally the same as \sa type.
+     * Requires is_multi_hash_set_v<hash_type>.
+     *
+     * \tparam U The type of the elements, normally the same as \p type.
      * \tparam VL The vector length, or number of elements probed.
      * \tparam MT Determines the type of the return value.
      *
@@ -186,7 +194,9 @@ struct dual_set {
 
     /*! Performs simultaneous lookup of a number of elements in the hash table.
      *
-     * \tparam U The type of the elements, normally the same as \sa type.
+     * Requires is_multi_hash_table_v<hash_type>.
+     *
+     * \tparam U The type of the elements, normally the same as \p type.
      * \tparam VL The vector length, or number of elements probed.
      *
      * \param index Elements looked up
@@ -215,7 +225,8 @@ private:
     const hash_type & m_hash;	//!< Hashed representation
 };
 
-/*! \brief Short-hand construction method for a \sa dual_set
+/*! \brief Short-hand construction method for a \p dual_set
+ * \sa dual_set
  */
 template<typename Seq, typename Hash>
 auto make_dual_set( Seq && seq, const Hash & hash ) {
