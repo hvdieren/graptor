@@ -319,7 +319,8 @@ struct hash_scalar;
 struct hash_vector;
 struct merge_scalar;
 struct merge_vector;
-struct merge_jump;
+struct merge_scalar_jump;
+struct merge_vector_jump;
 
 template<typename so_traits>
 struct set_operations {
@@ -545,7 +546,7 @@ struct merge_scalar {
 
 };
 
-struct merge_jump {
+struct merge_scalar_jump {
 
     static constexpr bool uses_hash = false;
 
@@ -735,6 +736,94 @@ struct merge_jump {
 	return options + exceed - ( le - l );
     }
 
+};
+
+struct merge_vector_jump {
+    template<set_operation so, typename T, unsigned short VL, bool rhs,
+	     typename LIt, typename RIt, typename Collector>
+    static
+    std::pair<LIt,RIt>
+    intersect_task_vl( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+
+	if( out.terminated() )
+	    return std::make_pair( lb, rb );
+
+	while( lb+VL <= le && rb+VL <= re ) {
+	    type vl = tr::loadu( lb );
+
+	    mask_type ma = tr::intersect( vl, rb );
+
+	    type lf = tr::set1( lb[VL-1] );
+	    type rf = tr::set1( rb[VL-1] );
+
+	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
+	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
+	    size_t la = rt_ilog2( ((uint64_t)ladv) + 1 );
+	    size_t ra = rt_ilog2( ((uint64_t)radv) + 1 );
+
+	    lb += la;
+	    rb += ra;
+
+	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la ) )
+		break;
+
+	    // If not a single element in the LHS vector was present on the RHS
+	    // side, perhaps many more will follow. Try jumping.
+	    if( la == VL ) {
+		LIt ln = merge_scalar_jump::jump( lb, le, *rb );
+		out.template remainder<rhs>( std::distance( lb, ln ), 0 );
+		lb = ln;
+	    }
+	    // Similar jumping for RHS without matches.
+	    if( ra == VL ) {
+		LIt rn = merge_scalar_jump::jump( rb, re, *lb );
+		out.template remainder<rhs>( 0, std::distance( rb, rn ) );
+		rb = rn;
+	    }
+	}
+
+	if( lb+VL == le && rb+VL == re )
+	    out.template remainder<rhs>( le - lb, re - rb );
+	
+	return std::make_pair( lb, rb );
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	using T = typename std::decay_t<LSet>::type;
+	
+	auto lb = lset.begin();
+	auto le = lset.end();
+	auto rb = rset.begin();
+	auto re = rset.end();
+#if __AVX512F__
+	std::tie( lb, rb ) =
+	    intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rb, re, out );
+#endif
+#if __AVX2__
+	std::tie( lb, rb ) =
+	    intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rb, re, out );
+#endif
+	merge_scalar::intersect_task<so,rhs>( lb, le, rb, re, out );
+    }
+    
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	return intersect_task<so,true>( lset, rset, out );
+    }
 };
 
 struct hash_scalar {
@@ -1774,7 +1863,7 @@ struct adaptive_intersect {
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return;
 	
-#if 0
+#if 1
 	// Trim ranges
 	auto llo = *lset.begin();
 	auto lhi = *std::prev( lset.end() );
@@ -1786,42 +1875,56 @@ struct adaptive_intersect {
 
 	out.swap( tlset, trset );
 
-#if 1
+	auto range = std::max( lhi, rhi ) - std::min( llo, rlo );
+
 	int lcat = rt_ilog2( tlset.size()/2 );
 	int rcat = rt_ilog2( trset.size()/2 );
 
 	bool do_hash = true;
 
-#if 0
 	if constexpr ( so == so_intersect || so == so_intersect_xlat ) {
 	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
-	    do_hash = std::abs( lcat - rcat ) > 1; // rule2
+	    // do_hash = std::abs( lcat - rcat ) > 1; // rule2
 	    // do_hash = std::abs( lcat - rcat ) > 0; // rule5
 	    // do_hash = ( lcat != rcat || std::max( lcat, rcat ) >= 5 ); // rule6
 	} else if constexpr ( so == so_intersect_size ) {
 	    // do_hash = ( lcat != rcat );
-	    do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
+	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	} else if constexpr ( so == so_intersect_size_exceed ) {
 	    // do_hash = ( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 ); // rule1
 	    // do_hash = ( lcat != rcat ); // ne
 	    // do_hash = std::abs( lcat - rcat ) > 1; // rule2
-	    do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
+	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	    // do_hash = ( lcat + rcat >= 4 && std::abs( lcat - rcat ) > 1 ); // rule4
+	    // do_hash = std::min(lset.size(), rset.size()) > range/2; // rule6
+	    // do_hash = std::min(lset.size(), rset.size()) > range/4; // rule7
+	    // do_hash = std::min(lset.size(), rset.size()) > range/8; // rule8
+	    do_hash = std::min(lset.size(), rset.size()) > range/8
+		|| std::abs( lcat - rcat ) > 1; // rule2.8
 	}
 
-	if( do_hash )
-	    return hash_vector::template apply<so>( tlset, trset, out );
+	if( do_hash ) {
+	    // Assume trimmed sets have same type as original sets
+	    if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+			   || is_hash_set_v<std::decay_t<RSet>> )
+		return hash_vector::template apply<so>( tlset, trset, out );
+	    else
+		return merge_vector_jump::template apply<so>( tlset, trset, out );
+	}
 	else
-	    return merge_vector::template apply<so>( tlset, trset, out );
-#endif
-	return hash_scalar::template apply<so>( tlset, trset, out );
-#else
-	// Intersection operation
-	return hash_vector::template apply<so>( tlset, trset, out );
-#endif
+	    return merge_vector_jump::template apply<so>( tlset, trset, out );
 #else
 	// return merge_vector::template apply<so>( lset, rset, out );
-	return merge_jump::template apply<so>( lset, rset, out );
+	// return merge_scalar_jump::template apply<so>( lset, rset, out );
+	// return merge_vector_jump::template apply<so>( lset, rset, out );
+/*
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> )
+	    return hash_scalar::template apply<so>( lset, rset, out );
+	else
+	return merge_vector_jump::template apply<so>( lset, rset, out );
+*/
+	return merge_scalar::template apply<so>( lset, rset, out );
 #endif
     }
 };
