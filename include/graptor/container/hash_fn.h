@@ -41,32 +41,33 @@ struct java_hash<uint32_t> {
     }
 };
 
-template<typename T>
+template<typename T, typename Enable = void>
 struct rand_hash;
 
-template<>
-struct rand_hash<uint32_t> {
+template<typename T>
+struct rand_hash<T, std::enable_if_t<std::is_integral_v<T>>> {
     // Same RNG as Blanusa's code.
-    using type = uint32_t;
+    using type = T;
+    static constexpr size_t bits = 8 * sizeof(T);
 
-    explicit rand_hash( uint32_t log_size ) {
+    explicit rand_hash( type log_size ) {
 	resize( log_size );
     }
 
-    void resize( uint32_t log_size ) {
-	m_shift = 32 - log_size - 1;
+    void resize( type log_size ) {
+	m_shift = bits - log_size - 1;
 	m_a = rand() | 1;
-	m_b = rand() & ((uint32_t(1) << m_shift) - 1);
+	m_b = rand() & ((type(1) << m_shift) - 1);
     }
 
-    type operator() ( uint32_t h ) const {
+    type operator() ( type h ) const {
 	h = h * m_a + m_b;
 	return h >> m_shift;
     }
 
     template<unsigned short VL>
-    typename vector_type_traits_vl<uint32_t,VL>::type
-    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+    typename vector_type_traits_vl<type,VL>::type
+    vectorized( typename vector_type_traits_vl<type,VL>::type h ) const {
 	using tr = vector_type_traits_vl<type,VL>;
 	using vtype = typename tr::type;
 
@@ -90,8 +91,8 @@ private:
     }
 
 private:
-    uint32_t m_a, m_b;
-    uint32_t m_shift;
+    type m_a, m_b;
+    type m_shift;
 };
 
 template<typename T>
