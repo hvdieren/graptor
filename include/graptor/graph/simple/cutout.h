@@ -129,12 +129,12 @@ public:
 	: NeighbourCutOutDegeneracyOrderFiltered(
 	    G, v, G.getIndex()[v+1] - G.getIndex()[v],
 	    std::forward<FilterFn>( fn ) ) { }
-    template<typename FilterFn>
+    template<typename GraphTy, typename FilterFn>
     NeighbourCutOutDegeneracyOrderFiltered(
-	const ::GraphCSx & G, lVID v, lVID deg,
+	const GraphTy & G, lVID v, lVID deg,
 	FilterFn && fn )
 	: m_iset( new lVID[deg] ) {
-	const lVID * const ngh = &G.getEdges()[G.getIndex()[v]];
+	const lVID * const ngh = G.get_neighbours( v );
 	// Skip left neighbourhood
 	const lVID * pos = std::lower_bound( ngh, ngh+deg, v );
 	// Filter remaining vertices
