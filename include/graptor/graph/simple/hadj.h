@@ -280,7 +280,7 @@ public:
 	EID h = 0;
 	parallel_loop( VID(0), n, [&]( VID v ) {
 	    EID deg = gindex[v+1] - gindex[v];
-	    index[v] = get_hash_slots( deg );
+	    index[v] = deg == 0 ? 0 : get_hash_slots( deg );
 	    if constexpr ( dual_rep )
 		index[v] *= 2;
 	} );
@@ -292,10 +292,10 @@ public:
 	    VID s = index[v+1] - index[v];
 	    if constexpr ( dual_rep )
 		s /= 2;
-	    VID logs = rt_ilog2( s );
+	    VID logs = s == 0 ? 0 : rt_ilog2( s );
 	    hash_set_type & a = m_adjacency[v];
 	    new ( &a ) hash_set_type( &hashes[index[v]+(dual_rep?s:0)], 0, logs );
-	    a.clear(); // initialise to invalid element
+	    // a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	    if constexpr ( dual_rep )
 		std::copy( &gedges[gindex[v]], &gedges[gindex[v+1]],
