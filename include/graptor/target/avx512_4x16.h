@@ -347,6 +347,9 @@ public:
     static vmask_type cmpeq( type a, type b, mt_vmask ) {
 	return asvector( cmpeq( a, b, mt_mask() ) );
     }
+    static vmask_type cmpeq( mask_type m, type a, type b, mt_vmask ) {
+	return asvector( cmpeq( m, a, b, mt_mask() ) );
+    }
     static vmask_type cmpne( type a, type b, mt_vmask ) {
 	return asvector( cmpne( a, b, mt_mask() ) );
     }
