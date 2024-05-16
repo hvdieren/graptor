@@ -226,36 +226,14 @@ public:
 	    typename vector_type_traits_vl<U,VL>::type index,
 	    MT ) const {
 	    static_assert( sizeof( U ) >= sizeof( lVID ) );
-	    using tr = vector_type_traits_vl<U,VL>;
-	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
-	    using vtype = typename tr::type;
-#if __AVX512F__
-	    using mtr = typename tr::mask_traits;
-	    using mkind = target::mt_mask;
-#else
-	    using mtr = typename tr::vmask_traits;
-	    using mkind = target::mt_vmask;
-#endif
-	    using mtype = typename mtr::type;
-
-	    mtype present;
-	    vtype value;
-	    std::tie( present, value ) = multi_helper<U,VL>( index );
-
-	    if constexpr ( std::is_same_v<mkind,MT> )
-		return present;
-	    else if constexpr ( std::is_same_v<MT,target::mt_mask> )
-		return tr::asmask( present );
-	    else
-		return tr::asvector( present );
+	    return multi_helper<U,VL>( index, MT() ).first;
 	}
 
-	template<typename U, unsigned short VL>
-	std::pair<typename vector_type_traits_vl<U,VL>::mask_type,
-		  typename vector_type_traits_vl<U,VL>::type>
+	template<typename U, unsigned short VL, typename MT>
+	auto
 	multi_lookup(
-	    typename vector_type_traits_vl<U,VL>::type index ) const {
-	    return multi_helper<U,VL>;
+	    typename vector_type_traits_vl<U,VL>::type index, MT mt ) const {
+	    return multi_helper<U,VL>( index, mt );
 	}
 	    
 	const lVID * begin() const { return m_xp.begin(); }
@@ -263,11 +241,10 @@ public:
 	const lVID size() const { return m_xp.size(); }
 
     private:
-	template<typename U, unsigned short VL>
-	std::pair<typename vector_type_traits_vl<U,VL>::mask_type,
-		  typename vector_type_traits_vl<U,VL>::type>
+	template<typename U, unsigned short VL, typename MT>
+	auto
 	multi_helper(
-	    typename vector_type_traits_vl<U,VL>::type index ) const {
+	    typename vector_type_traits_vl<U,VL>::type index, MT ) const {
 	    static_assert( sizeof( U ) >= sizeof( lVID ) );
 	    using tr = vector_type_traits_vl<U,VL>;
 	    using str = vector_type_traits_vl<std::make_signed_t<U>,VL>;
@@ -292,7 +269,7 @@ public:
 	    // load the certificates, if plausible
 	    vtype vc = tr::gather( m_xp.m_set, pos, mc );
 	    // check which certificates are valid
-	    mtype mv = tr::cmpeq( mc, vc, index, mkind() );
+	    auto mv = tr::cmpeq( mc, vc, index, MT() );
 
 	    return std::make_pair( mv, pos );
 	}

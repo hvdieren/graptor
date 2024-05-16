@@ -355,7 +355,8 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    while( l+RVL <= udeg ) {
 		const itype v = itr::loadu( &ngh[l] );
 		// translate to new ID
-		const itype b0 = xp_hash.template multi_contains<sVID,RVL>( v );
+		const itype b0 = xp_hash.template
+		    multi_lookup<sVID,RVL>( v, target::mt_vmask() ).second;
 
 		// like blend: if v < lobnd, then invalidate lane, else use bb
 		const itype b1 = itr::bitwise_or(
@@ -403,7 +404,8 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    while( l+IVL <= udeg ) {
 		const itype v = itr::loadu( &ngh[l] );
 		// translate ID to cutout range
-		const itype b0 = xp_hash.template multi_contains<sVID,IVL>( v );
+		const itype b0 = xp_hash.template multi_contains<sVID,IVL>(
+		    v, target::mt_vmask() );
 
 		// like blend: if b0 < lobnd, then invalidate lane, else use b0
 		const itype b1 = itr::bitwise_or(

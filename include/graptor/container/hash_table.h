@@ -165,26 +165,15 @@ public:
 	    return false;
     }
 
-    template<typename U, unsigned short VL>
+    template<typename U, unsigned short VL, typename MT>
     auto multi_contains(
-	typename vector_type_traits_vl<U,VL>::type index ) const {
-	return multi_contains<U,VL>( index, target::mt_vmask() );
+	typename vector_type_traits_vl<U,VL>::type index, MT ) const {
+	return multi_lookup<U,VL>( index, MT() ).first;
     }
 
-    template<typename U, unsigned short VL, typename MT>
-    /*
-    std::pair<
-	// Index found
-	typename vector_type_traits_vl<U,VL>::type,
-	// presence flag
-	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
-			   typename vector_type_traits_vl<U,VL>::mask_type,
-			   typename vector_type_traits_vl<U,VL>::vmask_type>
-	>
-    */
-    typename vector_type_traits_vl<U,VL>::type
-    multi_contains( typename vector_type_traits_vl<U,VL>::type
-		    index, MT ) const {
+    template<typename U, unsigned short VL, typename MT = target::mt_mask>
+    auto
+    multi_lookup( typename vector_type_traits_vl<U,VL>::type index, MT ) const {
 	static_assert( sizeof( U ) >= sizeof( value_type ) );
 	using tr = vector_type_traits_vl<U,VL>;
 	using vtype = typename tr::type;
@@ -232,9 +221,10 @@ public:
 	// It just takes one cycle to recompute, same as invert. The code
 	// below is most compact to achieve the correct return type.
 	// return std::make_pair( vidx, tr::cmpeq( e, v, MT() ) );
-	vtype vals = tr::gather( tr::setone(), m_values, vidx, 
+	vtype vals = tr::gather( tr::setone(), m_values, vidx,
 				 tr::cmpeq( e, v, mkind() ) );
-	return vals;
+	auto mask = tr::cmpeq( e, v, MT() );
+	return std::make_pair( mask, vals );
     }
 
 private:
