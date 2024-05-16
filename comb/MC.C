@@ -1079,7 +1079,7 @@ public:
 	const graptor::graph::NeighbourCutOutDegeneracyOrder<VID,EID> & cut )
 	: S( G, H, cut.get_vertices(), cut.get_start_pos(),
 	     cut.get_num_vertices(),
-	     numa_allocation_interleaved() ),
+	     numa_allocation_small() ),
 	  start_pos( cut.get_start_pos() ) { }
     template<typename HGraph>
     GraphBuilderInduced(
@@ -1096,7 +1096,15 @@ public:
 	VID v,
 	const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut )
 	: S( G, H, cut.get_vertices(), cut.get_num_vertices(),
-	     numa_allocation_interleaved() ),
+	     numa_allocation_small() ),
+	  start_pos( 0 ) { }
+    template<typename HGraph>
+    GraphBuilderInduced(
+	const HGraph & H,
+	VID v,
+	const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut )
+	: S( H, H, cut.get_vertices(), cut.get_num_vertices(),
+	     numa_allocation_small() ),
 	  start_pos( 0 ) { }
 
     const auto & get_graph() const { return S; }
@@ -1654,6 +1662,61 @@ vertex_cover_vc3_crown( GraphType & G,
 }
 #endif
 
+template<unsigned Bits, typename lVID, typename lEID, typename GraphType>
+bool leaf_vertex_cover(
+    const GraphType & H,
+    lVID n_remain,
+    lVID k,
+    lVID & best_size,
+    lVID * best_cover ) {
+
+    variant_statistics & stats
+	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
+    timer tm;
+    tm.start();
+
+    std::vector<lVID> cutout;
+    cutout.reserve( n_remain );
+    lVID nh = H.get_num_vertices();
+    std::cout << "nh=" << nh << " dp=" << H.get_cur_depth() << "\n";
+    for( lVID v=0; v < nh; ++v )
+	if( H.getDegree( v ) > 0 ) {
+	    cutout.push_back( v );
+	    // std::cout << "cut v=" << v << " deg=" << H.get_degree(v)
+	    // << " depth=" << H.get_depth(v) << "\n";
+	}
+
+    std::cout << "nh=" << nh << " nr=" << n_remain << " Bits=" << Bits
+	      << " cut=" << cutout.size() << "\n";
+    assert( cutout.size() <= n_remain );
+    assert( cutout.size() <= Bits );
+
+    DenseMatrix<Bits,lVID,lEID> D( H, &cutout[0], cutout.size() );
+
+    lVID n = D.numVertices();
+    lVID m = D.get_num_edges();
+    float d = (float)m / ( (float)n * (float)(n-1) );
+    stats.record_build( tm.next() );
+
+    // std::cout << "VC cutout: nrem=" << n_remain << " n=" << n
+    // << " m=" << m << " d=" << d << "\n";
+
+    auto [ bs, sz ] = D.template vertex_cover_kernelised<false>( k );
+    bool ret;
+    if( sz == 0 || sz > k )
+	ret = false;
+    else {
+	for( auto v : bs )
+	    best_cover[best_size++] = cutout[v];
+	ret = true;
+    }
+
+    float tbk = tm.next();
+    stats.record( tbk );
+
+    return ret;
+}
+
 template<bool exists, typename GraphType, typename lVID>
 bool
 vertex_cover_vc3( GraphType & G,
@@ -1668,6 +1731,24 @@ vertex_cover_vc3( GraphType & G,
 
     if( k == 0 )
 	return m == 0;
+
+    // Apply reduction rules for degree-1 vertices.
+    lVID min_v, min_deg;
+    std::tie( min_v, min_deg ) = G.min_degree();
+    if( min_deg == 1 ) {
+	lVID ngh = *G.nbegin( min_v );
+	lVID rm[2] = { min_v, ngh };
+	auto chkptv = G.disable_incident_edges( &rm[0], &rm[2] );
+	lVID m_best_size = 0;
+	bool ok = vertex_cover_vc3<exists>(
+	    G, (lVID)(k-(lVID)1), c, m_best_size, &best_cover[best_size+1] );
+	if( ok ) {
+	    best_cover[best_size++] = ngh;
+	    best_size += m_best_size;
+	}
+	G.restore_checkpoint( chkptv );
+	return ok;
+    }
 
     lVID max_v, max_deg;
     std::tie( max_v, max_deg ) = G.max_degree();
@@ -1684,6 +1765,35 @@ vertex_cover_vc3( GraphType & G,
     if( m/2 > c * k * k && max_deg > k ) {
 	// replace by Buss kernel
 	return vertex_cover_vc3_buss<exists>( G, k, c, best_size, best_cover );
+    }
+
+/*
+    std::cout << "nrem=" << G.get_num_remaining_vertices()
+	      << " k=" << k
+	      << " max_v=" << max_v
+	      << " max_deg=" << max_deg
+	      << "\n";
+*/
+
+    // Consider if it is worthwhile to transform to a dense problem.
+    // Do this after the buss kernel, as the buss kernel may give a reasonable
+    // reduction graph size.
+    lVID n_remain = G.get_num_remaining_vertices();
+    if( n_remain <= (VID(1)<<N_MAX_SIZE) ) {
+	typedef bool (*fptr_t)( const GraphType &, lVID, lVID, lVID &, lVID * );
+	static fptr_t fptr[N_DIM+1] = {
+	    &leaf_vertex_cover<32,lVID,lEID,GraphType>,
+	    &leaf_vertex_cover<64,lVID,lEID,GraphType>,
+	    &leaf_vertex_cover<128,lVID,lEID,GraphType>,
+	    &leaf_vertex_cover<256,lVID,lEID,GraphType>,
+	    &leaf_vertex_cover<512,lVID,lEID,GraphType> };
+	    
+	VID nlg = get_size_class( n_remain );
+	if( nlg < N_MIN_SIZE )
+	    nlg = N_MIN_SIZE;
+	if( nlg <= N_MAX_SIZE )
+	    return fptr[nlg-N_MIN_SIZE](
+		G, n_remain, k, best_size, best_cover );
     }
 
     // Must have a vertex with degree >= 3 (trivial given check for poly)
@@ -1742,6 +1852,7 @@ vertex_cover_vc3( GraphType & G,
     auto chkptn = G.disable_incident_edges( NI, NE );
 
     // The k value to aim for.
+    // Note: if !exists, then additionally take x_k = std::min( x_k, i_k ).
     lVID x_k = std::min( n-1-max_deg, k-max_deg );
     // If the first subproblem succeeded, tighten k to find only a better
     // solution. We have a solution of size i_best_size+1 (including max_v);
@@ -1870,6 +1981,10 @@ clique_via_vc3( const HGraphTy & G,
 
     const lVID k_prior = cn + depth - bc;
     lVID k_up = k_prior - 1;
+    // TODO: the minimum size of a vertex cover is at least half the number
+    //       of vertices with non-zero degree (?) 
+    // Assumption mentioned by Chen and Kanj in "On Approximating Minimum
+    // Vertex Cover for Graphs with Perfect Matching"
     lVID k_lo = 1;
     lVID k_best_size = k_prior;
     lVID k = k_up;
@@ -2282,7 +2397,6 @@ mc_bron_kerbosch_recpar_top_xps(
 
 template<unsigned Bits, typename HGraph, typename Enumerator>
 void mc_dense_fn(
-    const GraphCSx & G,
     const HGraph & H,
     Enumerator & E,
     VID v,
@@ -2297,7 +2411,7 @@ void mc_dense_fn(
 
     // Build induced graph
     DenseMatrix<Bits,VID,EID>
-	IG( G, H, cut.get_vertices(), 0, cut.get_num_vertices() );
+	IG( H, H, cut.get_vertices(), 0, cut.get_num_vertices() );
 
     VID n = IG.numVertices();
     VID m = IG.calculate_num_edges(); // considers inverted graph
@@ -2327,7 +2441,6 @@ void mc_dense_fn(
 }
 
 typedef void (*mc_func)(
-    const GraphCSx &, 
     const HFGraphTy &,
     MC_CutOutEnumerator &,
     VID,
@@ -2343,7 +2456,6 @@ static mc_func mc_dense_func[N_DIM+1] = {
 };
 
 void mc_top_level_bk(
-    const GraphCSx & G,
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
@@ -2356,7 +2468,7 @@ void mc_top_level_bk(
     timer tm;
     tm.start();
 
-    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
+    GraphBuilderInduced<HGraphTy> ibuilder( H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
     stats.record_genbuild( av_bk, tm.next() );
@@ -2368,7 +2480,6 @@ void mc_top_level_bk(
 }
 
 void mc_top_level_vc(
-    const GraphCSx & G,
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
@@ -2384,7 +2495,7 @@ void mc_top_level_vc(
     tm.start();
 
     // TODO: cut out just once, not twice
-    GraphBuilderInduced<HGraphTy> ibuilder( G, H, v, cut );
+    GraphBuilderInduced<HGraphTy> ibuilder( H, v, cut );
     const auto & HG = ibuilder.get_graph();
 
     stats.record_genbuild( av_vc, tm.next() );
@@ -2400,7 +2511,6 @@ void mc_top_level_vc(
 }
 
 void mc_top_level(
-    const GraphCSx & G,
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
@@ -2424,7 +2534,8 @@ void mc_top_level(
     // With degree == best, we can make a clique of size best+1 at best.
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
-	cut( G, v, [&]( VID u ) { return remap_coreness[u] > best; } );
+	cut( H, v, H.getDegree( v ),
+	     [&]( VID u ) { return remap_coreness[u] > best; } );
 
     VID hn1 = cut.get_num_vertices();
 
@@ -2487,14 +2598,14 @@ void mc_top_level(
 
     if( nlg <= N_MAX_SIZE ) {
 	MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-	return mc_dense_func[nlg-N_MIN_SIZE]( G, H, CE, v, cut, stats );
+	return mc_dense_func[nlg-N_MIN_SIZE]( H, CE, v, cut, stats );
     }
 #endif
 
     if( d > .9f ) {
-	mc_top_level_vc( G, H, E, v, degeneracy, remap_coreness, cut );
+	mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
     } else {
-	mc_top_level_bk( G, H, E, v, degeneracy, remap_coreness, cut );
+	mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
     }
 
 #if 0
@@ -2867,18 +2978,21 @@ int main( int argc, char *argv[] ) {
     } );
     std::cout << "Remapping coreness data: " << tm.next() << "\n";
 
-    // Check !!!
-    // GraphCSx R( G, std::make_pair( order.get(), rev_order.get() ) );
+    // Remap graph.
+    // TODO: remap+hash in one step
     RemapVertex<VID> remapper( order.get(), rev_order.get() );
     GraphCSx R( pn, pm, -1, true, false );
     R.import_select( G, remapper );
     std::cout << "Remapping graph: " << tm.next() << "\n";
 
+    // Cleanup original graph now; we won't need it any more.
+    G.del();
+
     HFGraphTy H( R, numa_allocation_interleaved() );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
-    // Cleanup original graph now; we won't need it any more.
-    G.del();
+    // Cleanup remapped graph now; we won't need it any more.
+    R.del();
 
     std::cout << "Sort order check:\n\tcoreness[0]=" << remap_coreness[0]
 	      << " coreness[pn-1]=" << remap_coreness[pn-1]
@@ -2952,7 +3066,7 @@ int main( int argc, char *argv[] ) {
 		  << " deg=" << H.getDegree( v )
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
     }
 
     if( what_if != ~(VID)0 ) {
@@ -2965,7 +3079,7 @@ int main( int argc, char *argv[] ) {
 		  << " deg=" << H.getDegree( v )
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 
 	// Successfully found a clique larger than postulated size?
 	// If not, erase result.
@@ -3018,7 +3132,7 @@ int main( int argc, char *argv[] ) {
 #else
 	VID v = n-1-w;
 #endif
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
     }
 
 #elif SORT_ORDER == 4 || SORT_ORDER == 5
@@ -3042,7 +3156,7 @@ int main( int argc, char *argv[] ) {
 	// << " deg=" << H.getDegree( v )
 	// << " rho=" << remap_coreness[v]
 	// << "\n";
-	mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 
 #if ( TRAVERSAL_ORDER & 1 ) != 0
 	if( !E.is_feasible( c+1, fr_outer ) )
@@ -3078,7 +3192,7 @@ int main( int argc, char *argv[] ) {
 	    // << " deg=" << H.getDegree( v )
 	    // << " rho=" << remap_coreness[v]
 	    // << "\n";
-	    mc_top_level( R, H, E, v, degeneracy, remap_coreness.get() );
+	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 	    if( !E.is_feasible( c+1, fr_outer ) )
 		break;
 	}
@@ -3107,6 +3221,12 @@ int main( int argc, char *argv[] ) {
 	stats.get( av_bk, n ).print( std::cout ); 
 	std::cout << (1<<n) << "-bit dense VC: ";
 	stats.get( av_vc, n ).print( std::cout ); 
+    }
+    for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
+	std::cout << (1<<n) << "-bit dense leaf BK: ";
+	stats.get_leaf( av_bk, n ).print( std::cout ); 
+	std::cout << (1<<n) << "-bit dense leaf VC: ";
+	stats.get_leaf( av_vc, n ).print( std::cout ); 
     }
     std::cout << "generic BK: ";
     stats.m_gen[av_bk].print( std::cout );
