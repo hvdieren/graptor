@@ -48,6 +48,10 @@
 #define ABLATION_DENSE_PIVOT_FILTER 0
 #endif
 
+#ifndef BK_MIN_LEAF
+#define BK_MIN_LEAF 8
+#endif
+
 #ifndef USE_512_VECTOR
 #if __AVX512F__
 #define USE_512_VECTOR 1
@@ -2591,6 +2595,9 @@ bool mc_leaf(
     VID num = ce;
     VID * XP = xp_set.get_set();
 
+    if( ce < BK_MIN_LEAF )
+	return false;
+
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
 	nlg = N_MIN_SIZE;
@@ -2688,6 +2695,8 @@ int main( int argc, char *argv[] ) {
     std::cout << "Reading graph: " << tm.stop() << "\n";
     tm.start(); // Reset timer as graph I/O has high variability
 
+    MC_Enumerator E;
+
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
     std::cout << "Removed self-edges: " << tm.next() << "\n";
@@ -2711,7 +2720,6 @@ int main( int argc, char *argv[] ) {
     GraphCSRAdaptor GA( G, npart );
     KCv<GraphCSRAdaptor> kcore( GA, P );
 
-    MC_Enumerator E;
     VID pn = n;
     EID pm = m;
     VID prune_th = ~(VID)0;
@@ -2876,6 +2884,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
+	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << '\n';
@@ -2895,7 +2904,7 @@ int main( int argc, char *argv[] ) {
     VID degeneracy = kcore.getLargestCore();
     E.rebase( degeneracy, order.get() );
 
-    std::cout << "Start enumeration: " << tm.next() << std::endl;
+    std::cout << "Start enumeration at " << tm.elapsed() << std::endl;
 
     /*! Traversal orders
      * 1. SOTA: sort by decreasing degree, visit low to high degree.
