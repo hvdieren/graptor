@@ -2346,8 +2346,8 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
 #if ABLATION_SORT_ORDER_TIES
-    sort_order( order.get(), rev_order.get(),
-		coreness.get_ptr(), n, kcore.getLargestCore(), true );
+    sort_order( n, kcore.getLargestCore(), coreness.get_ptr(),
+		order.get(), rev_order.get(), true );
 #else
     sort_order_ties( order.get(), rev_order.get(),
 		     coreness.get_ptr(), n, kcore.getLargestCore(),
