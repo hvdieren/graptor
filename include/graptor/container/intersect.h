@@ -1887,17 +1887,21 @@ struct adaptive_intersect {
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 	auto & trset = rset;
-#else
+#endif
+
+#if INTERSECTION_TRIM == 1 || INTERSECTION_ALGORITHM >= 6
 	// Trim ranges
 	auto llo = *lset.begin();
 	auto lhi = *std::prev( lset.end() );
 	auto rlo = *rset.begin();
 	auto rhi = *std::prev( rset.end() );
 
+#if INTERSECTION_TRIM == 1
 	auto tlset = lset.trim_range( rlo, rhi );
 	auto trset = rset.trim_range( llo, lhi );
 
 	out.swap( tlset, trset );
+#endif
 #endif
 
 #if INTERSECTION_ALGORITHM == 0
