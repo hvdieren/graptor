@@ -31,10 +31,6 @@
 #define ABLATION_DISABLE_LEAF 0
 #endif
 
-#ifndef ABLATION_DISABLE_TOP_TINY
-#define ABLATION_DISABLE_TOP_TINY 1
-#endif
-
 #ifndef ABLATION_DISABLE_TOP_DENSE
 #define ABLATION_DISABLE_TOP_DENSE 0
 #endif
@@ -476,13 +472,11 @@ struct all_variant_statistics {
 	    }
 	    sum.m_gen[v] = m_gen[v] + s.m_gen[v];
 	}
-	sum.m_tiny = m_tiny + s.m_tiny;
 	sum.m_filter = m_filter + s.m_filter;
 	sum.m_heuristic = m_heuristic + s.m_heuristic;
 	return sum;
     }
 
-    void record_tiny( double atm ) { m_tiny.record( atm ); }
     void record_gen( algo_variant var, double atm ) {
 	m_gen[(size_t)var].record( atm );
     }
@@ -501,7 +495,7 @@ struct all_variant_statistics {
     
     variant_statistics m_dense[N_VARIANTS][N_DIM];
     variant_statistics m_leaf_dense[N_VARIANTS][N_DIM];
-    variant_statistics m_tiny, m_gen[N_VARIANTS];
+    variant_statistics m_gen[N_VARIANTS];
     variant_statistics m_filter, m_heuristic;
 
 };
@@ -538,86 +532,6 @@ struct per_thread_statistics {
 };
 
 per_thread_statistics mc_stats;
-
-/*! Direct solution for tiny problems.
- *
- * HGraph is a graph type that supports a get_adjacency(VID) method that returns
- * a type with contains method.
- */
-#if 0
-template<typename HGraph>
-void
-mc_tiny(
-    const HGraph & H,
-    const VID * const ngh,
-    const VID start_pos,
-    const VID num,
-    const VID v,
-    MC_Enumerator & E ) {
-    if( num == 0 ) {
-	E.record( 0, v );
-    } else if( num == 1 ) {
-	if( start_pos == 0 )
-	    E.record( 2, v ); // v, 0
-    } else if( num == 2 ) {
-	bool n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] );
-	if( start_pos == 0 ) {
-	    if( n01 ) // Two neighbours of v are neighbours themselves
-		E.record( 3, v ); // v, 0, 1
-	    else {
-		E.record( 2, v ); // v, 0
-		E.record( 2, v ); // v, 1
-	    }
-	} else if( start_pos == 1 ) {
-	    // No maximal clique in case start_pos == 1
-	    if( !n01 ) // triangle v, 0, 1 does not exist
-		E.record( 2, v ); // v, 1
-	}
-    } else if( num == 3 ) {
-	int n01 = H.get_adjacency( ngh[0] ).contains( ngh[1] ) ? 1 : 0;
-	int n02 = H.get_adjacency( ngh[0] ).contains( ngh[2] ) ? 1 : 0;
-	int n12 = H.get_adjacency( ngh[1] ).contains( ngh[2] ) ? 1 : 0;
-	if( start_pos == 0 ) {
-	    // v < ngh[0] < ngh[1] < ngh[2]
-	    if( n01 + n02 + n12 == 3 )
-		E.record( 4, v );
-	    else if( n01 + n02 + n12 == 2 ) {
-		E.record( 3, v );
-		E.record( 3, v );
-	    } else if( n01 + n02 + n12 == 1 ) {
-		E.record( 3, v );
-		E.record( 2, v );
-	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 2, v );
-		E.record( 2, v );
-		E.record( 2, v );
-	    }
-	} else if( start_pos == 1 ) {
-	    // ngh[0] < v < ngh[1] < ngh[2]
-	    if( n01 + n02 + n12 == 3 )
-		; // duplicate
-	    else if( n01 + n02 + n12 == 2 ) { // wedge
-		if( n12 == 1 )
-		    E.record( 3, v );
-	    } else if( n01 + n02 + n12 == 1 ) {
-		if( n12 == 1 )
-		    E.record( 3, v ); // v, 1, 2
-		else if( n01 == 1 )
-		    E.record( 2, v ); // v, 2
-		else if( n02 == 1 )
-		    E.record( 2, v ); // v, 1
-	    } else if( n01 + n02 + n12 == 0 ) {
-		E.record( 2, v ); // v, 1
-		E.record( 2, v ); // v, 2
-	    }
-	} else if( start_pos == 2 ) {
-	    // ngh[0] < ngh[1] < v < ngh[2]
-	    if( n02 + n12 == 0 ) // not part of a triangle or more
-		E.record( 2, v );
-	}
-    }
-}    
-#endif
 
 /*======================================================================*
  * Exception for timeout on variants executing too long
@@ -2554,6 +2468,19 @@ void mc_top_level(
     // removed during this filtering step. It is expected that the error
     // will be small as the removed vertices have a relatively low degree
     // and we expect that not many vertices will be removed.
+    //
+    // TODO:
+    // Based on the observation that most often the filtering prooves that
+    // there is no need to perform any detailed search, it would be better
+    // to introduce a boolean gt primitive to reduce the time spent in
+    // intersections than the exceed primitive does. The boolean gt primitive
+    // can stop earlier than exceed as soon as it is established that the size
+    // of the intersection is greater than the threshold. The price is that a
+    // second set of intersections may need to be performed to determine the
+    // density of the induced graph, however, this would only be necessary
+    // for non-dense cases. Moreover, as the overall result of filtering is
+    // that the threshold is not sufficiently met, the benefits may be
+    // restricted to a small subset of the performed intersections.
     EID m_est = 0;
     cut.filter( [&]( VID u ) {
 	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
@@ -2567,31 +2494,16 @@ void mc_top_level(
 	return d >= best;
     }, best );
 
-    // If size of cut-out graph is less than best, then there is no point
-    // in analysing it, nor constructing cut-out.
-    if( cut.get_num_vertices() < best || cut.get_num_vertices() == 0 ) {
-	stats.record_filter( tm.stop() );
-	return;
-    }
+    stats.record_filter( tm.next() );
 
-    stats.record_filter( tm.stop() );
+    // If size of cut-out graph is less than best, then there is no point
+    // in analysing it, nor constructing cut-out. A cut-out of size S can
+    // lead to a S+1 clique when including the top-level vertex.
+    // Check for empty cut-out just in case best is zero.
+    if( cut.get_num_vertices() < best || cut.get_num_vertices() == 0 )
+	return;
 
     VID num = cut.get_num_vertices();
-
-    double tf = tm.next();
-
-#if !ABLATION_DISABLE_TOP_TINY
-    if( num <= 3 ) [[unlikely]] {
-	timer tm;
-	tm.start();
-	mc_tiny( H, cut.get_vertices(), cut.get_start_pos(),
-		 cut.get_num_vertices(), E );
-	stats.record_tiny( tm.stop() );
-	return;
-    }
-#endif
-
-    float d = float(m_est) / ( float(num) * float(num) );
 
 #if !ABLATION_DISABLE_TOP_DENSE
     VID nlg = get_size_class( num );
@@ -2602,60 +2514,12 @@ void mc_top_level(
     }
 #endif
 
+    float d = float(m_est) / ( float(num) * float(num) );
     if( d > .9f ) {
 	mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
     } else {
 	mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
     }
-
-#if 0
-    if constexpr ( true )
-    {
-	VID hn = HG.numVertices();
-	EID hm = 0;
-	for( auto I=HG.vbegin(), E=HG.vend(); I != E; ++I )
-	    hm += HG.getDegree( *I );
-	float hd = float(hm) / ( (float)(hn) * (float)(hn-1) );
-	float avg = float(hm) / float(hn);
-
-	VID * deg = new VID[hn];
-	for( VID i=0; i < hn; ++i )
-	    deg[i] = HG.getDegree( i );
-	std::sort( deg, deg+hn );
-
-	float med = *( deg + hn/2 );
-	if( ( hn & 1 ) == 0 )
-	    med = float( *( deg+hn/2-1 ) + *( deg+hn/2 ) ) / 2.0f;
-
-	std::lock_guard<std::mutex> guard( io_mux );
-	std::cout << "v=" << v
-		  << " n1=" << hn1
-		  << " n=" << hn
-		  << " m=" << hm
-		  << " d=" << hd
-		  << " davg=" << avg
-		  << " dmed=" << med
-		  << " tbk=" << t1
-		  << " tvc=" << t0
-		  << " tdns=" << t2
-		  << " tf=" << tf
-		  << " tc=" << tc
-		  << " deg: {";
-	for( VID i=0; i < hn; ++i )
-	    std::cout << ' ' << deg[hn-i-1];
-	std::cout << " } core: {";
-	for( VID i=0; i < hn; ++i )
-	    std::cout << ' ' << HG_coreness[i];
-	std::cout << " } " << ( t1<t0 ? "BK" : "VC" ) << "\n";
-
-	if( t1 < t0 )
-	    ++num_top_bk;
-	else
-	    ++num_top_vc;
-
-	delete[] deg;
-    }
-#endif
 }
 
 template<unsigned Bits, typename VID, typename EID>
@@ -2725,15 +2589,7 @@ bool mc_leaf(
 #else
     VID ce = xp_set.get_fill();
     VID num = ce;
-    // VID pnum = ce - ne;
     VID * XP = xp_set.get_set();
-
-/*
-    if( false && ce <= 3 ) { // TODO
-	mc_tiny( H, XP, 0, ce, E );
-	return true;
-    }
-*/
 
     VID nlg = get_size_class( num );
     if( nlg < N_MIN_SIZE )
@@ -2829,7 +2685,8 @@ int main( int argc, char *argv[] ) {
 
     GraphCSx G0( ifile, -1, symmetric );
 
-    std::cout << "Reading graph: " << tm.next() << "\n";
+    std::cout << "Reading graph: " << tm.stop() << "\n";
+    tm.start(); // Reset timer as graph I/O has high variability
 
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
@@ -3003,7 +2860,6 @@ int main( int argc, char *argv[] ) {
     std::cout << "Options:"
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
 	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
-	      << "\n\tABLATION_DISABLE_TOP_TINY=" << ABLATION_DISABLE_TOP_TINY
 	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
 	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
 	      << ABLATION_HADJPA_DISABLE_XP_HASH
@@ -3027,9 +2883,6 @@ int main( int argc, char *argv[] ) {
     system( "hostname" );
     system( "date" );
 
-    std::cout << "Start enumeration: " << tm.next() << std::endl;
-
-
 #if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
 	if( PAPI_OK != PAPI_hl_region_begin( "MC" ) ) {
@@ -3041,6 +2894,8 @@ int main( int argc, char *argv[] ) {
 
     VID degeneracy = kcore.getLargestCore();
     E.rebase( degeneracy, order.get() );
+
+    std::cout << "Start enumeration: " << tm.next() << std::endl;
 
     /*! Traversal orders
      * 1. SOTA: sort by decreasing degree, visit low to high degree.
@@ -3067,6 +2922,7 @@ int main( int argc, char *argv[] ) {
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
 	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	std::cout << "pre-trial: " << tm.next() << "\n";
     }
 
     if( what_if != ~(VID)0 ) {
@@ -3085,6 +2941,8 @@ int main( int argc, char *argv[] ) {
 	// If not, erase result.
 	if( E.get_max_clique_size() <= what_if )
 	    E.reset();
+
+	std::cout << "what-if: " << tm.next() << "\n";
     }
 
     if( heuristic == 1 ) {
@@ -3096,7 +2954,7 @@ int main( int argc, char *argv[] ) {
 	    if( !E.is_feasible( remap_coreness[v], fr_outer ) )
 		break;
 	}
-	std::cout << "heuristic 1 done\n";
+	std::cout << "heuristic 1: " << tm.next() << "\n";
     } else if( heuristic == 2 ) {
 #if SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
@@ -3113,7 +2971,7 @@ int main( int argc, char *argv[] ) {
 	    if( !E.is_feasible( c+1, fr_outer ) )
 		break;
 	}
-	std::cout << "heuristic 2 done\n";
+	std::cout << "heuristic 2: " << tm.next() << "\n";
 #else
 	std::cerr << "Heuristic 2 not supported if sort order does not "
 		  << "partition vertex range by equal degeneracy\n";
