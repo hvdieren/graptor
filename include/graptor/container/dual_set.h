@@ -137,8 +137,8 @@ struct dual_set {
     
     //! Returns an iterator to the beginning of the sequential representation
     auto begin() { return m_seq.begin(); }
-    //! Returns a constant iterator to the beginning of the sequential
-    //  representation
+    /*! Returns a constant iterator to the beginning of the sequential
+     *  representation */
     const auto begin() const { return m_seq.begin(); }
     //! Returns an iterator to the end of the sequential representation
     auto end() { return m_seq.end(); }
@@ -176,7 +176,7 @@ struct dual_set {
      *
      * Requires is_multi_hash_set_v<hash_type>.
      *
-     * \tparam U The type of the elements, normally the same as \p type.
+     * \tparam U The type of the elements, normally the same as type.
      * \tparam VL The vector length, or number of elements probed.
      * \tparam MT Determines the type of the return value.
      *
@@ -196,7 +196,7 @@ struct dual_set {
      *
      * Requires is_multi_hash_table_v<hash_type>.
      *
-     * \tparam U The type of the elements, normally the same as \p type.
+     * \tparam U The type of the elements, normally the same as type.
      * \tparam VL The vector length, or number of elements probed.
      *
      * \param index Elements looked up
@@ -225,7 +225,7 @@ private:
     const hash_type & m_hash;	//!< Hashed representation
 };
 
-/*! \brief Short-hand construction method for a \p dual_set
+/*! \brief Short-hand construction method for constructing a dual_set
  * \sa dual_set
  */
 template<typename Seq, typename Hash>
