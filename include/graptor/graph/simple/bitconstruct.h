@@ -164,13 +164,13 @@ sVID construct_row_hash_adj(
 	constexpr VID VL = 1;
 #endif
 
-    VID u = XP[su];
+    sVID u = XP[su];
 
-    bitmask_lhs_sorted_output_iterator<type, VID, true, false>
-	row_u( bitmask_ptr, XP, su >= ne ? 0 : ne, 0, ce );
+    bitmask_lhs_sorted_output_iterator<type, sVID, true, false>
+	row_u( bitmask_ptr, XP, su >= ne ? 0 : ne, (sVID)0, ce );
 
     // Trim off vertices that will be filtered out, but keep alignment.
-    const VID * const XP_start
+    const sVID * const XP_start
 	= su >= ne ? XP
 	: XP + ( ne & ~( VL - 1 ) );
 
