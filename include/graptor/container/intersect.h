@@ -7,6 +7,14 @@
 #ifndef GRAPTOR_CONTAINER_INTERSECT_H
 #define GRAPTOR_CONTAINER_INTERSECT_H
 
+#ifndef INTERSECTION_ALGORITHM
+#define INTERSECTION_ALGORITHM 0
+#endif
+
+#ifndef INTERSECTION_TRIM
+#define INTERSECTION_TRIM 0
+#endif
+
 #include <iterator>
 #include <type_traits>
 #include <immintrin.h>
@@ -173,6 +181,10 @@ private:
     type * m_pointer; //!< Pointer to the next location to store elements
 };
 
+/*! Collector type to support the set_operation::intersect_size operation.
+ *
+ * \tparam T type of elements in the sets.
+ */
 template<typename T>
 struct intersection_size {
     //! The type of elements in this set
@@ -220,6 +232,11 @@ private:
     size_t m_size;
 };
 
+/*! Collector type to support the set_operation::intersect_size_exceed
+ *  operation.
+ *
+ * \tparam T type of elements in the sets.
+ */
 template<typename T>
 struct intersection_size_exceed {
     //! The type of elements in this set
@@ -302,6 +319,11 @@ private:
     bool m_terminated;
 };
 
+/*! Traits class to recognise collectors for the
+ *  set_operation::intersect_size_exceed operation.
+ *
+ * \tparam S The collector type that is checked.
+ */
 template<typename S>
 struct is_intersection_size_exceed : public std::false_type { };
 
@@ -309,6 +331,9 @@ template<typename T>
 struct is_intersection_size_exceed<intersection_size_exceed<T>>
     : public std::true_type { };
 
+/*! Variable to recognise collectors for the
+ *  set_operation::intersect_size_exceed operation.
+ */
 template<typename S>
 constexpr bool is_intersection_size_exceed_v =
     is_intersection_size_exceed<S>::value;
@@ -883,10 +908,6 @@ struct hash_scalar {
     static
     auto
     apply( LSet && lset, RSet && rset, Collector & out ) {
-	// TODO: tighten begin/end of each set using jumping, from start
-	//       and also from the end. This should give a tighter bound
-	//       on the number of sequential values to lookup in the hash set
-	//       and reduce work overall.
 	static_assert( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
@@ -1862,8 +1883,11 @@ struct adaptive_intersect {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return;
-	
-#if 1
+
+#if INTERSECTION_TRIM == 0
+	auto & tlset = lset;
+	auto & trset = rset;
+#else
 	// Trim ranges
 	auto llo = *lset.begin();
 	auto lhi = *std::prev( lset.end() );
@@ -1874,7 +1898,29 @@ struct adaptive_intersect {
 	auto trset = rset.trim_range( llo, lhi );
 
 	out.swap( tlset, trset );
+#endif
 
+#if INTERSECTION_ALGORITHM == 0
+	return merge_scalar::template apply<so>( tlset, trset, out );
+#elif INTERSECTION_ALGORITHM == 1
+	return merge_vector::template apply<so>( tlset, trset, out );
+#elif INTERSECTION_ALGORITHM == 2
+	return merge_scalar_jump::template apply<so>( tlset, trset, out );
+#elif INTERSECTION_ALGORITHM == 3
+	return merge_vector_jump::template apply<so>( tlset, trset, out );
+#elif INTERSECTION_ALGORITHM == 4
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> )
+	    return hash_scalar::template apply<so>( tlset, trset, out );
+	else
+	    return merge_vector_jump::template apply<so>( tlset, trset, out );
+#elif INTERSECTION_ALGORITHM == 5
+	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
+		       || is_multi_hash_set_v<std::decay_t<RSet>> )
+	    return hash_vector::template apply<so>( tlset, trset, out );
+	else
+	    return merge_vector_jump::template apply<so>( tlset, trset, out );
+#else
 	auto range = std::max( lhi, rhi ) - std::min( llo, rlo );
 
 	int lcat = rt_ilog2( tlset.size()/2 );
@@ -1891,16 +1937,21 @@ struct adaptive_intersect {
 	    // do_hash = ( lcat != rcat );
 	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	} else if constexpr ( so == so_intersect_size_exceed ) {
+#if INTERSECTION_ALGORITHM == 6
+	    do_hash = std::abs( lcat - rcat ) > 1; // rule2
+#elif INTERSECTION_ALGORITHM == 7
+	    do_hash = std::min(lset.size(), rset.size()) > range/8; // rule8
+#elif INTERSECTION_ALGORITHM == 8
+	    do_hash = std::min(lset.size(), rset.size()) > range/8
+		|| std::abs( lcat - rcat ) > 1; // rule2.8
+#endif
 	    // do_hash = ( lcat + rcat >= 5 || std::abs( lcat - rcat ) > 1 ); // rule1
 	    // do_hash = ( lcat != rcat ); // ne
-	    // do_hash = std::abs( lcat - rcat ) > 1; // rule2
 	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
 	    // do_hash = ( lcat + rcat >= 4 && std::abs( lcat - rcat ) > 1 ); // rule4
 	    // do_hash = std::min(lset.size(), rset.size()) > range/2; // rule6
 	    // do_hash = std::min(lset.size(), rset.size()) > range/4; // rule7
 	    // do_hash = std::min(lset.size(), rset.size()) > range/8; // rule8
-	    do_hash = std::min(lset.size(), rset.size()) > range/8
-		|| std::abs( lcat - rcat ) > 1; // rule2.8
 	}
 
 	if( do_hash ) {
@@ -1913,18 +1964,6 @@ struct adaptive_intersect {
 	}
 	else
 	    return merge_vector_jump::template apply<so>( tlset, trset, out );
-#else
-	// return merge_vector::template apply<so>( lset, rset, out );
-	// return merge_scalar_jump::template apply<so>( lset, rset, out );
-	// return merge_vector_jump::template apply<so>( lset, rset, out );
-/*
-	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		       || is_hash_set_v<std::decay_t<RSet>> )
-	    return hash_scalar::template apply<so>( lset, rset, out );
-	else
-	return merge_vector_jump::template apply<so>( lset, rset, out );
-*/
-	return merge_scalar::template apply<so>( lset, rset, out );
 #endif
     }
 };

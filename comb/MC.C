@@ -2884,6 +2884,8 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
+	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
+	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
