@@ -11,7 +11,7 @@ export CC=@CMAKE_C_COMPILER@
 export CFLAGS="$INC @graptor_cflags@"
 export CXX=@CMAKE_CXX_COMPILER@
 export CXXFLAGS="$INC @graptor_cxxflags@"
-export LD_FLAGS=`echo "$link_libs" | sed -e 's,graptorlib,@CMAKE_BINARY_DIR@/libgraptorlib.a,'`
+export LD_FLAGS=`echo "$link_libs" | sed -e 's,graptorlib,@CMAKE_BINARY_DIR@/libgraptorlib.a,g'`
 
 . @CMAKE_CURRENT_SOURCE_DIR@/build_settings.sh
 
@@ -36,38 +36,9 @@ function one() {
     build ${GRAPTOR}/comb/$bench.C ${bindir}/${bench}_${version} ${outdir}/${bench}_${version}.txt "$(get_flags $version)" $arch
 }
 
-#one intersect _op0_vl8 &
-#one intersect _op1_vl8 &
-#one intersect _op2_vl8 &
-
-#one dense _vl8 &
-#one dense _cutout_vl8 &
-#one dense _pre_merge_scalar_vl8 &
-#one dense _pre_merge_jump_vl8 &
-#one dense _pre_merge_vector_vl8 &
-#one dense _merge_scalar_vl8 &
-#one dense _merge_vector_vl8 &
-#one dense _merge_jump_vl8 &
-#one dense _hash_vector_vl8 &
-#one dense _hash_scalar_vl8 &
-#one dense _pre_hash_vector_vl8 &
-#one dense _pre_hash_scalar_vl8 &
-#one blocked _vl8 &
-#one blocked _cutout_vl8
-#one blocked _merge_scalar_vl8 &
-#one blocked _merge_vector_vl8 &
-#one blocked _merge_jump_vl8 &
-#one blocked _hash_vector_vl8 &
-#one blocked _hash_scalar_vl8 &
-
+if false ; then
 one MCE _vl16 ${arch} &
-#one MCE _vl16_papi ${arch} 
 one MCE _vl16_no512_noavx512f ${arch} &
-
-#one MCE _vl16_no512_noavx512f_papi ${arch} &
-#one MCE _vl16_no512_noavx512f_par0_papi ${arch} &
-#one MCE _vl16_no512_noavx512f_par1_papi ${arch} &
-
 
 one MCE _vl16_no512 ${arch} &
 one MCE _vl16_yes512_noavx512f ${arch} 
@@ -80,57 +51,25 @@ one MCE _vl8_no512_noavx512f ${arch} &
 one MCE _vl8_yes512_noavx512f ${arch} 
 one MCE _vl8_yes512_noavx512f_nopopc ${arch} 
 
-#one MCE _vl16_papi ${arch} &
-
-#one MCE _abDi_abBi_vl16 ${arch} &
-
-#one MCE _par1_vl16_papi ${arch} &
-#one MCE _par0_vl16_papi ${arch} &
-
-#one MCE _abTd_vl16 &
-#one MCE _abL_vl16 &
 one MCE _abTd_abL_vl16 &
-#one MCE _abL_abBxph_vl16 &
-#one MCE _abDnpt_abBnpt_vl16 &
-#one MCE _top1_vl16 &
-#one MCE _top2_vl16 &
 one MCE _abBc_abDc_abGc_vl16  &
 one MCE _abGc_vl16  
-#one MCE _abTy_abTd_abL_vl16 &
-#one MCE _abDxph_abBxph_abAxph_vl16 &
 one MCE _abPxph_vl16 &
 one MCE _abBxph_vl16 &
 one MCE _abAxph_vl16 &
 one MCE _abDxph_vl16 &
 one MCE _abDi_abBi_vl16
-#one MCE _abxpv_vl16 
 
-#one MCE _DQ128_BQ128_vl16 &
-#one MCE _DQ64_BQ64_vl16 &
-#one MCE _DQ64_BQ64_Dq32_Bq32_vl16 &
-#one MCE _DQ32_BQ32_Dq32_Bq32_vl16 &
-#one MCE _Dq32_Bq32_vl16 &
-#one MCE _Dq40_Bq40_vl16 &
-#one MCE _Dq64_Bq64_vl16 &
-
-#one MCE _Dq3_Bq3_vl16 &
-#one MCE _Dq10_Bq10_vl16 &
-#one MCE _Dq20_Bq20_vl16 &
-#one MCE _Dq50_Bq50_vl16 
-#one MCE _Dq1024_Bq1024_vl16 
-#one MCE _Dd20_Bd20_vl16 &
-#one MCE _Dd80_Bd80_vl16 &
-#one MCE _Dd99_Bd99_vl16 &
-
-#one MCE _abBxph_vl16 &
-#one MCE _abBxph_abAxph_vl16 &
-#one MCE _abBhm_vl16 
-#one MCE _abDhm_vl16 &
-#one MCE _scut8_vl16 &
 one MCE _abTy_vl16 &
 one MCE _abTd_vl16 
 one MCE _abL_vl16 &
-#one MCE _abRPa_vl16 &
-#one MCE _abRPn_vl16 &
+fi
+
+for i in `seq 0 8` ; do
+    one MC _ins${i}_vl16 &
+    one MC _itrim_ins${i}_vl16 &
+    one MC _ins${i}_vl8_noavx512f &
+    one MC _itrim_ins${i}_vl8_noavx512f 
+done
 
 wait

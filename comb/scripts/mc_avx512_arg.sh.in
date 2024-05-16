@@ -1,0 +1,92 @@
+#!/bin/bash
+
+graph=$1
+commit=$2
+mode=$3
+
+hours=24
+node=persia
+prio=persia
+
+read -r -d '' graphs <<EOG
+CAroad
+GG-NE-bio-heart
+GG-NE-bio-neuron
+LiveJournal
+M87127560
+RMAT27
+USAroad
+Yahoo_mem
+Yahoo_web
+bio-HS-CX
+bio-WormNet-v3
+bio-human-gene1
+bio-human-gene2
+bio-mouse-gene
+btc-2009
+cit-patents
+clueweb09
+dblp2012
+dimacs
+flickr
+friendster_full
+higgs-twitter
+hollywood2009
+hudong
+it-2004
+keller4
+keller5
+keller6
+orkut
+pokec
+sinaweibo
+sx-stackoverflow
+twitter_xl
+uk-2005
+uk_union_06
+warwiki
+webcc
+wiki-talk
+wiki-topcats
+EOG
+
+request=`echo $graphs | tr ' ' "\n" | grep -E "^$graph"`
+cnt=`echo $request | wc -w`
+if [ $cnt -ne 1 ] ; then
+    echo \'$graph\' is not unique
+fi
+
+echo request=$request
+
+read -r -d '' script <<EOT
+#!/bin/bash
+#SBATCH --job-name sr:$1
+#PBS -r 1
+#xxSBATCH --mem-per-cpu=23G
+#SBATCH --exclusive
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=128
+#SBATCH --nodes=1
+#SBATCH --nodelist=${node}
+#SBATCH -p $prio
+#SBATCH --time=${hours}:00:00
+
+. @CMAKE_CURRENT_BINARY_DIR@/mc_avx512_lib.sh
+
+for_gg $request undir $commit
+true
+EOT
+
+if [ x$mode = xshell ] ; then
+    /bin/bash -c "$script"
+elif [ x$mode = xsbatch ] ; then
+    echo "$script" | sbatch 
+elif [ x$mode = xsrun ] ; then
+    file=`mktemp $HOME/tmp/tmp.XXXXXXXX`
+    echo "$script" > $file
+    chmod u+x $file
+    srun -n 1 -c 128 -p $prio -w $node -t 0 $file
+    rm $file
+else
+    echo "unknown mode '$mode', use (shell|sbatch|srun)"
+fi

@@ -21,7 +21,7 @@ function build() {
     #local LIB="${GRAPTOR}/build/libgraptorlib.a ${CILKLDPATH}/libcilkrts.so"
     local LIB=${LD_FLAGS}
     #local CXXFLAGS="-g -I${GRAPTOR}/build -I${GRAPTOR}/include -I${CILK_INC}/include -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -DLONG -ldl -std=c++17 -march=$arch ${LIB}"
-    local cxxflags="${CXXFLAGS} -O4 -std=c++17"
+    local cxxflags="${CXXFLAGS} -O4 -std=c++2a"
     local PAPIFLAGS=
     if echo $flags | grep PAPI_REGION=1 > /dev/null 2>&1 ; then
 	PAPI_FLAGS=-lpapi
@@ -65,6 +65,8 @@ function get_flags() {
     flags["USE_PRESTUDY"]=0;
     flags["UNDERLYING"]="";
     flags["PAPI_REGION"]=0;
+    flags["INTERSECTION_ALGORITHM"]=0
+    flags["INTERSECTION_TRIM"]=0
 
     if [[ "$v" == *_papi* ]] ; then
  	flags["PAPI_REGION"]=1;
@@ -252,6 +254,13 @@ function get_flags() {
     if [[ "$v" == *_vl* ]] ; then
 	flags["MAX_VL"]=`echo "${v}_" | sed -e 's/^.*_vl\([0-9][0-9]*\)_.*$/\1/'`;
 	flags["GRAPTOR_DEGREE_BITS"]=${flags["MAX_VL"]};
+    fi
+
+    if [[ "$v" == *_ins* ]] ; then
+	flags["INTERSECTION_ALGORITHM"]=`echo "${v}_" | sed -e 's/^.*_ins\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
+    if [[ "$v" == *_itrim* ]] ; then
+	flags["INTERSECTION_TRIM"]=1
     fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done
