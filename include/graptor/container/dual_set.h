@@ -53,7 +53,6 @@ constexpr bool is_hash_table_v = is_hash_table<S>::value;
  * \tparam S The type for which it is determined if it is a multi-hash set.
  */
 template<typename S>
-template<typename S>
 struct is_multi_hash_set {
     static constexpr bool value = requires( const S & s ) {
 	s.template multi_contains<typename S::type,8,target::mt_vmask>(
