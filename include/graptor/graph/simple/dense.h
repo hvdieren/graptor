@@ -10,6 +10,7 @@
 #include "graptor/graph/simple/hadjt.h"
 #include "graptor/graph/simple/bitconstruct.h"
 #include "graptor/graph/simple/xp_set.h"
+#include "graptor/graph/simple/csxd.h"
 #include "graptor/target/vector.h"
 #include "graptor/container/intersect.h"
 
@@ -546,6 +547,77 @@ public:
 		    ( su >= ne ? 0 : ne ), ce );
 		row_u = tr::load( &m_matrix[VL * su] );
 	    }
+
+	    row_type su_only = create_row( su );
+	    row_type eql = allP; // su >= m_start_pos ? allP : all;
+	    if( tr::cmpeq( tr::bitwise_andnot( su_only, eql ),
+			   tr::bitwise_and( row_u, eql ),
+			   target::mt_bool() ) )
+		m_fully_connected = tr::bitwise_or(
+		    m_fully_connected, su_only );
+
+#if !ABLATION_PDEG
+	    m_degree[su] = adeg;
+#endif
+	    m_m += adeg;
+	    if( adeg > m_d_max )
+		m_d_max = adeg;
+	}
+
+	m_n = ns;
+    }
+    // In this variation, hVIDs are already sorted by core_order
+    // and we know the separation between X and P sets.
+    DenseMatrix( const GraphCSxDepth<sVID,sEID> & G,
+		 const sVID * XP, sVID ce )
+	: m_allv_mask( tr::bitwise_invert( tr::himask( ce+1 ) ) ),
+	  m_start_pos( 0 ) {
+	// Vertices in X and P are independently already sorted by core order.
+	// We do not reorder, primarily because only the order in P matters
+	// for efficiency of enumeration.
+	// Do we need to copy, or can we just keep a pointer to XP?
+	VID ns = ce;
+
+	assert( ( ns + bits_per_lane - 1 ) / bits_per_lane <= m_words );
+	m_matrix = m_matrix_alc = new type[m_words * ns + 64];
+	intptr_t p = reinterpret_cast<intptr_t>( m_matrix );
+	if( p & 63 ) // 63 = 512 bits / 8 bits per byte - 1
+	    m_matrix = &m_matrix[64 - (p&63)/sizeof(type)];
+	static_assert( Bits <= 512, "AVX512 requires 64-byte alignment" );
+
+	std::fill( m_matrix, m_matrix+ns*m_words, type(0) );
+
+	// Build hash table. Note: comparable hash set already exists in
+	// the graph H, however, not set up to do remapping.
+	hash_table<sVID, sVID, rand_hash<sVID>> XP_hash( ce );
+	for( sVID i=0; i < ce; ++i )
+	    XP_hash.insert( XP[i], i );
+
+	// Place edges
+	VID ni = 0;
+	m_m = 0;
+	m_d_max = 0;
+	m_fully_connected = tr::setzero();
+
+	row_type mn = get_himask( ns );
+	row_type mx = get_himask( m_start_pos );
+	row_type allP = tr::bitwise_xor( mn, mx );
+	row_type all = tr::bitwise_invert( mn );
+
+	for( VID su=0; su < ns; ++su ) {
+	    VID u = XP[su];
+
+	    // Attempting a hash lookup in XP when XP is much longer than the
+	    // neighbour list of the vertex appears not beneficial to
+	    // performance in this location
+
+	    VID adeg;
+	    row_type row_u;
+
+	    std::tie( row_u, adeg )
+		= graptor::graph::construct_row_hash_xp_vec<tr>(
+		    G, G, XP_hash, (sVID)0, ce, su, u, (sVID)0, ce, (sVID)0 ); 
+	    tr::store( &m_matrix[VL * su], row_u );
 
 	    row_type su_only = create_row( su );
 	    row_type eql = allP; // su >= m_start_pos ? allP : all;
