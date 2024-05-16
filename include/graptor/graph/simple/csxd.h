@@ -17,6 +17,11 @@ namespace graptor {
 
 namespace graph {
 
+// TODO: redefine as a wrapper around another graph representation.
+//       the other representation may provide hashing also, and we could
+//       adapt to check depth upon hash access. This may accelerate creating
+//       a dense cutout
+
 /*! CSR/CSC style graph with vertices and edges filtered based on a depth
  *  parameter.
  *
@@ -41,50 +46,55 @@ public:
     };
 
     using vertex_iterator =
-	conditional_iterator<range_iterator<VID>,depth_check>;
+	conditional_iterator<range_iterator<lVID>,depth_check>;
     using edge_iterator =
-	conditional_iterator<const VID*,depth_check>; // TODO: all edges
+	conditional_iterator<const lVID*,depth_check>; // TODO: all edges
     using neighbour_iterator =
-	conditional_iterator<const VID*,depth_check>;
-    // using const_neighbour_iterator = const VID *;
+	conditional_iterator<const lVID*,depth_check>;
+    // using const_neighbour_iterator = const lVID *;
 
-    static constexpr VID initial_depth = std::numeric_limits<VID>::max();
+    static constexpr lVID initial_depth = std::numeric_limits<lVID>::max();
 
     class checkpoint_type {
     public:
 	checkpoint_type( const GraphCSxDepth & G )
 	    : m_degree(),
 	      m_cur_m( G.m_cur_m ),
-	      m_cur_depth( G.m_cur_depth ) {
+	      m_cur_depth( G.m_cur_depth ),
+	      m_n_remain( G.m_n_remain ) {
 	    m_degree.insert( m_degree.end(), G.dbegin(), G.dend() );
 	}
 
-	VID get_degree( VID v ) const { return m_degree[v]; }
+	lVID get_degree( lVID v ) const { return m_degree[v]; }
 
-	EID get_num_edges() const { return m_cur_m; }
+	lEID get_num_edges() const { return m_cur_m; }
 
-	EID get_cur_depth() const { return m_cur_depth; }
+	lVID get_cur_depth() const { return m_cur_depth; }
+
+	lVID get_num_remaining_vertices() const { return m_n_remain; }
 
     private:
-	std::vector<VID> m_degree;
-	EID m_cur_m;
-	VID m_cur_depth;
+	std::vector<lVID> m_degree;
+	lEID m_cur_m;
+	lVID m_cur_depth;
+	lVID m_n_remain;
     };
 
     class single_vertex_checkpoint_type {
     public:
-	single_vertex_checkpoint_type( VID v ) : m_vid( v ) { }
+	single_vertex_checkpoint_type( lVID v ) : m_vid( v ) { }
 
-	VID get_vertex() const { return m_vid; }
+	lVID get_vertex() const { return m_vid; }
 
     private:
-	VID m_vid;
+	lVID m_vid;
     };
 
 public:
     GraphCSxDepth() : m_n( 0 ), m_m( 0 ) { }
-    GraphCSxDepth( VID n, EID m, numa_allocation && alloc ) :
+    GraphCSxDepth( lVID n, lEID m, numa_allocation && alloc ) :
 	m_n( n ),
+	m_n_remain( n ),
 	m_m( m ),
 	m_cur_m( m ),
 	m_cur_depth( 0 ),
@@ -92,7 +102,7 @@ public:
 	m_depth( n, alloc ),
 	m_degree( n, alloc ),
 	m_edges( m, alloc ) { }
-    GraphCSxDepth( VID n, EID m )
+    GraphCSxDepth( lVID n, lEID m )
 	: GraphCSxDepth( n, m, numa_allocation_interleaved() ) { }
     GraphCSxDepth( GraphCSxDepth && ) = delete;
     GraphCSxDepth( const GraphCSxDepth & ) = delete;
@@ -104,19 +114,34 @@ public:
 	m_edges.del();
     }
 
-    VID numVertices() const { return m_n; }
-    EID numEdges() const { return m_cur_m; }
+    // capitalised interface
+    lVID numVertices() const { return m_n; }
+    lEID numEdges() const { return m_cur_m; }
 
-    EID * getIndex() { return m_index.get(); }
-    EID * const getIndex() const { return m_index.get(); }
-    VID * getEdges() { return m_edges.get(); }
-    VID * const getEdges() const { return m_edges.get(); }
-    VID * getDegree() { return m_degree.get(); }
-    VID * const getDegree() const { return m_degree.get(); }
-    VID * getDepth() { return m_depth.get(); }
-    VID * const getDepth() const { return m_depth.get(); }
+    // readable interface
+    lVID get_num_vertices() const { return m_n; }
+    lEID get_num_edges() const { return m_cur_m; }
+    lVID get_num_remaining_vertices() const { return m_n_remain; }
 
-    EID getDegree( VID v ) const { return m_degree[v]; }
+    lVID get_cur_depth() const { return m_cur_depth; }
+    lVID get_depth( lVID v ) const { return m_depth[v]; }
+    lVID get_degree( lVID v ) const { return m_degree[v]; }
+
+    lEID * getIndex() { return m_index.get(); }
+    lEID * const getIndex() const { return m_index.get(); }
+    lVID * getEdges() { return m_edges.get(); }
+    lVID * const getEdges() const { return m_edges.get(); }
+    lVID * getDegree() { return m_degree.get(); }
+    lVID * const getDegree() const { return m_degree.get(); }
+    lVID * getDepth() { return m_depth.get(); }
+    lVID * const getDepth() const { return m_depth.get(); }
+
+    lVID getDegree( lVID v ) const { return m_degree[v]; }
+
+    // Returns neighbours without considering depth-based filtering
+    const lVID * get_neighbours( lVID v ) const {
+	return &m_edges[m_index[v]];
+    }
 
 #if 0
     vertex_iterator vbegin() {
@@ -158,22 +183,22 @@ public:
     }
 #endif
 
-    neighbour_iterator nbegin( VID v ) {
+    neighbour_iterator nbegin( lVID v ) {
 	return neighbour_iterator( &m_edges[m_index[v]],
 				   &m_edges[m_index[v+1]],
 				   depth_check( m_depth, m_cur_depth ) );
     }
-    neighbour_iterator nbegin( VID v ) const {
+    neighbour_iterator nbegin( lVID v ) const {
 	return neighbour_iterator( &m_edges[m_index[v]],
 				   &m_edges[m_index[v+1]],
 				   depth_check( m_depth, m_cur_depth ) );
     }
-    neighbour_iterator nend( VID v ) {
+    neighbour_iterator nend( lVID v ) {
 	return neighbour_iterator( &m_edges[m_index[v+1]],
 				   &m_edges[m_index[v+1]],
 				   depth_check( m_depth, m_cur_depth ) );
     }
-    neighbour_iterator nend( VID v ) const {
+    neighbour_iterator nend( lVID v ) const {
 	return neighbour_iterator( &m_edges[m_index[v+1]],
 				   &m_edges[m_index[v+1]],
 				   depth_check( m_depth, m_cur_depth ) );
@@ -182,11 +207,29 @@ public:
     auto dbegin() const { return &m_degree[0]; }
     auto dend() const { return &m_degree[m_n]; }
 
-    VID max_degree_vertex() const {
+    lVID min_degree_vertex() const {
+	return min_degree().first;
+    }
+    std::pair<lVID,lVID> min_degree() const {
+	lVID min_deg = m_n;
+	lVID min_v = m_n;
+	for( lVID v=0; v < m_n; ++v ) {
+	    lVID deg = getDegree( v );
+	    if( deg < min_deg && deg > 0 ) {
+		min_deg = deg;
+		min_v = v;
+		if( min_deg == 1 )
+		    break;
+	    }
+	}
+	return std::make_pair( min_v, min_deg );
+    }
+
+    lVID max_degree_vertex() const {
 	return std::max_element( dbegin(), dend() ) - dbegin();
     }
-    std::pair<VID,VID> max_degree() const {
-	VID v = max_degree_vertex();
+    std::pair<lVID,lVID> max_degree() const {
+	lVID v = max_degree_vertex();
 	return std::make_pair( v, getDegree( v ) );
     }
 
@@ -194,12 +237,12 @@ public:
      *
      * \param v Vertex whose neighbour lists should be placed in sort order.
      */
-    void sort_neighbours( VID v ) { }
+    void sort_neighbours( lVID v ) { }
 
 #if 0
     void sort_neighbour_lists() {
 	// TODO: add boolean flag to check whether already sorted or not
-	for( VID v=0; v < m_n; ++v )
+	for( lVID v=0; v < m_n; ++v )
 	    std::sort(
 		&m_edges[m_begin_index[v]], &m_edges[m_end_index[v]] );
     }
@@ -211,15 +254,29 @@ public:
 	return checkpoint_type( *this );
     }
     void restore_checkpoint( const checkpoint_type & chkpt ) {
-	for( VID v=0; v < m_n; ++v ) {
+	assert( m_cur_depth == chkpt.get_cur_depth()+1 );
+	
+	// TODO: checkpoint only removed vertices and reconstruct as single vertex
+	lVID r = 0;
+	for( lVID v=0; v < m_n; ++v ) {
 	    if( m_depth[v] == m_cur_depth )
 		m_depth[v] = initial_depth;
-	    
+
 	    m_degree[v] = chkpt.get_degree( v );
+	    if( m_degree[v] > 0 )
+		++r;
 	}
+
+	m_n_remain = chkpt.get_num_remaining_vertices();
+
+	if( r != m_n_remain )
+	    std::cout << "r=" << r << " m_n_remain=" << m_n_remain << "\n";
+	assert( r == m_n_remain );
 
 	m_cur_depth = chkpt.get_cur_depth();
 	m_cur_m = chkpt.get_num_edges();
+
+	assert( m_n_remain <= m_n );
     }
     void restore_checkpoint( const single_vertex_checkpoint_type & chkpt ) {
 	restore_vertex( chkpt.get_vertex() );
@@ -235,71 +292,121 @@ public:
     checkpoint_type disable_incident_edges( Iterator I, Iterator E ) {
 	auto cp = checkpoint();
 	++m_cur_depth;
+	lVID dd = std::distance( I, E );
 	for( ; I != E; ++I )
 	    disable_incident_edges_per_vertex( *I );
+
+	lVID r = 0, d = 0;
+	for( lVID v=0; v < m_n; ++v ) {
+	    if( m_depth[v] == m_cur_depth )
+		++d;
+	    
+	    if( m_degree[v] > 0 )
+		++r;
+	}
+	if( r != m_n_remain )
+	    std::cout << "r=" << r << " m_n_remain=" << m_n_remain << "\n";
+	if( dd != d )
+	    std::cout << "dd=" << dd << " d=" << d << "\n";
+	assert( r == m_n_remain );
+	assert( dd == d );
+
+	assert( m_n_remain <= m_n );
+	
 	return cp;
     }
 
     single_vertex_checkpoint_type
-    disable_incident_edges_for( VID v ) {
+    disable_incident_edges_for( lVID v ) {
 	++m_cur_depth;
 	disable_incident_edges_per_vertex( v );
+
+	lVID dd = 1;
+	lVID r = 0, d = 0;
+	for( lVID v=0; v < m_n; ++v ) {
+	    if( m_depth[v] == m_cur_depth )
+		++d;
+	    
+	    if( m_degree[v] > 0 )
+		++r;
+	}
+	if( r != m_n_remain )
+	    std::cout << "r=" << r << " m_n_remain=" << m_n_remain << "\n";
+	if( dd != d )
+	    std::cout << "dd=" << dd << " d=" << d << "\n";
+	assert( r == m_n_remain );
+	assert( dd == d );
+
+	assert( m_n_remain <= m_n );
+	
 	return single_vertex_checkpoint_type( v );
     }
 
 private:
-    void disable_incident_edges_per_vertex( VID v ) {
+    void disable_incident_edges_per_vertex( lVID v ) {
 	if( m_depth[v] <= m_cur_depth )
 	    return;
 
-	m_depth[v] = m_cur_depth;
-	// VID rm = 0;
+	lVID r = 0;
+	if( m_degree[v] > 0 )
+	    ++r;
 
-	EID se = m_index[v];
-	EID ee = m_index[v+1];
-	for( EID e=se; e != ee; ++e ) {
-	    VID u = m_edges[e];
+	m_depth[v] = m_cur_depth;
+	// lVID rm = 0;
+
+	lEID se = m_index[v];
+	lEID ee = m_index[v+1];
+	for( lEID e=se; e != ee; ++e ) {
+	    lVID u = m_edges[e];
 	    if( m_depth[u] > m_cur_depth ) {
 		// assert( m_degree[u] > 0 );
-		--m_degree[u];
-		// ++rm;
+		if( --m_degree[u] == 0 )
+		    ++r;
 	    }
 	}
 
 	// assert( m_degree[v] == rm );
 	m_cur_m -= 2 * m_degree[v];
+	m_n_remain -= r;
 	m_degree[v] = 0;
     }
 
-    void restore_vertex( VID v ) {
+    void restore_vertex( lVID v ) {
 	assert( m_depth[v] == m_cur_depth );
 
 	m_depth[v] = initial_depth;
 
-	EID se = m_index[v];
-	EID ee = m_index[v+1];
-	VID cnt = 0;
-	for( EID e=se; e != ee; ++e ) {
-	    VID u = m_edges[e];
+	lVID r = 0;
+	if( m_degree[v] == 0 )
+	    ++r;
+
+	lEID se = m_index[v];
+	lEID ee = m_index[v+1];
+	lVID cnt = 0;
+	for( lEID e=se; e != ee; ++e ) {
+	    lVID u = m_edges[e];
 	    if( m_depth[u] >= m_cur_depth ) {
-		++m_degree[u];
+		if( m_degree[u]++ == 0 )
+		    ++r;
 		++cnt;
 	    }
 	}
 
 	m_cur_m += 2 * cnt;
 	m_degree[v] = cnt;
+	m_n_remain += r;
     }
 
 private:
-    const VID m_n;
-    const EID m_m;
-    EID m_cur_m;
-    VID m_cur_depth;
-    mm::buffer<EID> m_index;
-    mm::buffer<VID> m_depth;
-    mm::buffer<VID> m_degree;
-    mm::buffer<VID> m_edges;
+    const lVID m_n;
+    lVID m_n_remain;
+    const lEID m_m;
+    lEID m_cur_m;
+    lVID m_cur_depth;
+    mm::buffer<lEID> m_index;
+    mm::buffer<lVID> m_depth;
+    mm::buffer<lVID> m_degree;
+    mm::buffer<lVID> m_edges;
 };
 
 } // namespace graph
