@@ -12,7 +12,7 @@
 #endif
 
 #ifndef INTERSECTION_TRIM
-#define INTERSECTION_TRIM 0
+#define INTERSECTION_TRIM 1
 #endif
 
 #include <iterator>
@@ -51,7 +51,7 @@ struct is_multi_collector {
     };
 };
 
-/*! Variable indicating that \sa is_multi_collector trait is met
+/*! Variable indicating that is_multi_collector trait is met
  *
  * \tparam C Collector type.
  */
@@ -366,10 +366,10 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector<false,typename std::decay_t<LSet>::type>
 		cout( out );
-	    so_traits::template apply<so_intersect>( lset, rset, cout );
+	    apply<so_intersect>( lset, rset, cout );
 	    return cout.return_value();
 	} else {
-	    so_traits::template apply<so_intersect>( lset, rset, out );
+	    apply<so_intersect>( lset, rset, out );
 	    return out;
 	}
     }
@@ -390,10 +390,10 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector<true,typename std::decay_t<LSet>::type>
 		cout( out );
-	    so_traits::template apply<so_intersect_xlat>( lset, rset, cout );
+	    apply<so_intersect_xlat>( lset, rset, cout );
 	    return cout.return_value();
 	} else {
-	    so_traits::template apply<so_intersect_xlat>( lset, rset, out );
+	    apply<so_intersect_xlat>( lset, rset, out );
 	    return out;
 	}
     }
@@ -408,7 +408,7 @@ struct set_operations {
 		       "Sets must contain elements of the same type" );
 	
 	intersection_size<typename std::decay_t<LSet>::type> out;
-	so_traits::template apply<so_intersect_size>( lset, rset, out );
+	apply<so_intersect_size>( lset, rset, out );
 	return out.return_value();
     }
 
@@ -423,10 +423,36 @@ struct set_operations {
 	
 	intersection_size_exceed<typename std::decay_t<LSet>::type>
 	    out( lset, rset, exceed );
-	so_traits::template apply<so_intersect_size_exceed>( lset, rset, out );
+	apply<so_intersect_size_exceed>( lset, rset, out );
 	return out.return_value();
     }
 
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return;
+
+#if INTERSECTION_TRIM == 0
+	auto & tlset = lset;
+	auto & trset = rset;
+#else
+	// Trim ranges
+	auto llo = *lset.begin();
+	auto lhi = *std::prev( lset.end() );
+	auto rlo = *rset.begin();
+	auto rhi = *std::prev( rset.end() );
+
+	auto tlset = lset.trim_range( rlo, rhi );
+	auto trset = rset.trim_range( llo, lhi );
+
+	out.swap( tlset, trset );
+#endif
+	so_traits::template apply<so>( lset, rset, out );
+    }
 };
 
 struct merge_scalar {
@@ -1884,51 +1910,39 @@ struct adaptive_intersect {
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return;
 
-#if INTERSECTION_TRIM == 0
-	auto & tlset = lset;
-	auto & trset = rset;
-#endif
-
-#if INTERSECTION_TRIM == 1 || INTERSECTION_ALGORITHM >= 6
+#if INTERSECTION_ALGORITHM >= 6
 	// Trim ranges
 	auto llo = *lset.begin();
 	auto lhi = *std::prev( lset.end() );
 	auto rlo = *rset.begin();
 	auto rhi = *std::prev( rset.end() );
-
-#if INTERSECTION_TRIM == 1
-	auto tlset = lset.trim_range( rlo, rhi );
-	auto trset = rset.trim_range( llo, lhi );
-
-	out.swap( tlset, trset );
-#endif
 #endif
 
 #if INTERSECTION_ALGORITHM == 0
-	return merge_scalar::template apply<so>( tlset, trset, out );
+	return merge_scalar::template apply<so>( lset, rset, out );
 #elif INTERSECTION_ALGORITHM == 1
-	return merge_vector::template apply<so>( tlset, trset, out );
+	return merge_vector::template apply<so>( lset, rset, out );
 #elif INTERSECTION_ALGORITHM == 2
-	return merge_scalar_jump::template apply<so>( tlset, trset, out );
+	return merge_scalar_jump::template apply<so>( lset, rset, out );
 #elif INTERSECTION_ALGORITHM == 3
-	return merge_vector_jump::template apply<so>( tlset, trset, out );
+	return merge_vector_jump::template apply<so>( lset, rset, out );
 #elif INTERSECTION_ALGORITHM == 4
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>> )
-	    return hash_scalar::template apply<so>( tlset, trset, out );
+	    return hash_scalar::template apply<so>( lset, rset, out );
 	else
-	    return merge_vector_jump::template apply<so>( tlset, trset, out );
+	    return merge_vector_jump::template apply<so>( lset, rset, out );
 #elif INTERSECTION_ALGORITHM == 5
 	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
 		       || is_multi_hash_set_v<std::decay_t<RSet>> )
-	    return hash_vector::template apply<so>( tlset, trset, out );
+	    return hash_vector::template apply<so>( lset, rset, out );
 	else
-	    return merge_vector_jump::template apply<so>( tlset, trset, out );
+	    return merge_vector_jump::template apply<so>( lset, rset, out );
 #else
 	auto range = std::max( lhi, rhi ) - std::min( llo, rlo );
 
-	int lcat = rt_ilog2( tlset.size()/2 );
-	int rcat = rt_ilog2( trset.size()/2 );
+	int lcat = rt_ilog2( lset.size()/2 );
+	int rcat = rt_ilog2( rset.size()/2 );
 
 	bool do_hash = true;
 
@@ -1962,12 +1976,12 @@ struct adaptive_intersect {
 	    // Assume trimmed sets have same type as original sets
 	    if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 			   || is_hash_set_v<std::decay_t<RSet>> )
-		return hash_vector::template apply<so>( tlset, trset, out );
+		return hash_vector::template apply<so>( lset, rset, out );
 	    else
-		return merge_vector_jump::template apply<so>( tlset, trset, out );
+		return merge_vector_jump::template apply<so>( lset, rset, out );
 	}
 	else
-	    return merge_vector_jump::template apply<so>( tlset, trset, out );
+	    return merge_vector_jump::template apply<so>( lset, rset, out );
 #endif
     }
 };
