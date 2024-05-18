@@ -114,16 +114,7 @@
 #include "graptor/container/intersect.h"
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
-
-#define NOBENCH
-#define MD_ORDERING 0
-#define VARIANT 11
-#define FUSION 1
-#include "../bench/KC_bucket.C"
-#undef FUSION
-#undef VARIANT
-#undef MD_ORDERING
-#undef NOBENCH
+#include "reorder_kcore.h"
 
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
@@ -2681,7 +2672,6 @@ int main( int argc, char *argv[] ) {
     bool symmetric = P.getOptionValue( "-s" );
     bool early_pruning = P.getOptionValue( "-p" );
     int heuristic = P.getOptionLongValue( "-h", 0);
-    VID npart = P.getOptionLongValue( "-c", 256 );
     VID pre = P.getOptionLongValue( "-pre", -1 );
     VID what_if = P.getOptionLongValue( "-what-if", -1 );
     verbose = P.getOptionValue( "-v" );
@@ -2693,7 +2683,11 @@ int main( int argc, char *argv[] ) {
     GraphCSx G0( ifile, -1, symmetric );
 
     std::cout << "Reading graph: " << tm.stop() << "\n";
-    tm.start(); // Reset timer as graph I/O has high variability
+
+    // Reset timer as graph I/O has high variability, and comparator frameworks
+    // don't measure I/O or tend to perform poorly on I/O.
+    tm = timer();
+    tm.start();
 
     MC_Enumerator E;
 
@@ -2715,11 +2709,6 @@ int main( int argc, char *argv[] ) {
 	      << " davg=" << davg
 	      << std::endl;
 
-    // Number of partitions is tunable. A fairly large number is helpful
-    // to help load balancing.
-    GraphCSRAdaptor GA( G, npart );
-    KCv<GraphCSRAdaptor> kcore( GA, P );
-
     VID pn = n;
     EID pm = m;
     VID prune_th = ~(VID)0;
@@ -2736,27 +2725,7 @@ int main( int argc, char *argv[] ) {
 	    if( v != dmax_v )
 		heuristic_search( G, E, v, G.getDegree() );
 	}
-	std::cout << "early pruning done\n";
-
-	// Look for a clique larger than this size, requires this many
-	// neighbours.
-	// TODO: duplicated in graph construction.
-	prune_th = E.get_max_clique_size();
-	pn = 0;
-	pm = 0;
-	const EID * const idx = G.getIndex();
-	const VID * const edg = G.getEdges();
-	for( VID v=0; v < n; ++v ) {
-	    if( G.getDegree( v ) >= prune_th ) {
-		++pn;
-		for( EID j=idx[v], je=idx[v+1]; j != je; ++j ) {
-		    if( G.getDegree( edg[j] ) >= prune_th )
-			++pm;
-		}
-	    }
-	}
-
-	std::cout << "pruned vertex range: " << pn << "\n";
+	std::cout << "early pruning: " << tm.next() << "\n";
     }
 
     // TODO: after coreness computation, could further trim down
@@ -2764,91 +2733,17 @@ int main( int argc, char *argv[] ) {
     //       and how it compares to the best known clique.
     //       However, coreness computation remains fairly expensives for
     //       some graphs.
-    kcore.run( prune_th );
-    auto & coreness = kcore.getCoreness();
-    std::cout << "Calculating coreness: " << tm.next() << "\n";
-    std::cout << "coreness=" << kcore.getLargestCore() << "\n";
 
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
-    VID K = kcore.getLargestCore();
-#if SORT_ORDER == 0
-    // Increasing degree
-    if( early_pruning )
-	sort_order_pruned( n, dmax, G.getDegree(), prune_th,
-			   order.get(), rev_order.get(), false );
-    else
-	sort_order( n, dmax, G.getDegree(), order.get(), rev_order.get(),
-		    false );
-#elif SORT_ORDER == 1
-    // Decreasing degree
-    if( early_pruning )
-	sort_order_pruned( n, dmax, G.getDegree(), prune_th,
-			   order.get(), rev_order.get(), true );
-    else
-	sort_order( n, dmax, G.getDegree(), order.get(), rev_order.get(),
-		    true );
-#elif SORT_ORDER == 2
-    // Increasing degeneracy
-    if( early_pruning )
-	sort_order_pruned( n, K, coreness, prune_th,
-			   order.get(), rev_order.get(), false );
-    else
-	sort_order( n, K, coreness, order.get(), rev_order.get(), false );
-#elif SORT_ORDER == 3
-    // Decreasing degeneracy
-    if( early_pruning )
-	sort_order_pruned( n, K, coreness, prune_th,
-			   order.get(), rev_order.get(), true );
-    else
-	sort_order( n, K, coreness, order.get(), rev_order.get(), true );
-#elif SORT_ORDER == 4
-    std::vector<VID> histo; histo.resize( K+2 );
-    if( early_pruning )
-	sort_order_ties_pruned( n, K, G.getDegree(), coreness.get_ptr(),
-				prune_th,
-				order.get(), rev_order.get(), &histo[0],
-				false, false );
-    else
-	sort_order_ties( n, K, G.getDegree(), coreness,
-			 order.get(), rev_order.get(), &histo[0],
-			 false, false );
-#elif SORT_ORDER == 5
-    std::vector<VID> histo; histo.resize( K+2 );
-    // Sort by increasing coreness, and decreasing degree per coreness.
-    // This place high-coreness vertices to "the right", resulting in
-    // right-hand neighbourhoods containing only higher-degeneracy vertices.
-    // The sorting by decreasing degree ensures that high-degree vertices
-    // are visited first, for instance, in computation of the pivot.
-    if( early_pruning )
-	sort_order_ties_pruned( n, K, G.getDegree(), coreness.get_ptr(),
-				prune_th,
-				order.get(), rev_order.get(), &histo[0],
-				false, true );
-    else
-	sort_order_ties( n, K, G.getDegree(), coreness,
-			 order.get(), rev_order.get(), &histo[0],
-			 false, true );
-#else
-#error "SORT_ORDER must be in range [0,5]"
-#endif
-    std::cout << "Determining sort order: " << tm.next() << "\n";
-
-    n = pn; // From here on
-
-    mm::buffer<VID> remap_coreness( n, numa_allocation_interleaved() );
-    // Only pruned vertex range (if applicable)
-    parallel_loop( (VID)0, pn, [&]( VID v ) {
-	remap_coreness[v] = coreness[order[v]];
-    } );
-    std::cout << "Remapping coreness data: " << tm.next() << "\n";
-
-    // Remap graph.
-    // TODO: remap+hash in one step
-    RemapVertex<VID> remapper( order.get(), rev_order.get() );
-    GraphCSx R( pn, pm, -1, true, false );
-    R.import_select( G, remapper );
-    std::cout << "Remapping graph: " << tm.next() << "\n";
+    mm::buffer<VID> remap_coreness( pn, numa_allocation_interleaved() );
+    GraphCSx R;
+    VID degeneracy;
+    std::vector<VID> histo;
+    std::tie( R, degeneracy, histo )
+	= reorder_kcore<SORT_ORDER>( G, order, rev_order, remap_coreness,
+				     P, prune_th, dmax_v );
+    std::cout << "Building pruned and remapped graph: " << tm.next() << "\n";
 
     // Cleanup original graph now; we won't need it any more.
     G.del();
@@ -2903,7 +2798,6 @@ int main( int argc, char *argv[] ) {
     } );
 #endif
 
-    VID degeneracy = kcore.getLargestCore();
     E.rebase( degeneracy, order.get() );
 
     std::cout << "Start enumeration at " << tm.elapsed() << std::endl;
@@ -2969,8 +2863,8 @@ int main( int argc, char *argv[] ) {
     } else if( heuristic == 2 ) {
 #if SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
-	for( VID cc=0; cc <= K; ++cc ) {
-	    VID c = K - cc;
+	for( VID cc=0; cc <= degeneracy; ++cc ) {
+	    VID c = degeneracy - cc;
 	    VID c_up = histo[c+1];
 	    VID c_lo = histo[c];
 	    if( c_up == c_lo )
@@ -3009,11 +2903,11 @@ int main( int argc, char *argv[] ) {
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, decreasing degree. */
-    for( VID cc=0; cc <= K; ++cc ) {
+    for( VID cc=0; cc <= degeneracy; ++cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID c = cc;
 #else
-	VID c = K - cc;
+	VID c = degeneracy - cc;
 #endif
 	VID c_up = histo[c+1];
 	VID c_lo = histo[c];
@@ -3033,11 +2927,11 @@ int main( int argc, char *argv[] ) {
 #endif
     }
 	    
-    for( VID cc=0; cc <= K; ++cc ) { // decreasing degeneracy
+    for( VID cc=0; cc <= degeneracy; ++cc ) { // decreasing degeneracy
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID c = cc;
 #else
-	VID c = K - cc;
+	VID c = degeneracy - cc;
 #endif
 	VID c_up = histo[c+1];
 	VID c_lo = histo[c];
