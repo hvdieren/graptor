@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# For custom gcc build
+. $HOME/tools/gcc-13-install/bin/load.sh
+
+# Kelvin build
+#module load compilers/gcc/10.3.0
+#module load papi/7.0.1/gcc-10.3.0
+
+TREE_ROOT=/var/shared/projects/asap/graphs/
+
+TOOLSPATH=@CMAKE_BINARY_DIR@/tools
+EXTERNALPATH=@CMAKE_BINARY_DIR@/external/Build
+CILK_LIB=@graptor_ld_preload@
+
+WEIGHTS=none
+
+hostname
+
+# args 1:prog_graph_layout 2:graph-file 3:graph-name 4:threads 5:commit 6:round 7:partitions
+function run()
+{
+    local prog=$1
+    local graph_path=$2
+    local graph_name=$3
+    local threads=$4
+    local commit=$5
+    local round=$6
+    local part=$7
+
+    bindir=bin_avx512_$commit
+    arg=""
+
+    local outdir=./graptor_avx512/$commit
+    [ -d $outdir ] || mkdir -p $outdir
+    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.${prog}.${graph_name} 
+
+    if [ ! -f $file ] ; then
+	local papi_out=$file.papi
+	echo $1 $2
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file"
+	PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_LIBRARY_PATH="$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH" LD_PRELOAD="$TOOLSPATH/interposer.so" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file 2>&1
+    fi
+}
+
+# args: graph dir/undir
+function for_gg()
+{
+    local graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise graptor $1 $2 $WEIGHTS`
+
+    echo "graph path: $graph_path"
+
+    local g="${1}_${2}"
+    local commit=$3
+
+    local is_avx512f=0
+    if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
+
+    # warning: -h 2 !?
+    for r in `seq 0 2` ; do
+	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
+	    for ins in `seq 0 8` ; do
+		if [ $is_avx512f == 1 ] ; then
+		    run MC__ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
+		    run MC__itrim_ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
+		fi
+		run MC__ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
+		run MC__itrim_ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
+	    done
+	done
+    done
+}
+
+true

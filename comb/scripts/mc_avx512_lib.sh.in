@@ -27,25 +27,21 @@ function run()
     local commit=$5
     local round=$6
     local part=$7
+    local heur=$8
 
     bindir=bin_avx512_$commit
     arg=""
 
     local outdir=./graptor_avx512/$commit
     [ -d $outdir ] || mkdir -p $outdir
-    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.${prog}.${graph_name} 
+    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.h${heur}.${prog}.${graph_name} 
 
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file"
-	PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_LIBRARY_PATH="$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH" LD_PRELOAD="$TOOLSPATH/interposer.so" ./${bindir}/${prog} -c ${part} -s -i ${graph_path} > $file 2>&1
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
+	PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_LIBRARY_PATH="$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH" LD_PRELOAD="$TOOLSPATH/interposer.so" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1
     fi
-}
-
-# one 1:bench 2:graph-path 3:graph-name 4:threads 5:commit 6:round 7:part
-function one() {
-    run ${1}_${2}_${3} $4 $5 $6 $7 $8 $9
 }
 
 # args: graph dir/undir
@@ -58,16 +54,27 @@ function for_gg()
     local g="${1}_${2}"
     local commit=$3
 
-    for r in `seq 0 2` ; do
-	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
-	    for ins in `seq 0 8` ; do
-		one $b MC _ins${ins} vl16 $graph_path $g $threads $commit $r 1024
-		one $b MC _itrim_ins${ins} vl16 $graph_path $g $threads $commit $r 1024
-		one $b MC _ins${ins} vl8_noavx512f $graph_path $g $threads $commit $r 1024
-		one $b MC _itrim_ins${ins} vl8_noavx512f $graph_path $g $threads $commit $r 1024
-	    done
-	done
+    local is_avx512f=0
+    if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
+
+    for r in 0 ; do
+	run intersect_ds__op2_vl16 $graph_path $g 1 $commit $r 1024 0
+	run intersect_ds__op0_vl16 $graph_path $g 1 $commit $r 1024 0
+	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
     done
+
+#    for r in `seq 0 2` ; do
+#	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
+#	    for ins in `seq 0 8` ; do
+#		if [ $is_avx512f == 1 ] ; then
+#		    run MC__ins${ins}_vl16 $graph_path $g $threads $commit $r 1024 2
+#		    run MC__itrim_ins${ins}_vl16 $graph_path $g $threads $commit $r 1024 2
+#		fi
+#		run MC__ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024 2
+#		run MC__itrim_ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024 2
+#	    done
+#	done
+#    done
 }
 
 true

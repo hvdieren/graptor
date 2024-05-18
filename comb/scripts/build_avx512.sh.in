@@ -65,9 +65,24 @@ one MCE _abTd_vl16
 one MCE _abL_vl16 &
 fi
 
+is_avx512f=0
+if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
+
+if [ $is_avx512f == 1 ] ; then
+    one intersect_ds _op0_vl16 &
+    one intersect_ds _op1_vl16 &
+    one intersect_ds _op2_vl16
+else
+    one intersect_ds _op0_vl8 &
+    one intersect_ds _op1_vl8 &
+    one intersect_ds _op2_vl8
+fi
+
 for i in `seq 0 8` ; do
-    one MC _ins${i}_vl16 &
-    one MC _itrim_ins${i}_vl16 &
+    if [ $is_avx512f == 1 ] ; then
+	one MC _ins${i}_vl16 &
+	one MC _itrim_ins${i}_vl16 &
+    fi
     one MC _ins${i}_vl8_noavx512f &
     one MC _itrim_ins${i}_vl8_noavx512f 
 done

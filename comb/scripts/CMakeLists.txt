@@ -5,6 +5,8 @@ configure_file(mce_blanusa_avx512_arg.sh.in mce_blanusa_avx512_arg.sh @ONLY)
 configure_file(mce_blanusa_avx512_lib.sh.in mce_blanusa_avx512_lib.sh @ONLY)
 configure_file(mc_avx512_arg.sh.in mc_avx512_arg.sh @ONLY)
 configure_file(mc_avx512_lib.sh.in mc_avx512_lib.sh @ONLY)
+configure_file(mc_avx2_arg.sh.in mc_avx2_arg.sh @ONLY)
+configure_file(mc_avx2_lib.sh.in mc_avx2_lib.sh @ONLY)
 
 get_property(include_dirs TARGET MCE PROPERTY INCLUDE_DIRECTORIES)
 get_property(link_libs TARGET MCE PROPERTY LINK_LIBRARIES)
