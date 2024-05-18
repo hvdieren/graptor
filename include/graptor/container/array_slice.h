@@ -12,9 +12,16 @@ struct array_slice {
     array_slice( const type * begin_, const type * end_ )
 	: m_begin( begin_ ), m_end( end_ ) { }
     array_slice( const type * begin_, index_type len_ )
-	: m_begin( begin_ ), m_end( begin_ + len_ ) { }
+	: m_begin( begin_ ), m_end( std::next( begin_, len_ ) ) { }
 
-    index_type size() const { return m_end - m_begin; }
+    index_type size() const { return std::distance( m_begin, m_end ); }
+    
+    /*! Returns the range of the set, i.e., the difference between largest
+     * and smallest. Assumes sequence is sorted.
+     */
+    type range() const {
+	return m_begin != m_end ? *std::prev( m_end ) - *m_begin: 0;
+    }
     
     const type * begin() const { return m_begin; }
     const type * end() const { return m_end; }

@@ -120,7 +120,8 @@ template<typename Seq, typename Hash>
 struct dual_set {
     using seq_type = Seq; 	 	 	 	//!< sequential set type
     using hash_type = Hash;	   			//!< hashed set type
-    using type = std::remove_cv_t<typename seq_type::type>; //!< element type
+    using type = 	 	 	 	 	//!< element type
+	std::remove_cv_t<typename std::decay_t<seq_type>::type>;
 
     /*! Constructor taking a sequential and a hashed set
      *
@@ -132,7 +133,12 @@ struct dual_set {
 	: m_seq( seq ), m_hash( hash ) { }
 
     //! Returns the size of the set, i.e., a count of elements.
-    auto size() const { return m_seq.size(); }
+    size_t size() const { return m_seq.size(); }
+    
+    /*! Returns the range of the set, i.e., the difference between largest
+     * and smallest.
+     */
+    auto range() const { return m_seq.range(); }
     
     //! Returns an iterator to the beginning of the sequential representation
     auto begin() { return m_seq.begin(); }
