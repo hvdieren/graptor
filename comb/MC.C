@@ -2480,7 +2480,7 @@ void mc_top_level(
     cut.filter( [&]( VID u ) {
 	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
 	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
-	VID d = graptor::set_operations<graptor::adaptive_intersect>
+	VID d = graptor::set_operations<graptor::adaptive_intersect_filter>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
