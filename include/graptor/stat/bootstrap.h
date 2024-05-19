@@ -68,6 +68,9 @@ std::vector<T> bootstrap_difference(
 
 template<typename T>
 double mean( const std::vector<T> & x ) {
+    if( x.size() == 0 )
+	return std::numeric_limits<T>::infinity();
+    
     double sum = 0;
     for( auto v : x )
 	sum += v;
@@ -78,6 +81,9 @@ double mean( const std::vector<T> & x ) {
 
 template<typename T>
 double sdev( const std::vector<T> & x ) {
+    if( x.size() <= 1 )
+	return std::numeric_limits<T>::infinity();
+    
     double sum = 0, sumsq = 0;
     for( auto v : x ) {
 	sum += v;
