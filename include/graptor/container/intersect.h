@@ -8,7 +8,11 @@
 #define GRAPTOR_CONTAINER_INTERSECT_H
 
 #ifndef INTERSECTION_ALGORITHM
-#define INTERSECTION_ALGORITHM 0
+#define INTERSECTION_ALGORITHM 1
+#endif
+
+#ifndef FILTER_INTERSECTION_ALGORITHM
+#define FILTER_INTERSECTION_ALGORITHM 0
 #endif
 
 #ifndef INTERSECTION_TRIM
@@ -451,7 +455,7 @@ struct set_operations {
 
 	out.swap( tlset, trset );
 #endif
-	so_traits::template apply<so>( lset, rset, out );
+	so_traits::template apply<so>( tlset, trset, out );
     }
 };
 
@@ -1985,6 +1989,68 @@ struct adaptive_intersect {
 #endif
     }
 };
+
+/*! The adaptive_intersect_filter class optimises the intersection algorithm
+ *  for the filtering step. Filtering is applied on a sequential (non-hashed)
+ *  list and an adjacency list. There is thus only one option for hashing.
+ */
+struct adaptive_intersect_filter {
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return;
+
+	if constexpr ( so != so_intersect_size_exceed )
+	    // This class is designed strictly for so_intersect_size_exceed
+	    return adaptive_intersect::template apply<so>( lset, rset, out );
+	else {
+	    static_assert( !is_hash_set_v<std::decay_t<LSet>>,
+			   "expect LHS is a sequential list" );
+	    static_assert( is_hash_set_v<std::decay_t<RSet>>,
+			   "expect RHS is hashed" );
+	    static_assert( is_multi_hash_set_v<std::decay_t<RSet>>,
+			   "expect RHS is hashed and vectorisable" );
+
+	    // Trim ranges
+	    auto llo = *lset.begin();
+	    auto lhi = *std::prev( lset.end() );
+	    auto rlo = *rset.begin();
+	    auto rhi = *std::prev( rset.end() );
+
+	    auto tlset = lset.trim_range( rlo, rhi );
+	    auto trset = rset.trim_range( llo, lhi );
+
+	    out.swap( tlset, trset );
+
+	    int lcat = rt_ilog2( tlset.size()/2 );
+	    int rcat = rt_ilog2( trset.size()/2 );
+
+	    llo = *tlset.begin();
+	    lhi = *std::prev( tlset.end() );
+	    rlo = *trset.begin();
+	    rhi = *std::prev( trset.end() );
+
+	    size_t lf = 10.0f * float(tlset.size()) / float(lhi - llo);
+	    size_t rf = 10.0f * float(trset.size()) / float(rhi - rlo);
+
+	    // If set sizes about equal, merge could work well.
+	    // If LHS size much smaller than RHS size, hash would work well.
+	    // If RHS has high density, chances of having good vector occupation
+	    // are high.
+	    if( lcat < rcat || rf <= 2 )
+		return hash_vector::template apply<so>( tlset, trset, out );
+	    else if( rcat+1 < lcat )
+		return merge_scalar_jump::template apply<so>( tlset, trset, out );
+	    else
+		return merge_vector::template apply<so>( tlset, trset, out );
+	}
+    }
+};
+
 
 } // namespace graptor
 
