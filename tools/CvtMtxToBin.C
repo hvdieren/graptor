@@ -132,6 +132,7 @@ int main( int argc, char *argv[] ) {
 	++enxt;
 
 	// Need to mirror edges
+	// Note: self-edges are duplicated in this process!
 	if( symmetric ) {
 	    src[enxt] = dst[enxt-1];
 	    dst[enxt] = src[enxt-1];
