@@ -57,18 +57,21 @@ function for_gg()
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
     # warning: -h 2 !?
-    for r in `seq 0 2` ; do
-	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
-	    for ins in `seq 0 8` ; do
-		if [ $is_avx512f == 1 ] ; then
-		    run MC__ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
-		    run MC__itrim_ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
-		fi
-		run MC__ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
-		run MC__itrim_ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
-	    done
-	done
+    for r in 0 ; do
+    	run intersect_ds__op2_vl8 $graph_path $g 1 $commit $r 1024 0
     done
+#    for r in `seq 0 2` ; do
+#	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
+#	    for ins in `seq 0 8` ; do
+#		if [ $is_avx512f == 1 ] ; then
+#		    run MC__ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
+#		    run MC__itrim_ins${ins}_vl16 $graph_path $g $threads $commit $r 1024
+#		fi
+#		run MC__ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
+#		run MC__itrim_ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024
+#	    done
+#	done
+#    done
 }
 
 true
