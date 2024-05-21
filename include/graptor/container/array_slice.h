@@ -14,7 +14,7 @@ struct array_slice {
     array_slice( const type * begin_, index_type len_ )
 	: m_begin( begin_ ), m_end( std::next( begin_, len_ ) ) { }
 
-    index_type size() const { return std::distance( m_begin, m_end ); }
+    size_t size() const { return std::distance( m_begin, m_end ); }
     
     /*! Returns the range of the set, i.e., the difference between largest
      * and smallest. Assumes sequence is sorted.
