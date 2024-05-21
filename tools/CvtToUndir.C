@@ -28,15 +28,15 @@ bool hasEdge( graph<vertex> & G, VID src, VID dst ) {
 
 int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
-    char* iFile = P.getArgument(0);
     bool symmetric = P.getOptionValue("-s");
     bool binary = P.getOptionValue("-b");             //Galois binary format
 
     const char * ofile = P.getOptionValue( "-o" );
+    const char * ifile = P.getOptionValue( "-i" );
 
-    GraphCSx G( iFile, -1 );
+    GraphCSx G( ifile, -1 );
 
-    std::cerr << "Read graph.\n";
+    std::cerr << "Read graph '" << ifile << "'.\n";
     
     const EID * idx = G.getIndex();
     const VID * edge = G.getEdges();
@@ -109,6 +109,8 @@ int main( int argc, char *argv[] ) {
     std::cerr << "Graph sorted\n";
 
     UG.writeToBinaryFile( ofile );
+
+    std::cerr << "Wrote graph '" << ofile << "'.\n";
 
     return 0;
 }
