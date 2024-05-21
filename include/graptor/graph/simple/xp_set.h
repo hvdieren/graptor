@@ -175,7 +175,7 @@ public:
 	    else
 		return m_xp.begin() + m_ne;
 	}
-	const lVID size() const {
+	const size_t size() const {
 	    if constexpr ( present_p )
 		return m_xp.size() - m_ne;
 	    else
@@ -238,7 +238,7 @@ public:
 	    
 	const lVID * begin() const { return m_xp.begin(); }
 	const lVID * end() const { return m_xp.end(); }
-	const lVID size() const { return m_xp.size(); }
+	const size_t size() const { return m_xp.size(); }
 
     private:
 	template<typename U, unsigned short VL, typename MT>
@@ -387,7 +387,7 @@ public:
     /*const*/ lVID * get_set() const { return m_set; }
     lVID at( lVID pos ) const { return m_set[pos]; }
     lVID get_fill() const { return m_fill; }
-    lVID size() const { return m_fill; }
+    size_t size() const { return m_fill; }
 
     const lVID * begin() const { return m_set; }
     const lVID * end() const { return m_set + m_fill; }
