@@ -65,7 +65,8 @@ int main( int argc, char *argv[] ) {
 	    }
 
 	    if( mtx_mkt ) {
-		if( u > v ) {
+		// Note: do not drop self-edges
+		if( u >= v ) {
 		    buffer << (u+1) << ' ' << (v+1);
 		    if( weights )
 			buffer << ' ' << weights[e];
