@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <ostream>
 
+#include "graptor/stat/welford.h"
+
 namespace graptor {
 
 template<typename T>
@@ -71,10 +73,10 @@ double mean( const std::vector<T> & x ) {
     if( x.size() == 0 )
 	return std::numeric_limits<T>::infinity();
     
-    double sum = 0;
+    variance_estimator<float,size_t> est;
     for( auto v : x )
-	sum += v;
-    double mu = sum / double(x.size());
+	est.update( v );
+    double mu = est.get_mean();
     assert( !std::isnan( mu ) && "NaN detected" );
     return mu;
 }
@@ -83,14 +85,11 @@ template<typename T>
 double sdev( const std::vector<T> & x ) {
     if( x.size() <= 1 )
 	return std::numeric_limits<T>::infinity();
-    
-    double sum = 0, sumsq = 0;
-    for( auto v : x ) {
-	sum += v;
-	sumsq += v * v;
-    }
-    double n = x.size();
-    double sd = std::sqrt( n * ( sumsq/n - (sum/n)*(sum/n) ) / (n-1.0) );
+
+    variance_estimator<float,size_t> est;
+    for( auto v : x )
+	est.update( v );
+    double sd = est.get_stdev();
     assert( !std::isnan( sd ) && "NaN detected" );
     return sd;
 }
