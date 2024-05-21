@@ -1911,8 +1911,10 @@ struct adaptive_intersect {
     auto
     apply( LSet && lset, RSet && rset, Collector & out ) {
 	// Corner case
-	if( lset.size() == 0 || rset.size() == 0 )
+	if( lset.size() == 0 || rset.size() == 0 ) {
+	    out.template remainder<true>( lset.size(), rset.size() );
 	    return;
+	}
 
 #if INTERSECTION_ALGORITHM >= 6
 	// Trim ranges
@@ -2001,8 +2003,10 @@ struct adaptive_intersect_filter {
     auto
     apply( LSet && lset, RSet && rset, Collector & out ) {
 	// Corner case
-	if( lset.size() == 0 || rset.size() == 0 )
+	if( lset.size() == 0 || rset.size() == 0 ) {
+	    out.template remainder<true>( lset.size(), rset.size() );
 	    return;
+	}
 
 	if constexpr ( so != so_intersect_size_exceed )
 	    // This class is designed strictly for so_intersect_size_exceed
@@ -2041,9 +2045,12 @@ struct adaptive_intersect_filter {
 	    // If LHS size much smaller than RHS size, hash would work well.
 	    // If RHS has high density, chances of having good vector occupation
 	    // are high.
-	    if( lcat < rcat || rf <= 2 )
+	    if( lcat < rcat ) // || rf <= 2 )
 		return hash_vector::template apply<so>( tlset, trset, out );
-	    else if( rcat+1 < lcat )
+	    // else if( rcat+1 < lcat ) // better hash_vector
+	    else if( rf == 0 )
+		return merge_vector_jump::template apply<so>( tlset, trset, out );
+	    else if( lf == 0 )
 		return merge_scalar_jump::template apply<so>( tlset, trset, out );
 	    else
 		return merge_vector::template apply<so>( tlset, trset, out );
