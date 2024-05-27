@@ -794,6 +794,46 @@ struct merge_scalar_jump {
 };
 
 struct merge_vector_jump {
+    template<unsigned short VL, typename T>
+    static
+    const T * jump( const T * b, const T * e, T ref ) {
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+
+	if( ref <= *b )
+	    return b;
+
+	// Search for the furthest position in bounds and not higher than ref
+	type step = tr::sllv( tr::setoneval(), tr::set1inc0() );
+	size_t voff = size_t(1) << ( VL - 1 ); // same as step lane VL-1
+	const type vref = tr::set1( ref );
+	const T * i = b;
+	while( i+voff < e ) {
+	    type val = tr::gather( i, step );
+	    mask_type fnd = tr::cmplt( val, vref, target::mt_mask() );
+	    if( !tr::mask_traits::is_ones( fnd ) ) {
+		if( tr::mask_traits::is_zero( fnd ) )
+		    return i; // do not advance
+		else {
+		    // Lane is the first lane containing a value >= reference.
+		    // Return the lane before it.
+		    size_t lane = tr::mask_traits::find_first( fnd );
+		    return i + tr::lane( step, lane-1 ); // remain before ref
+		}
+	    }
+	    step = tr::slli( step, VL );
+	    i += voff;
+	    voff <<= VL;
+	}
+	voff >>= ( VL - 1 );
+	while( i+voff < e && *(i+voff) < ref ) {
+	    i += voff;
+	    voff <<= 1;
+	}
+	return i;
+    }
+
     template<set_operation so, typename T, unsigned short VL, bool rhs,
 	     typename LIt, typename RIt, typename Collector>
     static
@@ -833,12 +873,14 @@ struct merge_vector_jump {
 	    // side, perhaps many more will follow. Try jumping.
 	    if( la == VL ) {
 		LIt ln = merge_scalar_jump::jump( lb, le, *rb );
+		// LIt ln = jump<VL>( lb, le, *rb );
 		out.template remainder<rhs>( std::distance( lb, ln ), 0 );
 		lb = ln;
 	    }
 	    // Similar jumping for RHS without matches.
 	    if( ra == VL ) {
 		LIt rn = merge_scalar_jump::jump( rb, re, *lb );
+		// LIt rn = jump<VL>( rb, re, *lb );
 		out.template remainder<rhs>( 0, std::distance( rb, rn ) );
 		rb = rn;
 	    }
