@@ -51,7 +51,7 @@ struct is_multi_collector {
 	    static_cast<typename C::type *>( nullptr ),
 	    vector_type_traits_vl<typename C::type,8>::setzero(),
 	    vector_type_traits_vl<typename C::type,8>::mask_traits::setzero(),
-	    size_t(0) );
+	    size_t(0), size_t(0) );
     };
 };
 
@@ -164,7 +164,8 @@ struct intersection_collector {
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type value,
 		  M mask,
-		  size_t vl ) {
+		  size_t vl,
+		  size_t vr ) {
 	using tr = vector_type_traits_vl<U,VL>;
 
 	m_pointer = tr::cstoreu_p( m_pointer, mask, value );
@@ -221,7 +222,8 @@ struct intersection_size {
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type index,
 		  typename vector_type_traits_vl<U,VL>::mask_type mask,
-		  size_t vl ) {
+		  size_t vl,
+		  size_t vr ) {
 	using tr = vector_type_traits_vl<U,VL>;
 	size_t present = tr::mask_traits::popcnt( mask );
 	m_size += present;
@@ -300,7 +302,8 @@ struct intersection_size_exceed {
     multi_record( const U * p,
 		  typename vector_type_traits_vl<U,VL>::type index,
 		  typename vector_type_traits_vl<U,VL>::mask_type mask,
-		  size_t vl ) {
+		  size_t vl,
+		  size_t vr ) {
 	using tr = vector_type_traits_vl<U,VL>;
 	size_t absent = vl - tr::mask_traits::popcnt( mask );
 	m_options -= absent;
@@ -323,6 +326,108 @@ private:
     bool m_terminated;
 };
 
+/*! Collector type to support the set_operation::intersect_size_exceed
+ *  operation.
+ *
+ * \tparam T type of elements in the sets.
+ */
+template<typename T>
+struct intersection_size_exceed_two_sided {
+    //! The type of elements in this set
+    using type = T;
+
+    intersection_size_exceed_two_sided(
+	size_t left_size,
+	size_t right_size,
+	size_t exceed )
+	: m_left_options( left_size - exceed ),
+	  m_right_options( right_size - exceed ),
+	  m_exceed( exceed ),
+	  m_terminated( left_size <= exceed || right_size <= exceed ) { }
+
+    // This code currently only works with rhs == true
+    // When swapping lhs/rhs, we need to change the initial options.
+    template<typename LSet, typename RSet>
+    intersection_size_exceed_two_sided(
+	LSet && lset, RSet && rset, size_t exceed )
+	: intersection_size_exceed_two_sided(
+	    lset.size(), rset.size(), exceed ) { }
+
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) {
+	m_left_options = lset.size() - m_exceed;
+	m_right_options = rset.size() - m_exceed;
+    }
+
+    // Version called by merge
+    template<bool rhs>
+    bool record( const type * l, const type * r, bool ins ) {
+	if( *l < *r ) { // lhs not present
+	    if( --m_left_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	} else if( *l > *r ) { // rhs not present
+	    if( --m_right_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	}
+	return true;
+    }
+
+    // Version called by hash
+    template<bool rhs>
+    bool record( const type * l, type value, bool ins ) {
+	if( !ins ) {
+	    if( --m_left_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	}
+	return true;
+    }
+
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) {
+	// We could flag m_terminated if m_options drops below zero,
+	// however, this is not necessary as a correct intersection size
+	// will be returned.
+	m_left_options -= l;
+	m_right_options -= r;
+    }
+
+    template<bool rhs, typename U, unsigned short VL>
+    bool
+    multi_record( const U * p, // pointer to LHS sequential data
+		  typename vector_type_traits_vl<U,VL>::type index, // LHS data
+		  typename vector_type_traits_vl<U,VL>::mask_type mask, // LHS mask
+		  size_t vl, size_t vr ) {
+	using tr = vector_type_traits_vl<U,VL>;
+	std::make_signed_t<size_t> num_matched =
+	    tr::mask_traits::popcnt( mask );
+	m_left_options -= std::make_signed_t<size_t>( vl ) - num_matched;
+	m_right_options -= std::make_signed_t<size_t>( vr ) - num_matched;
+	if( m_left_options <= 0 || m_right_options <= 0 ) {
+	    m_terminated = true;
+	    return false;
+	}
+
+	return true;
+    }
+
+    size_t return_value() const {
+	return m_terminated ? 0 : m_left_options + m_exceed;
+    }
+
+    bool terminated() const { return m_terminated; }
+
+private:
+    std::make_signed_t<size_t> m_left_options, m_right_options;
+    size_t m_exceed;
+    bool m_terminated;
+};
+
 /*! Traits class to recognise collectors for the
  *  set_operation::intersect_size_exceed operation.
  *
@@ -333,6 +438,10 @@ struct is_intersection_size_exceed : public std::false_type { };
 
 template<typename T>
 struct is_intersection_size_exceed<intersection_size_exceed<T>>
+    : public std::true_type { };
+
+template<typename T>
+struct is_intersection_size_exceed<intersection_size_exceed_two_sided<T>>
     : public std::true_type { };
 
 /*! Variable to recognise collectors for the
@@ -425,7 +534,8 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 	
-	intersection_size_exceed<typename std::decay_t<LSet>::type>
+	// intersection_size_exceed<typename std::decay_t<LSet>::type>
+	intersection_size_exceed_two_sided<typename std::decay_t<LSet>::type>
 	    out( lset, rset, exceed );
 	apply<so_intersect_size_exceed>( lset, rset, out );
 	return out.return_value();
@@ -866,7 +976,7 @@ struct merge_vector_jump {
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la, ra ) )
 		break;
 
 	    // If not a single element in the LHS vector was present on the RHS
@@ -1460,7 +1570,7 @@ public:
 		    v, target::mt_mask() );
 
 		// Record / count common values
-		if( !out.template multi_record<rhs,T,VL>( lb, m.second, m.first ) )
+		if( !out.template multi_record<rhs,T,VL>( lb, m.second, m.first, 0 ) )
 		    break;
 	    } else {
 		// Check present in hash set. Returns a mask.
@@ -1468,7 +1578,7 @@ public:
 		    v, target::mt_mask() );
 
 		// Record / count common values
-		if( !out.template multi_record<rhs,T,VL>( lb, v, m, VL ) )
+		if( !out.template multi_record<rhs,T,VL>( lb, v, m, VL, 0 ) )
 		    break;
 	    }
 
@@ -1573,7 +1683,7 @@ struct merge_vector {
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la, ra ) )
 		break;
 	}
 
