@@ -534,11 +534,23 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 	
-	// intersection_size_exceed<typename std::decay_t<LSet>::type>
-	intersection_size_exceed_two_sided<typename std::decay_t<LSet>::type>
-	    out( lset, rset, exceed );
-	apply<so_intersect_size_exceed>( lset, rset, out );
-	return out.return_value();
+	// Two-sided operation has no merit for hashed representations
+	// as we cannot count missed opportunites in the RHS.
+	// Although this may work differently for a dual representation where
+	// we can cheaply relate the hashed data structure to the sequential
+	// representation.
+	if constexpr ( std::is_same_v<so_traits,hash_scalar>
+		       || std::is_same_v<so_traits,hash_vector> ) {
+	    intersection_size_exceed<
+		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    return out.return_value();
+	} else {
+	    intersection_size_exceed_two_sided<
+		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    return out.return_value();
+	}
     }
 
     template<set_operation so,
@@ -727,8 +739,6 @@ struct merge_scalar_jump {
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
 
-	size_t lrem = 0, rrem = 0;
-
 	while( lb != le && rb != re ) {
 	    if( !out.template record<rhs>( lb, rb, *lb == *rb ) )
 		break;
@@ -738,17 +748,17 @@ struct merge_scalar_jump {
 	    } else if( *lb < *rb ) {
 		++lb;
 		LIt lj = jump( lb, le, *rb );
-		lrem += std::distance( lb, lj );
+		out.template remainder<rhs>( std::distance( lb, lj ), 0 );
 		lb = lj;
 	    } else {
 		++rb;
 		RIt rj = jump( rb, re, *lb );
-		rrem += std::distance( rb, rj );
+		out.template remainder<rhs>( 0, std::distance( rb, rj ) );
 		rb = rj;
 	    }
 	}
 
-	out.template remainder<rhs>( lrem + ( le - lb ), rrem + ( re - rb ) );
+	out.template remainder<rhs>( le - lb, re - rb );
 
 	return std::make_pair( lb, rb );
     }
@@ -804,6 +814,64 @@ struct merge_scalar_jump {
 	    off <<= 1;
 	}
 	return i;
+    }
+
+    //! Repeated jumping: reset step size when step size too large.
+    template<typename It, typename T>
+    static
+    It jump_precise( It b, It e, T ref ) {
+	// Search for the furthest position in bounds and not higher than ref
+	size_t off = 1;
+	while( b != e && ref > *b ) {
+	    if( b+off >= e || *(b+off) > ref ) {
+		off >>= 1;
+		if( off == 0 )
+		    break;
+	    } else if( *(b+off) <= ref ) {
+		b += off;
+		off <<= 1;
+	    }
+	}
+	return b;
+    }
+
+    //! Jump ahead with binary search to land on next value or just above.
+    template<typename It, typename T>
+    static
+    It jump_binary_search( It b, It e, T ref ) {
+	if( ref <= *b )
+	    return b;
+
+	// Search for the furthest position in bounds and not higher than ref
+	It i = b;
+	size_t off = 1;
+	while( i+off < e && *(i+off) < ref ) {
+	    i += off;
+	    off <<= 1;
+	}
+
+	// Work with tighter bounds
+	b = i;
+	if( i+off < e )
+	    e = i + off;
+
+	if( ref <= *b )
+	    return b;
+
+	while( std::distance( b, e ) > 1 ) {
+	    It mid = std::next( b, std::distance( b, e ) / 2 );
+	    if( ref == *mid )
+		return mid;
+	    else if( ref < *mid ) {
+		if( mid != b && ref >= *std::prev( mid, 1 ) )
+		    return std::prev( mid, 1 );
+		else
+		    e = mid;
+	    } else
+		b = mid;
+	}
+
+	return b;
     }
 
     template<typename It, typename Ot>
@@ -1223,6 +1291,87 @@ struct hash_scalar {
 
 };
 
+struct hash_scalar_jump {
+    template<set_operation so, bool rhs,
+	     typename LIt, typename RSet, typename Collector>
+    static
+    LIt
+    intersect_task( LIt lb, LIt le, RSet && rset, Collector & out ) {
+	if( out.terminated() )
+	    return lb;
+
+	auto rb = rset.begin();
+	auto re = rset.end();
+
+	// It is assumed that the caller has already determined
+	// that the left set is the smaller one.
+	while( lb != le ) {
+	    VID v = *lb;
+	    if constexpr ( so == so_intersect_xlat ) {
+		auto rc = rset.lookup( v );
+		// all 1s indicates invalid/absent value
+		if( ~rc != 0 && !out.template record<rhs>( lb, rc, true ) )
+		    break;
+		++lb;
+	    } else {
+		auto rc = rset.contains( v );
+		if( !out.template record<rhs>( lb, *lb, rc ) )
+		    break;
+
+		++lb;
+
+		auto rn = merge_scalar_jump::jump( rb, re, *(lb-1) );
+		auto ln = lb;
+		if( *rn > *lb )
+		    ln = merge_scalar_jump::jump( lb, le, *rn );
+
+		out.template remainder<rhs>(
+		    std::distance( lb, ln ),
+		    std::distance( rb, rn ) );
+
+		rb = rn;
+		lb = ln;
+	    }
+	}
+
+	return lb;
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	auto lb = lset.begin();
+	auto le = lset.end();
+	intersect_task<so,rhs>( lb, le, rset, out );
+    }
+
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	static_assert( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>>,
+		       "at least one of arguments should be hash set" );
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       && is_hash_set_v<std::decay_t<RSet>> ) {
+	    if( lset.size() <= rset.size() )
+		return intersect_task<so,true>( lset, rset, out );
+	    else {
+		out.swap( rset, lset );
+		return intersect_task<so,false>( rset, lset, out );
+	    }
+	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
+	    return intersect_task<so,true>( lset, rset, out );
+	} else {
+	    out.swap( rset, lset );
+	    return intersect_task<so,false>( rset, lset, out );
+	}
+    }
+};
+
 struct hash_wide {
 
     static constexpr bool uses_hash = true;
@@ -1634,6 +1783,99 @@ public:
     }
     
 };
+
+struct hash_vector_jump {
+    template<set_operation so, typename T, unsigned VL, bool rhs,
+	     typename LIt, typename RSet, typename Collector>
+    static
+    LIt
+    intersect_task_vl( LIt lb, LIt le, RSet && rset, Collector & out ) {
+	if( out.terminated() )
+	    return lb;
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+
+	auto rb = rset.begin();
+	auto re = rset.end();
+
+	while( lb+VL <= le ) {
+	    // Load sequence of values from left-hand argument
+	    type v = tr::loadu( lb );
+
+	    if constexpr ( so == so_intersect_xlat ) {
+		// Convert through hash table
+		// Returns a pair of { present, translated }
+		auto m = rset.template multi_lookup<T,VL>(
+		    v, target::mt_mask() );
+
+		// Record / count common values
+		if( !out.template multi_record<rhs,T,VL>( lb, m.second, m.first, 0 ) )
+		    break;
+
+		lb += VL;
+	    } else {
+		// Check present in hash set. Returns a mask.
+		auto m = rset.template multi_contains<T,VL>(
+		    v, target::mt_mask() );
+
+		// Record / count common values
+		if( !out.template multi_record<rhs,T,VL>( lb, v, m, VL, 0 ) )
+		    break;
+
+		lb += VL;
+	    }
+	}
+
+	return lb;
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	using T = typename std::decay_t<LSet>::type;
+
+	auto lb = lset.begin();
+	auto le = lset.end();
+
+#if __AVX512F__
+	lb = intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rset, out );
+#endif
+#if __AVX2__
+	lb = intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rset, out );
+#endif
+	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
+    }
+
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	static_assert( is_multi_hash_set_v<std::decay_t<LSet>>
+		       || is_multi_hash_set_v<std::decay_t<RSet>>,
+		       "at least one of arguments should be hash set" );
+	// static_assert( is_multi_collector_v<std::decay_t<Collector>>,
+		//        "collector must accept vectors of values" );
+	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
+		       && is_multi_hash_set_v<std::decay_t<RSet>> ) {
+	    if( lset.size() <= rset.size() )
+		return intersect_task<so,true>( lset, rset, out );
+	    else {
+		out.swap( rset, lset );
+		return intersect_task<so,false>( rset, lset, out );
+	    }
+	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
+	    return intersect_task<so,true>( lset, rset, out );
+	} else {
+	    out.swap( rset, lset );
+	    return intersect_task<so,false>( rset, lset, out );
+	}
+    }
+};
+
 
 /*!=====================================================================*
  * TODO:
@@ -2054,6 +2296,65 @@ struct merge_partitioned {
 	    return sz0 + sz1;
 	}
     }
+};
+
+struct something {
+    template<set_operation so, bool rhs,
+	     typename LIt, typename RIt, typename Collector>
+    static
+    void
+    intersect_task( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	if( out.terminated() )
+	    return;
+
+	if( std::distance( lb, le ) <= 4 || std::distance( rb, re ) <= 4 ) {
+	    merge_scalar_jump::intersect_task( lb, le, rb, re, out );
+	    return;
+	}
+
+	LIt lm = std::next( lb, std::distance( lb, le ) / 2 );
+	RIt rm = std::next( rb, std::distance( rb, re ) / 2 );
+
+	// Splits three-ways
+	// 1. intersect lb ... lm with rb ... rm
+	intersect_task( lb, lm, rb, rm, out );
+
+	// 2. intersect lm ... le with rm ... re
+	intersect_task( lm, le, rm, re, out );
+	
+	if( *rm < *lm ) {
+	    // 3. intersect equiv(rm) ... lm with rm ... equiv(lm)
+	    intersect_task( lb, lm, rm, re, out );
+	} else {
+	    // 3. intersect lb ... equiv(rm) with equiv(lm) ... re
+	    intersect_task( lm, le, rb, rm, out );
+	}
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	auto lb = lset.begin();
+	auto le = lset.end();
+	auto rb = rset.begin();
+	auto re = rset.end();
+	intersect_task<so,rhs>( lb, le, rb, re, out );
+    }
+    
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	return intersect_task<so,true>( lset, rset, out );
+    }
+
 };
 
 struct adaptive_intersect {
