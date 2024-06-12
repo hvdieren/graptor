@@ -2357,6 +2357,26 @@ struct something {
 
 };
 
+struct MC_intersect {
+    template<set_operation so,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Collector & out ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 ) {
+	    out.template remainder<true>( lset.size(), rset.size() );
+	    return;
+	}
+
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> )
+	    return hash_vector::template apply<so>( lset, rset, out );
+	else
+	    return merge_vector_jump::template apply<so>( lset, rset, out );
+    }
+};
+
 struct adaptive_intersect {
     template<set_operation so,
 	     typename LSet, typename RSet, typename Collector>
