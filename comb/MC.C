@@ -243,6 +243,7 @@ public:
 
     void reset() {
 	m_best = m_degeneracy > 0 ? 1 : 0;
+	std::lock_guard<std::mutex> guard( m_mutex );
 	m_max_clique.clear();
     }
 
@@ -272,6 +273,8 @@ public:
 
     // Modifies m_max_clique to adjust sort order
     std::ostream & report( std::ostream & os ) {
+	std::lock_guard<std::mutex> guard( m_mutex );
+
 	os << "Maximum clique size: " << m_best.load()
 	   << " from top-vertex " << m_max_clique[0]
 	   << "\n";
@@ -302,6 +305,10 @@ public:
 private:
     template<typename It>
     void update_best( size_t s, VID top_v, It && begin, It && end ) {
+	// m_max_clique requires mutex; so may remove atomicity from
+	// m_best
+	std::lock_guard<std::mutex> guard( m_mutex );
+
 	size_t prior = m_best.load( std::memory_order_relaxed );
 	while( s > prior )  {
 	    if( m_best.compare_exchange_weak(
@@ -337,6 +344,7 @@ private:
     std::array<std::atomic<size_t>,filter_reason_num> m_reason;
     timer m_timer;
     const VID * m_order; //!< to translate IDs back to input file IDs
+    std::mutex m_mutex;
     std::vector<VID> m_max_clique; //!< max clique contents, not thread-safe
 };
 
@@ -3350,12 +3358,12 @@ int main( int argc, char *argv[] ) {
     if( heuristic == 1 ) {
 	// Heuristic 1: explore all vertices in a greedy manner, finding one
 	// clique per vertex. Traverse from high to low degeneracy.
-	for( VID w=0; w < n; ++w ) {
+	// for( VID w=0; w < n; ++w ) {
+	parallel_loop( (VID)0, (VID)n, (VID)1, [&]( VID w ) {
 	    VID v = n - 1 - w;
-	    heuristic_search( H, E, v, remap_coreness.get() );
-	    if( !E.is_feasible( remap_coreness[v], fr_outer ) )
-		break;
-	}
+	    if( E.is_feasible( remap_coreness[v], fr_outer ) )
+		heuristic_search( H, E, v, remap_coreness.get() );
+	} );
 	std::cout << "heuristic 1: " << tm.next() << "\n";
     } else if( heuristic == 2 ) {
 #if SORT_ORDER >= 4
@@ -3365,15 +3373,14 @@ int main( int argc, char *argv[] ) {
 	    VID c = degeneracy - cc;
 	    VID c_up = histo[c+1];
 	    VID c_lo = histo[c];
-	    if( c_up == c_lo )
-		continue;
+	    if( c_up != c_lo ) {
+		VID v = c_lo;
+		if( E.is_feasible( c+1, fr_outer ) )
+		    heuristic_search( H, E, v, remap_coreness.get() );
 
-	    VID v = c_lo;
-	    if( E.is_feasible( c+1, fr_outer ) )
-		heuristic_search( H, E, v, remap_coreness.get() );
-
-	    // if( !E.is_feasible( c+1, fr_outer ) )
-	    // break;
+		// if( !E.is_feasible( c+1, fr_outer ) )
+		// break;
+	    }
 	} );
 	std::cout << "heuristic 2: " << tm.next() << "\n";
 #else
@@ -3412,21 +3419,20 @@ int main( int argc, char *argv[] ) {
 #endif
 	VID c_up = histo[c+1];
 	VID c_lo = histo[c];
-	if( c_up == c_lo )
-	    continue;
-
-	VID v = c_lo;
-	// std::cout << "c=" << c << " v=" << v
-	// << " deg=" << H.getDegree( v )
-	// << " rho=" << remap_coreness[v]
-	// << "\n";
-	if( E.is_feasible( c+1, fr_outer ) )
-	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	if( c_up != c_lo ) {
+	    VID v = c_lo;
+	    // std::cout << "c=" << c << " v=" << v
+	    // << " deg=" << H.getDegree( v )
+	    // << " rho=" << remap_coreness[v]
+	    // << "\n";
+	    if( E.is_feasible( c+1, fr_outer ) )
+		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 
 // #if ( TRAVERSAL_ORDER & 1 ) != 0
-	// if( !E.is_feasible( c+1, fr_outer ) )
-	//     break;
+	    // if( !E.is_feasible( c+1, fr_outer ) )
+	    //     break;
 // #endif
+	}
     } );
 	    
     for( VID cc=0; cc <= degeneracy; ++cc ) { // decreasing degeneracy
@@ -3448,7 +3454,7 @@ int main( int argc, char *argv[] ) {
 	    break;
 #endif
 	// for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
-	parallel_loop( c_lo, c_cup, (VID)1, [&]( VID w ) {
+	parallel_loop( c_lo, c_up, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 2 ) == 0
 	    VID v = w;
 #else
