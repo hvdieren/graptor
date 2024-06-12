@@ -9,6 +9,7 @@
 #include "graptor/container/range_iterator.h"
 #include "graptor/container/generic_edge_iterator.h"
 #include "graptor/container/difference_iterator.h"
+#include "graptor/container/array_slice.h"
 
 namespace graptor {
 
@@ -46,6 +47,14 @@ public:
     EID * const getIndex() const { return m_index.get(); }
     VID * getEdges() { return m_edges.get(); }
     VID * const getEdges() const { return m_edges.get(); }
+    VID getDegree( VID v ) const { return m_index[v+1] - m_index[v]; }
+
+    const VID * get_neighbours( VID v ) const {
+	return &m_edges[m_index[v]];
+    }
+    auto get_neighbours_set( VID v ) const {
+	return make_array_slice( &m_edges[m_index[v]], &m_edges[m_index[v+1]] );
+    }
 
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
     vertex_iterator vbegin() const { return vertex_iterator( 0 ); }
