@@ -1024,6 +1024,78 @@ private:
     VID start_pos;
 };
 
+template<typename lVID, typename lEID>
+class GraphBuilderInduced<graptor::graph::GraphCSxDepth<lVID,lEID>> {
+public:
+    template<typename gVID, typename gEID>
+    GraphBuilderInduced(
+	const graptor::graph::GraphCSx<gVID,gEID> & G,
+	const lVID * cut,
+	lVID num_cut ) {
+	gVID n = G.numVertices();
+	lVID ns = num_cut;
+
+	auto cut_slice = graptor::make_array_slice( cut, cut+num_cut );
+
+	// Count induced edges
+	std::vector<lEID> tmp_index( ns+1 );
+	for( lVID p=0; p < ns; ++p ) {
+	    VID v = cut[p];
+
+	    // Degree of vertex
+	    lVID deg = graptor::set_operations<graptor::MC_intersect>::
+		intersect_size_ds( cut_slice, G.get_neighbours_set( v ) );
+
+	    tmp_index[p] = deg;
+
+	    assert( deg != 0 ); // because of components
+	}
+	std::exclusive_scan( &tmp_index[0], &tmp_index[ns+1],
+			     &tmp_index[0], 0 );
+
+	// Construct selected graph
+	// Edges: complement, not including diagonal
+	lEID ms = tmp_index[ns];
+	new ( &S ) graptor::graph::GraphCSxDepth(
+	    ns, ms /*, numa_allocation_unbound()*/ );
+	lEID * index = S.getIndex();
+	lVID * edges = S.getEdges();
+	lVID * depth = S.getDepth();
+	lVID * degree = S.getDegree();
+
+	// Set up index array
+	std::copy( &tmp_index[0], &tmp_index[ns+1], index );
+	index[ns] = ms;
+
+	// Set edges
+	for( lVID vs=0; vs < ns; ++vs ) {
+	    gVID v = cut[vs];
+	    lEID e = index[vs];
+	    const gVID * gedges = G.get_neighbours( v );
+	    gVID deg = G.getDegree( v );
+	    lVID le = 0;
+
+	    for( gVID ge=0; ge < deg; ++ge ) {
+		lVID u = gedges[ge];
+		while( le != ns && cut[le] < u )
+		    ++le;
+		assert( le <= ns || cut[le] >= u );
+		if( le < ns && u == cut[le] )
+		    edges[e++] = le;
+	    }
+	    assert( e == index[vs+1] );
+
+	    degree[vs] = index[vs+1] - index[vs];
+	    depth[vs] = S.initial_depth;
+	}
+    }
+
+    auto & get_graph() { return S; }
+
+private:
+    graptor::graph::GraphCSxDepth<lVID,lEID> S;
+};
+
 /*======================================================================*
  * Induced subgraph and complement builder
  *======================================================================*/
@@ -1167,6 +1239,75 @@ public:
 
 private:
     graptor::graph::GraphCSxDepth<lVID,lEID> S;
+};
+
+template<typename lVID, typename lEID>
+class GraphBuilderInducedComplement<
+    graptor::graph::GraphCSx<lVID,lEID>> {
+public:
+    template<typename HGraph>
+    GraphBuilderInducedComplement(
+	const HGraph & G,
+	const PSet<VID> & pset ) {
+	using gVID = typename HGraph::VID;
+	using gEID = typename HGraph::EID;
+	
+	gVID n = G.numVertices();
+	lVID ns = pset.get_fill();
+
+	// Count induced edges
+	std::vector<lEID> tmp_index( ns+1 );
+	for( lVID p=0; p < ns; ++p ) {
+	    VID v = pset.at( p );
+
+	    // Degree of vertex
+	    lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+
+	    tmp_index[p] = ns - 1 - deg;
+
+	    std::cout << "cutout p=" << p << " v=" << v << " deg=" << tmp_index[p] << "\n";
+	}
+	std::exclusive_scan( &tmp_index[0], &tmp_index[ns+1],
+			     &tmp_index[0], 0 );
+
+	// Construct selected graph
+	// Edges: complement, not including diagonal
+	lEID ms = tmp_index[ns];
+	new ( &S ) graptor::graph::GraphCSx(
+	    ns, ms /*, numa_allocation_unbound()*/ );
+	lEID * index = S.getIndex();
+	lVID * edges = S.getEdges();
+
+	// Set up index array
+	std::copy( &tmp_index[0], &tmp_index[ns+1], index );
+	index[ns] = ms;
+
+	// Set edges
+	for( lVID vs=0; vs < ns; ++vs ) {
+	    gVID v = pset.at( vs );
+	    lEID e = index[vs];
+	    const gVID * gedges = G.get_neighbours( v );
+	    gVID deg = G.getDegree( v );
+	    gVID ge = 0, gee = deg;
+
+	    for( gVID us=0; us < ns; ++us ) {
+		lVID u = pset.at( us );
+		while( ge != gee && gedges[ge] < u )
+		    ++ge;
+		assert( ge == gee || gedges[ge] >= u );
+		if( ( ge == gee || u != gedges[ge] )
+		    && us != vs ) // no self-edges
+		    edges[e++] = us;
+	    }
+	    assert( ge == gee || ge == gee-1 );
+	    assert( e == index[vs+1] );
+	}
+    }
+
+    auto & get_graph() { return S; }
+
+private:
+    graptor::graph::GraphCSx<lVID,lEID> S;
 };
 
 
@@ -1587,7 +1728,7 @@ bool leaf_vertex_cover(
     std::vector<lVID> cutout;
     cutout.reserve( n_remain );
     lVID nh = H.get_num_vertices();
-    std::cout << "nh=" << nh << " dp=" << H.get_cur_depth() << "\n";
+    // std::cout << "nh=" << nh << " dp=" << H.get_cur_depth() << "\n";
     for( lVID v=0; v < nh; ++v )
 	if( H.getDegree( v ) > 0 ) {
 	    cutout.push_back( v );
@@ -1831,6 +1972,362 @@ vertex_cover_vc3( GraphType & G,
     //       actually, look at vertices with degree > 1 (paths/cycles)?
 }
 
+template<typename lVID>
+lVID cc_find( lVID v, lVID * label ) {
+    lVID u = label[v];
+    while( v != u ) {
+	label[v] = label[u];
+	v = u;
+	u = label[v];
+    }
+    return u;
+}
+
+template<typename lVID, typename Fn>
+void cc_union( lVID u, lVID v, Fn && fn, lVID * label ) {
+    lVID x = cc_find( u, label );
+    lVID y = cc_find( v, label );
+
+    // Already in same tree?
+    if( x == y )
+	return;
+
+    // Vertex with highest degree goes on top, tie-breaker is lexicographic
+    // ordering. Swap such that x goes on top.
+    if( fn( x, y ) ) // does y go on top of x?
+	label[x] = y;
+    else
+	label[y] = x;
+}
+
+/*! Find connected components
+ *
+ * This is a sequential implementation using union-find
+ */
+template<typename lVID, typename lEID, typename GraphTy>
+lVID
+connected_components( const GraphTy & G, std::vector<lVID> & label ) {
+    lVID n = G.numVertices();
+    
+    // Initialise single-node trees
+    std::iota( label.begin(), label.end(), 0 );
+
+    // Make pass over all edges, merging trees for end-points of each edge
+    // Ignore any erased edges; we assume none have been erased yet.
+    const lEID * const index = G.getIndex();
+    const lVID * const edges = G.getEdges();
+    lEID e = 0;
+    for( lVID v=0; v < n; ++v ) {
+	lEID ee = index[v+1];
+	for( ; e < ee; ++e ) {
+	    // Use symmetry of graph to process each edge once.
+	    if( v <= edges[e] ) {
+		e = ee;
+		break; // break assuming vertices sorted in increasing manner
+	    }
+	    
+	    // Perform union operation
+	    cc_union( v, edges[e], [=]( lVID x, lVID y ) {
+		lVID deg_x = index[x+1] - index[x];
+		lVID deg_y = index[y+1] - index[y];
+		return deg_x < deg_y || ( deg_x == deg_y && x < y );
+	    }, &label[0] );
+	}
+    }
+
+    lVID nwcc = 0;
+    for( lVID v=0; v < n; ++v )
+	if( cc_find( v, &label[0] ) == v )
+	    ++nwcc;
+
+    return nwcc;
+}
+
+template<typename lVID, typename lEID>
+bool
+find_min_vertex_cover( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
+		       lVID & csize,
+		       lVID * cover ) {
+    lVID cn = G.numVertices();
+    lEID cm = G.numEdges();
+
+    // If no edges remain after pruning, then cover has size 0 and
+    // clique has size cn.
+    if( cm == 0 )
+	return true;
+
+    // If one edge remains, cover has size 1
+    if( cm == 1 ) {
+	cover[csize++] = 0; // any vertex
+	return true;
+    }
+
+    constexpr lVID c = 1;
+    return vertex_cover_vc3<false>( G, cn, c, csize, cover );
+}
+
+template<typename lVID, typename lEID>
+bool
+find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
+				   lVID k_max, // we know a cover with size k_max exists
+				   lVID & csize,
+				   lVID * cover ) {
+    lVID cn = G.numVertices();
+    lEID cm = G.numEdges();
+
+    // If no edges remain after pruning, then cover has size 0 and
+    // clique has size cn.
+    if( cm == 0 )
+	return true;
+
+    // If one edge remains, cover has size 1
+    if( cm == 1 ) {
+	cover[csize++] = 0; // any vertex
+	return true;
+    }
+
+    constexpr lVID c = 1;
+    std::vector<lVID> cur_cover( cn );
+    lVID cur_size = 0;
+
+    timer tm;
+    tm.start();
+
+    const lVID k_prior = k_max;
+    lVID k_up = k_prior - 1;
+    /* TODO: the minimum size of a vertex cover is at least half the number
+     *       of vertices with non-zero degree (?) 
+     * Assumption mentioned by Chen and Kanj in "On Approximating Minimum
+     * Vertex Cover for Graphs with Perfect Matching"
+     * Assuming graph G is a connected component, then there are no zero-degree
+     * vertices (as previously checked this is not a singleton component).
+     */
+    lVID k_lo = cn / 2; // lower bound, round down
+    lVID k_best_size = k_prior;
+    lVID k = k_up;
+    bool first_attempt = true;
+    while( true ) {
+	constexpr lVID c = 1;
+	cur_size = 0;
+	bool any = vertex_cover_vc3<true>( G, k, c, cur_size, &cur_cover[0] );
+	if( true || verbose ) {
+	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
+		      << k << ',' << k_up << "] bs=" << cur_size
+		      << " ok=" << any
+		      << ' ' << tm.next()
+		      << "\n";
+	}
+	if( any ) {
+	    k_best_size = cur_size;
+	    // in case we find a better cover than requested
+	    if( k > k_best_size )
+		k = k_best_size;
+	    std::copy( &cur_cover[0], &cur_cover[cur_size], cover );
+	}
+
+	// Reduce range
+	if( any ) // k too high
+	    k_up = k;
+	else
+	    k_lo = k;
+	if( k_up <= k_lo+1 )
+	    break;
+
+	// Determine next k
+	// On the first attempt, we prefer to drop k just by one as it often
+	// fails at -1. After that, we perform binary search.
+	if( first_attempt ) {
+	    first_attempt = false;
+	    k = k_up - 1;
+	} else
+	    k = ( k_up + k_lo ) / 2;
+    }
+
+    return k_best_size < k_max;
+}
+
+template<typename T, typename Fn>
+T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
+    size_t k = 0;
+    for( T i=0; i < n; ++i ) {
+	if( b != e && *b == i ) {
+	    ++b;
+	} else {
+	    *x++ = fn( i );
+	    ++k;
+	}
+    }
+    return k;
+}
+
+template<typename lVID, typename lEID, typename HGraphTy>
+lVID
+clique_via_vc3_cc( const HGraphTy & G,
+		   lVID v,
+		   lVID degeneracy,
+		   MC_CutOutEnumerator & E,
+		   int depth ) {
+    PSet<VID> pset = PSet<VID>::create_full_set( G );
+    lVID ce = pset.size();
+    
+    // TODO: potentially apply more filtering using up-to-date best
+    //       might do conditionally on improvement of best since
+    //       previous cut-out
+    // Note: when called from top-level, the pset contains all vertices and
+    //       no further filtering is applied.
+    assert( ce == pset.get_fill() );
+    // GraphBuilderInducedComplement<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
+    GraphBuilderInducedComplement<graptor::graph::GraphCSx<lVID,lEID>>
+	cbuilder( G, pset );
+    auto & CG = cbuilder.get_graph();
+    lVID cn = CG.numVertices();
+    lEID cm = CG.numEdges();
+
+    // If no edges remain after pruning, then cover has size 0 and
+    // clique has size cn.
+    if( cm == 0 ) {
+	E.record( depth+cn, pset.begin(), pset.end() );
+	return depth+cn; // return true;
+    }
+
+    // Check if improving the best known clique is impossible
+    lVID bc = E.get_max_clique_size();
+    if( bc >= cn + depth )
+	return 0; // return false;
+
+    // Calculate weakly connected components
+    std::vector<lVID> wcc_label( cn );
+    lVID nwcc = connected_components<lVID,lEID>( CG, wcc_label );
+    std::cout << "number of components: " << nwcc << "\n";
+
+    std::vector<lVID> wcc_root( nwcc ), wcc_size( nwcc ), wcc_id( cn );
+    lVID cur = 0;
+    for( lVID v=0; v < cn; ++v ) {
+	lVID root = cc_find( v, &wcc_label[0] );
+	if( root == v ) {
+	    wcc_root[cur] = v;
+	    wcc_size[cur] = 1;
+	    wcc_id[v] = cur++;
+	}
+    }
+    for( lVID v=0; v < cn; ++v ) {
+	lVID root = cc_find( v, &wcc_label[0] );
+	if( root != v )
+	    ++wcc_size[wcc_id[root]];
+    }
+
+    assert( cur == nwcc );
+
+    lVID tot = 0;
+    for( lVID cc=0; cc < nwcc; ++cc )
+	tot += wcc_size[cc];
+
+    assert( tot == cn );
+
+    // Sort components by size
+    paired_sort( wcc_size.begin(), wcc_size.end(), wcc_root.begin() );
+    for( lVID cc=0; cc < nwcc; ++cc )
+	wcc_id[wcc_root[cc]] = cc;
+
+    for( lVID cc=0; cc < nwcc; ++cc ) {
+	std::cout << "wcc " << cc << ": root=" << wcc_root[cc]
+		  << " size=" << wcc_size[cc]
+		  << " root_deg=" << CG.getDegree( wcc_root[cc] )
+		  << "\n";
+    }
+
+    std::vector<lVID> best_clique( cn );
+    std::vector<lVID> cover( cn );
+    lVID best_size = 0;
+
+    // Solve components one by one
+    for( lVID cc=0; cc < nwcc; ++cc ) {
+	if( wcc_size[cc] == 1 ) {
+	    // An isolated vertex - nothing to add to vertex cover.
+	    // Vertex goes into clique
+	    best_clique[best_size++] = wcc_root[cc];
+	} else if( wcc_size[cc] == 2 ) {
+	    // A graph with 2 vertices which are known to be connected
+	    // has precisely one vertex in the minimum vertex cover.
+	    // Pick either. The other becomes part of the clique.
+	    best_clique[best_size++] = wcc_root[cc];
+	} else {
+	    std::cout << "processing wcc " << cc << ": root=" << wcc_root[cc]
+		      << " size=" << wcc_size[cc]
+		      << " depth=" << depth
+		      << " cn=" << cn
+		      << " bc=" << bc
+		      << " best_size=" << best_size
+		      << "\n";
+	    // Create cutout of graph representing this component
+	    std::vector<lVID> cut;
+	    cut.reserve( wcc_size[cc] );
+	    for( lVID v=0; v < cn; ++v )
+		if( cc_find( v, &wcc_label[0] ) == wcc_root[cc] )
+		    cut.push_back( v );
+
+	    assert( cut.size() == wcc_size[cc] );
+	    
+	    GraphBuilderInduced<graptor::graph::GraphCSxDepth<lVID,lEID>>
+		ccbuilder( CG, &cut[0], cut.size() );
+	    graptor::graph::GraphCSxDepth<lVID,lEID> & CCG =
+		ccbuilder.get_graph();
+
+	    // Find minimum vertex cover
+	    lVID csize = 0;
+	    
+	    // We know of a clique of size bc. We currently have assembled
+	    // a clique of size depth + best_size. We can at best make a clique
+	    // of size depth + best_size + wcc_size[cc]. Check if we can
+	    // already improve upon the best known clique with the current
+	    // component.
+	    bool fnd;
+	    if( cc == nwcc-1
+		&& depth + best_size <= bc
+		&& depth + best_size + wcc_size[cc] > bc ) {
+		// This component may result in increased clique size.
+		// Solve using existential queries as we assume improvement
+		// won't be possible.
+		lVID oc = depth + best_size + wcc_size[cc];
+		lVID k_known = std::max( wcc_size[cc], (lVID)( oc - bc ) );
+		std::cout << "existential solve k_known=" << k_known << "\n";
+		fnd = find_min_vertex_cover_existential<lVID,lEID>(
+		    CCG, k_known,
+		    csize, &cover[0] );
+	    } else {
+		// Solving this component won't affect best clique size yet.
+		std::cout << "absolute solve\n";
+		fnd = find_min_vertex_cover<lVID,lEID>(
+		    CCG, csize, &cover[0] );
+	    }
+	    // If we cannot identify any minimum vertex cover, then we
+	    // fail overall.
+	    if( !fnd )
+		return 0;
+
+	    // Translate IDs
+	    best_size += complement_set( CCG.get_num_vertices(),
+					 &cover[0], &cover[csize],
+					 &best_clique[best_size],
+					 [&]( lVID v ) { return cut[v]; } );
+	    // for( lVID i=0; i < csize; ++i )
+	    // best_cover[best_size+i] = cut[best_cover[best_size+i]];
+	    // best_size += csize;
+	}
+    }
+	    
+    if( E.is_feasible( depth + best_size, fr_cover ) ) {
+	if( true || verbose )
+	    std::cout << "clique_via_vc3: max_clique: "
+		      << ( depth + best_size )
+		      << " E.best: " << bc << "\n";
+	E.record( depth + best_size, best_clique.begin(),
+		  std::next( best_clique.begin(), best_size ) );
+    }
+
+    return depth + cn - best_size;
+}
+    
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
 clique_via_vc3( const HGraphTy & G,
@@ -1854,9 +2351,6 @@ clique_via_vc3( const HGraphTy & G,
     lVID cn = CG.numVertices();
     lEID cm = CG.numEdges();
 
-    for( lVID v=0; v < cn; ++v )
-	assert( CG.getDegree(v) + G.getDegree(v) + 1 == cn );
-
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
@@ -1864,13 +2358,14 @@ clique_via_vc3( const HGraphTy & G,
 	return depth+cn; // return true;
     }
 
-    lVID best_size = 0;
-    std::vector<lVID> cover( cn );
-    std::vector<lVID> best_cover( cn );
-
+    // Check if improving the best known clique is impossible
     lVID bc = E.get_max_clique_size();
     if( bc >= cn + depth )
 	return 0; // return false;
+
+    std::vector<lVID> cover( cn );
+    std::vector<lVID> best_cover( cn );
+    lVID best_size = 0;
 
     // Set initial k on the basis of best known clique by E
     // May need two tries: once with pessimistic but restrictive k asking
@@ -2410,7 +2905,7 @@ void mc_top_level_vc(
     stats.record_genbuild( av_vc, tm.next() );
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-    if( HG.get_num_vertices() < VID(1) << 16 ) {
+    if( HG.get_num_vertices() < (VID(1) << 16) ) {
 	clique_via_vc3<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
     } else {
 	clique_via_vc3<VID,EID>( HG, v, degeneracy, CE, 1 );
@@ -2480,25 +2975,27 @@ void mc_top_level(
     cut.filter( [&]( VID u ) {
 	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
 	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
-	VID d = graptor::set_operations<graptor::adaptive_intersect_filter>
+	VID d = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
 		best-1 ); // exceed checks >, we need >= best
-	m_est += d;
+	if( d >= best )
+	    m_est += d;
 	return d >= best;
     }, best );
 
     stats.record_filter( tm.next() );
 
+    VID num = cut.get_num_vertices();
+
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out. A cut-out of size S can
     // lead to a S+1 clique when including the top-level vertex.
-    // Check for empty cut-out just in case best is zero.
-    if( cut.get_num_vertices() < best || cut.get_num_vertices() == 0 )
+    // Check for empty cut-out just in case best is zero. Strictly speaking,
+    // should log 1-clique in case num == 0.
+    if( num < best || num == 0 )
 	return;
-
-    VID num = cut.get_num_vertices();
 
 #if !ABLATION_DISABLE_TOP_DENSE
     VID nlg = get_size_class( num );
@@ -2624,7 +3121,7 @@ void heuristic_expand(
 
     std::vector<VID> ins( std::distance( P_begin, P_end-1 ) );
     VID * out = &ins[0];
-    size_t sz = graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
+    size_t sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
 	s, v_adj, out ) - out;
 
     heuristic_expand( H, &R_new, v, &ins[0], &ins[sz], E, depth+1 );
@@ -2863,7 +3360,8 @@ int main( int argc, char *argv[] ) {
     } else if( heuristic == 2 ) {
 #if SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
-	for( VID cc=0; cc <= degeneracy; ++cc ) {
+	// for( VID cc=0; cc <= degeneracy; ++cc ) {
+	parallel_loop( (VID)0, degeneracy+1, (VID)1, [&]( VID cc ) {
 	    VID c = degeneracy - cc;
 	    VID c_up = histo[c+1];
 	    VID c_lo = histo[c];
@@ -2871,11 +3369,12 @@ int main( int argc, char *argv[] ) {
 		continue;
 
 	    VID v = c_lo;
-	    heuristic_search( H, E, v, remap_coreness.get() );
+	    if( E.is_feasible( c+1, fr_outer ) )
+		heuristic_search( H, E, v, remap_coreness.get() );
 
-	    if( !E.is_feasible( c+1, fr_outer ) )
-		break;
-	}
+	    // if( !E.is_feasible( c+1, fr_outer ) )
+	    // break;
+	} );
 	std::cout << "heuristic 2: " << tm.next() << "\n";
 #else
 	std::cerr << "Heuristic 2 not supported if sort order does not "
@@ -2889,21 +3388,23 @@ int main( int argc, char *argv[] ) {
     /* 1. high to low degree order */
     /* 2. low to high degeneracy order */
     /* 3. high to low degeneracy order */
-    for( VID w=0; w < n; ++w ) {
+    // for( VID w=0; w < n; ++w ) {
+    parallel_loop( (VID)0, (VID)n, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID v = w;
 #else
 	VID v = n-1-w;
 #endif
 	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
-    }
+    } );
 
 #elif SORT_ORDER == 4 || SORT_ORDER == 5
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, decreasing degree. */
-    for( VID cc=0; cc <= degeneracy; ++cc ) {
+    // for( VID cc=0; cc <= degeneracy; ++cc ) {
+    parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID c = cc;
 #else
@@ -2919,13 +3420,14 @@ int main( int argc, char *argv[] ) {
 	// << " deg=" << H.getDegree( v )
 	// << " rho=" << remap_coreness[v]
 	// << "\n";
-	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	if( E.is_feasible( c+1, fr_outer ) )
+	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 
-#if ( TRAVERSAL_ORDER & 1 ) != 0
-	if( !E.is_feasible( c+1, fr_outer ) )
-	    break;
-#endif
-    }
+// #if ( TRAVERSAL_ORDER & 1 ) != 0
+	// if( !E.is_feasible( c+1, fr_outer ) )
+	//     break;
+// #endif
+    } );
 	    
     for( VID cc=0; cc <= degeneracy; ++cc ) { // decreasing degeneracy
 #if ( TRAVERSAL_ORDER & 1 ) == 0
@@ -2945,7 +3447,8 @@ int main( int argc, char *argv[] ) {
 	if( !E.is_feasible( c+1, fr_outer ) ) // decreasing degeneracy -> done
 	    break;
 #endif
-	for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
+	// for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
+	parallel_loop( c_lo, c_cup, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 2 ) == 0
 	    VID v = w;
 #else
@@ -2955,10 +3458,11 @@ int main( int argc, char *argv[] ) {
 	    // << " deg=" << H.getDegree( v )
 	    // << " rho=" << remap_coreness[v]
 	    // << "\n";
-	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
-	    if( !E.is_feasible( c+1, fr_outer ) )
-		break;
-	}
+	    if( E.is_feasible( c+1, fr_outer ) )
+		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	    //if( !E.is_feasible( c+1, fr_outer ) )
+	    //break;
+	} );
     }
 #else
 #error "SORT_ORDER must be in range [0,5]"
