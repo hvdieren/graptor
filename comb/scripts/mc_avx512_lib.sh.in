@@ -57,10 +57,18 @@ function for_gg()
     local is_avx512f=0
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
-    for r in 0 ; do
-	run intersect_ds__op2_vl16 $graph_path $g 1 $commit $r 1024 0
-	run intersect_ds__op0_vl16 $graph_path $g 1 $commit $r 1024 0
-	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
+#    for r in 0 ; do
+#	run intersect_ds__op2_vl16 $graph_path $g 1 $commit $r 1024 0
+#	run intersect_ds__op0_vl16 $graph_path $g 1 $commit $r 1024 0
+#	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
+#    done
+
+    for r in `seq 0 2` ; do
+	for s in `seq 0 5` ; do
+	    for t in `seq 0 3` ; do
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g $threads $commit $r 1024 2
+	    done
+	done
     done
 
 #    for r in `seq 0 2` ; do

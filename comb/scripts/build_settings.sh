@@ -262,6 +262,12 @@ function get_flags() {
     if [[ "$v" == *_itrim* ]] ; then
 	flags["INTERSECTION_TRIM"]=1
     fi
+    if [[ "$v" == *_sort* ]] ; then
+	flags["SORT_ORDER"]=`echo "${v}_" | sed -e 's/^.*_sort\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
+    if [[ "$v" == *_trav* ]] ; then
+	flags["TRAVERSAL_ORDER"]=`echo "${v}_" | sed -e 's/^.*_trav\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done
 
