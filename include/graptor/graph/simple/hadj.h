@@ -280,26 +280,31 @@ public:
 	EID h = 0;
 	parallel_loop( VID(0), n, [&]( VID v ) {
 	    EID deg = gindex[v+1] - gindex[v];
-	    index[v] = deg == 0 ? 0 : get_hash_slots( deg );
+	    index[v] = /*deg == 0 ? 0 :*/ get_hash_slots( deg );
 	    if constexpr ( dual_rep )
-		index[v] *= 2;
+		index[v] += ( deg == 0 ? 0 : index[v] );
 	} );
 	index[n] = sequence::plusScan( index, index, n );
 
 	new ( &m_storage ) mm::buffer<VID>( index[n], alloc );
 	VID * hashes = m_storage.get();
 	parallel_loop( VID(0), n, [&]( VID v ) {
+	    EID deg = gindex[v+1] - gindex[v];
 	    VID s = index[v+1] - index[v];
+	    VID t = dual_rep && deg != 0 ? s/2 : 0;
 	    if constexpr ( dual_rep )
-		s /= 2;
+		if( deg != 0 )
+		    s /= 2;
 	    VID logs = s == 0 ? 0 : rt_ilog2( s );
 	    hash_set_type & a = m_adjacency[v];
-	    new ( &a ) hash_set_type( &hashes[index[v]+(dual_rep?s:0)], 0, logs );
+	    new ( &a ) hash_set_type( &hashes[index[v]+t], 0, logs );
 	    // a.clear(); // initialise to invalid element
 	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
-	    if constexpr ( dual_rep )
+	    if constexpr ( dual_rep ) {
 		std::copy( &gedges[gindex[v]], &gedges[gindex[v+1]],
 			   &hashes[index[v]] );
+		assert( gindex[v] == gindex[v+1] || hashes[index[v]] != ~(VID)0 );
+	    }
 	} );
 
 	index_buf.del();
