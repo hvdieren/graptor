@@ -114,6 +114,13 @@ public:
 	m_edges.del();
     }
 
+    void complete_init() {
+	m_n_remain = 0;
+	for( lVID v=0; v < m_n; ++v )
+	    if( m_degree[v] > 0 )
+		++m_n_remain;
+    }
+
     // capitalised interface
     lVID numVertices() const { return m_n; }
     lEID numEdges() const { return m_cur_m; }
