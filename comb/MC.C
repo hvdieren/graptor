@@ -64,13 +64,14 @@
 /* (SORT,TRAVERSAL) execution time findings (<: clearly faster;
  * ~< sometimes marginally faster):
  * (4,1) ~< (4,3) < (5,1)
+ * Preferred on basis of completer measurement: (4,3)
  */
 #ifndef SORT_ORDER
 #define SORT_ORDER 4
 #endif
 
 #ifndef TRAVERSAL_ORDER
-#define TRAVERSAL_ORDER 1
+#define TRAVERSAL_ORDER 3
 #endif
 
 #ifndef PAPI_REGION
@@ -317,8 +318,10 @@ private:
 		    std::memory_order_relaxed ) ) {
 		std::cout << "max_clique: " << s << " at "
 			  << m_timer.elapsed()
-			  << " top-level vertex: " << top_v
-			  << '\n';
+			  << " top-level vertex: " << top_v;
+		if( m_order != nullptr )
+		    std::cout << " (" << m_order[top_v] << ')';
+		std::cout << '\n';
 
 		// TODO: concurrency concerns!
 		m_max_clique.clear();
@@ -1096,6 +1099,8 @@ public:
 	    degree[vs] = index[vs+1] - index[vs];
 	    depth[vs] = S.initial_depth;
 	}
+
+	S.complete_init();
     }
 
     auto & get_graph() { return S; }
@@ -1241,6 +1246,8 @@ public:
 	    degree[vs] = index[vs+1] - index[vs];
 	    depth[vs] = S.initial_depth;
 	}
+
+	S.complete_init();
     }
 
     auto & get_graph() { return S; }
@@ -1272,8 +1279,6 @@ public:
 	    lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
 
 	    tmp_index[p] = ns - 1 - deg;
-
-	    std::cout << "cutout p=" << p << " v=" << v << " deg=" << tmp_index[p] << "\n";
 	}
 	std::exclusive_scan( &tmp_index[0], &tmp_index[ns+1],
 			     &tmp_index[0], 0 );
@@ -2170,7 +2175,7 @@ T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
 
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
-clique_via_vc3_cc( const HGraphTy & G,
+clique_via_vc3( const HGraphTy & G,
 		   lVID v,
 		   lVID degeneracy,
 		   MC_CutOutEnumerator & E,
@@ -2237,12 +2242,14 @@ clique_via_vc3_cc( const HGraphTy & G,
     for( lVID cc=0; cc < nwcc; ++cc )
 	wcc_id[wcc_root[cc]] = cc;
 
+/*
     for( lVID cc=0; cc < nwcc; ++cc ) {
 	std::cout << "wcc " << cc << ": root=" << wcc_root[cc]
 		  << " size=" << wcc_size[cc]
 		  << " root_deg=" << CG.getDegree( wcc_root[cc] )
 		  << "\n";
     }
+*/
 
     std::vector<lVID> best_clique( cn );
     std::vector<lVID> cover( cn );
@@ -2338,7 +2345,7 @@ clique_via_vc3_cc( const HGraphTy & G,
     
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
-clique_via_vc3( const HGraphTy & G,
+clique_via_vc3_old( const HGraphTy & G,
 		lVID v,
 		lVID degeneracy,
 		MC_CutOutEnumerator & E,
@@ -3122,17 +3129,22 @@ void heuristic_expand(
 	return;
     }
 
-    VID v = *(P_end-1); // Highest-core vertex is first in sorted list
+    // Assume highest-core vertices have higher vertex ID, at end of list
+    VID v = *(P_end-1);
     const auto & v_adj = H.get_neighbours_set( v );
     clique_set<VID> R_new( v, R );
     graptor::array_slice<VID,size_t> s( P_begin, P_end-1 );
 
-    std::vector<VID> ins( std::distance( P_begin, P_end-1 ) );
+    // TODO: it could be helpful to define also a function intersect_exceed,
+    //       which aborts the intersection if it does not meet a given size.
+    //       Additionally, checking feasibility of depth + size of P seems
+    //       meaningful.
+    std::vector<VID> ins( s.size() );
     VID * out = &ins[0];
     size_t sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
 	s, v_adj, out ) - out;
 
-    heuristic_expand( H, &R_new, v, &ins[0], &ins[sz], E, depth+1 );
+    heuristic_expand( H, &R_new, top_v, &ins[0], &ins[sz], E, depth+1 );
 }
 
 /*! Heuristic search method for maximum clique
@@ -3158,14 +3170,12 @@ void heuristic_search(
 
     // Only interested in vertices that can make a clique larger than th
     VID th = E.get_max_clique_size();
-    for( auto v : adj )
-	if( coreness[v] >= th ) 
-	    pset.push_back( v );
+    for( auto u : adj )
+	if( coreness[u] >= th ) 
+	    pset.push_back( u );
 
-    // Heuristically expand a clique. Assume highest-core vertices have
-    // smaller vertex ID.
-    clique_set<VID> R( v );
-    heuristic_expand( H, &R, v, &pset[0], &pset[pset.size()-1], E, 1 );
+    // Heuristically expand a clique.
+    heuristic_expand( H, nullptr, v, &pset[0], &pset[pset.size()], E, 1 );
 
     stats.record_heuristic( tm.stop() );
 }
