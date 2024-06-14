@@ -209,6 +209,10 @@ struct mask_type_traits<32> {
 			  typename mask_type_traits<vlen/2>::type lo ) {
 	return _kor_mask32( _kshiftli_mask32( hi, vlen/2 ), lo );
     }
+
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
 };
 
 #endif // __AVX512F__

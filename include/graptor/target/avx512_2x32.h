@@ -244,6 +244,9 @@ public:
     static mask_type cmpne( type a, type b, mt_mask ) {
 	return _mm512_cmpneq_epi16_mask( a, b );
     }
+    static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
+	return _mm512_mask_cmpneq_epi16_mask( m, a, b );
+    }
     static bool cmpne( type a, type b, mt_bool ) {
 	mask_type ne = cmpne( a, b, mt_mask() );
 	return ! _kortestz_mask32_u8( ne, ne );
@@ -393,6 +396,33 @@ public:
     static type ternary( type a, type b, type c ) {
 	return _mm512_ternarylogic_epi32( a, b, c, imm8 );
     }
+
+    static mask_type intersect( type a, const member_type * b ) {
+	// This code is claimed to be faster than the vp2intersect instruction
+	// https://arxiv.org/pdf/2112.06342.pdf
+	mask_type m00 = cmpne( a, set1( b[0] ), mt_mask() );
+	mask_type m01 = cmpne( a, set1( b[1] ), mt_mask() );
+	mask_type m02 = cmpne( a, set1( b[2] ), mt_mask() );
+
+	mask_type m03 = cmpne( m00, a, set1( b[3] ), mt_mask() );
+	mask_type m04 = cmpne( m01, a, set1( b[4] ), mt_mask() );
+	mask_type m05 = cmpne( m02, a, set1( b[5] ), mt_mask() );
+	mask_type m06 = cmpne( m03, a, set1( b[6] ), mt_mask() );
+	mask_type m07 = cmpne( m04, a, set1( b[7] ), mt_mask() );
+	mask_type m08 = cmpne( m05, a, set1( b[8] ), mt_mask() );
+	mask_type m09 = cmpne( m06, a, set1( b[9] ), mt_mask() );
+	mask_type m10 = cmpne( m07, a, set1( b[10] ), mt_mask() );
+	mask_type m11 = cmpne( m08, a, set1( b[11] ), mt_mask() );
+	mask_type m12 = cmpne( m09, a, set1( b[12] ), mt_mask() );
+	mask_type m13 = cmpne( m10, a, set1( b[13] ), mt_mask() );
+	mask_type m14 = cmpne( m11, a, set1( b[14] ), mt_mask() );
+	mask_type m15 = cmpne( m12, a, set1( b[15] ), mt_mask() );
+
+	return mask_traits::logical_invert(
+	    mask_traits::logical_and(
+		m13, mask_traits::logical_and( m14, m15 ) ) );
+    }
+ 
  
     static type load( const member_type * a ) {
 	return _mm512_load_si512( a );
