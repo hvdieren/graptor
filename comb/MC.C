@@ -3269,10 +3269,18 @@ int main( int argc, char *argv[] ) {
     // Cleanup remapped graph now; we won't need it any more.
     R.del();
 
-    std::cout << "Sort order check:\n\tcoreness[0]=" << remap_coreness[0]
+    std::cout << "Sort order check:\n\thisto[0]=" << histo[0]
+	      << " histo[1]=" << histo[1]
+	      << " histo[degeneracy]=" << histo[degeneracy]
+	      << "\n\tcoreness[0]=" << remap_coreness[0]
 	      << " coreness[pn-1]=" << remap_coreness[pn-1]
+	      << " coreness[histo[1]]=" << remap_coreness[histo[1]]
+	      << " coreness[histo[degeneracy]]="
+	      << remap_coreness[histo[degeneracy]]
 	      << "\n\tdegree[0]=" << H.getDegree(0)
 	      << " degree[pn-1]=" << H.getDegree(pn-1)
+	      << " degree[histo[1]]=" << H.getDegree(histo[1])
+	      << " degree[histo[degeneracy]]=" << H.getDegree(histo[degeneracy])
 	      << "\n";
 
     std::cout << "Options:"
@@ -3383,6 +3391,9 @@ int main( int argc, char *argv[] ) {
 	    VID c = degeneracy - cc;
 	    VID c_up = histo[c+1];
 	    VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+	    std::swap( c_up, c_lo );
+#endif
 	    if( c_up != c_lo ) {
 		VID v = c_lo;
 		if( E.is_feasible( c+1, fr_outer ) )
@@ -3415,7 +3426,7 @@ int main( int argc, char *argv[] ) {
 	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
     } );
 
-#elif SORT_ORDER == 4 || SORT_ORDER == 5
+#elif SORT_ORDER >= 4 && SORT_ORDER <= 7
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
@@ -3429,6 +3440,9 @@ int main( int argc, char *argv[] ) {
 #endif
 	VID c_up = histo[c+1];
 	VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+	std::swap( c_up, c_lo );
+#endif
 	if( c_up != c_lo ) {
 	    VID v = c_lo;
 	    // std::cout << "c=" << c << " v=" << v
@@ -3444,25 +3458,30 @@ int main( int argc, char *argv[] ) {
 // #endif
 	}
     } );
+    std::cout << "phase 1 (one vertex per degeneracy):" << tm.next() << "\n";
 	    
-    for( VID cc=0; cc <= degeneracy; ++cc ) { // decreasing degeneracy
+    for( VID cc=0; cc <= degeneracy; ++cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID c = cc;
 #else
+	// 4,5: decreasing degeneracy
 	VID c = degeneracy - cc;
 #endif
 	VID c_up = histo[c+1];
 	VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+	std::swap( c_up, c_lo );
+#endif
 	if( c_up == c_lo )
 	    continue;
 	++c_lo; // already did c_lo in preamble
+	if( !E.is_feasible( c+1, fr_outer ) ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
-	if( !E.is_feasible( c+1, fr_outer ) ) // increasing degeneracy -> skip
-	    continue;
+	    continue; // increasing degeneracy -> skip
 #else
-	if( !E.is_feasible( c+1, fr_outer ) ) // decreasing degeneracy -> done
-	    break;
+	    break; // decreasing degeneracy -> skip
 #endif
+	}
 	// for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
 	parallel_loop( c_lo, c_up, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 2 ) == 0
@@ -3481,7 +3500,7 @@ int main( int argc, char *argv[] ) {
 	} );
     }
 #else
-#error "SORT_ORDER must be in range [0,5]"
+#error "SORT_ORDER must be in range [0,7]"
 #endif
 
 #if PAPI_REGION == 1

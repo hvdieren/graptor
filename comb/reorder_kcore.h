@@ -130,6 +130,28 @@ reorder_kcore( const GraphCSx & G,
 	    sort_order_ties( n, K, G.getDegree(), coreness,
 			     order.get(), rev_order.get(), &histo[0],
 			     false, true );
+    } else if constexpr ( sorting_order == 6 ) {
+	histo.resize( K+2 );
+	if( early_pruning )
+	    sort_order_ties_pruned( n, K, G.getDegree(), coreness.get_ptr(),
+				    prune_th,
+				    order.get(), rev_order.get(), &histo[0],
+				    true, false );
+	else
+	    sort_order_ties( n, K, G.getDegree(), coreness,
+			     order.get(), rev_order.get(), &histo[0],
+			     true, false );
+    } else if constexpr ( sorting_order == 7 ) {
+	histo.resize( K+2 );
+	if( early_pruning )
+	    sort_order_ties_pruned( n, K, G.getDegree(), coreness.get_ptr(),
+				    prune_th,
+				    order.get(), rev_order.get(), &histo[0],
+				    true, true );
+	else
+	    sort_order_ties( n, K, G.getDegree(), coreness,
+			     order.get(), rev_order.get(), &histo[0],
+			     true, true );
     } else {
 	static_assert( 0 <= sorting_order && sorting_order <= 5,
 		       "sorting_order must be in range [0,5]" );
