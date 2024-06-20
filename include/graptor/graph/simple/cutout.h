@@ -143,6 +143,17 @@ public:
 	m_num_iset = end - m_iset;
     }
 
+    template<typename FilterFn>
+    NeighbourCutOutDegeneracyOrderFiltered(
+	const lVID * set, lVID num,
+	FilterFn && fn )
+	: m_iset( new lVID[num] ) {
+	// Filter vertices
+	lVID * end = std::copy_if( set, set+num, m_iset,
+				   std::forward<FilterFn>( fn ) );
+	m_num_iset = end - m_iset;
+    }
+
     ~NeighbourCutOutDegeneracyOrderFiltered() {
 	delete[] m_iset;
     }
