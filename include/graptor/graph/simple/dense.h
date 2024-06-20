@@ -871,7 +871,7 @@ public:
 	// every fully-connected vertex is automatically included in clique
 	if( !tr::is_zero( R ) )
 	    depth += get_size( R );
-	mc_iterate( E, R, allP, depth );
+	mc_iterate_colour( E, R, allP, depth );
     }
     
 private:
@@ -1181,6 +1181,244 @@ private:
 	    }
 	}
     }
+
+    // Colour graph induced by P
+    auto induced_graph_colour( row_type P, VID n_collect ) {
+	bitset<Bits> b( P );
+	using sgVID = std::make_signed_t<VID>;
+	std::vector<sgVID> col( m_n );
+	std::vector<uint8_t> histo( Bits );
+	sgVID last_col = 0;
+	row_type fc = tr::setzero();
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+
+	    // Colours used by neighbours
+	    // row_type histo = tr::setzero();
+
+	    // Neighbours in induced subgraph that were visited before
+	    row_type ngh = tr::bitwise_and( P, get_row( v ) );
+	    row_type v_mask = get_himask( v );
+	    ngh = tr::bitwise_andnot( v_mask, ngh );
+	    bitset<Bits> bn( ngh );
+	    sgVID max_h = -1;
+	    // sgVID max_h = 0;
+	    for( auto u : bn ) {
+		histo[col[u]] = uint8_t(1); // highest bit set
+		// histo[col[u]] = uint8_t(0xff); // highest bit set
+		// histo = tr::bitwise_or( histo, create_row( col[u] ) );
+		if( max_h < col[u] )
+		    max_h = col[u];
+	    }
+
+	    // TODO: consider making histo bitset and using alltzcnt for this
+	    //       loop
+	    if( max_h == -1 ) {
+		col[v] = 0;
+	    } else {
+		col[v] = max_h + 1; // if no better colour found
+		VID c = 0;
+		while( c <= max_h ) {
+		    if( histo[c] == 0 ) {
+			col[v] = c;
+			break;
+		    }
+		    histo[c] = uint8_t(0);
+		    ++c;
+		}
+		while( c <= max_h )
+		    histo[c++] = uint8_t(0);
+	    }
+/*
+	    static constexpr size_t VLB = 8; // 16 on AVX512
+	    using trb = vector_type_traits_vl<uint8_t,VLB>;
+	    size_t i;
+	    for( i=0; i <= max_h; i += VLB ) {
+		auto chunk = trb::loadu( &histo[i] );
+		auto mask = ~trb::asmask( chunk );
+		trb::storeu( &histo[i], trb::setzero() );
+		if( mask != 0 ) {
+		    col[v] = _tzcnt_u32( mask ) + ( i & ~(VLB-1) );
+		    break;
+		}
+	    }
+	    for( ; i <= max_h; i += VLB )
+		trb::storeu( &histo[i], trb::setzero() );
+*/
+		
+/*
+	    VID c = target::alltzcnt<sVID,type,VL>::compute( histo );
+	    col[v] = c;
+*/
+
+	    // Track number of colours
+	    if( last_col < col[v] )
+		last_col = col[v];
+	    // Build bit mask of all vertices in n_collect first colours
+	    if( col[v] < n_collect )
+		fc = tr::bitwise_or( fc, I.get_mask() );
+	}
+
+	return std::make_tuple( last_col+1, col, fc );
+    }
+
+    template<typename Enumerate>
+    void mc_iterate_colour(
+	Enumerate && EE,
+	row_type R, row_type P, unsigned int depth ) {
+	if( depth + get_size( P ) < EE.get_max_clique_size() )
+	    return;
+	
+	if( tr::is_zero( P ) ) {
+	    bitset<Bits> b( R );
+	    EE.record( depth, b.begin(), b.end() );
+	    return;
+	}
+
+	VID tol = EE.get_max_clique_size() - depth;
+	auto [ num_col, col, skipv ] = induced_graph_colour( P, tol );
+
+	if( depth + num_col < EE.get_max_clique_size() )
+	    return;
+
+	row_type x = tr::bitwise_andnot( skipv, P );
+
+	auto task = [=,&EE,this]( VID u, row_type u_only ) {
+	    row_type u_ngh = get_row( u );
+	    row_type h = get_himask( u );
+	    row_type u_done = tr::bitwise_andnot( h, x );
+
+	    row_type Pv = tr::bitwise_andnot( u_done, P, u_ngh );
+	    row_type Rv = tr::bitwise_or( R, u_only );
+	    mc_iterate_colour( EE, Rv, Pv, depth+1 );
+	};
+	
+	bitset<Bits> bx( x );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID u = *I;
+	    row_type u_only = I.get_mask();
+	    task( u, u_only );
+	}
+    }
+
+#if 0
+    bool sat_test_viable( row_type P, VID u,
+			  const std::vector<VID> & col, VID num_col ) {
+	using LID = std::make_signed_t<VID>;
+	using CID = std::make_signed_t<EID>;
+	row_type u_only = create_row( u );
+	row_type vertices = tr::bitwise_or( P, u_only );
+	size_t num_vertices = get_size( vertices );
+	size_t induced_edges = calculate_num_edges( vertices );
+	// All induced non-edges
+	size_t hard_clauses =
+	    ( vertices * ( vertices - 1 ) - induced_edges ) / 2;
+	size_t hard_literals = 2 * hard_clauses;
+	// All independent sets
+	size_t soft_clauses = num_col + 1; // +1 for u
+	size_t soft_literals = vertices;
+	size_t num_clauses = hard_clauses + soft_clauses;
+	size_t num_literals = hard_literals + soft_literals;
+	SATClauses<LID,CID> clauses( num_clauses, num_literals );
+
+	LID * cc = &clauses[0];
+	size_t * ci = clauses.get_index();
+
+	// Hard clauses
+	size_t c=0;
+	bitset<Bits> b( vertices );
+	for( auto I=b.begin(), E=b.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type non_edges = get_inv_row( v, I.get_mask(), vertices );
+	    bitset<Bits> bne( non_edges );
+	    for( auto u : bne ) {
+		if( u < v ) {
+		    ci[c] = 2*c;
+		    cc[2*c] = -(LID)u;
+		    cc[2*c+1] = -(LID)v;
+		    c++;
+		}
+	    }
+	}
+	assert( c == hard_clauses );
+
+	// Soft clauses
+	size_t * nc = &ci[c];
+	for( auto v : b )
+	    if( v != u )
+		nc[col[v]]++;
+	nc[num_col] = 1; // u in its own class, at this particular colour
+	nc[0] += 2*c;
+	VID nv = std::exclusive_scan( nc, nc+num_col+1, nc );
+	assert( nv == num_literals );
+	for( auto v : b ) {
+	    VID vcol = v == u ? num_col : col[v];
+	    cc[nc[vcol]++] = (LID)v;
+	}
+	for( size_t i=c; i < c+num_col+1; ++i )
+	    ci[i] = ci[i+1];
+	ci[c+num_col+1] = num_literals;
+
+	SATUnitPropagation<LID,CID> up( clauses, m_n );
+	return up.unit_propagation();
+    }
+
+    template<typename Enumerate>
+    void mc_iterate_coloursat(
+	Enumerate && EE,
+	row_type R, row_type P, unsigned int depth ) {
+	if( depth + get_size( P ) < EE.get_max_clique_size() )
+	    return;
+	
+	if( tr::is_zero( P ) ) {
+	    bitset<Bits> b( R );
+	    EE.record( depth, b.begin(), b.end() );
+	    return;
+	}
+
+	VID tol = EE.get_max_clique_size() - depth;
+	auto [ num_col, col, skipv ] = induced_graph_colour( P, tol );
+
+	if( depth + num_col < EE.get_max_clique_size() )
+	    return;
+
+	row_type x = tr::bitwise_andnot( skipv, P );
+
+	bitset<Bits> bx( x );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID u = *I;
+	    if( !sat_test_viable( x, u, col, tol ) ) {
+		std::cout << "SAT remove u=" << u << "\n";
+		skipv = tr::bitwise_or( skipv, I.get_mask() );
+		col[u] = tol++; // need to recolour? not for first addition...
+		// maybe need to test if colour can be same as previously
+		// added vertices, so maybe yes, recolour...
+	    }
+	}
+
+	// Update x, if skipv has grown
+	x = tr::bitwise_andnot( skipv, P );
+
+
+	auto task = [=,&EE,this]( VID u, row_type u_only ) {
+	    row_type u_ngh = get_row( u );
+	    row_type h = get_himask( u );
+	    row_type u_done = tr::bitwise_andnot( h, x );
+
+	    row_type Pv = tr::bitwise_andnot( u_done, P, u_ngh );
+	    row_type Rv = tr::bitwise_or( R, u_only );
+	    mc_iterate_coloursat( EE, Rv, Pv, depth+1 );
+	};
+	
+	bitset<Bits> bx( x );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID u = *I;
+	    
+	    row_type u_only = I.get_mask();
+	    task( u, u_only );
+	}
+    }
+#endif
 
     template<typename Enumerate>
     void mc_iterate(
