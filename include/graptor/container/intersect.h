@@ -37,7 +37,8 @@ enum set_operation {
     so_intersect_size = 2,		//!< intersection size
     so_intersect_size_exceed = 3,	//!< intersection size > or abort
     so_intersect_size_ge = 4,		//!< intersection size >=
-    so_N = 5 	 	 	 	//!< number of set operations
+    so_intersect_gt = 5,		//!< list elements if size gt threshold
+    so_N = 6 	 	 	 	//!< number of set operations
 };
 
 /*! Trait for multi-element (vectorized) collector
@@ -326,6 +327,111 @@ private:
     bool m_terminated;
 };
 
+/*! Collector type to support the set_operation::intersect_exceed
+ *  operation.
+ *
+ * \tparam T type of elements in the sets.
+ */
+template<typename T>
+struct intersection_collector_gt {
+    //! The type of elements in this set
+    using type = T;
+
+    intersection_collector_gt(
+	type * pointer, size_t min_arg_size, size_t exceed )
+	: m_pointer( pointer ),
+	  m_pointer_start( pointer ),
+	  m_options( min_arg_size - exceed ),
+	  m_exceed( exceed ),
+	  m_terminated( min_arg_size <= exceed ) { }
+
+    // This code currently only works with rhs == true
+    // When swapping lhs/rhs, we need to change the initial options.
+    template<typename LSet, typename RSet>
+    intersection_collector_gt( type * pointer, LSet && lset, RSet && rset,
+			       size_t exceed )
+	: intersection_collector_gt( pointer, lset.size(), // iterated set!
+				     exceed ) { }
+
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) {
+	m_options = lset.size() - m_exceed;
+    }
+
+    // Version called by merge
+    template<bool rhs>
+    bool record( const type * l, const type * r, bool ins ) {
+	if( *l < *r ) { // lhs not present
+	    if( --m_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	} else if( ins )
+	    *m_pointer++ = *l;
+	return true;
+    }
+
+    // Version called by hash
+    template<bool rhs>
+    bool record( const type * l, type value, bool ins ) {
+	if( !ins ) {
+	    if( --m_options <= 0 ) [[unlikely]] {
+		m_terminated = true;
+		return false;
+	    }
+	} else
+	    *m_pointer++ = *l;
+	return true;
+    }
+
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) {
+	// We could flag m_terminated if m_options drops below zero,
+	// however, this is not necessary as a correct intersection size
+	// will be returned.
+	m_options -= l;
+	if( m_options <= 0 )
+	    m_terminated = true;
+    }
+
+    template<bool rhs, typename U, unsigned short VL>
+    bool
+    multi_record( const U * p,
+		  typename vector_type_traits_vl<U,VL>::type value,
+		  typename vector_type_traits_vl<U,VL>::mask_type mask,
+		  size_t vl,
+		  size_t vr ) {
+	using tr = vector_type_traits_vl<U,VL>;
+	size_t absent = vl - tr::mask_traits::popcnt( mask );
+	m_options -= absent;
+	if( m_options <= 0 ) {
+	    m_terminated = true;
+	    return false;
+	} else {
+	    using tr = vector_type_traits_vl<U,VL>;
+	    m_pointer = tr::cstoreu_p( m_pointer, mask, value );
+
+	    return true;
+	}
+    }
+
+    type * return_value() const {
+	assert( m_terminated
+		|| ( std::distance( m_pointer_start, m_pointer )
+		     == m_options + m_exceed ) );
+	return m_terminated ? m_pointer_start : m_pointer;
+    }
+
+    bool terminated() const { return m_terminated; }
+
+private:
+    type * m_pointer, * m_pointer_start;
+    std::make_signed_t<size_t> m_options;
+    size_t m_exceed;
+    bool m_terminated;
+};
+
+
 /*! Collector type to support the set_operation::intersect_size_exceed
  *  operation.
  *
@@ -428,6 +534,241 @@ private:
     bool m_terminated;
 };
 
+/*! Collector type to support the set_operation::intersect_size_ge
+ *  operation.
+ *
+ * \tparam T type of elements in the sets.
+ */
+template<typename T>
+struct intersection_size_ge {
+    //! The type of elements in this set
+    using type = T;
+
+    intersection_size_ge(
+	const type * const l_end,
+	const type * const r_end,
+	size_t left_size,
+	size_t right_size,
+	size_t exceed )
+	: m_left_options( left_size - exceed ),
+	  m_exceed( exceed ),
+	  m_terminated( left_size <= exceed || right_size <= exceed ),
+	  m_ge( false ),
+	  m_left_end( l_end ) { }
+
+    // This code currently only works with rhs == true
+    // When swapping lhs/rhs, we need to change the initial options.
+    template<typename LSet, typename RSet>
+    intersection_size_ge(
+	LSet && lset, RSet && rset, size_t exceed )
+	: intersection_size_ge(
+	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), exceed ) { }
+
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) {
+	m_left_options = lset.size() - m_exceed;
+	m_left_end = &*lset.end();
+    }
+
+    // Version called by merge
+    template<bool rhs>
+    bool record( const type * l, const type * r, bool ins ) {
+	if( *l < *r ) { // lhs not present
+	    if( --m_left_options < 0 ) [[unlikely]] {
+		m_terminated = true;
+		m_ge = false;
+		return false;
+	    }
+	} else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+	return true;
+    }
+
+    // Version called by hash
+    template<bool rhs>
+    bool record( const type * l, type value, bool ins ) {
+	if( !ins ) {
+	    if( --m_left_options < 0 ) [[unlikely]] {
+		m_terminated = true;
+		m_ge = false;
+		return false;
+	    }
+	}
+	return true;
+    }
+
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) {
+	// We could flag m_terminated if m_options drops below zero,
+	// however, this is not necessary as a correct intersection size
+	// will be returned.
+	m_left_options -= l;
+    }
+
+    template<bool rhs, typename U, unsigned short VL>
+    bool
+    multi_record( const U * p, // pointer to LHS sequential data
+		  typename vector_type_traits_vl<U,VL>::type index, // LHS data
+		  typename vector_type_traits_vl<U,VL>::mask_type mask, // LHS mask
+		  size_t vl, size_t vr ) {
+	using tr = vector_type_traits_vl<U,VL>;
+	std::make_signed_t<size_t> num_matched =
+	    tr::mask_traits::popcnt( mask );
+	m_left_options -= std::make_signed_t<size_t>( vl ) - num_matched;
+	if( m_left_options < 0 ) {
+	    m_terminated = true;
+	    m_ge = false;
+	    return false;
+	} else if( m_left_options
+		   >= std::distance( p + num_matched, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+
+	return true;
+    }
+
+    bool return_value() const {
+	return m_terminated ? m_ge : m_left_options >= 0;
+    }
+
+    bool terminated() const { return m_terminated; }
+
+private:
+    std::make_signed_t<size_t> m_left_options;
+    size_t m_exceed;
+    bool m_terminated, m_ge;
+    const type * m_left_end;
+};
+
+template<typename T>
+struct intersection_size_ge_two_sided {
+    //! The type of elements in this set
+    using type = T;
+
+    intersection_size_ge_two_sided(
+	const type * const l_end,
+	const type * const r_end,
+	size_t left_size,
+	size_t right_size,
+	size_t exceed )
+	: m_left_options( left_size - exceed ),
+	  m_right_options( right_size - exceed ),
+	  m_exceed( exceed ),
+	  m_terminated( left_size <= exceed || right_size <= exceed ),
+	  m_ge( false ),
+	  m_left_end( l_end ),
+	  m_right_end( r_end ) { }
+
+    // This code currently only works with rhs == true
+    // When swapping lhs/rhs, we need to change the initial options.
+    template<typename LSet, typename RSet>
+    intersection_size_ge_two_sided(
+	LSet && lset, RSet && rset, size_t exceed )
+	: intersection_size_ge_two_sided(
+	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), exceed ) { }
+
+    template<typename LSet, typename RSet>
+    void swap( LSet && lset, RSet && rset ) {
+	m_left_options = lset.size() - m_exceed;
+	m_right_options = rset.size() - m_exceed;
+	m_left_end = &*lset.end();
+	m_right_end = &*rset.end();
+    }
+
+    // Version called by merge
+    template<bool rhs>
+    bool record( const type * l, const type * r, bool ins ) {
+	if( *l < *r ) { // lhs not present
+	    if( --m_left_options < 0 ) [[unlikely]] {
+		m_terminated = true;
+		m_ge = false;
+		return false;
+	    }
+	} else if( *l > *r ) { // rhs not present
+	    if( --m_right_options < 0 ) [[unlikely]] {
+		m_terminated = true;
+		m_ge = false;
+		return false;
+	    }
+	} else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	} else if( m_right_options >= std::distance( r, m_right_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+	return true;
+    }
+
+    // Version called by hash
+    template<bool rhs>
+    bool record( const type * l, type value, bool ins ) {
+	if( !ins ) {
+	    if( --m_left_options < 0 ) [[unlikely]] {
+		m_terminated = true;
+		m_ge = false;
+		return false;
+	    }
+	}
+	return true;
+    }
+
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) {
+	// We could flag m_terminated if m_options drops below zero,
+	// however, this is not necessary as a correct intersection size
+	// will be returned.
+	m_left_options -= l;
+	m_right_options -= r;
+    }
+
+    template<bool rhs, typename U, unsigned short VL>
+    bool
+    multi_record( const U * p, // pointer to LHS sequential data
+		  typename vector_type_traits_vl<U,VL>::type index, // LHS data
+		  typename vector_type_traits_vl<U,VL>::mask_type mask, // LHS mask
+		  size_t vl, size_t vr ) {
+	using tr = vector_type_traits_vl<U,VL>;
+	std::make_signed_t<size_t> num_matched =
+	    tr::mask_traits::popcnt( mask );
+	m_left_options -= std::make_signed_t<size_t>( vl ) - num_matched;
+	m_right_options -= std::make_signed_t<size_t>( vr ) - num_matched;
+	if( m_left_options < 0 || m_right_options < 0 ) {
+	    m_terminated = true;
+	    m_ge = false;
+	    return false;
+	} else if( m_left_options
+		   >= std::distance( p + num_matched, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+
+	return true;
+    }
+
+    bool return_value() const {
+	return m_terminated ? m_ge : m_left_options >= 0;
+    }
+
+    bool terminated() const { return m_terminated; }
+
+private:
+    std::make_signed_t<size_t> m_left_options, m_right_options;
+    size_t m_exceed;
+    bool m_terminated, m_ge;
+    const type * m_left_end;
+    const type * m_right_end;
+};
+
+
 /*! Traits class to recognise collectors for the
  *  set_operation::intersect_size_exceed operation.
  *
@@ -479,6 +820,31 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector<false,typename std::decay_t<LSet>::type>
 		cout( out );
+	    apply<so_intersect>( lset, rset, cout );
+	    return cout.return_value();
+	} else {
+	    apply<so_intersect>( lset, rset, out );
+	    return out;
+	}
+    }
+
+    template<typename LSet, typename RSet, typename Collector>
+    static
+    auto
+    intersect_gt_ds( LSet && lset, RSet && rset, size_t exceed,
+		     Collector & out ) {
+	static_assert( std::is_same_v<
+		       typename std::decay_t<LSet>::type,
+		       typename std::decay_t<RSet>::type>,
+		       "Sets must contain elements of the same type" );
+	
+	// Collector is of type pointer to element of set
+	// Construct custom collector object to have unified code base
+	// for storing intersection with pointer or with a custom class.
+	if constexpr ( std::is_same_v<std::decay_t<Collector>,
+		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
+	    intersection_collector_gt<typename std::decay_t<LSet>::type>
+		cout( out, lset, rset, exceed );
 	    apply<so_intersect>( lset, rset, cout );
 	    return cout.return_value();
 	} else {
@@ -547,6 +913,34 @@ struct set_operations {
 	    return out.return_value();
 	} else {
 	    intersection_size_exceed_two_sided<
+		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    return out.return_value();
+	}
+    }
+
+    template<typename LSet, typename RSet>
+    static
+    bool
+    intersect_size_ge_ds( LSet && lset, RSet && rset, size_t exceed ) {
+	static_assert( std::is_same_v<
+		       typename std::decay_t<LSet>::type,
+		       typename std::decay_t<RSet>::type>,
+		       "Sets must contain elements of the same type" );
+	
+	// Two-sided operation has no merit for hashed representations
+	// as we cannot count missed opportunites in the RHS.
+	// Although this may work differently for a dual representation where
+	// we can cheaply relate the hashed data structure to the sequential
+	// representation.
+	if constexpr ( std::is_same_v<so_traits,hash_scalar>
+		       || std::is_same_v<so_traits,hash_vector> ) {
+	    intersection_size_ge<
+		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    return out.return_value();
+	} else {
+	    intersection_size_ge_two_sided<
 		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
 	    apply<so_intersect_size_exceed>( lset, rset, out );
 	    return out.return_value();
