@@ -39,8 +39,8 @@ function run()
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
-	PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY="${papi_out}" LD_LIBRARY_PATH="$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH" LD_PRELOAD="$TOOLSPATH/interposer.so" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1
+	echo "ulimit -t $[1800*$threads] ; PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
+	bash -c "ulimit -t $[1800*$threads] ; PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -64,9 +64,13 @@ function for_gg()
 #    done
 
     for r in `seq 0 2` ; do
-	for s in `seq 0 5` ; do
-	    for t in `seq 0 3` ; do
-		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g $threads $commit $r 1024 2
+	for t in `seq 0 3` ; do
+	    for s in `seq 0 3` ; do
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
+	    done
+	    for s in `seq 4 5` ; do
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
 	    done
 	done
     done

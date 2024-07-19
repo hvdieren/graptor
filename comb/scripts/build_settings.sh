@@ -67,6 +67,9 @@ function get_flags() {
     flags["PAPI_REGION"]=0;
     flags["INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
+    flags["VERTEX_COVER_COMPONENTS"]=1
+    flags["PIVOT_COLOUR"]=0
+    flags["PIVOT_COLOUR_DENSE"]=0
 
     if [[ "$v" == *_papi* ]] ; then
  	flags["PAPI_REGION"]=1;
@@ -267,6 +270,15 @@ function get_flags() {
     fi
     if [[ "$v" == *_trav* ]] ; then
 	flags["TRAVERSAL_ORDER"]=`echo "${v}_" | sed -e 's/^.*_trav\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
+    if [[ "$v" == *_vcmono* ]] ; then
+	flags["VERTEX_COVER_COMPONENTS"]=0;
+    fi
+    if [[ "$v" == *_pivc* ]] ; then
+	flags["PIVOT_COLOUR"]=1;
+    fi
+    if [[ "$v" == *_pivd* ]] ; then
+	flags["PIVOT_COLOUR_DENSE"]=1;
     fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done
