@@ -871,7 +871,11 @@ public:
 	// every fully-connected vertex is automatically included in clique
 	if( !tr::is_zero( R ) )
 	    depth += get_size( R );
+#if PIVOT_COLOUR_DENSE
 	mc_iterate_colour( E, R, allP, depth );
+#else
+	mc_iterate( E, R, allP, depth );
+#endif
     }
     
 private:
@@ -967,7 +971,7 @@ public:
 	    bool any = vck_iterate<true,co>(
 		k, 1, all_vertices, a_best_size, a_best_cover );
 	    std::cout << " vck: k_max=" << k_max << " k=[" << k_lo << ','
-		      << k << ',' << k_up << "] bs=" << best_size
+		      << k << ',' << k_up << "] bs=" << a_best_size
 		      << " ok=" << any
 		      << ' ' << tm.next()
 		      << "\n";
