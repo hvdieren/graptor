@@ -52,8 +52,20 @@
 #define BK_MIN_LEAF 8
 #endif
 
+#ifndef PIVOT_COLOUR
+#define PIVOT_COLOUR 0
+#endif
+
+#ifndef PIVOT_COLOUR_DENSE
+#define PIVOT_COLOUR_DENSE 0
+#endif
+
 #ifndef CLIQUER_PRUNE
 #define CLIQUER_PRUNE 0
+#endif
+
+#ifndef VERTEX_COVER_COMPONENTS
+#define VERTEX_COVER_COMPONENTS 1
 #endif
 
 #ifndef USE_512_VECTOR
@@ -484,7 +496,9 @@ struct all_variant_statistics {
 	    }
 	    sum.m_gen[v] = m_gen[v] + s.m_gen[v];
 	}
-	sum.m_filter = m_filter + s.m_filter;
+	sum.m_filter0 = m_filter0 + s.m_filter0;
+	sum.m_filter1 = m_filter1 + s.m_filter1;
+	sum.m_filter2 = m_filter2 + s.m_filter2;
 	sum.m_heuristic = m_heuristic + s.m_heuristic;
 	return sum;
     }
@@ -495,7 +509,9 @@ struct all_variant_statistics {
     void record_genbuild( algo_variant var, double atm ) {
 	m_gen[(size_t)var].record_build( atm );
     }
-    void record_filter( double atm ) { m_filter.record( atm ); }
+    void record_filter0( double atm ) { m_filter0.record( atm ); }
+    void record_filter1( double atm ) { m_filter1.record( atm ); }
+    void record_filter2( double atm ) { m_filter2.record( atm ); }
     void record_heuristic( double atm ) { m_heuristic.record( atm ); }
 
     variant_statistics & get( algo_variant var, size_t n ) {
@@ -508,7 +524,7 @@ struct all_variant_statistics {
     variant_statistics m_dense[N_VARIANTS][N_DIM];
     variant_statistics m_leaf_dense[N_VARIANTS][N_DIM];
     variant_statistics m_gen[N_VARIANTS];
-    variant_statistics m_filter, m_heuristic;
+    variant_statistics m_filter0, m_filter1, m_filter2, m_heuristic;
 
 };
 
@@ -2784,7 +2800,7 @@ mc_bron_kerbosch_recpar_xps(
 	// lead to an improvement of the clique. The lowest-numbered colour
 	// classes should have the most vertices and the highest-degree
 	// vertices.
-	if( colour[v] < skip_colours )
+	if( colours[v] < skip_colours )
 	    continue;
 #else
 	// Skip neighbours of pivot.
@@ -2978,11 +2994,19 @@ void mc_top_level_vc(
     stats.record_genbuild( av_vc, tm.next() );
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
+#if VERTEX_COVER_COMPONENTS
     if( HG.get_num_vertices() < (VID(1) << 16) ) {
 	clique_via_vc3_cc<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
     } else {
 	clique_via_vc3_cc<VID,EID>( HG, v, degeneracy, CE, 1 );
     }
+#else
+    if( HG.get_num_vertices() < (VID(1) << 16) ) {
+	clique_via_vc3_mono<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
+    } else {
+	clique_via_vc3_mono<VID,EID>( HG, v, degeneracy, CE, 1 );
+    }
+#endif
 
 #if CLIQUER_PRUNE
     max_clique_per_vertex[v] = CE.get_max_clique_size();
@@ -3007,7 +3031,7 @@ void mc_top_level(
 
     // No point analysing a vertex of too low degree
     if( remap_coreness[v] < best ) {
-	stats.record_filter( tm.stop() );
+	stats.record_filter0( tm.next() );
 	return;
     }
 
@@ -3017,13 +3041,11 @@ void mc_top_level(
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
 	cut( H, v, H.getDegree( v ),
 	     [&]( VID u ) { return remap_coreness[u] > best; } );
+    stats.record_filter0( tm.next() );
 
     VID hn1 = cut.get_num_vertices();
-
-    if( hn1 < best ) {
-	stats.record_filter( tm.stop() );
+    if( hn1 < best )
 	return;
-    }
 
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
@@ -3058,18 +3080,16 @@ void mc_top_level(
 		best ); // keep if intersection size >= best
 	return ge;
     }, best );
-
-    VID hn2 = cut.get_num_vertices();
+    stats.record_filter1( tm.next() );
 
     // If size of cut-out graph is less than best, then there is no point
     // in analysing it, nor constructing cut-out. A cut-out of size S can
     // lead to a S+1 clique when including the top-level vertex.
     // Check for empty cut-out just in case best is zero. Strictly speaking,
     // should log 1-clique in case num == 0.
-    if( hn2 < best || hn2 == 0 ) {
-	stats.record_filter( tm.next() );
+    VID hn2 = cut.get_num_vertices();
+    if( hn2 < best || hn2 == 0 )
 	return;
-    }
 
     // The previous filtering loop uses the size_ge primitive to maximise
     // performance under the expectation that the filtering loop is most
@@ -3093,7 +3113,7 @@ void mc_top_level(
 	return d >= best;
     }, best );
 
-    stats.record_filter( tm.next() );
+    stats.record_filter2( tm.next() );
     VID num = cut.get_num_vertices();
     if( num < best || num == 0 )
 	return;
@@ -3105,7 +3125,6 @@ void mc_top_level(
     VID nlg = get_size_class( num );
 
     if( nlg <= N_MAX_SIZE ) {
-	stats.record_filter( tm.next() );
 	MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
 	return mc_dense_func[nlg-N_MIN_SIZE]( H, CE, v, cut, stats );
     }
@@ -3442,6 +3461,9 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
+	      << "\n\tPIVOT_COLOUR=" << PIVOT_COLOUR
+	      << "\n\tPIVOT_COLOUR_DENSE=" << PIVOT_COLOUR_DENSE
+	      << "\n\tVERTEX_COVER_COMPONENTS=" << VERTEX_COVER_COMPONENTS
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << '\n';
@@ -3671,8 +3693,12 @@ int main( int argc, char *argv[] ) {
     stats.m_gen[av_bk].print( std::cout );
     std::cout << "generic VC: ";
     stats.m_gen[av_vc].print( std::cout );
-    std::cout << "filter: ";
-    stats.m_filter.print( std::cout );
+    std::cout << "filter0: ";
+    stats.m_filter0.print( std::cout );
+    std::cout << "filter1: ";
+    stats.m_filter1.print( std::cout );
+    std::cout << "filter2: ";
+    stats.m_filter2.print( std::cout );
     std::cout << "heuristic: ";
     stats.m_heuristic.print( std::cout );
 
