@@ -32,7 +32,7 @@
 #endif
 
 #ifndef ABLATION_DISABLE_TOP_DENSE
-#define ABLATION_DISABLE_TOP_DENSE 0
+#define ABLATION_DISABLE_TOP_DENSE 1
 #endif
 
 // Not effective, so disable by default
@@ -50,6 +50,10 @@
 
 #ifndef BK_MIN_LEAF
 #define BK_MIN_LEAF 8
+#endif
+
+#ifndef CLIQUER_PRUNE
+#define CLIQUER_PRUNE 0
 #endif
 
 #ifndef USE_512_VECTOR
@@ -168,7 +172,8 @@ enum filter_reason {
     fr_unknown = 5,
     fr_cover = 6,
     fr_outer = 7,
-    filter_reason_num = 8
+    fr_cliquer = 8,
+    filter_reason_num = 9
 };
 
 template<typename T>
@@ -299,6 +304,7 @@ public:
 	os << "  filter unknown: " << m_reason[(int)fr_unknown].load() << "\n";
 	os << "  filter cover: " << m_reason[(int)fr_cover].load() << "\n";
 	os << "  filter outer: " << m_reason[(int)fr_outer].load() << "\n";
+	os << "  filter cliquer: " << m_reason[(int)fr_cliquer].load() << "\n";
 
 	return os;
     }
@@ -2115,7 +2121,7 @@ find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
      * Assuming graph G is a connected component, then there are no zero-degree
      * vertices (as previously checked this is not a singleton component).
      */
-    lVID k_lo = cn / 2; // lower bound, round down
+    lVID k_lo = 1; // cn / 2; // lower bound, round down: only after kernelisation?
     lVID k_best_size = k_prior;
     lVID k = k_up;
     bool first_attempt = true;
@@ -2136,6 +2142,7 @@ find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
 	    if( k > k_best_size )
 		k = k_best_size;
 	    std::copy( &cur_cover[0], &cur_cover[cur_size], cover );
+	    csize = cur_size;
 	}
 
 	// Reduce range
@@ -2175,7 +2182,7 @@ T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
 
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
-clique_via_vc3( const HGraphTy & G,
+clique_via_vc3_cc( const HGraphTy & G,
 		   lVID v,
 		   lVID degeneracy,
 		   MC_CutOutEnumerator & E,
@@ -2196,17 +2203,35 @@ clique_via_vc3( const HGraphTy & G,
     lVID cn = CG.numVertices();
     lEID cm = CG.numEdges();
 
+/*
+    {
+	std::ofstream f( "./cutout.hgr" );
+	f << "p edge " << cn << ' ' << cm << "\n";
+	for( VID v=0; v < cn; ++v ) {
+	    const lVID * ngh = CG.get_neighbours( v );
+	    VID deg = CG.getDegree( v );
+	    for( VID i=0; i < deg; ++i )
+		f << "e " << (v+1) << ' ' << (ngh[i]+1) << "\n";
+	}
+	f.close();
+    }
+*/
+
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
+	std::cout << "clique_via_vc3: no edges in complement graph\n";
 	E.record( depth+cn, pset.begin(), pset.end() );
 	return depth+cn; // return true;
     }
 
     // Check if improving the best known clique is impossible
     lVID bc = E.get_max_clique_size();
-    if( bc >= cn + depth )
+    if( bc >= cn + depth ) {
+	std::cout << "[unexpected] clique_via_vc3: insufficient vertices: "
+		  << " cn=" << cn << " depth=" << depth << " bc=" << bc << "\n";
 	return 0; // return false;
+    }
 
     // Calculate weakly connected components
     std::vector<lVID> wcc_label( cn );
@@ -2304,7 +2329,7 @@ clique_via_vc3( const HGraphTy & G,
 		// Solve using existential queries as we assume improvement
 		// won't be possible.
 		lVID oc = depth + best_size + wcc_size[cc];
-		lVID k_known = std::max( wcc_size[cc], (lVID)( oc - bc ) );
+		lVID k_known = std::min( wcc_size[cc], (lVID)( oc - bc ) );
 		std::cout << "existential solve k_known=" << k_known << "\n";
 		fnd = find_min_vertex_cover_existential<lVID,lEID>(
 		    CCG, k_known,
@@ -2315,6 +2340,8 @@ clique_via_vc3( const HGraphTy & G,
 		fnd = find_min_vertex_cover<lVID,lEID>(
 		    CCG, csize, &cover[0] );
 	    }
+	    std::cout << "existential solve fnd=" << fnd << " csize=" << csize
+		      << " bs=" << best_size << " depth=" << depth << "\n";
 	    // If we cannot identify any minimum vertex cover, then we
 	    // fail overall.
 	    if( !fnd )
@@ -2345,11 +2372,11 @@ clique_via_vc3( const HGraphTy & G,
     
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
-clique_via_vc3_old( const HGraphTy & G,
-		lVID v,
-		lVID degeneracy,
-		MC_CutOutEnumerator & E,
-		int depth ) {
+clique_via_vc3_mono( const HGraphTy & G,
+		     lVID v,
+		     lVID degeneracy,
+		     MC_CutOutEnumerator & E,
+		     int depth ) {
     PSet<VID> pset = PSet<VID>::create_full_set( G );
     lVID ce = pset.size();
     
@@ -2474,6 +2501,11 @@ clique_via_vc3_old( const HGraphTy & G,
 /*======================================================================*
  * recursively parallel version of Bron-Kerbosch w/ pivoting
  *======================================================================*/
+
+#if CLIQUER_PRUNE
+static VID * max_clique_per_vertex = nullptr;
+#endif
+
 template<typename VID, typename EID>
 bool mc_leaf(
     const HGraphTy & H,
@@ -2623,7 +2655,7 @@ count_colours_ub( const HGraphTy & G, const PSet<VID> & xp ) {
 }
 
 template<typename VID>
-std::pair<VID,VID>
+std::tuple<VID,std::vector<VID>,VID>
 count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 		      VID exceed ) {
     // Upper bound, loose?
@@ -2669,8 +2701,8 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 		colour[v] = c;
 		if( c > max_col ) {
 		    max_col = c;
-		    if( max_col+1 > exceed ) // stop early and accept solution
-			return { max_col+1, max_rdeg };
+		    // if( max_col+1 > exceed ) // stop early and accept solution
+		    // return { max_col+1, colour, max_rdeg };
 		}
 		break;
 	    }
@@ -2694,7 +2726,7 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
     
     // Add one to the maximum colour in use as colours are numbered [0,max_col]
     // and thus the number of colours is max_col+1
-    return { max_col+1, max_rdeg };
+    return { max_col+1, colour, max_rdeg };
 }
 
 // XP may be modified by the method. It is not required to be in sort order.
@@ -2731,24 +2763,45 @@ mc_bron_kerbosch_recpar_xps(
     // it may have stopped early and found a size that is insufficient.
     VID target = E.get_max_clique_size();
     // auto [ num_colours, max_rdeg ] = count_colours_ub( G, xp );
-    auto [ num_colours, max_rdeg ] = count_colours_greedy( G, xp, target - depth );
+    auto [ num_colours, colours, max_rdeg ] = count_colours_greedy( G, xp, target - depth );
     if( !E.is_feasible_bool( depth + num_colours > target, fr_colour_greedy ) )
 	return;
     if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
 	return;
 
-    // VID pivot = xp.at( 0 );
+#if PIVOT_COLOUR
+    VID skip_colours = target - depth;
+#else
     VID pivot = mc_get_pivot( G, xp ).first;
     const auto & p_adj = G.get_neighbours_set( pivot );
+#endif
 
     for( VID i=0; i < xp.size(); ++i ) {
 	VID v = xp.at( i );
 
+#if PIVOT_COLOUR
+	// Skip first few colour classes, as on their own they cannot
+	// lead to an improvement of the clique. The lowest-numbered colour
+	// classes should have the most vertices and the highest-degree
+	// vertices.
+	if( colour[v] < skip_colours )
+	    continue;
+#else
 	// Skip neighbours of pivot.
 	// Could remove them explicitly, however, not needed in sequential
 	// execution.
 	if( p_adj.contains( v ) )
 	    continue;
+#endif
+
+#if CLIQUER_PRUNE
+	// Based on Cliquer.
+	// Only works really when vertices in P have already been visited
+	// at top level.
+	if( max_clique_per_vertex[v] != 0
+	    && !E.is_feasible( depth + max_clique_per_vertex[v], fr_cliquer ) )
+	    break;
+#endif
 	
 	// Add vertex v to running clique
 	clique_set<VID> R_new( v, R );
@@ -2895,6 +2948,10 @@ void mc_top_level_bk(
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
     mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE );
 
+#if CLIQUER_PRUNE
+    max_clique_per_vertex[v] = CE.get_max_clique_size();
+#endif
+
     stats.record_gen( av_bk, tm.next() );
 }
 
@@ -2908,7 +2965,8 @@ void mc_top_level_vc(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
-    std::cout << "top-level generic VC: v=" << v << "\n";
+    std::cout << "top-level generic VC: v=" << v
+	      << " cut=" << cut.get_num_vertices() << "\n";
     
     timer tm;
     tm.start();
@@ -2921,10 +2979,14 @@ void mc_top_level_vc(
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
     if( HG.get_num_vertices() < (VID(1) << 16) ) {
-	clique_via_vc3<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
+	clique_via_vc3_cc<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
     } else {
-	clique_via_vc3<VID,EID>( HG, v, degeneracy, CE, 1 );
+	clique_via_vc3_cc<VID,EID>( HG, v, degeneracy, CE, 1 );
     }
+
+#if CLIQUER_PRUNE
+    max_clique_per_vertex[v] = CE.get_max_clique_size();
+#endif
 
     stats.record_gen( av_vc, tm.next() );
 }
@@ -2986,6 +3048,37 @@ void mc_top_level(
     // for non-dense cases. Moreover, as the overall result of filtering is
     // that the threshold is not sufficiently met, the benefits may be
     // restricted to a small subset of the performed intersections.
+    cut.filter( [&]( VID u ) {
+	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
+	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
+	bool ge = graptor::set_operations<graptor::MC_intersect>
+	    ::intersect_size_ge_ds(
+		cut.get_slice(),
+		H.get_neighbours_set( u ),
+		best ); // keep if intersection size >= best
+	return ge;
+    }, best );
+
+    VID hn2 = cut.get_num_vertices();
+
+    // If size of cut-out graph is less than best, then there is no point
+    // in analysing it, nor constructing cut-out. A cut-out of size S can
+    // lead to a S+1 clique when including the top-level vertex.
+    // Check for empty cut-out just in case best is zero. Strictly speaking,
+    // should log 1-clique in case num == 0.
+    if( hn2 < best || hn2 == 0 ) {
+	stats.record_filter( tm.next() );
+	return;
+    }
+
+    // The previous filtering loop uses the size_ge primitive to maximise
+    // performance under the expectation that the filtering loop is most
+    // often successful at proving that the subproblem does not need to be
+    // analysed. The next loop re-calculates the intersections in such a way
+    // that we can estimate the density of the subproblem without cutting it
+    // out. This loop additionally filters as well (only if the previous
+    // filtering loop managed to filter out vertices), which is doubly
+    // useful.
     EID m_est = 0;
     cut.filter( [&]( VID u ) {
 	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
@@ -3001,21 +3094,18 @@ void mc_top_level(
     }, best );
 
     stats.record_filter( tm.next() );
-
     VID num = cut.get_num_vertices();
-
-    // If size of cut-out graph is less than best, then there is no point
-    // in analysing it, nor constructing cut-out. A cut-out of size S can
-    // lead to a S+1 clique when including the top-level vertex.
-    // Check for empty cut-out just in case best is zero. Strictly speaking,
-    // should log 1-clique in case num == 0.
     if( num < best || num == 0 )
 	return;
 
 #if !ABLATION_DISABLE_TOP_DENSE
+    // Needs to be determined if it is useful to engage the dense cutout
+    // sooner when not all filtering is done. This would be useful when the
+    // last filtering step does not reduce the cutout size any further.
     VID nlg = get_size_class( num );
 
     if( nlg <= N_MAX_SIZE ) {
+	stats.record_filter( tm.next() );
 	MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
 	return mc_dense_func[nlg-N_MIN_SIZE]( H, CE, v, cut, stats );
     }
@@ -3040,11 +3130,37 @@ void leaf_dense_fn(
 	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
     timer tm;
     tm.start();
-// TODO: Integrate colouring heuristic into cutout (?)
-// or at least track max degree and use this for early filtering
+
+/*
+    // Do a bit of extra filtering
+    VID req_deg = E.get_max_clique_size() - depth;
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> cut(
+	xp_set.get_set(), xp_set.get_fill(),
+	[&]( VID u ) {
+	    VID d = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_exceed_ds(
+		    xp_set.hash_set(),
+		    H.get_neighbours_set( u ),
+		    req_deg );
+	    return d >= req_deg;
+	} );
+
+    if( cut.get_num_vertices() != xp_set.get_fill() ) {
+	cut.filter( [&]( VID u ) {
+	    VID d = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_exceed_ds(
+		    cut.get_slice(),
+		    H.get_neighbours_set( u ),
+		    req_deg );
+	    return d >= req_deg;
+	}, req_deg );
+    }
+    DenseMatrix<Bits,VID,VID> D( H, H, cut.get_vertices(), 0,
+				 cut.get_num_vertices() );
+*/
+
     DenseMatrix<Bits,VID,VID> D( H, H, xp_set.get_set(), 0, xp_set.get_fill() );
     VID n = D.numVertices();
-    // VID m = D.calculate_num_edges();
     VID m = D.get_num_edges();
     float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
@@ -3056,7 +3172,7 @@ void leaf_dense_fn(
 	return;
     }
 
-    MC_DenseEnumerator DE( E, R, xp_set.get_set() );
+    MC_DenseEnumerator DE( E, R, xp_set.get_set() ); // cut.get_vertices() );
     if( d > 0.9f ) {
 	VID init_k = n - ( E.get_max_clique_size() - depth );
 	auto bs = D.clique_via_vertex_cover( init_k );
@@ -3067,6 +3183,10 @@ void leaf_dense_fn(
 
     float tbk = tm.next();
     stats.record( tbk );
+
+    // std::cout << "leaf-dense<" << Bits << "> n_req=" << xp_set.get_fill()
+    // << " n=" << n << " m=" << m << " d=" << d
+    // << " delay=" << tbk << "\n";
 }
 
 typedef void (*mc_leaf_func)(
@@ -3141,10 +3261,21 @@ void heuristic_expand(
     //       meaningful.
     std::vector<VID> ins( s.size() );
     VID * out = &ins[0];
+#if 0
     size_t sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
 	s, v_adj, out ) - out;
+#else
+    size_t cur_size = E.get_max_clique_size();
+    size_t sz;
+    if( cur_size <= depth )
+	sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+	    s, v_adj, out ) - out;
+    else
+	sz = graptor::set_operations<graptor::MC_intersect>::intersect_gt_ds(
+	    s, v_adj, cur_size - depth, out ) - out;
+#endif
 
-    heuristic_expand( H, &R_new, top_v, &ins[0], &ins[sz], E, depth+1 );
+    heuristic_expand( H, &R_new, top_v, out, out+sz, E, depth+1 );
 }
 
 /*! Heuristic search method for maximum clique
@@ -3269,6 +3400,11 @@ int main( int argc, char *argv[] ) {
     // Cleanup remapped graph now; we won't need it any more.
     R.del();
 
+#if CLIQUER_PRUNE
+    max_clique_per_vertex = new VID[pn];
+    std::fill( max_clique_per_vertex, max_clique_per_vertex+pn, VID(0) );  
+#endif
+
     std::cout << "Sort order check:\n\thisto[0]=" << histo[0]
 	      << " histo[1]=" << histo[1]
 	      << " histo[degeneracy]=" << histo[degeneracy]
@@ -3305,6 +3441,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
+	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << '\n';
@@ -3545,6 +3682,11 @@ int main( int argc, char *argv[] ) {
     remap_coreness.del();
     rev_order.del();
     order.del();
+
+#if CLIQUER_PRUNE
+    delete[] max_clique_per_vertex;
+    max_clique_per_vertex = nullptr;
+#endif
 
     return 0;
 }
