@@ -65,7 +65,7 @@
 #endif
 
 #ifndef VERTEX_COVER_COMPONENTS
-#define VERTEX_COVER_COMPONENTS 1
+#define VERTEX_COVER_COMPONENTS 0
 #endif
 
 #ifndef USE_512_VECTOR
@@ -83,11 +83,11 @@
  * Preferred on basis of completer measurement: (4,3)
  */
 #ifndef SORT_ORDER
-#define SORT_ORDER 4
+#define SORT_ORDER 5
 #endif
 
 #ifndef TRAVERSAL_ORDER
-#define TRAVERSAL_ORDER 3
+#define TRAVERSAL_ORDER 1
 #endif
 
 #ifndef PAPI_REGION
@@ -294,7 +294,7 @@ public:
 	std::lock_guard<std::mutex> guard( m_mutex );
 
 	os << "Maximum clique size: " << m_best.load()
-	   << " from top-vertex " << m_max_clique[0]
+	   << " from top-level vertex " << m_max_clique[0]
 	   << "\n";
 
 	// Sort clique, except top-level vertex
@@ -1073,14 +1073,14 @@ public:
 	// Count induced edges
 	std::vector<lEID> tmp_index( ns+1 );
 	for( lVID p=0; p < ns; ++p ) {
-	    VID v = cut[p];
+	    VID v = cut[p]; // error at p=46 w/ trim?
 
 	    // Degree of vertex
 	    lVID deg = graptor::set_operations<graptor::MC_intersect>::
 		intersect_size_ds( cut_slice, G.get_neighbours_set( v ) );
-
 	    tmp_index[p] = deg;
 
+	    assert( n != ns || deg == G.getDegree( v ) );
 	    assert( deg != 0 ); // because of components
 	}
 	std::exclusive_scan( &tmp_index[0], &tmp_index[ns+1],
@@ -1771,8 +1771,8 @@ bool leaf_vertex_cover(
 	    // << " depth=" << H.get_depth(v) << "\n";
 	}
 
-    std::cout << "nh=" << nh << " nr=" << n_remain << " Bits=" << Bits
-	      << " cut=" << cutout.size() << "\n";
+    // std::cout << "nh=" << nh << " nr=" << n_remain << " Bits=" << Bits
+    // << " cut=" << cutout.size() << "\n";
     assert( cutout.size() <= n_remain );
     assert( cutout.size() <= Bits );
 
@@ -1783,8 +1783,9 @@ bool leaf_vertex_cover(
     float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
 
-    // std::cout << "VC cutout: nrem=" << n_remain << " n=" << n
-    // << " m=" << m << " d=" << d << "\n";
+    if( verbose )
+	std::cout << "VC cutout: nrem=" << n_remain << " n=" << n
+		  << " m=" << m << " d=" << d << "\n";
 
     auto [ bs, sz ] = D.template vertex_cover_kernelised<false>( k );
     bool ret;
@@ -2145,7 +2146,7 @@ find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
 	constexpr lVID c = 1;
 	cur_size = 0;
 	bool any = vertex_cover_vc3<true>( G, k, c, cur_size, &cur_cover[0] );
-	if( true || verbose ) {
+	if( verbose ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << cur_size
 		      << " ok=" << any
@@ -2212,7 +2213,6 @@ clique_via_vc3_cc( const HGraphTy & G,
     // Note: when called from top-level, the pset contains all vertices and
     //       no further filtering is applied.
     assert( ce == pset.get_fill() );
-    // GraphBuilderInducedComplement<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
     GraphBuilderInducedComplement<graptor::graph::GraphCSx<lVID,lEID>>
 	cbuilder( G, pset );
     auto & CG = cbuilder.get_graph();
@@ -2315,6 +2315,8 @@ clique_via_vc3_cc( const HGraphTy & G,
 		      << " bc=" << bc
 		      << " best_size=" << best_size
 		      << "\n";
+	    /*
+	    */
 	    // Create cutout of graph representing this component
 	    std::vector<lVID> cut;
 	    cut.reserve( wcc_size[cc] );
@@ -2346,24 +2348,25 @@ clique_via_vc3_cc( const HGraphTy & G,
 		// won't be possible.
 		lVID oc = depth + best_size + wcc_size[cc];
 		lVID k_known = std::min( wcc_size[cc], (lVID)( oc - bc ) );
-		std::cout << "existential solve k_known=" << k_known << "\n";
+		// std::cout << "existential solve k_known=" << k_known << "\n";
 		fnd = find_min_vertex_cover_existential<lVID,lEID>(
 		    CCG, k_known,
 		    csize, &cover[0] );
 	    } else {
 		// Solving this component won't affect best clique size yet.
-		std::cout << "absolute solve\n";
+		// std::cout << "absolute solve\n";
 		fnd = find_min_vertex_cover<lVID,lEID>(
 		    CCG, csize, &cover[0] );
 	    }
-	    std::cout << "existential solve fnd=" << fnd << " csize=" << csize
-		      << " bs=" << best_size << " depth=" << depth << "\n";
+	    // std::cout << "existential solve fnd=" << fnd << " csize=" << csize
+	    // << " bs=" << best_size << " depth=" << depth << "\n";
 	    // If we cannot identify any minimum vertex cover, then we
 	    // fail overall.
 	    if( !fnd )
 		return 0;
 
 	    // Translate IDs
+	    std::sort( &cover[0], &cover[csize] );
 	    best_size += complement_set( CCG.get_num_vertices(),
 					 &cover[0], &cover[csize],
 					 &best_clique[best_size],
@@ -2455,7 +2458,7 @@ clique_via_vc3_mono( const HGraphTy & G,
 	constexpr lVID c = 1;
 	best_size = 0;
 	bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
-	if( true || verbose ) {
+	if( verbose ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
 		      << " ok=" << any
@@ -2670,8 +2673,49 @@ count_colours_ub( const HGraphTy & G, const PSet<VID> & xp ) {
     return { c, max_rdeg };
 }
 
+// Also clears array
+template<unsigned short VL>
+uint8_t *
+find_first_zero_vectorized( uint8_t * b, uint8_t * e ) {
+    using tr = vector_type_traits_vl<uint8_t,VL>;
+    using type = typename tr::type;
+    using mtype = typename tr::mask_type;
+
+    type z = tr::setzero();
+    for( ; b+VL <= e; b += VL ) {
+	mtype m = tr::cmpeq( tr::loadu( b ), z, target::mt_mask() );
+	tr::storeu( b, z );
+	if( m != 0 )
+	    return b + _tzcnt_u64( m );
+    }
+
+    return b;
+}
+
+// Also clears array
+VID find_first_zero( uint8_t * b, uint8_t * e ) {
+    uint8_t * const ob = b;
+
+    // Use a vectorized approach
+#if __AVX512F__
+    if( b+64 <= e )
+	b = find_first_zero_vectorized<64>( b, e );
+    if( b+32 <= e && *b != 0 ) 
+	b = find_first_zero_vectorized<32>( b, e );
+#elif __AVX2__
+    if( b+32 <= e )
+	b = find_first_zero_vectorized<32>( b, e );
+#endif
+
+    for( ; b != e && *b != 0; ++b ) {
+	*b = 0;
+    }
+
+    return b - ob;
+}
+
 template<typename VID>
-std::tuple<VID,std::vector<VID>,VID>
+std::tuple<VID,std::vector<VID>>
 count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 		      VID exceed ) {
     // Upper bound, loose?
@@ -2681,69 +2725,53 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
     VID n = G.numVertices();
     VID s = xp.size();
     std::vector<VID> colour( n );
-    std::vector<VID> histo( s );
+    std::vector<uint8_t> histo( s, (uint8_t)0 );
+    std::vector<VID> retain;
+    retain.reserve( s/2 );
     VID c = 1; // number of colours in use
     VID max_col = 0;
-    VID max_rdeg = 0;
-    for( VID j=0; j < s; ++j ) {
-	VID i = s-1 - j;
+    // for( VID j=0; j < s; ++j ) {
+	// VID i = s-1 - j;
+    for( VID i=0; i < s; ++i ) {
 	VID v = xp.at( i );
 	const auto & adj = G.get_neighbours_set( v );
-	std::fill( histo.begin(), histo.end(), 0 );
 
-	// Right-degree
 	auto nb = adj.begin();
 	auto ne = adj.end();
-	nb = std::upper_bound( nb, ne, v );
-	VID rdeg = 0;
+	// Right neighbours only
+	// nb = std::upper_bound( nb, ne, v );
+	// Left neighbours only
+	ne = std::lower_bound( nb, ne, v );
 
 	// Intersect and check colours
-	const VID * pb = xp.get_set() + i + 1;
-	const VID * pe = xp.get_set() + s;
-	if( ne != nb )
+	const VID * pb = xp.get_set(); //  + i + 1;
+	const VID * pe = xp.get_set() + i; //  + s;
+	if( ne != nb ) {
+	    // Trimming
+	    pb = std::lower_bound( pb, pe, *nb );
 	    pe = std::upper_bound( pb, pe, *(ne-1) );
-	for( ; pb != pe; ++pb ) {
-	    if( adj.contains( *pb ) ) {
-		histo[colour[*pb]] = 1;
-		++rdeg;
+	    for( ; pb != pe; ++pb ) {
+		if( adj.contains( *pb ) )
+		    histo[colour[*pb]] = (uint8_t)1;
 	    }
 	}
 
-	if( rdeg > max_rdeg )
-	    max_rdeg = rdeg;
-		
-	for( VID c=0; c < n; ++c ) {
-	    if( histo[c] == 0 ) {
-		colour[v] = c;
-		if( c > max_col ) {
-		    max_col = c;
-		    // if( max_col+1 > exceed ) // stop early and accept solution
-		    // return { max_col+1, colour, max_rdeg };
-		}
-		break;
-	    }
-	}
+	VID c = find_first_zero( &*histo.begin(), &*histo.end() );
+	colour[v] = c;
+	if( c >= exceed )
+	    retain.push_back( v );
+	if( c > max_col )
+	    max_col = c;
+
+	// We have already cleared array elements up to c
+	std::fill( histo.begin() + c, histo.begin() + max_col + 1, (uint8_t)0 );
     }
 
-#if 0
-    for( VID j=0; j < s; ++j ) {
-	VID i = s-1 - j;
-	VID v = xp.at( i );
-	const auto & adj = G.get_neighbours_set( v );
-
-	const VID * pb = xp.get_set();
-	const VID * pe = xp.get_set() + s;
-	for( ; pb != pe; ++pb ) {
-	    if( adj.contains( *pb ) )
-		assert( colour[*pb] != colour[v] );
-	}
-    }
-#endif
-    
     // Add one to the maximum colour in use as colours are numbered [0,max_col]
     // and thus the number of colours is max_col+1
-    return { max_col+1, colour, max_rdeg };
+    return { max_col+1, retain };
 }
+
 
 // XP may be modified by the method. It is not required to be in sort order.
 template<bool allow_dense>
@@ -2779,11 +2807,11 @@ mc_bron_kerbosch_recpar_xps(
     // it may have stopped early and found a size that is insufficient.
     VID target = E.get_max_clique_size();
     // auto [ num_colours, max_rdeg ] = count_colours_ub( G, xp );
-    auto [ num_colours, colours, max_rdeg ] = count_colours_greedy( G, xp, target - depth );
+    auto [ num_colours, retain ] = count_colours_greedy( G, xp, target - depth );
     if( !E.is_feasible_bool( depth + num_colours > target, fr_colour_greedy ) )
 	return;
-    if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
-	return;
+    // if( !E.is_feasible( depth + 1 + max_rdeg, fr_rdeg ) )
+    // return;
 
 #if PIVOT_COLOUR
     VID skip_colours = target - depth;
@@ -2792,16 +2820,23 @@ mc_bron_kerbosch_recpar_xps(
     const auto & p_adj = G.get_neighbours_set( pivot );
 #endif
 
+#if PIVOT_COLOUR
+    if( retain.size() < 2 )
+	std:cout << "retain size=" << retain.size() << "\n";
+    for( VID i=0; i < retain.size(); ++i ) {
+	VID v = retain[i];
+#else
     for( VID i=0; i < xp.size(); ++i ) {
 	VID v = xp.at( i );
+#endif
 
 #if PIVOT_COLOUR
 	// Skip first few colour classes, as on their own they cannot
 	// lead to an improvement of the clique. The lowest-numbered colour
 	// classes should have the most vertices and the highest-degree
 	// vertices.
-	if( colours[v] < skip_colours )
-	    continue;
+	// if( colours[v] < skip_colours )
+	// continue;
 #else
 	// Skip neighbours of pivot.
 	// Could remove them explicitly, however, not needed in sequential
@@ -2953,6 +2988,10 @@ void mc_top_level_bk(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
+    if( verbose )
+	std::cout << "top-level generic BK: v=" << v
+		  << " cut=" << cut.get_num_vertices() << "\n";
+
     timer tm;
     tm.start();
 
@@ -2981,8 +3020,9 @@ void mc_top_level_vc(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
-    std::cout << "top-level generic VC: v=" << v
-	      << " cut=" << cut.get_num_vertices() << "\n";
+    if( verbose )
+	std::cout << "top-level generic VC: v=" << v
+		  << " cut=" << cut.get_num_vertices() << "\n";
     
     timer tm;
     tm.start();
@@ -3316,7 +3356,7 @@ void heuristic_search(
 	return;
 
     std::vector<VID> pset;
-    pset.resize( adj.size() );
+    pset.reserve( adj.size() );
 
     // Only interested in vertices that can make a clique larger than th
     VID th = E.get_max_clique_size();
@@ -3617,7 +3657,7 @@ int main( int argc, char *argv[] ) {
 // #endif
 	}
     } );
-    std::cout << "phase 1 (one vertex per degeneracy):" << tm.next() << "\n";
+    std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
 	    
     for( VID cc=0; cc <= degeneracy; ++cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
