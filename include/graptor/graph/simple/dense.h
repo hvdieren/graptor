@@ -970,11 +970,13 @@ public:
 	    row_type a_best_cover = tr::setzero();
 	    bool any = vck_iterate<true,co>(
 		k, 1, all_vertices, a_best_size, a_best_cover );
+	    /*
 	    std::cout << " vck: k_max=" << k_max << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << a_best_size
 		      << " ok=" << any
 		      << ' ' << tm.next()
 		      << "\n";
+	    */
 	    if( any ) {
 		best_size = a_best_size;
 		best_cover = a_best_cover;
@@ -1263,7 +1265,7 @@ private:
 		fc = tr::bitwise_or( fc, I.get_mask() );
 	}
 
-	return std::make_tuple( last_col+1, col, fc );
+	return std::make_tuple( last_col+1, fc );
     }
 
     template<typename Enumerate>
@@ -1279,13 +1281,41 @@ private:
 	    return;
 	}
 
-	VID tol = EE.get_max_clique_size() - depth;
-	auto [ num_col, col, skipv ] = induced_graph_colour( P, tol );
+	row_type x;
 
-	if( depth + num_col < EE.get_max_clique_size() )
-	    return;
+	while( true ) {
+	    VID tol = EE.get_max_clique_size() - depth;
+	    auto [ num_col, skipv ] = induced_graph_colour( P, tol );
 
-	row_type x = tr::bitwise_andnot( skipv, P );
+	    if( depth + num_col < EE.get_max_clique_size() )
+		return;
+
+	    x = tr::bitwise_andnot( skipv, P );
+	    VID nset = get_size( x );
+
+	    if( nset == 0 )
+		// P\N(pivot) is empty. If we were to proceed without
+		// pivoting, the pivot would remain in X as it
+		// is a neighbour of all elements of P.
+		return;
+	    else if( nset == 1 ) {
+		// Only one vertex is iterated over. Simply adopt
+		// and search for next, to reduce depth of recursion
+		sVID u = target::alltzcnt<sVID,type,VL>::compute( x );
+		row_type u_only = x;
+		row_type u_ngh = get_row( u );
+		P = tr::bitwise_and( P, u_ngh );
+		R = tr::bitwise_or( R, u_only );
+		++depth;
+
+		if( tr::is_zero( P ) ) {
+		    bitset<Bits> b( R );
+		    EE.record( depth, b.begin(), b.end() );
+		    return;
+		}
+	    } else
+		break;
+	}
 
 	auto task = [=,&EE,this]( VID u, row_type u_only ) {
 	    row_type u_ngh = get_row( u );
