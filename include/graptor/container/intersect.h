@@ -1458,7 +1458,7 @@ struct merge_vector_jump {
 	    }
 	}
 
-	if( lb+VL == le && rb+VL == re )
+	if( lb+VL == le && rb+VL == re ) // always false?
 	    out.template remainder<rhs>( le - lb, re - rb );
 	
 	return std::make_pair( lb, rb );
@@ -1483,6 +1483,8 @@ struct merge_vector_jump {
 	std::tie( lb, rb ) =
 	    intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rb, re, out );
 #endif
+	// Why not jump? We know one of the lists is short (less than VL),
+	// but the other may be very long.
 	merge_scalar::intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
