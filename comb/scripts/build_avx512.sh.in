@@ -96,4 +96,9 @@ for s in `seq 0 5` ; do
     wait
 done
 
+one MC _itrim_sort5_trav1_vcmono_vl16 &
+one MC _itrim_sort5_trav1_pivc_vl16 &
+one MC _itrim_sort5_trav1_pivd_vl16 &
+one MC _itrim_sort5_trav1_pivc_pivd_vl16 
+
 wait

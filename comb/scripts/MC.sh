@@ -29,7 +29,8 @@ function get_avg() {
 		#local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
 		local val=`( grep "$what:" $file 2> /dev/null || echo $what: ABORT ) | cut -d' ' -f$whatn`
 		if [ x$val != xABORT ] ; then
-		    sum=`echo "scale=4; $sum + $val" | bc`
+		    sum=`echo | perl -ne "END { printf \"%f\n\", ($sum+$val); }"`
+		    #sum=`echo "scale=4; $sum + $val" | bc`
 		    count=$(( $count + 1 ))
 		else
 		    fail=1
@@ -41,7 +42,9 @@ function get_avg() {
     done
 
     if [ $fail -eq 0 -a $count -ne 0 ] ; then
-	echo "scale=4; $sum / $count" | bc
+    	echo | perl -ne "END { printf \"%f\n\", ($sum/$count); }"
+	#echo ${sum}:${count}
+	#echo "scale=4; $sum / $count" | bc
     elif [ $fail -eq 1 ] ; then
 	echo FAIL
     else
@@ -76,7 +79,8 @@ function mce() {
 	dir=$commit
     fi
 
-    local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
+    #local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
+    local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vcmono_$vl itrim_sort5_trav1_pivc_$vl itrim_sort5_trav1_pivd_$vl itrim_sort5_trav1_pivc_pivd_$vl"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
     (
@@ -93,5 +97,7 @@ function mce() {
     echo
 }
 
-mce 16 1 700306b4 1024 avx512 700306b4
-mce 8_noavx512f 1 700306b4 1024 avx512 700306b4
+#mce 16 1 700306b4 1024 avx512 700306b4
+#mce 8_noavx512f 1 700306b4 1024 avx512 700306b4
+
+mce 16 128 4d1bb30b 1024 avx512 4d1bb30b
