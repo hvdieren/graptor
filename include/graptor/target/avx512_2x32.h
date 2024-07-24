@@ -398,29 +398,25 @@ public:
     }
 
     static mask_type intersect( type a, const member_type * b ) {
-	// This code is claimed to be faster than the vp2intersect instruction
-	// https://arxiv.org/pdf/2112.06342.pdf
+	// There is no intersect intrinsic on 16-bit elements.
+	// Code inspired from https://arxiv.org/pdf/2112.06342.pdf
+	// Added a loop for code compactness.
 	mask_type m00 = cmpne( a, set1( b[0] ), mt_mask() );
 	mask_type m01 = cmpne( a, set1( b[1] ), mt_mask() );
 	mask_type m02 = cmpne( a, set1( b[2] ), mt_mask() );
 
-	mask_type m03 = cmpne( m00, a, set1( b[3] ), mt_mask() );
-	mask_type m04 = cmpne( m01, a, set1( b[4] ), mt_mask() );
-	mask_type m05 = cmpne( m02, a, set1( b[5] ), mt_mask() );
-	mask_type m06 = cmpne( m03, a, set1( b[6] ), mt_mask() );
-	mask_type m07 = cmpne( m04, a, set1( b[7] ), mt_mask() );
-	mask_type m08 = cmpne( m05, a, set1( b[8] ), mt_mask() );
-	mask_type m09 = cmpne( m06, a, set1( b[9] ), mt_mask() );
-	mask_type m10 = cmpne( m07, a, set1( b[10] ), mt_mask() );
-	mask_type m11 = cmpne( m08, a, set1( b[11] ), mt_mask() );
-	mask_type m12 = cmpne( m09, a, set1( b[12] ), mt_mask() );
-	mask_type m13 = cmpne( m10, a, set1( b[13] ), mt_mask() );
-	mask_type m14 = cmpne( m11, a, set1( b[14] ), mt_mask() );
-	mask_type m15 = cmpne( m12, a, set1( b[15] ), mt_mask() );
+	for( int i=3; i < 30; i += 3 ) {
+	    m00 = cmpne( m00, a, set1( b[i] ), mt_mask() );
+	    m01 = cmpne( m01, a, set1( b[i+1] ), mt_mask() );
+	    m02 = cmpne( m02, a, set1( b[i+2] ), mt_mask() );
+	}
+
+	m00 = cmpne( m00, a, set1( b[30] ), mt_mask() );
+	m01 = cmpne( m01, a, set1( b[31] ), mt_mask() );
 
 	return mask_traits::logical_invert(
 	    mask_traits::logical_and(
-		m13, mask_traits::logical_and( m14, m15 ) ) );
+		m00, mask_traits::logical_and( m01, m02 ) ) );
     }
  
  
