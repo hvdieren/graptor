@@ -2308,6 +2308,7 @@ clique_via_vc3_cc( const HGraphTy & G,
 	    // Pick either. The other becomes part of the clique.
 	    best_clique[best_size++] = wcc_root[cc];
 	} else {
+	    /*
 	    std::cout << "processing wcc " << cc << ": root=" << wcc_root[cc]
 		      << " size=" << wcc_size[cc]
 		      << " depth=" << depth
@@ -2315,7 +2316,6 @@ clique_via_vc3_cc( const HGraphTy & G,
 		      << " bc=" << bc
 		      << " best_size=" << best_size
 		      << "\n";
-	    /*
 	    */
 	    // Create cutout of graph representing this component
 	    std::vector<lVID> cut;
