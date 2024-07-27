@@ -68,6 +68,10 @@
 #define VERTEX_COVER_COMPONENTS 0
 #endif
 
+#ifndef VERTEX_COVER_ABSOLUTE
+#define VERTEX_COVER_ABSOLUTE 0
+#endif
+
 /*!
  * Profile impact of various incumbent sizes on enumeration time.
  *
@@ -77,7 +81,7 @@
  * 2: measure vertex cover
  */
 #ifndef PROFILE_INCUMBENT_SIZE
-#define PROFILE_INCUMBENT_SIZE 1
+#define PROFILE_INCUMBENT_SIZE 0
 #endif
 
 #ifndef USE_512_VECTOR
@@ -1302,15 +1306,15 @@ template<typename lVID, typename lEID>
 class GraphBuilderInducedComplement<
     graptor::graph::GraphCSx<lVID,lEID>> {
 public:
-    template<typename HGraph>
+    template<typename HGraph, typename DualSet>
     GraphBuilderInducedComplement(
 	const HGraph & G,
-	const PSet<VID> & pset ) {
+	const DualSet & pset ) {
 	using gVID = typename HGraph::VID;
 	using gEID = typename HGraph::EID;
 	
 	gVID n = G.numVertices();
-	lVID ns = pset.get_fill();
+	lVID ns = pset.size();
 
 	// Count induced edges
 	std::vector<lEID> tmp_index( ns+1 );
@@ -1318,7 +1322,9 @@ public:
 	    VID v = pset.at( p );
 
 	    // Degree of vertex
-	    lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    // lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    lVID deg = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_ds( pset, G.get_neighbours_set( v ) );
 
 	    tmp_index[p] = ns - 1 - deg;
 	}
@@ -1345,8 +1351,8 @@ public:
 	    gVID deg = G.getDegree( v );
 	    gVID ge = 0, gee = deg;
 
-	    for( gVID us=0; us < ns; ++us ) {
-		lVID u = pset.at( us );
+	    for( lVID us=0; us < ns; ++us ) {
+		gVID u = pset.at( us );
 		while( ge != gee && gedges[ge] < u )
 		    ++ge;
 		assert( ge == gee || gedges[ge] >= u );
@@ -1354,7 +1360,7 @@ public:
 		    && us != vs ) // no self-edges
 		    edges[e++] = us;
 	    }
-	    assert( ge == gee || ge == gee-1 );
+	    // assert( ge == gee || ge == gee-1 );
 	    assert( e == index[vs+1] );
 	}
     }
@@ -2220,9 +2226,9 @@ T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
     return k;
 }
 
-template<typename lVID, typename lEID, typename HGraphTy>
+template<typename lVID, typename lEID>
 lVID
-clique_via_vc3_cc( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
+clique_via_vc3_cc( graptor::graph::GraphCSx<lVID,lEID> & CG,
 		   lVID v,
 		   lVID degeneracy,
 		   MC_CutOutEnumerator & E,
@@ -2413,7 +2419,7 @@ clique_via_vc3_cc( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     return depth + cn - best_size;
 }
     
-template<typename lVID, typename lEID>
+template<typename lVID, typename lEID, bool use_exist>
 lVID
 clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		     lVID v,
@@ -2448,7 +2454,6 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     if( bc >= cn + depth )
 	return 0; // return false;
 
-    std::vector<lVID> cover( cn );
     std::vector<lVID> best_cover( cn );
     lVID best_size = 0;
 
@@ -2467,52 +2472,68 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     // looking for a better clique/cover than what we know
     timer tm;
     tm.start();
-
     const lVID k_prior = cn + depth - bc;
-    lVID k_up = k_prior - 1;
-    // TODO: the minimum size of a vertex cover is at least half the number
-    //       of vertices with non-zero degree (?) 
-    // Assumption mentioned by Chen and Kanj in "On Approximating Minimum
-    // Vertex Cover for Graphs with Perfect Matching"
-    lVID k_lo = 1;
     lVID k_best_size = k_prior;
-    lVID k = k_up;
-    bool first_attempt = true;
-    while( true ) {
+
+    if constexpr ( use_exist ) {
+	std::vector<lVID> cover( cn );
+	lVID k_up = k_prior - 1;
+	// TODO: the minimum size of a vertex cover is at least half the number
+	//       of vertices with non-zero degree (?) 
+	// Assumption mentioned by Chen and Kanj in "On Approximating Minimum
+	// Vertex Cover for Graphs with Perfect Matching"
+	lVID k_lo = 1;
+	lVID k = k_up;
+	bool first_attempt = true;
+	while( true ) {
+	    constexpr lVID c = 1;
+	    best_size = 0;
+	    bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
+	    if( verbose > 1 ) {
+		std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
+			  << k << ',' << k_up << "] bs=" << best_size
+			  << " ok=" << any
+			  << ' ' << tm.next()
+			  << "\n";
+	    }
+	    if( any ) {
+		k_best_size = best_size;
+		// in case we find a better cover than requested
+		if( k > k_best_size )
+		    k = k_best_size;
+		std::copy( &cover[0], &cover[best_size], best_cover.begin() );
+	    }
+
+	    // Reduce range
+	    if( any ) // k too high
+		k_up = k;
+	    else
+		k_lo = k;
+	    if( k_up <= k_lo+1 )
+		break;
+
+	    // Determine next k
+	    // On the first attempt, we prefer to drop k just by one as it often
+	    // fails at -1. After that, we perform binary search.
+	    if( first_attempt ) {
+		first_attempt = false;
+		k = k_up - 1;
+	    } else
+		k = ( k_up + k_lo ) / 2;
+	}
+    } else {
 	constexpr lVID c = 1;
-	best_size = 0;
-	bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
+	lVID k = k_prior - 1;
+	bool any = vertex_cover_vc3<false>(
+	    CG, k, c, best_size, &best_cover[0] );
 	if( verbose > 1 ) {
-	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
-		      << k << ',' << k_up << "] bs=" << best_size
-		      << " ok=" << any
-		      << ' ' << tm.next()
-		      << "\n";
+	    std::cout << " vc3 (abs): cn=" << cn << " k=" << k
+		      << " ok=" << any << ' ' << tm.next() << "\n";
 	}
 	if( any ) {
-	    k_best_size = best_size;
 	    // in case we find a better cover than requested
-	    if( k > k_best_size )
-		k = k_best_size;
-	    std::copy( &cover[0], &cover[best_size], best_cover.begin() );
+	    k_best_size = best_size;
 	}
-
-	// Reduce range
-	if( any ) // k too high
-	    k_up = k;
-	else
-	    k_lo = k;
-	if( k_up <= k_lo+1 )
-	    break;
-
-	// Determine next k
-	// On the first attempt, we prefer to drop k just by one as it often
-	// fails at -1. After that, we perform binary search.
-	if( first_attempt ) {
-	    first_attempt = false;
-	    k = k_up - 1;
-	} else
-	    k = ( k_up + k_lo ) / 2;
     }
 
     // Record clique
@@ -2537,7 +2558,6 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	}
     }
 
-    // return true;
     return depth + cn - k_best_size;
 }
 
@@ -2846,7 +2866,7 @@ mc_bron_kerbosch_recpar_xps(
 
 #if PIVOT_COLOUR
     if( retain.size() == 1 ) {
-	VID v = retain.pop_back();
+	VID v = retain.front();
 
 	// Add vertex v to running clique
 	clique_set<VID> R_new( v, R );
@@ -3068,27 +3088,32 @@ void mc_top_level_vc(
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
 #if VERTEX_COVER_COMPONENTS
     if( cut.get_num_vertices() < (VID(1) << 16) ) {
-	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
+	GraphBuilderInducedComplement<graptor::graph::GraphCSx<uint16_t,uint32_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
 	clique_via_vc3_cc<uint16_t,uint32_t>( CG, v, degeneracy, CE, 1 );
     } else {
-	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint32_t,uint64_t>>
+	GraphBuilderInducedComplement<graptor::graph::GraphCSx<uint32_t,uint64_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
 	clique_via_vc3_cc<VID,EID>( CG, v, degeneracy, CE, 1 );
     }
 #else
+#if VERTEX_COVER_ABSOLUTE
+    constexpr bool use_exist = false;
+#else
+    constexpr bool use_exist = true;
+#endif
     if( cut.get_num_vertices() < (VID(1) << 16) ) {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_mono<uint16_t,uint32_t>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_mono<uint16_t,uint32_t,use_exist>( CG, v, degeneracy, CE, 1 );
     } else {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint32_t,uint64_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_mono<VID,EID>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_mono<VID,EID,use_exist>( CG, v, degeneracy, CE, 1 );
     }
 #endif
 
@@ -3607,6 +3632,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
+	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << '\n';
     
     system( "hostname" );
