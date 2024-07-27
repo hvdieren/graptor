@@ -65,43 +65,39 @@ function for_gg()
 #	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
 #    done
 
-#    for r in `seq 0 2` ; do
-#	for t in `seq 0 3` ; do
-#	    for s in `seq 0 3` ; do
-#		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-#	    done
-#	    for s in `seq 4 5` ; do
-#		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-#		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
-#	    done
-#	done
-#    done
+    for r in `seq 0 2` ; do
+	for t in `seq 0 3` ; do
+	    for s in `seq 0 3` ; do
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
+	    done
+	    for s in `seq 4 5` ; do
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
+		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
+	    done
+	done
+    done
 
     for r in `seq 0 2` ; do
 	run MC__itrim_sort5_trav1_vl16 $graph_path $g 128 $commit $r 1024 2
-#	run MC__itrim_sort5_trav1_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort5_trav1_nopivc_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort5_trav1_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
-#	run MC__itrim_sort5_trav1_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
+	run MC__itrim_sort5_trav1_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
+	run MC__itrim_sort5_trav1_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
     done
 
-#    for r in `seq 0 2` ; do
-#	for threads in 1 ; do # 1 4 8 16 32 64 128 ; do
-#	    for ins in `seq 0 8` ; do
-#		if [ $is_avx512f == 1 ] ; then
-#		    run MC__ins${ins}_vl16 $graph_path $g $threads $commit $r 1024 2
-#		    run MC__itrim_ins${ins}_vl16 $graph_path $g $threads $commit $r 1024 2
-#		fi
-#		run MC__ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024 2
-#		run MC__itrim_ins${ins}_vl8_noavx512f $graph_path $g $threads $commit $r 1024 2
-#	    done
-#	done
-#    done
+    for r in `seq 0 2` ; do
+	for threads in 1 4 8 16 32 64 128 ; do
+	    run MC__itrim_sort5_trav1_vl16 $graph_path $g $threads $commit $r 1024 2
+	done
+    done
 
+    for r in `seq 0 2` ; do
+	run MC__itrim_sort5_trav1_vl16_noavx512 $graph_path $g 128 $commit $r 1024 2
+    done
 
     # Incumbent clique profiling
     verbose=0
-    run MC__itrim_sort5_trav1_incumbent_vl16 $graph_path $g 128 $commit $r 1024 2
+    run MC__itrim_sort5_trav1_incumbent1_vl16 $graph_path $g 1 $commit 0 1024 0
+    run MC__itrim_sort5_trav1_incumbent2_vl16 $graph_path $g 1 $commit 0 1024 0
+    run MC__itrim_sort5_trav1_incumbent2_vcabs_vl16 $graph_path $g 1 $commit 0 1024 0
 }
 
 true
