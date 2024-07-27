@@ -295,6 +295,9 @@ public:
 	assert( 0 && "NYI" );
     }
 
+    // TODO: make sparse representation of checkpointed data to save
+    //       space and possibly computation time (if sparsity of m_depth
+    //       is apparent)
     template<typename Iterator>
     checkpoint_type disable_incident_edges( Iterator I, Iterator E ) {
 	auto cp = checkpoint();
@@ -303,6 +306,8 @@ public:
 	for( ; I != E; ++I )
 	    disable_incident_edges_per_vertex( *I );
 
+#if 0
+	// Debugging code
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
 	    if( m_depth[v] == m_cur_depth )
@@ -317,6 +322,7 @@ public:
 	    std::cout << "dd=" << dd << " d=" << d << "\n";
 	assert( r == m_n_remain );
 	assert( dd == d );
+#endif
 
 	assert( m_n_remain <= m_n );
 	
@@ -328,6 +334,8 @@ public:
 	++m_cur_depth;
 	disable_incident_edges_per_vertex( v );
 
+#if 0
+	// Debugging code
 	lVID dd = 1;
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
@@ -343,6 +351,7 @@ public:
 	    std::cout << "dd=" << dd << " d=" << d << "\n";
 	assert( r == m_n_remain );
 	assert( dd == d );
+#endif
 
 	assert( m_n_remain <= m_n );
 	
