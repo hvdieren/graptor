@@ -99,4 +99,6 @@ done
 one MC _itrim_sort5_trav1_vccc_vl16 &
 one MC _itrim_sort5_trav1_nopivc_nopivd_vl16 
 
+one MC _itrim_sort5_trav1_incumbent_vl16 
+
 wait

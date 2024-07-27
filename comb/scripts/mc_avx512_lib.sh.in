@@ -17,6 +17,8 @@ WEIGHTS=none
 
 hostname
 
+verbose=1
+
 # args 1:prog_graph_layout 2:graph-file 3:graph-name 4:threads 5:commit 6:round 7:partitions
 function run()
 {
@@ -39,8 +41,8 @@ function run()
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "ulimit -t $[1800*$threads] ; PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
-	bash -c "ulimit -t $[1800*$threads] ; PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -v ${verbose} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -v ${verbose} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -63,24 +65,24 @@ function for_gg()
 #	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
 #    done
 
-    for r in `seq 0 2` ; do
-	for t in `seq 0 3` ; do
-	    for s in `seq 0 3` ; do
-		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-	    done
-	    for s in `seq 4 5` ; do
+#    for r in `seq 0 2` ; do
+#	for t in `seq 0 3` ; do
+#	    for s in `seq 0 3` ; do
 #		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
-	    done
-	done
-    done
+#	    done
+#	    for s in `seq 4 5` ; do
+#		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
+#		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
+#	    done
+#	done
+#    done
 
     for r in `seq 0 2` ; do
 	run MC__itrim_sort5_trav1_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort5_trav1_vcmono_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort5_trav1_pivc_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort5_trav1_pivd_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort5_trav1_pivc_pivd_vl16 $graph_path $g 128 $commit $r 1024 2
+#	run MC__itrim_sort5_trav1_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort5_trav1_nopivc_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort5_trav1_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
+#	run MC__itrim_sort5_trav1_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
     done
 
 #    for r in `seq 0 2` ; do
@@ -95,6 +97,11 @@ function for_gg()
 #	    done
 #	done
 #    done
+
+
+    # Incumbent clique profiling
+    verbose=0
+    run MC__itrim_sort5_trav1_incumbent_vl16 $graph_path $g 128 $commit $r 1024 2
 }
 
 true

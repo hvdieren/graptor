@@ -70,6 +70,7 @@ function get_flags() {
     flags["VERTEX_COVER_COMPONENTS"]=0
     flags["PIVOT_COLOUR"]=1
     flags["PIVOT_COLOUR_DENSE"]=1
+    flags["PROFILE_INCUMBENT_SIZE"]=0
 
     if [[ "$v" == *_papi* ]] ; then
  	flags["PAPI_REGION"]=1;
@@ -288,6 +289,9 @@ function get_flags() {
     fi
     if [[ "$v" == *_nopivd* ]] ; then
 	flags["PIVOT_COLOUR_DENSE"]=0;
+    fi
+    if [[ "$v" == *_incumbent* ]] ; then
+	flags["PROFILE_INCUMBENT_SIZE"]=1
     fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done

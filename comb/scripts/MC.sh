@@ -1,8 +1,13 @@
 #!/bin/bash
 
 #what="filter"
-what="Enumeration"
+#what="Enumeration"
 #what="Calculting coreness"
+#what="Completed MC in"
+#what="Completed search in"
+#what="filter0"
+#what="filter1"
+what="filter2"
 whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
 function get_avg() {
@@ -27,13 +32,13 @@ function get_avg() {
 		fail=1
 	    else
 		#local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
-		local val=`( grep "$what:" $file 2> /dev/null || echo $what: ABORT ) | cut -d' ' -f$whatn`
+		local val=`( grep "$what" $file 2> /dev/null || echo $what ABORT ) | cut -d' ' -f$whatn`
 		if [ x$val != xABORT ] ; then
 		    sum=`echo | perl -ne "END { printf \"%f\n\", ($sum+$val); }"`
 		    #sum=`echo "scale=4; $sum + $val" | bc`
 		    count=$(( $count + 1 ))
 		else
-		    fail=1
+		    fail=3
 		fi
 	    fi
 	else
@@ -47,6 +52,8 @@ function get_avg() {
 	#echo "scale=4; $sum / $count" | bc
     elif [ $fail -eq 1 ] ; then
 	echo FAIL
+    elif [ $fail -eq 3 ] ; then
+	echo NOMETRIC
     else
 	echo ABSENT
     fi
@@ -80,7 +87,8 @@ function mce() {
     fi
 
     #local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
-    local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vcmono_$vl itrim_sort5_trav1_pivc_$vl itrim_sort5_trav1_pivd_$vl itrim_sort5_trav1_pivc_pivd_$vl"
+    #local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vccc_$vl itrim_sort5_trav1_nopivc_$vl itrim_sort5_trav1_nopivd_$vl itrim_sort5_trav1_nopivc_nopivd_$vl"
+    local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vccc_$vl itrim_sort5_trav1_nopivc_nopivd_$vl"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
     (
@@ -100,4 +108,5 @@ function mce() {
 #mce 16 1 700306b4 1024 avx512 700306b4
 #mce 8_noavx512f 1 700306b4 1024 avx512 700306b4
 
-mce 16 128 4d1bb30b 1024 avx512 4d1bb30b
+#mce 16 128 4d1bb30b 1024 avx512 4d1bb30b
+mce 16 128 9ad9741d 1024 avx512 9ad9741d

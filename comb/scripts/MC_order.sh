@@ -1,9 +1,10 @@
 #!/bin/bash
 
 #what="filter:"
-#what="Enumeration:"
+what="Enumeration:"
 #what="Calculting coreness:"
-what="Completed MC in"
+#what="Completed MC in"
+#what="Completed search in"
 whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
 function get_avg() {
@@ -31,10 +32,11 @@ function get_avg() {
 		#local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
 		local val=`( grep "$what" $file 2> /dev/null || echo $what: ABORT ) | cut -d' ' -f$whatn`
 		if [ x$val != xABORT ] ; then
-		    sum=`echo "scale=4; $sum + $val" | bc`
+		    sum=`echo | perl -ne "END { printf \"%f\n\", ($sum+$val); }"`
+		    #sum=`echo "scale=4; $sum + $val" | bc`
 		    count=$(( $count + 1 ))
 		else
-		    fail=1
+		    fail=3
 		fi
 	    fi
 	else
@@ -43,9 +45,12 @@ function get_avg() {
     done
 
     if [ $fail -eq 0 -a $count -ne 0 ] ; then
-	echo "scale=4; $sum / $count" | bc
+    	echo | perl -ne "END { printf \"%f\n\", ($sum/$count); }"
+	#echo "scale=4; $sum / $count" | bc
     elif [ $fail -eq 1 ] ; then
 	echo FAIL
+    elif [ $fail -eq 3 ] ; then
+	echo NOMETRIC
     else
 	echo ABSENT
     fi
@@ -110,5 +115,8 @@ function mce() {
     echo
 }
 
-mce 16 128 dc3fc239 1024 avx512 dc3fc239 1
-mce 16 128 dc3fc239 1024 avx512 dc3fc239 2
+#mce 16 128 dc3fc239 1024 avx512 dc3fc239 1
+#mce 16 128 dc3fc239 1024 avx512 dc3fc239 2
+
+mce 16 128 9ad9741d 1024 avx512 9ad9741d 1
+mce 16 128 9ad9741d 1024 avx512 9ad9741d 2
