@@ -68,11 +68,22 @@
 #define VERTEX_COVER_COMPONENTS 0
 #endif
 
+/*!
+ * Profile impact of various incumbent sizes on enumeration time.
+ *
+ * Values:
+ * 0: disabled
+ * 1: measure bron-kerbosch-style enumeration (leafs may use vertex cover)
+ * 2: measure vertex cover
+ */
+#ifndef PROFILE_INCUMBENT_SIZE
+#define PROFILE_INCUMBENT_SIZE 1
+#endif
+
 #ifndef USE_512_VECTOR
 #if __AVX512F__
 #define USE_512_VECTOR 1
 #else
-// #define USE_512_VECTOR 0
 #define USE_512_VECTOR 1
 #endif
 #endif
@@ -170,7 +181,10 @@ enum algo_variant {
     N_VARIANTS = 2
 };
 
-static bool verbose = false;
+/*! Verbosity level
+ * Higher values provide more verbose output
+ */
+static int verbose = 0;
 
 static std::mutex io_mux;
 static constexpr bool io_trace = false;
@@ -268,7 +282,9 @@ public:
     // Record solution
     template<typename It>
     void record( size_t s, VID top_v, It && begin, It && end ) {
+#if PROFILE_INCUMBENT_SIZE == 0
 	assert( s <= m_degeneracy+1 );
+#endif
 	if( s > m_best )
 	    update_best( s, top_v, begin, end );
     }
@@ -334,12 +350,14 @@ private:
 		    prior, s, 
 		    std::memory_order_release,
 		    std::memory_order_relaxed ) ) {
-		std::cout << "max_clique: " << s << " at "
-			  << m_timer.elapsed()
-			  << " top-level vertex: " << top_v;
-		if( m_order != nullptr )
-		    std::cout << " (" << m_order[top_v] << ')';
-		std::cout << '\n';
+		if( verbose > 0 ) {
+		    std::cout << "max_clique: " << s << " at "
+			      << m_timer.elapsed()
+			      << " top-level vertex: " << top_v;
+		    if( m_order != nullptr )
+			std::cout << " (" << m_order[top_v] << ')';
+		    std::cout << '\n';
+		}
 
 		// TODO: concurrency concerns!
 		m_max_clique.clear();
@@ -947,7 +965,7 @@ private:
 	try {
 	    // TODO: pass in ret as argument and use any contents filled in
 	    //       even in case of timeout.
-	    if( verbose )
+	    if( verbose > 0 )
 		std::cerr << "as: alternative " << idx
 			  << " timeout " << usec << "\n";
 	    ret = execute_time_limited(
@@ -1109,7 +1127,7 @@ public:
 	    lVID le = 0;
 
 	    for( gVID ge=0; ge < deg; ++ge ) {
-		lVID u = gedges[ge];
+		gVID u = gedges[ge];
 		while( le != ns && cut[le] < u )
 		    ++le;
 		assert( le <= ns || cut[le] >= u );
@@ -1208,15 +1226,15 @@ template<typename lVID, typename lEID>
 class GraphBuilderInducedComplement<
     graptor::graph::GraphCSxDepth<lVID,lEID>> {
 public:
-    template<typename HGraph>
+    template<typename HGraph, typename DualSet>
     GraphBuilderInducedComplement(
 	const HGraph & G,
-	const PSet<VID> & pset ) {
+	const DualSet & pset ) {
 	using gVID = typename HGraph::VID;
 	using gEID = typename HGraph::EID;
 	
 	gVID n = G.numVertices();
-	lVID ns = pset.get_fill();
+	lVID ns = pset.size();
 
 	// Count induced edges
 	std::vector<lEID> tmp_index( ns+1 );
@@ -1224,7 +1242,9 @@ public:
 	    VID v = pset.at( p );
 
 	    // Degree of vertex
-	    lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    // lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    lVID deg = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_ds( pset, G.get_neighbours_set( v ) );
 
 	    tmp_index[p] = ns - 1 - deg;
 	}
@@ -1251,10 +1271,10 @@ public:
 	    lEID e = index[vs];
 	    const gVID * gedges = G.get_neighbours( v );
 	    gVID deg = G.getDegree( v );
-	    gVID ge = 0, gee = deg;
 
-	    for( gVID us=0; us < ns; ++us ) {
-		lVID u = pset.at( us );
+	    gVID ge = 0, gee = deg;
+	    for( lVID us=0; us < ns; ++us ) {
+		gVID u = pset.at( us );
 		while( ge != gee && gedges[ge] < u )
 		    ++ge;
 		assert( ge == gee || gedges[ge] >= u );
@@ -1262,7 +1282,7 @@ public:
 		    && us != vs ) // no self-edges
 		    edges[e++] = us;
 	    }
-	    assert( ge == gee || ge == gee-1 );
+	    // assert( ge == gee || ge == gee-1 );
 	    assert( e == index[vs+1] );
 
 	    degree[vs] = index[vs+1] - index[vs];
@@ -1783,7 +1803,7 @@ bool leaf_vertex_cover(
     float d = (float)m / ( (float)n * (float)(n-1) );
     stats.record_build( tm.next() );
 
-    if( verbose )
+    if( verbose > 3 )
 	std::cout << "VC cutout: nrem=" << n_remain << " n=" << n
 		  << " m=" << m << " d=" << d << "\n";
 
@@ -1823,8 +1843,11 @@ vertex_cover_vc3( GraphType & G,
     std::tie( min_v, min_deg ) = G.min_degree();
     if( min_deg == 1 ) {
 	lVID ngh = *G.nbegin( min_v );
-	lVID rm[2] = { min_v, ngh };
-	auto chkptv = G.disable_incident_edges( &rm[0], &rm[2] );
+	// lVID rm[2] = { min_v, ngh };
+	// auto chkptv = G.disable_incident_edges( &rm[0], &rm[2] );
+	// should suffice to remove just ngh as the 1-degree neighbour min_v
+	// will be removed/disabled with it
+	auto chkptv = G.disable_incident_edges_for( ngh );
 	lVID m_best_size = 0;
 	bool ok = vertex_cover_vc3<exists>(
 	    G, (lVID)(k-(lVID)1), c, m_best_size, &best_cover[best_size+1] );
@@ -2146,7 +2169,7 @@ find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
 	constexpr lVID c = 1;
 	cur_size = 0;
 	bool any = vertex_cover_vc3<true>( G, k, c, cur_size, &cur_cover[0] );
-	if( verbose ) {
+	if( verbose > 1 ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << cur_size
 		      << " ok=" << any
@@ -2199,23 +2222,23 @@ T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
 
 template<typename lVID, typename lEID, typename HGraphTy>
 lVID
-clique_via_vc3_cc( const HGraphTy & G,
+clique_via_vc3_cc( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		   lVID v,
 		   lVID degeneracy,
 		   MC_CutOutEnumerator & E,
 		   int depth ) {
-    PSet<VID> pset = PSet<VID>::create_full_set( G );
-    lVID ce = pset.size();
+    // PSet<VID> pset = PSet<VID>::create_full_set( G );
+    // lVID ce = pset.size();
     
     // TODO: potentially apply more filtering using up-to-date best
     //       might do conditionally on improvement of best since
     //       previous cut-out
     // Note: when called from top-level, the pset contains all vertices and
     //       no further filtering is applied.
-    assert( ce == pset.get_fill() );
-    GraphBuilderInducedComplement<graptor::graph::GraphCSx<lVID,lEID>>
-	cbuilder( G, pset );
-    auto & CG = cbuilder.get_graph();
+    // assert( ce == pset.get_fill() );
+    // GraphBuilderInducedComplement<graptor::graph::GraphCSx<lVID,lEID>>
+	// cbuilder( G, pset );
+    // auto & CG = cbuilder.get_graph();
     lVID cn = CG.numVertices();
     lEID cm = CG.numEdges();
 
@@ -2237,6 +2260,7 @@ clique_via_vc3_cc( const HGraphTy & G,
     // clique has size cn.
     if( cm == 0 ) {
 	std::cout << "clique_via_vc3: no edges in complement graph\n";
+	PSet<VID> pset = PSet<VID>::create_full_set( CG );
 	E.record( depth+cn, pset.begin(), pset.end() );
 	return depth+cn; // return true;
     }
@@ -2378,7 +2402,7 @@ clique_via_vc3_cc( const HGraphTy & G,
     }
 	    
     if( E.is_feasible( depth + best_size, fr_cover ) ) {
-	if( true || verbose )
+	if( verbose > 3 )
 	    std::cout << "clique_via_vc3: max_clique: "
 		      << ( depth + best_size )
 		      << " E.best: " << bc << "\n";
@@ -2389,32 +2413,32 @@ clique_via_vc3_cc( const HGraphTy & G,
     return depth + cn - best_size;
 }
     
-template<typename lVID, typename lEID, typename HGraphTy>
+template<typename lVID, typename lEID>
 lVID
-clique_via_vc3_mono( const HGraphTy & G,
+clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		     lVID v,
 		     lVID degeneracy,
 		     MC_CutOutEnumerator & E,
 		     int depth ) {
-    PSet<VID> pset = PSet<VID>::create_full_set( G );
-    lVID ce = pset.size();
+    // PSet<VID> pset = PSet<VID>::create_full_set( G );
+    // lVID ce = pset.size();
     
     // TODO: potentially apply more filtering using up-to-date best
     //       might do conditionally on improvement of best since
     //       previous cut-out
     // Note: when called from top-level, the pset contains all vertices and
     //       no further filtering is applied.
-    assert( ce == pset.get_fill() );
-    // GraphBuilderInducedComplement<graptor::graph::GraphDoubleIndexCSx<VID,EID>>
-    GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<lVID,lEID>>
-	cbuilder( G, pset );
-    auto & CG = cbuilder.get_graph();
+    // assert( ce == pset.get_fill() );
+    // GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<lVID,lEID>>
+    // cbuilder( G, pset );
+    // auto & CG = cbuilder.get_graph();
     lVID cn = CG.numVertices();
     lEID cm = CG.numEdges();
 
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
+	PSet<VID> pset = PSet<VID>::create_full_set( CG );
 	E.record( depth+cn, pset.begin(), pset.end() );
 	return depth+cn; // return true;
     }
@@ -2458,7 +2482,7 @@ clique_via_vc3_mono( const HGraphTy & G,
 	constexpr lVID c = 1;
 	best_size = 0;
 	bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
-	if( verbose ) {
+	if( verbose > 1 ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << best_size
 		      << " ok=" << any
@@ -2494,7 +2518,7 @@ clique_via_vc3_mono( const HGraphTy & G,
     // Record clique
     if( k_best_size < k_prior ) {
 	if( E.is_feasible( depth + cn - k_best_size, fr_cover ) ) {
-	    if( true || verbose )
+	    if( verbose > 3 )
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
@@ -2821,8 +2845,20 @@ mc_bron_kerbosch_recpar_xps(
 #endif
 
 #if PIVOT_COLOUR
-    if( retain.size() < 2 )
-	std:cout << "retain size=" << retain.size() << "\n";
+    if( retain.size() == 1 ) {
+	VID v = retain.pop_back();
+
+	// Add vertex v to running clique
+	clique_set<VID> R_new( v, R );
+
+	// Intersect candidates with neighbours of v and proceed
+	PSet<VID> xp_new = xp.intersect( n, G.get_neighbours_set( v ) );
+	bk_recursive_call<allow_dense>(
+	    G, degeneracy, E, &R_new, xp_new, depth+1 );
+
+	return;
+    }
+
     for( VID i=0; i < retain.size(); ++i ) {
 	VID v = retain[i];
 #else
@@ -2988,7 +3024,7 @@ void mc_top_level_bk(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
-    if( verbose )
+    if( verbose > 2 )
 	std::cout << "top-level generic BK: v=" << v
 		  << " cut=" << cut.get_num_vertices() << "\n";
 
@@ -3020,31 +3056,39 @@ void mc_top_level_vc(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
-    if( verbose )
+    if( verbose > 2 )
 	std::cout << "top-level generic VC: v=" << v
 		  << " cut=" << cut.get_num_vertices() << "\n";
     
     timer tm;
     tm.start();
 
-    // TODO: cut out just once, not twice
-    GraphBuilderInduced<HGraphTy> ibuilder( H, v, cut );
-    const auto & HG = ibuilder.get_graph();
-
     stats.record_genbuild( av_vc, tm.next() );
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
 #if VERTEX_COVER_COMPONENTS
-    if( HG.get_num_vertices() < (VID(1) << 16) ) {
-	clique_via_vc3_cc<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
+    if( cut.get_num_vertices() < (VID(1) << 16) ) {
+	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
+	    cbuilder( H, cut.get_slice() );
+	auto & CG = cbuilder.get_graph();
+	clique_via_vc3_cc<uint16_t,uint32_t>( CG, v, degeneracy, CE, 1 );
     } else {
-	clique_via_vc3_cc<VID,EID>( HG, v, degeneracy, CE, 1 );
+	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint32_t,uint64_t>>
+	    cbuilder( H, cut.get_slice() );
+	auto & CG = cbuilder.get_graph();
+	clique_via_vc3_cc<VID,EID>( CG, v, degeneracy, CE, 1 );
     }
 #else
-    if( HG.get_num_vertices() < (VID(1) << 16) ) {
-	clique_via_vc3_mono<uint16_t,uint32_t>( HG, v, degeneracy, CE, 1 );
+    if( cut.get_num_vertices() < (VID(1) << 16) ) {
+	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
+	    cbuilder( H, cut.get_slice() );
+	auto & CG = cbuilder.get_graph();
+	clique_via_vc3_mono<uint16_t,uint32_t>( CG, v, degeneracy, CE, 1 );
     } else {
-	clique_via_vc3_mono<VID,EID>( HG, v, degeneracy, CE, 1 );
+	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint32_t,uint64_t>>
+	    cbuilder( H, cut.get_slice() );
+	auto & CG = cbuilder.get_graph();
+	clique_via_vc3_mono<VID,EID>( CG, v, degeneracy, CE, 1 );
     }
 #endif
 
@@ -3055,7 +3099,8 @@ void mc_top_level_vc(
     stats.record_gen( av_vc, tm.next() );
 }
 
-void mc_top_level(
+template<int select>
+void mc_top_level_select(
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
@@ -3171,11 +3216,64 @@ void mc_top_level(
 #endif
 
     float d = float(m_est) / ( float(num) * float(num) );
-    if( d > .9f ) {
+    if( verbose > 4 )
+	std::cout << "top-level density: v=" << v
+		  << " cut=" << cut.get_num_vertices()
+		  << " density=" << d << "\n";
+    
+
+    if constexpr ( select == 0 ) {
+	if( d > .9f ) {
+	    mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
+	} else {
+	    mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
+	}
+    } else if constexpr ( select == 1 ) {
 	mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
     } else {
 	mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
     }
+}
+
+void mc_top_level(
+    const HFGraphTy & H,
+    MC_Enumerator & E,
+    VID v,
+    VID degeneracy,
+    const VID * const remap_coreness ) {
+#if PROFILE_INCUMBENT_SIZE != 0
+    VID deg = H.getDegree( v );
+    std::vector<double> timings;
+    timings.reserve( deg );
+    std::vector<VID> empty;
+    for( VID is=0; is <= deg; ++is ) {
+	// Clear the enumerator (should execute sequentially for this to work)
+	E.reset();
+
+	// Register a clique of size is
+	E.record( is, v, empty.begin(), empty.end() );
+
+	// Execute top-level code
+	{
+	    timer tm;
+	    tm.start();
+	    mc_top_level_select<PROFILE_INCUMBENT_SIZE>(
+		H, E, v, degeneracy, remap_coreness );
+	    timings.push_back( tm.next() );
+	}
+    }
+
+    std::cout << v << " deg=" << deg;
+    for( double t : timings )
+	std::cout << ' ' << t;
+    std::cout << "\n";
+
+    // Make sure future filtering in outer loop is disabled
+    E.reset();
+
+#else
+    mc_top_level_select<0>( H, E, v, degeneracy, remap_coreness );
+#endif // PROFILE_INCUMBENT_SIZE
 }
 
 template<unsigned Bits, typename VID, typename EID>
@@ -3376,10 +3474,10 @@ int main( int argc, char *argv[] ) {
     commandLine P( argc, argv, " help" );
     bool symmetric = P.getOptionValue( "-s" );
     bool early_pruning = P.getOptionValue( "-p" );
-    int heuristic = P.getOptionLongValue( "-h", 0);
+    int heuristic = P.getOptionLongValue( "-h", 0 );
     VID pre = P.getOptionLongValue( "-pre", -1 );
     VID what_if = P.getOptionLongValue( "-what-if", -1 );
-    verbose = P.getOptionValue( "-v" );
+    verbose = P.getOptionLongValue( "-v", 0 );
     const char * ifile = P.getOptionValue( "-i" );
 
     timer tm;
@@ -3464,19 +3562,21 @@ int main( int argc, char *argv[] ) {
     std::fill( max_clique_per_vertex, max_clique_per_vertex+pn, VID(0) );  
 #endif
 
-    std::cout << "Sort order check:\n\thisto[0]=" << histo[0]
-	      << " histo[1]=" << histo[1]
-	      << " histo[degeneracy]=" << histo[degeneracy]
-	      << "\n\tcoreness[0]=" << remap_coreness[0]
-	      << " coreness[pn-1]=" << remap_coreness[pn-1]
-	      << " coreness[histo[1]]=" << remap_coreness[histo[1]]
-	      << " coreness[histo[degeneracy]]="
-	      << remap_coreness[histo[degeneracy]]
-	      << "\n\tdegree[0]=" << H.getDegree(0)
-	      << " degree[pn-1]=" << H.getDegree(pn-1)
-	      << " degree[histo[1]]=" << H.getDegree(histo[1])
-	      << " degree[histo[degeneracy]]=" << H.getDegree(histo[degeneracy])
-	      << "\n";
+    if( histo.size() != 0 )
+	std::cout << "Sort order check:\n\thisto[0]=" << histo[0]
+		  << " histo[1]=" << histo[1]
+		  << " histo[degeneracy]=" << histo[degeneracy]
+		  << "\n\tcoreness[0]=" << remap_coreness[0]
+		  << " coreness[pn-1]=" << remap_coreness[pn-1]
+		  << " coreness[histo[1]]=" << remap_coreness[histo[1]]
+		  << " coreness[histo[degeneracy]]="
+		  << remap_coreness[histo[degeneracy]]
+		  << "\n\tdegree[0]=" << H.getDegree(0)
+		  << " degree[pn-1]=" << H.getDegree(pn-1)
+		  << " degree[histo[1]]=" << H.getDegree(histo[1])
+		  << " degree[histo[degeneracy]]="
+		  << H.getDegree(histo[degeneracy])
+		  << "\n";
 
     std::cout << "Options:"
 	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
@@ -3506,6 +3606,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tVERTEX_COVER_COMPONENTS=" << VERTEX_COVER_COMPONENTS
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
+	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
 	      << '\n';
     
     system( "hostname" );
@@ -3523,6 +3624,9 @@ int main( int argc, char *argv[] ) {
     E.rebase( degeneracy, order.get() );
 
     std::cout << "Start enumeration at " << tm.elapsed() << std::endl;
+
+    timer tm_search;
+    tm_search.start();
 
     /*! Traversal orders
      * 1. SOTA: sort by decreasing degree, visit low to high degree.
@@ -3609,6 +3713,11 @@ int main( int argc, char *argv[] ) {
 	return -1;
 #endif
     }
+
+#if PROFILE_INCUMBENT_SIZE != 0
+    // Dsiable filtering 
+    E.reset();
+#endif
 
 #if SORT_ORDER < 4
     /* 0. low to high degree order */
@@ -3711,12 +3820,12 @@ int main( int argc, char *argv[] ) {
     } );
 #endif
 
-    std::cout << "Enumeration: " << tm.next() << "\n";
+    std::cout << "Enumeration: " << tm.next() << " seconds\n";
+    std::cout << "Completed search in " << tm_search.next() << " seconds\n";
+    std::cout << "Completed MC in " << tm.total() << " seconds\n";
 
     all_variant_statistics stats = mc_stats.sum();
 
-    double duration = tm.total();
-    std::cout << "Completed MC in " << duration << " seconds\n";
     for( size_t n=N_MIN_SIZE; n <= N_MAX_SIZE; ++n ) {
 	std::cout << (1<<n) << "-bit dense BK: ";
 	stats.get( av_bk, n ).print( std::cout ); 
