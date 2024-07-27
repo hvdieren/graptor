@@ -26,6 +26,8 @@ struct array_slice {
     const type * begin() const { return m_begin; }
     const type * end() const { return m_end; }
 
+    type at( size_t idx ) const { return *std::next( m_begin, idx ); }
+
     array_slice<T,I> trim_r( const type * r ) const {
 	return array_slice<T,I>( m_begin, r );
     }
