@@ -709,6 +709,26 @@ public:
 	return ins;
     }
 
+    template<typename DualSet>
+    PSet intersect( lVID n, const DualSet & adj ) const {
+	lVID deg = adj.size();
+	lVID ce = this->m_fill;
+	lVID mx = std::min( deg, ce );
+	PSet ins( n, mx+16 ); // hash_vector requires extra space
+
+	lVID ce_new =
+	    graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+		adj, this->hash_set(), ins.m_set ) - ins.m_set;
+
+	// Construct ins.m_pos 
+	for( lVID i=0; i < ce_new; ++i )
+	    ins.m_pos[ins.m_set[i]] = i;
+
+	ins.m_fill = ce_new;
+
+	return ins;
+    }
+
     // Intersect this with adjacency list.
     // Validate all entries in this->m_set.
     // TODO: streamline with dual_set
@@ -729,7 +749,7 @@ public:
 	auto validate_ds = make_dual_set( adj.get_seq(), validate_h );
 
 	lVID ce_new =
-	    graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
+	    graptor::set_operations<graptor::MC_intersect>::intersect_ds(
 		validate_ds, xp_h, ins.m_set ) - ins.m_set;
 
 	// Construct ins.m_pos 
@@ -787,7 +807,7 @@ public:
 
 	PSet lur( n, l_len + r_len + 16 );
 	lVID * s = lur.m_set;
-	s = graptor::set_operations<graptor::adaptive_intersect>::intersect_ds(
+	s = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
 	    l_adj.trim_r( l_ngh ), r_adj, s );
 	s = std::copy( r_ngh, r_adj.end(), s );
 
@@ -871,7 +891,7 @@ public:
     // Consider all vertices.
     template<typename DualSet>
     lVID intersect_size( const DualSet & adj ) const {
-	return graptor::set_operations<graptor::adaptive_intersect>
+	return graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_ds( adj, this->P_hash_set( 0 ) );
     }
 
@@ -879,7 +899,7 @@ public:
     // Consider all vertices.
     template<typename DualSet>
     lVID intersect_size_exceed( const DualSet & adj, lVID x ) const {
-	return graptor::set_operations<graptor::adaptive_intersect>
+	return graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_exceed_ds( adj, this->P_hash_set( 0 ), x );
     }
 
@@ -887,7 +907,7 @@ public:
     // Consider all vertices up to position i.
     template<typename DualSet>
     lVID intersect_size_from( const DualSet & set, lVID i ) const {
-	return graptor::set_operations<graptor::adaptive_intersect>::intersect_size_ds(
+	return graptor::set_operations<graptor::MC_intersect>::intersect_size_ds(
 	    set, this->P_hash_set( i+1 ) );
     }
 
