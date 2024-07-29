@@ -2,13 +2,8 @@
 // Specialised to MC
 
 // TODO:
-// * online machine learning
-// * Look at Blocked and Binary matrix design:
-//   + col_start and row_start redundant to each other
-// * VIDs of 8 or 16 bits
-// * Consider sorting vertices first by non-increasing degeneracy, secondly
-//   by non-increasing degree within a group of equal degeneracy.
-//   The non-increasing degree means faster reduction of size of P?
+// * Add TERM signal handler to flush all output after a timeout during
+//   measurements.
 
 // Consider:
 // + StackLikeAllocator PAGE_SIZE => mmap => high overhead, USAroad not needed
@@ -32,7 +27,7 @@
 #endif
 
 #ifndef ABLATION_DISABLE_TOP_DENSE
-#define ABLATION_DISABLE_TOP_DENSE 1
+#define ABLATION_DISABLE_TOP_DENSE 0
 #endif
 
 // Not effective, so disable by default
@@ -2993,8 +2988,8 @@ void mc_dense_fn(
 	IG( H, H, cut.get_vertices(), 0, cut.get_num_vertices() );
 
     VID n = IG.numVertices();
-    VID m = IG.calculate_num_edges(); // considers inverted graph
-    float d = 1.0f - ( (float)m / ( (float)n * (float)(n-1) ) );
+    VID m = IG.get_num_edges();
+    float d = (float)m / ( (float)n * (float)(n-1) );
 
     double tc = tm.next();
 
@@ -3150,11 +3145,11 @@ void mc_top_level_select(
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
 	cut( H, v, H.getDegree( v ),
-	     [&]( VID u ) { return remap_coreness[u] > best; } );
+	     [&]( VID u ) { return remap_coreness[u] >= best; } );
     stats.record_filter0( tm.next() );
 
     VID hn1 = cut.get_num_vertices();
-    if( hn1 < best )
+    if( hn1 < best || hn1 == 0 )
 	return;
 
     // Make a second pass over the vertices in the cut-out and check
@@ -3168,8 +3163,7 @@ void mc_top_level_select(
     // will be small as the removed vertices have a relatively low degree
     // and we expect that not many vertices will be removed.
     //
-    // TODO:
-    // Based on the observation that most often the filtering prooves that
+    // Based on the observation that most often the filtering proves that
     // there is no need to perform any detailed search, it would be better
     // to introduce a boolean gt primitive to reduce the time spent in
     // intersections than the exceed primitive does. The boolean gt primitive
@@ -3180,14 +3174,21 @@ void mc_top_level_select(
     // for non-dense cases. Moreover, as the overall result of filtering is
     // that the threshold is not sufficiently met, the benefits may be
     // restricted to a small subset of the performed intersections.
-    cut.filter( [&]( VID u ) {
-	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
-	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
+    cut.filter( [&,best]( VID u ) {
+        // TODO: could simplify intersection by requesting from H only the
+        // right-neigbours of u.
+	// Note: intersection size >= best-1 as the current vertex may be part
+	// of the clique but is not a neighbour of itself.
 	bool ge = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_ge_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
-		best ); // keep if intersection size >= best
+		best-1 ); // keep if intersection size >= best-1
+	size_t sz = graptor::set_operations<graptor::MC_intersect>
+	    ::intersect_size_ds(
+		cut.get_slice(),
+		H.get_neighbours_set( u ).get_seq() );
+	assert( ge == ( sz >= best-1 ) );
 	return ge;
     }, best );
     stats.record_filter1( tm.next() );
@@ -3210,17 +3211,17 @@ void mc_top_level_select(
     // filtering loop managed to filter out vertices), which is doubly
     // useful.
     EID m_est = 0;
-    cut.filter( [&]( VID u ) {
-	// std::cout << "Filter " << cut.get_num_vertices() << " vs "
-	// << H.getDegree( u ) << " for " << u << " best=" << best << "\n";
+    cut.filter( [&,best]( VID u ) {
+        // TODO: could simplify intersection by requesting from H only the
+        // right-neigbours of u.
 	VID d = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
-		best-1 ); // exceed checks >, we need >= best
-	if( d >= best )
+		best-2 ); // exceed checks >, we need >= best-1
+	if( d+1 >= best )
 	    m_est += d;
-	return d >= best;
+	return d+1 >= best;
     }, best );
 
     stats.record_filter2( tm.next() );
@@ -3779,17 +3780,8 @@ int main( int argc, char *argv[] ) {
 #endif
 	if( c_up != c_lo ) {
 	    VID v = c_lo;
-	    // std::cout << "c=" << c << " v=" << v
-	    // << " deg=" << H.getDegree( v )
-	    // << " rho=" << remap_coreness[v]
-	    // << "\n";
 	    if( E.is_feasible( c+1, fr_outer ) )
 		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
-
-// #if ( TRAVERSAL_ORDER & 1 ) != 0
-	    // if( !E.is_feasible( c+1, fr_outer ) )
-	    //     break;
-// #endif
 	}
     } );
     std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
@@ -3823,14 +3815,8 @@ int main( int argc, char *argv[] ) {
 #else
 	    VID v = c_up - ( w - c_lo ) - 1;
 #endif
-	    // std::cout << "c=" << c << " v=" << v
-	    // << " deg=" << H.getDegree( v )
-	    // << " rho=" << remap_coreness[v]
-	    // << "\n";
 	    if( E.is_feasible( c+1, fr_outer ) )
 		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
-	    //if( !E.is_feasible( c+1, fr_outer ) )
-	    //break;
 	} );
     }
 #else
