@@ -957,7 +957,7 @@ public:
 	// This is expected to fail. If it does succeed, we continue
 	// searching for smaller covers.
 	if( k_max == 0 )
-	    return std::make_pair( bitset<Bits>( tr::setzero() ), 0 );
+	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
 	VID best_size = k_max + 1;
 	row_type best_cover = tr::setzero();
 	VID k_up = k_max - 1;
@@ -1004,7 +1004,7 @@ public:
 	// If we can't meet the constraint, return something quick and
 	// recognisable as unuseful.
 	if( best_size > k_max )
-	    return std::make_pair( bitset<Bits>( tr::setzero() ), 0 );
+	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
 
 	return std::make_pair( bitset<Bits>( best_cover ), best_size );
     }
@@ -1012,7 +1012,7 @@ public:
     bitset<Bits>
     clique_via_vertex_cover( VID k_max ) {
 	auto r = vertex_cover_kernelised<true>( k_max );
-	if( r.second == 0 )
+	if( r.second == ~(VID)0 )
 	    return r.first;
 	
 	row_type best_cover = r.first;
