@@ -596,6 +596,12 @@ public:
 	    ngh_set_type( get_neighbours( v ), getDegree( v ) ),
 	    get_adjacency( v ) );
     }
+    dual_set_type get_right_neighbours_set( VID v ) const {
+	auto b = nbegin( v );
+	auto e = nend( v );
+	auto r = std::upper_bound( b, e, v );
+	return dual_set_type( ngh_set_type( r, e ), get_adjacency( v ) );
+    }
 
     neighbour_iterator nbegin( VID v ) {
 	return get_neighbours( v );

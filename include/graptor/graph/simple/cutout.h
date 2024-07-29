@@ -136,7 +136,7 @@ public:
 	: m_iset( new lVID[deg] ) {
 	const lVID * const ngh = G.get_neighbours( v );
 	// Skip left neighbourhood
-	const lVID * pos = std::lower_bound( ngh, ngh+deg, v );
+	const lVID * pos = std::upper_bound( ngh, ngh+deg, v );
 	// Filter remaining vertices
 	lVID * end = std::copy_if( pos, ngh+deg, m_iset,
 				   std::forward<FilterFn>( fn ) );
@@ -150,6 +150,15 @@ public:
 	: m_iset( new lVID[num] ) {
 	// Filter vertices
 	lVID * end = std::copy_if( set, set+num, m_iset,
+				   std::forward<FilterFn>( fn ) );
+	m_num_iset = end - m_iset;
+    }
+    template<typename SetType, typename FilterFn>
+    NeighbourCutOutDegeneracyOrderFiltered(
+	SetType && set, FilterFn && fn )
+	: m_iset( new lVID[set.size()] ) {
+	// Filter vertices
+	lVID * end = std::copy_if( set.begin(), set.end(), m_iset,
 				   std::forward<FilterFn>( fn ) );
 	m_num_iset = end - m_iset;
     }

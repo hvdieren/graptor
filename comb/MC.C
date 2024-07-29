@@ -3144,8 +3144,8 @@ void mc_top_level_select(
     // With degree == best, we can make a clique of size best+1 at best.
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
-	cut( H, v, H.getDegree( v ),
-	     [&]( VID u ) { return remap_coreness[u] >= best; } );
+	cut( H.get_right_neighbours_set( v ),
+	    [&]( VID u ) { return remap_coreness[u] >= best; } );
     stats.record_filter0( tm.next() );
 
     VID hn1 = cut.get_num_vertices();
@@ -3175,8 +3175,6 @@ void mc_top_level_select(
     // that the threshold is not sufficiently met, the benefits may be
     // restricted to a small subset of the performed intersections.
     cut.filter( [&,best]( VID u ) {
-        // TODO: could simplify intersection by requesting from H only the
-        // right-neigbours of u.
 	// Note: intersection size >= best-1 as the current vertex may be part
 	// of the clique but is not a neighbour of itself.
 	bool ge = graptor::set_operations<graptor::MC_intersect>
@@ -3184,11 +3182,6 @@ void mc_top_level_select(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
 		best-1 ); // keep if intersection size >= best-1
-	size_t sz = graptor::set_operations<graptor::MC_intersect>
-	    ::intersect_size_ds(
-		cut.get_slice(),
-		H.get_neighbours_set( u ).get_seq() );
-	assert( ge == ( sz >= best-1 ) );
 	return ge;
     }, best );
     stats.record_filter1( tm.next() );
@@ -3212,8 +3205,6 @@ void mc_top_level_select(
     // useful.
     EID m_est = 0;
     cut.filter( [&,best]( VID u ) {
-        // TODO: could simplify intersection by requesting from H only the
-        // right-neigbours of u.
 	VID d = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_exceed_ds(
 		cut.get_slice(),
