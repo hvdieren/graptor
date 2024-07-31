@@ -93,7 +93,7 @@
  * Preferred on basis of completer measurement: (4,3)
  */
 #ifndef SORT_ORDER
-#define SORT_ORDER 0
+#define SORT_ORDER 5
 #endif
 
 #ifndef TRAVERSAL_ORDER
