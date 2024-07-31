@@ -79,6 +79,7 @@ int main( int argc, char *argv[] ) {
 	return 1;
     }
 
+    // This is assuming no self-edges. If not, number will be less.
     if( symmetric )
 	m *= 2;
 
@@ -134,11 +135,16 @@ int main( int argc, char *argv[] ) {
 	// Need to mirror edges
 	// Note: self-edges are duplicated in this process!
 	if( symmetric ) {
-	    src[enxt] = dst[enxt-1];
-	    dst[enxt] = src[enxt-1];
-	    if( weighted )
-		wght[enxt] = wght[enxt-1];
-	    ++enxt;
+	    if( src[enxt-1] != dst[enxt-1] ) {
+		src[enxt] = dst[enxt-1];
+		dst[enxt] = src[enxt-1];
+		if( weighted )
+		    wght[enxt] = wght[enxt-1];
+		++enxt;
+	    } else {
+		std::cout << "Note: self-edge: " << src[enxt-1]
+			  << ' ' << dst[enxt-1] << " not flipped\n";
+	    }
 	}
 
 	if( enxt == m )
@@ -147,6 +153,12 @@ int main( int argc, char *argv[] ) {
 
     fclose( fp );
     delete[] buf;
+
+    // Discrepancy is due to self-edges that aren't flipped in symmetric matrix
+    if( m > enxt ) {
+	m = enxt;
+	G.shrink_num_edges( enxt );
+    }
 
     // Convert COO to CSR
     std::cerr << "Convert to CSR\n";
