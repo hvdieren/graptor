@@ -93,7 +93,7 @@
  * Preferred on basis of completer measurement: (4,3)
  */
 #ifndef SORT_ORDER
-#define SORT_ORDER 5
+#define SORT_ORDER 0
 #endif
 
 #ifndef TRAVERSAL_ORDER
@@ -3140,8 +3140,8 @@ void mc_top_level_select(
 	return;
     }
 
-    // Filter out vertices where degree in main graph < best.
-    // With degree == best, we can make a clique of size best+1 at best.
+    // Filter out vertices where coreness in main graph < best.
+    // With coreness == best, we can make a clique of size best+1 at best.
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
 	cut( H.get_right_neighbours_set( v ),
