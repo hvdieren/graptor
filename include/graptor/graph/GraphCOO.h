@@ -200,6 +200,11 @@ public:
     VID numVertices() const { return n; }
     EID numEdges() const { return m; }
 
+    void shrink_num_edges( EID mnew ) {
+	assert( m >= mnew );
+	m = mnew;
+    }
+
 private:
     // Align assuming AVX-512
     void allocateInterleaved( bool aw = false ) {
