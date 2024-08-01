@@ -47,6 +47,10 @@
 #define BK_MIN_LEAF 8
 #endif
 
+#ifndef TOP_DENSE_SELECT
+#define TOP_DENSE_SELECT 0
+#endif
+
 #ifndef PIVOT_COLOUR
 #define PIVOT_COLOUR 0
 #endif
@@ -142,6 +146,24 @@
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
 #include "reorder_kcore.h"
+
+float density_threshold = 0.9f;
+
+#if TOP_DENSE_SELECT > 0
+#include "graptor/stat/vfdt.h"
+
+using timing_attribute = graptor::numeric_float_dense_range<
+    float,std::ratio<0,1>,std::ratio<1,1>,8>;
+using input_attribute = graptor::numeric_float_dense_range<
+    float,std::ratio<0,1>,std::ratio<1,1>,8>;
+
+static std::vector<graptor::binary_vfdt<
+		       timing_attribute,
+		       input_attribute, // #vertices / 512
+		       input_attribute, // k_max / #vertices
+		       input_attribute // density
+		       >> algo_predictor;
+#endif
 
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
@@ -2994,36 +3016,88 @@ void mc_dense_fn(
     float d = (float)m / ( (float)n * (float)(n-1) );
 
     double tc = tm.next();
-
     algo_variant av = av_bk;
-    if( d > 0.9f ) {
-	VID bc = E.get_max_clique_size();
-	VID k_max = n < bc ? 0 : n - bc + 1;
+    bool do_vc = false, do_bk = false;
+    double t_vc = 0, t_bk = 0;
 
+    VID bc = E.get_max_clique_size();
+    VID k_max = n < bc ? 0 : n - bc + 1;
+
+#if TOP_DENSE_SELECT == 0
+    if( d > density_threshold ) {
+	do_vc = true;
+	av = av_vc;
+    } else {
+	do_bk = true;
+	av = av_bk;
+    }
+#else
+    // by predictor
+    float iv_n = float(n) / 512.0f;
+    float iv_k = float(k_max) / float(n);
+    float tp_bk = algo_predictor[0].predict( iv_n, iv_k, d );
+    float tp_vc = algo_predictor[1].predict( iv_n, iv_k, d );
+    if( tp_bk < tp_vc ) {
+	av = av_bk;
+	do_bk = true;
+    } else {
+	av = av_vc;
+	do_vc = true;
+    }
+#if TOP_DENSE_SELECT == 1
+    // profile both
+    do_vc = do_bk = true;
+#endif
+#endif
+
+    if( do_vc ) {
+#if TOP_DENSE_SELECT == 0
 	if( verbose > 2 )
 	    std::cout << "top-level dense VC: v=" << v
 		      << " cut=" << n << " density=" << d
 		      << " k_max=" << k_max << "\n";
+#endif
     
 	auto bs = IG.clique_via_vertex_cover( k_max );
 	E.record( 1 + bs.size(), bs.begin(), bs.end() );
-	av = av_vc;
-    } else {
+	t_vc = tm.next();
+    }
+
+    if( do_bk ) {
+#if TOP_DENSE_SELECT == 0
 	if( verbose > 2 )
-	    std::cout << "top-level dense VC: v=" << v << " cut="
-		      << " density=" << d
-		      << n << "\n";
+	    std::cout << "top-level dense BK: v=" << v << " cut=" << n
+		      << " density=" << d << "\n";
+#endif
     
 	clique_set<VID> R( v );
 	MC_DenseEnumerator DE( E, &R );
 	IG.mc_search( DE, 1 );
+	t_bk = tm.next();
     }
 
-    double t = tm.next();
+#if TOP_DENSE_SELECT > 0
+    if( verbose > 2 ) {
+	    std::cout << "top-level dense: v=" << v
+		      << " cut=" << n << " density=" << d
+		      << " k_max=" << k_max
+		      << " VC=" << t_vc
+		      << " BK=" << t_bk
+		      << " pred=" << ( av == av_bk ? "BK" : "VC" )
+		      << " pred_VC=" << tp_vc
+		      << " pred_BK=" << tp_bk
+		      << "\n";
+    }
+    // Update predictor
+    if( do_vc )
+	algo_predictor[1].update( t_vc, iv_n, iv_k, d );
+    if( do_bk )
+	algo_predictor[0].update( t_bk, iv_n, iv_k, d );
+#endif
 
     variant_statistics & s = stats.get( av, cl );
     s.record_build( tc );
-    s.record( t );
+    s.record( av == av_bk ? t_bk : t_vc );
 }
 
 typedef void (*mc_func)(
@@ -3046,6 +3120,7 @@ void mc_top_level_bk(
     MC_Enumerator & E,
     VID v,
     VID degeneracy,
+    float density,
     const VID * const remap_coreness,
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
 
@@ -3053,7 +3128,8 @@ void mc_top_level_bk(
 
     if( verbose > 2 )
 	std::cout << "top-level generic BK: v=" << v
-		  << " cut=" << cut.get_num_vertices() << "\n";
+		  << " cut=" << cut.get_num_vertices()
+		  << " density=" << density << "\n";
 
     timer tm;
     tm.start();
@@ -3078,6 +3154,7 @@ void mc_top_level_vc(
     MC_Enumerator & E,
     VID v,
     VID degeneracy,
+    float density,
     const VID * const remap_coreness,
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
 
@@ -3085,7 +3162,8 @@ void mc_top_level_vc(
 
     if( verbose > 2 )
 	std::cout << "top-level generic VC: v=" << v
-		  << " cut=" << cut.get_num_vertices() << "\n";
+		  << " cut=" << cut.get_num_vertices()
+		  << " density=" << density << "\n";
     
     timer tm;
     tm.start();
@@ -3245,21 +3323,16 @@ void mc_top_level_select(
 #endif
 
     float d = float(m_est) / ( float(num) * float(num) );
-    if( verbose > 4 )
-	std::cout << "top-level density: v=" << v
-		  << " cut=" << cut.get_num_vertices()
-		  << " density=" << d << "\n";
-
     if constexpr ( select == 0 ) {
-	if( d > .9f ) {
-	    mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
+	if( d > density_threshold ) {
+	    mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
 	} else {
-	    mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
+	    mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
 	}
     } else if constexpr ( select == 1 ) {
-	mc_top_level_vc( H, E, v, degeneracy, remap_coreness, cut );
+	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
     } else {
-	mc_top_level_bk( H, E, v, degeneracy, remap_coreness, cut );
+	mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
     }
 }
 
@@ -3358,7 +3431,7 @@ void leaf_dense_fn(
     }
 
     MC_DenseEnumerator DE( E, R, xp_set.get_set() ); // cut.get_vertices() );
-    if( d > 0.9f ) {
+    if( d > density_threshold ) {
 	VID init_k = n - ( E.get_max_clique_size() - depth );
 	auto bs = D.clique_via_vertex_cover( init_k );
 	DE.record( depth + bs.size(), bs.begin(), bs.end() );
@@ -3506,6 +3579,7 @@ int main( int argc, char *argv[] ) {
     VID pre = P.getOptionLongValue( "-pre", -1 );
     VID what_if = P.getOptionLongValue( "-what-if", -1 );
     verbose = P.getOptionLongValue( "-v", 0 );
+    density_threshold = P.getOptionDoubleValue( "-d", 0.9f );
     const char * ifile = P.getOptionValue( "-i" );
 
     timer tm;
@@ -3636,10 +3710,18 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
+	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
 	      << '\n';
     
     system( "hostname" );
     system( "date" );
+
+#if TOP_DENSE_SELECT > 0
+    graptor::hoeffding_tree_config cfg( 100, 200, 100, 0.99, 20 );
+    algo_predictor.reserve( 2 );
+    algo_predictor.emplace_back( cfg );
+    algo_predictor.emplace_back( cfg );
+#endif
 
 #if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
@@ -3707,7 +3789,7 @@ int main( int argc, char *argv[] ) {
 
     if( heuristic == 1 ) {
 	// Heuristic 1: explore all vertices in a greedy manner, finding one
-	// clique per vertex. Traverse from high to low degeneracy.
+	// clique per vertex. Traverse from high to low vertex number.
 	// for( VID w=0; w < n; ++w ) {
 	parallel_loop( (VID)0, (VID)n, (VID)1, [&]( VID w ) {
 	    VID v = n - 1 - w;
