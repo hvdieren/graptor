@@ -2208,11 +2208,13 @@ private:
 	}	
 
 	// Try crown kernel reduction
+#if 0 // crown cover not correct
 	if constexpr ( co == true ) { // co == false NYI
 	    int ret = vck_crown<exists,co>( k, c, eligible, best_size, best_cover );
 	    if( ret >= 0 )
 		return (bool)ret;
 	}
+#endif
 
 	if( m/2 > c * k * k && max_deg > k ) {
 	    // replace by Buss kernel
