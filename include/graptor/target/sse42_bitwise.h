@@ -73,7 +73,7 @@ struct sse42_bitwise {
     static type logical_and( type a, type b ) { return _mm_and_si128( a, b ); }
     static type logical_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
     static type logical_or( type a, type b ) { return _mm_or_si128( a, b ); }
-    static type logical_invert( type a ) { return _mm_xor_si128( a, setone() );}
+    static type logical_invert( type a ) { return _mm_xor_si128( a, setone() ); }
     static type bitwise_and( type a, type b ) { return _mm_and_si128( a, b ); }
     static type bitwise_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
     static type bitwise_or( type a, type b ) { return _mm_or_si128( a, b ); }
