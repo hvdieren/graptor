@@ -1888,6 +1888,7 @@ vertex_cover_vc3( GraphType & G,
     // Consider if it is worthwhile to transform to a dense problem.
     // Do this after the buss kernel, as the buss kernel may give a reasonable
     // reduction graph size.
+#if !ABLATION_DISABLE_LEAF
     lVID n_remain = G.get_num_remaining_vertices();
     if( n_remain <= (VID(1)<<N_MAX_SIZE) ) {
 	typedef bool (*fptr_t)( const GraphType &, lVID, lVID, lVID &, lVID * );
@@ -1905,6 +1906,7 @@ vertex_cover_vc3( GraphType & G,
 	    return fptr[nlg-N_MIN_SIZE](
 		G, n_remain, k, best_size, best_cover );
     }
+#endif // ABLATION_DISABLE_LEAF
 
     // Must have a vertex with degree >= 3 (trivial given check for poly)
     // assert( max_deg >= 3 );
@@ -2998,10 +3000,20 @@ void mc_dense_fn(
 	VID bc = E.get_max_clique_size();
 	VID k_max = n < bc ? 0 : n - bc + 1;
 
+	if( verbose > 2 )
+	    std::cout << "top-level dense VC: v=" << v
+		      << " cut=" << n << " density=" << d
+		      << " k_max=" << k_max << "\n";
+    
 	auto bs = IG.clique_via_vertex_cover( k_max );
 	E.record( 1 + bs.size(), bs.begin(), bs.end() );
 	av = av_vc;
     } else {
+	if( verbose > 2 )
+	    std::cout << "top-level dense VC: v=" << v << " cut="
+		      << " density=" << d
+		      << n << "\n";
+    
 	clique_set<VID> R( v );
 	MC_DenseEnumerator DE( E, &R );
 	IG.mc_search( DE, 1 );
@@ -3237,7 +3249,6 @@ void mc_top_level_select(
 	std::cout << "top-level density: v=" << v
 		  << " cut=" << cut.get_num_vertices()
 		  << " density=" << d << "\n";
-    
 
     if constexpr ( select == 0 ) {
 	if( d > .9f ) {
@@ -3749,7 +3760,8 @@ int main( int argc, char *argv[] ) {
 #else
 	VID v = n-1-w;
 #endif
-	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	if( E.is_feasible( remap_coreness[v]+1, fr_outer ) )
+	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
     } );
 
 #elif SORT_ORDER >= 4 && SORT_ORDER <= 7
