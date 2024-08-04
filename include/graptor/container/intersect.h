@@ -622,8 +622,7 @@ struct intersection_size_ge {
 	    m_terminated = true;
 	    m_ge = false;
 	    return false;
-	} else if( m_left_options
-		   >= std::distance( p + num_matched, m_left_end ) ) {
+	} else if( m_left_options >= std::distance( p, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -744,8 +743,7 @@ struct intersection_size_ge_two_sided {
 	    m_terminated = true;
 	    m_ge = false;
 	    return false;
-	} else if( m_left_options
-		   >= std::distance( p + num_matched, m_left_end ) ) {
+	} else if( m_left_options >= std::distance( p + vl, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -992,9 +990,10 @@ struct merge_scalar {
 	    return std::make_pair( lb, rb );
 
 	while( lb != le && rb != re ) {
+	    LIt olb = lb;
+	    LIt orb = rb;
+
 	    // translation not supported
-	    if( !out.template record<rhs>( lb, rb, *lb == *rb ) )
-		break;
 	    if( *lb == *rb ) {
 		++lb;
 		++rb;
@@ -1002,6 +1001,9 @@ struct merge_scalar {
 		++lb;
 	    else
 		++rb;
+
+	    if( !out.template record<rhs>( olb, orb, *olb == *orb ) )
+		break;
 	}
 
 	out.template remainder<rhs>( le - lb, re - rb );
@@ -1438,7 +1440,7 @@ struct merge_vector_jump {
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la, ra ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
 		break;
 
 	    // If not a single element in the LHS vector was present on the RHS
@@ -2321,7 +2323,7 @@ struct merge_vector {
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb, vl, ma, la, ra ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
 		break;
 	}
 
