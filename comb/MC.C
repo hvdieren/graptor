@@ -51,6 +51,10 @@
 #define TOP_DENSE_SELECT 0
 #endif
 
+#ifndef ABLATION_DISABLE_VC
+#define ABLATION_DISABLE_VC 0
+#endif
+
 #ifndef PIVOT_COLOUR
 #define PIVOT_COLOUR 0
 #endif
@@ -3024,6 +3028,7 @@ void mc_dense_fn(
     VID k_max = n < bc ? 0 : n - bc + 1;
 
 #if TOP_DENSE_SELECT == 0
+#if !ABLATION_DISABLE_VC
     if( d > density_threshold ) {
 	do_vc = true;
 	av = av_vc;
@@ -3031,6 +3036,10 @@ void mc_dense_fn(
 	do_bk = true;
 	av = av_bk;
     }
+#else
+    do_bk = true;
+    av = av_bk;
+#endif
 #else
     // by predictor
     float iv_n = float(n) / 512.0f;
@@ -3209,6 +3218,10 @@ void mc_top_level_vc(
     stats.record_gen( av_vc, tm.next() );
 }
 
+//! Largest and average right-hand neighbour list size observed
+//  by mc_top_level_select
+std::atomic<VID> g_largest_rhs, g_sum_rhs, g_count_rhs;
+
 template<int select>
 void mc_top_level_select(
     const HFGraphTy & H,
@@ -3230,12 +3243,29 @@ void mc_top_level_select(
 	return;
     }
 
+    // Profiling: check largest right-hand neighbour list encountered.
+    // Good performance is expected when this does not exceed the degeneracy
+    // by much.
+    auto v_radj = H.get_right_neighbours_set( v );
+    g_sum_rhs.fetch_add( v_radj.size() );
+    g_count_rhs.fetch_add( 1 );
+    // g_largest_rhs.fetch_max( v_radj.size() ); -- c++26
+    {
+	size_t v_radj_sz = v_radj.size();
+	VID lg = g_largest_rhs.load();
+	if( v_radj_sz > lg ) {
+	    while( !g_largest_rhs.compare_exchange_weak(
+		       lg, v_radj_sz,
+		       std::memory_order_release,
+		       std::memory_order_relaxed ) ) { }
+	}
+    }
+
     // Filter out vertices where coreness in main graph < best.
     // With coreness == best, we can make a clique of size best+1 at best.
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
-	cut( H.get_right_neighbours_set( v ),
-	    [&]( VID u ) { return remap_coreness[u] >= best; } );
+	cut( v_radj, [&]( VID u ) { return remap_coreness[u] >= best; } );
     stats.record_filter0( tm.next() );
 
     VID hn1 = cut.get_num_vertices();
@@ -3330,9 +3360,9 @@ void mc_top_level_select(
 	    mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
 	}
     } else if constexpr ( select == 1 ) {
-	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
-    } else {
 	mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
+    } else {
+	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
     }
 }
 
@@ -3373,7 +3403,11 @@ void mc_top_level(
     E.reset();
 
 #else
+#if !ABLATION_DISABLE_VC
     mc_top_level_select<0>( H, E, v, degeneracy, remap_coreness );
+#else
+    mc_top_level_select<1>( H, E, v, degeneracy, remap_coreness );
+#endif
 #endif // PROFILE_INCUMBENT_SIZE
 }
 
@@ -3384,8 +3418,6 @@ void leaf_dense_fn(
     const clique_set<VID> * R,
     const PSet<VID> & xp_set,
     size_t depth ) {
-    variant_statistics & stats
-	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
     timer tm;
     tm.start();
 
@@ -3421,7 +3453,7 @@ void leaf_dense_fn(
     VID n = D.numVertices();
     VID m = D.get_num_edges();
     float d = (float)m / ( (float)n * (float)(n-1) );
-    stats.record_build( tm.next() );
+    double tm_build = tm.next();
 
     // Maximum clique size is depth (size of R), maximum degree in D
     // (max number of plausible neighbours), +1 for the vertex whose neighbours
@@ -3431,15 +3463,24 @@ void leaf_dense_fn(
     }
 
     MC_DenseEnumerator DE( E, R, xp_set.get_set() ); // cut.get_vertices() );
+    algo_variant av = av_bk;
+#if !ABLATION_DISABLE_VC
     if( d > density_threshold ) {
 	VID init_k = n - ( E.get_max_clique_size() - depth );
 	auto bs = D.clique_via_vertex_cover( init_k );
 	DE.record( depth + bs.size(), bs.begin(), bs.end() );
+	av = av_vc;
     } else {
 	D.mc_search( DE, depth );
     }
+#else
+    D.mc_search( DE, depth );
+#endif
 
     float tbk = tm.next();
+    variant_statistics & stats
+	= mc_stats.get_statistics().get_leaf( av, ilog2( Bits ) );
+    stats.record_build( tm_build );
     stats.record( tbk );
 
     // std::cout << "leaf-dense<" << Bits << "> n_req=" << xp_set.get_fill()
@@ -3698,6 +3739,7 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_DENSE_NO_PIVOT_TOP
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
+	      << "\n\tABLATION_DISABLE_VC=" << ABLATION_DISABLE_VC
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
 	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
@@ -3711,6 +3753,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
+	      << "\n\tdensity_threshold=" << density_threshold
 	      << '\n';
     
     system( "hostname" );
@@ -3734,6 +3777,7 @@ int main( int argc, char *argv[] ) {
 
     E.rebase( degeneracy, order.get() );
 
+    std::cout << "setup: " << tm.next() << std::endl;
     std::cout << "Start enumeration at " << tm.elapsed() << std::endl;
 
     timer tm_search;
@@ -3871,11 +3915,11 @@ int main( int argc, char *argv[] ) {
     } );
     std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
 	    
+#if ( TRAVERSAL_ORDER & 4 ) == 0
     for( VID cc=0; cc <= degeneracy; ++cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
 	VID c = cc;
 #else
-	// 4,5: decreasing degeneracy
 	VID c = degeneracy - cc;
 #endif
 	VID c_up = histo[c+1];
@@ -3893,7 +3937,6 @@ int main( int argc, char *argv[] ) {
 	    break; // decreasing degeneracy -> skip
 #endif
 	}
-	// for( VID w=c_lo; w < c_up; ++w ) { // decreasing degree
 	parallel_loop( c_lo, c_up, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 2 ) == 0
 	    VID v = w;
@@ -3904,6 +3947,62 @@ int main( int argc, char *argv[] ) {
 		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
 	} );
     }
+
+#else // TRAVERSAL_ORDER & 4
+    // Note: a traversal whereby an increasing and decreasing
+    //       traversal are started in parallel, meeting halfway, i.e.,
+    //       lower half of range is traversed in increasing order, upper half
+    //       in decreasing order, bothin parallel.
+    for( VID cc=0; cc <= degeneracy; ++cc ) {
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	VID c = cc;
+#else
+	VID c = degeneracy - cc;
+#endif
+	VID c_up = histo[c+1];
+	VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+	std::swap( c_up, c_lo );
+#endif
+	if( c_up == c_lo )
+	    continue;
+	++c_lo; // already did c_lo in preamble
+	if( !E.is_feasible( c+1, fr_outer ) ) {
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	    continue; // increasing degeneracy -> skip
+#else
+	    break; // decreasing degeneracy -> skip
+#endif
+	}
+
+	parallel_loop( (VID)0, (VID)2, (VID)1, [&,c_lo,c_up,c,degeneracy](
+			   VID half ) {
+	    VID c_mid = ( c_lo + c_up ) / 2;
+	    
+	    if( half == 0 ) {
+		parallel_loop( c_lo, c_mid, (VID)1, [&,c,degeneracy]( VID w ) {
+		    // Increasing order from low end
+		    VID v = w;
+
+		    if( E.is_feasible( c+1, fr_outer ) )
+			mc_top_level( H, E, v, degeneracy,
+				      remap_coreness.get() );
+		} );
+	    } else {
+		parallel_loop( c_mid, c_up, (VID)1, [&,c,c_mid,degeneracy](
+				   VID w ) {
+		    // Decreasing order from high end
+		    VID v = c_up - ( w - c_mid ) - 1;
+
+		    if( E.is_feasible( c+1, fr_outer ) )
+			mc_top_level( H, E, v, degeneracy,
+				      remap_coreness.get() );
+		} );
+	    }
+	} );
+    }
+#endif
+    
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
@@ -3947,6 +4046,14 @@ int main( int argc, char *argv[] ) {
     stats.m_filter2.print( std::cout );
     std::cout << "heuristic: ";
     stats.m_heuristic.print( std::cout );
+
+    std::cout << "RHS neighbour list statistics:"
+	      << "\nRHS largest: " << g_largest_rhs.load()
+	      << "\nRHS sum: " << g_sum_rhs.load() 
+	      << "\nRHS count: " << g_count_rhs.load() 
+	      << "\nRHS average: "
+	      << ( (float)g_sum_rhs.load() / (float)g_count_rhs.load() )
+	      << "\n";
 
     // Note: reported top-level vertex not translated back after reordering
     E.report( std::cout );
