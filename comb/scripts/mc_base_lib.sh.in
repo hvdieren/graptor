@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# For custom gcc build
+. $HOME/tools/gcc-13-install/bin/load.sh
+
+# Kelvin build
+#module load compilers/gcc/10.3.0
+#module load papi/7.0.1/gcc-10.3.0
+
+TREE_ROOT=/var/shared/projects/asap/graphs/
+
+TOOLSPATH=@CMAKE_BINARY_DIR@/tools
+EXTERNALPATH=@CMAKE_BINARY_DIR@/external/Build
+CILK_LIB=@graptor_ld_preload@
+
+WEIGHTS=none
+
+hostname
+
+verbose=1
+
+# args 1:prog_graph_layout 2:graph-file 3:graph-name 4:threads 5:commit 6:round 7:partitions
+function run()
+{
+    local prog=$1
+    local graph_path=$2
+    local graph_name=$3
+    local threads=$4
+    local commit=$5
+    local round=$6
+
+    bindir=bin_base_$commit
+    arg=""
+
+    local outdir=./base_avx512/$commit
+    [ -d $outdir ] || mkdir -p $outdir
+    local file=$outdir/output.${commit}.t${threads}.r${round}.${prog}.${graph_name} 
+
+    local opts="";
+    if [ x$prog == xcliquer ] ; then
+	opts="-u ${graph_path} "
+    elif [ x$prog == xdOmega_LS ] ; then
+	opts="-m ${graph_path} -m ${threads}"
+    elif [ x$prog == xdOmega_BS ] ; then
+	opts="-m ${graph_path} -m ${threads}"
+    else # pmc
+	opts="-f ${graph_path} -t ${threads}"
+    fi
+
+    # Do not use interposer library as pmc gets the number of threads wrong.
+    if [ ! -f $file ] ; then
+	echo $1 $2
+	echo "OMP_NUM_THREADS=${threads} LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" timeout 1800s ./${bindir}/${prog} ${opts} > $file"
+	bash -c "OMP_NUM_THREADS=${threads} LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" timeout 1800s ./${bindir}/${prog} ${opts} > $file 2>&1"
+    fi
+}
+
+# args: graph dir/undir
+function for_gg()
+{
+    local graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise mtxmkt $1 $2 $WEIGHTS`
+
+    echo "graph path: $graph_path"
+
+    local g="${1}_${2}"
+    local commit=$3
+
+    local is_avx512f=0
+    if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
+
+#    for r in 0 ; do
+#	run intersect_ds__op2_vl16 $graph_path $g 1 $commit $r 1024 0
+#	run intersect_ds__op0_vl16 $graph_path $g 1 $commit $r 1024 0
+#	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
+#    done
+
+    for r in `seq 0 2` ; do
+	run pmc $graph_path $g 128 $commit $r
+	run cliquer $graph_path $g 128 $commit $r
+	run dOmega_LS $graph_path $g 128 $commit $r
+	run dOmega_BS $graph_path $g 128 $commit $r
+    done
+}
+
+true

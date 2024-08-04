@@ -72,6 +72,7 @@ function get_flags() {
     flags["PIVOT_COLOUR_DENSE"]=1
     flags["PROFILE_INCUMBENT_SIZE"]=0
     flags["VERTEX_COVER_ABSOLUTE"]=0
+    flags["ABLATION_DISABLE_VC"]=0
 
     if [[ "$v" == *_papi* ]] ; then
  	flags["PAPI_REGION"]=1;
@@ -199,39 +200,6 @@ function get_flags() {
     if [[ "$v" == *_clobber* ]] ; then
 	flags["MEMORY_CLOBBER_WORKAROUND"]=1;
     fi
-    if [[ "$v" == *_par0* ]] ; then
-	flags["PAR_LOOP"]=0;
-    fi
-    if [[ "$v" == *_par1* ]] ; then
-	flags["PAR_LOOP"]=1;
-    fi
-    if [[ "$v" == *_par2* ]] ; then
-	flags["PAR_LOOP"]=2;
-    fi
-    if [[ "$v" == *_par4* ]] ; then
-	flags["PAR_LOOP"]=4;
-    fi
-    if [[ "$v" == *_par5* ]] ; then
-	flags["PAR_LOOP"]=5;
-    fi
-    if [[ "$v" == *_par6* ]] ; then
-	flags["PAR_LOOP"]=6;
-    fi
-    if [[ "$v" == *_par7* ]] ; then
-	flags["PAR_LOOP"]=7;
-    fi
-    if [[ "$v" == *_par8* ]] ; then
-	flags["PAR_LOOP"]=8;
-    fi
-    if [[ "$v" == *_top0* ]] ; then
-	flags["ABLATION_GENERIC_TOP"]=0;
-    fi
-    if [[ "$v" == *_top1* ]] ; then
-	flags["ABLATION_GENERIC_TOP"]=1;
-    fi
-    if [[ "$v" == *_top2* ]] ; then
-	flags["ABLATION_GENERIC_TOP"]=2;
-    fi
     if [[ "$v" == *_BQ* ]] ; then
 	flags["BLOCKED_THRESHOLD_SEQUENTIAL_PBITS"]=`echo "${v}_" | sed -e 's/^.*_BQ\([0-9][0-9]*\)_.*$/\1.0/'`;
     fi
@@ -296,6 +264,9 @@ function get_flags() {
     fi
     if [[ "$v" == *_vcabs* ]] ; then
 	flags["VERTEX_COVER_ABSOLUTE"]=1
+    fi
+    if [[ "$v" == *_abVC* ]] ; then
+	flags["ABLATION_DISABLE_VC"]=1
     fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done

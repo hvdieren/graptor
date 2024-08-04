@@ -1,10 +1,11 @@
 #!/bin/bash
 
+#what="heuristic [01]:"
 #what="filter:"
-what="Enumeration:"
+#what="Enumeration:"
 #what="Calculting coreness:"
 #what="Completed MC in"
-#what="Completed search in"
+what="Completed search in"
 whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
 function get_avg() {
@@ -29,7 +30,6 @@ function get_avg() {
 	    if grep FAIL $file > /dev/null 2>&1 ; then
 		fail=1
 	    else
-		#local val=`( grep "Enumeration:" $file 2> /dev/null || echo Enumeration: ABORT ) | cut -d' ' -f2`
 		local val=`( grep "$what" $file 2> /dev/null || echo $what: ABORT ) | cut -d' ' -f$whatn`
 		if [ x$val != xABORT ] ; then
 		    sum=`echo | perl -ne "END { printf \"%f\n\", ($sum+$val); }"`
@@ -79,7 +79,7 @@ function mce() {
     local arch=$5
     local dir=$6
     local heur=$7
-    local graphs="CAroad GG-NE-bio-heart GG-NE-bio-neuron LiveJournal M87127560 RMAT27 USAroad Yahoo_mem Yahoo_web bio-HS-CX bio-WormNet-v3 bio-human-gene1 bio-human-gene2 bio-mouse-gene btc-2009 cit-patents clueweb09 dblp2012 dimacs flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 keller5 keller6 orkut pokec sinaweibo sx-stackoverflow twitter_xl uk-2005 uk_union_06 warwiki webcc wiki-talk wiki-topcats"
+    local graphs="CAroad LiveJournal M87127560 USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
 
     if [ x$dir = x ] ; then
 	dir=$commit
@@ -87,13 +87,13 @@ function mce() {
 
     local variants=""
     if [ $heur == 1 ] ; then
-	for s in `seq 0 5` ; do
+	for s in `seq 0 7` ; do
 	    for t in `seq 0 3` ; do
 		variants="$variants itrim_sort${s}_trav${t}_$vl"
 	    done
 	done
     else
-	for s in `seq 4 5` ; do
+	for s in `seq 4 7` ; do
 	    for t in `seq 0 3` ; do
 		variants="$variants itrim_sort${s}_trav${t}_$vl"
 	    done
@@ -118,5 +118,7 @@ function mce() {
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 1
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 2
 
-mce 16 128 9ad9741d 1024 avx512 9ad9741d 1
-mce 16 128 9ad9741d 1024 avx512 9ad9741d 2
+commit=46dad933
+
+mce 16 128 $commit 1024 avx512 $commit 1
+mce 16 128 $commit 1024 avx512 $commit 2

@@ -89,20 +89,32 @@ for i in `seq 0 8` ; do
 done
 fi
 
-for s in `seq 0 5` ; do
-    for t in `seq 0 3` ; do
+for s in `seq 0 3` ; do
+    for t in `seq 0 1` ; do
 	one MC _itrim_sort${s}_trav${t}_vl16 &
     done
     wait
 done
 
+for s in `seq 4 7` ; do
+    for t in `seq 0 4` ; do
+	one MC _itrim_sort${s}_trav${t}_vl16 &
+    done
+    wait
+done
+
+one MC _itrim_sort4_trav3_vccc_vl16 &
+one MC _itrim_sort4_trav3_nopivc_nopivd_vl16 
 one MC _itrim_sort5_trav1_vccc_vl16 &
 one MC _itrim_sort5_trav1_nopivc_nopivd_vl16 
 
-one MC _itrim_sort5_trav1_incumbent1_vl16  &
-one MC _itrim_sort5_trav1_incumbent2_vl16  &
-one MC _itrim_sort5_trav1_incumbent2_vcabs_vl16  
+#one MC _itrim_sort4_trav3_incumbent1_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_vcabs_vl16  
 
+one MC _itrim_sort4_trav3_vl16_noavx512 &
 one MC _itrim_sort5_trav1_vl16_noavx512
+
+one MC _itrim_sort4_trav3_abVC_vl16
 
 wait
