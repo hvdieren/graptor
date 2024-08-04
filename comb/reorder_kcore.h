@@ -12,13 +12,13 @@
 #undef MD_ORDERING
 #undef NOBENCH
 
-template<int sorting_order>
+template<int sorting_order, typename CommandLineType>
 std::tuple<GraphCSx,VID,std::vector<VID>>
 reorder_kcore( const GraphCSx & G,
 	       mm::buffer<VID> & order,
 	       mm::buffer<VID> & rev_order,
 	       mm::buffer<VID> & remap_coreness,
-	       commandLine & options,
+	       CommandLineType & options,
 	       VID prune_th,
 	       VID dmax_v = ~(VID)0 ) {
     timer tm;
