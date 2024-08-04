@@ -77,20 +77,20 @@ function download_file_if_missing()
     local srcpath=$3
 
     if [ ! -e ${path}/${filename} -a ! -e ${path}/${filename}.gz ] ; then
-	echo "$path/$filename missing"
+	echo "$path/$filename missing" >&2
 	if [ -z "${srcpath}" ] ; then
-	    echo "Cannot download file: remote not specified"
+	    echo "Cannot download file: remote not specified" >&2
 	    exit 1
 	fi
 
 	local dirname=`dirname $filename`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
 
-	echo Download data: scp $srcpath/${filename}* ${path}/${dirname}/
+	echo Download data: scp $srcpath/${filename}* ${path}/${dirname}/ >&2
     	scp $srcpath/${filename} $srcpath/${filename}.gz ${path}/${dirname}/
     fi
 }
@@ -113,7 +113,7 @@ function create_ligra_weights_from_graptor()
 
 	local dirname=`dirname $ligra_file`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
@@ -146,7 +146,7 @@ function create_ligra_from_graptor()
 
 	local dirname=`dirname $ligra_file`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
@@ -180,7 +180,7 @@ function create_gapbs_weights_from_graptor()
 
 	local dirname=`dirname $gapbs_file`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
@@ -215,7 +215,7 @@ function create_gapbs_from_graptor()
 
 	local dirname=`dirname $gapbs_file`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
@@ -239,7 +239,7 @@ function create_mtxmkt_from_graptor()
     local graph=$2
     local un_dir=$3
     local format=$4
-    local spec=coo.mtx
+    local spec=pattern.mtx
     local srcpath=$5
 
     local mtx_file=`graph_file $path $graph $un_dir mtx $spec`
@@ -248,7 +248,7 @@ function create_mtxmkt_from_graptor()
 
 	local dirname=`dirname $mtx_file`
 	if [ ! -e $path/$dirname ] ; then
-	    echo Create directory: $path/$dirname
+	    echo Create directory: $path/$dirname >&2
 	    mkdir -p $path/$dirname
 	    lfs setstripe -c 32 -S 128m $path/$dirname
 	fi
@@ -370,9 +370,9 @@ function mtxmkt_graph_path()
     local weights=$3
 
     if [ x$weights == xnone ] ; then
-	graph_path $GRAPHPATH $graph $un_dir mtx coo.mtx
+	graph_path $GRAPHPATH $graph $un_dir mtx pattern.mtx
     else
-	graph_path $GRAPHPATH $graph $un_dir mtx coo_${weights}.mtx
+	graph_path $GRAPHPATH $graph $un_dir mtx pattern_${weights}.mtx
     fi
 }
 
@@ -386,7 +386,7 @@ function mtxmkt_graph()
     if [ x$weights == xnone ] ; then
 	create_mtxmkt_from_graptor $GRAPHPATH $graph $un_dir mtx $SRCPATH
     else
-	echo "Not yet implemented - weighted matrix market file"
+	echo "Not yet implemented - weighted matrix market file" >&2
 	exit 1
     fi
 }
