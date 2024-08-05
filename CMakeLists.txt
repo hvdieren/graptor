@@ -166,6 +166,13 @@ ExternalProject_Add(
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
 )
 
+option(GRAPTOR_DMALLOC "Use dmalloc" OFF)
+if(GRAPTOR_DMALLOC)
+    string(APPEND graptor_cflags " -DDMALLOC=1")
+    string(APPEND graptor_cxxflags " -DDMALLOC=1")
+    list(APPEND EXTRA_LIBS "-ldmallocth")
+endif(GRAPTOR_DMALLOC)
+
 add_library(LIBCONFIG SHARED IMPORTED GLOBAL)
 ExternalProject_Get_Property(libconfig_project BINARY_DIR)
 string(APPEND graptor_cflags " -I${BINARY_DIR}/include")
