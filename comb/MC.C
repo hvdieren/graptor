@@ -105,7 +105,7 @@
 #endif
 
 #ifndef TRAVERSAL_ORDER
-#define TRAVERSAL_ORDER 1
+#define TRAVERSAL_ORDER 10
 #endif
 
 #ifndef PAPI_REGION
@@ -3915,94 +3915,62 @@ int main( int argc, char *argv[] ) {
     } );
     std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
 	    
-#if ( TRAVERSAL_ORDER & 4 ) == 0
-    for( VID cc=0; cc <= degeneracy; ++cc ) {
-#if ( TRAVERSAL_ORDER & 1 ) == 0
-	VID c = cc;
+    // Use a parallel loop to reduce code duplication.
+    // If TRAVERSAL_ORDER & 8 == 0 then only one iteration of the loop
+    // performs actual work.
+    parallel_loop( (VID)0, (VID)2, (VID)1, [&,degeneracy]( VID cc_half ) {
+#if ( TRAVERSAL_ORDER & 8 ) == 8
+	VID cc_mid = ( degeneracy + 1 ) / 2; // both up and downwards
+#elif ( TRAVERSAL_ORDER & 1 ) == 1
+	VID cc_mid = 0; // only downwards direction
 #else
-	VID c = degeneracy - cc;
+	VID cc_mid = degeneracy + 1; // only upwards direction
 #endif
-	VID c_up = histo[c+1];
-	VID c_lo = histo[c];
+	VID cc_b = cc_half == 0 ? 0 : cc_mid;
+	VID cc_e = cc_half == 0 ? cc_mid : degeneracy+1;
+	
+	for( VID cc_i=cc_b; cc_i < cc_e; ++cc_i ) {
+	    VID c = cc_half == 0 ? cc_i : degeneracy - ( cc_i - cc_mid );
+
+	    VID c_up = histo[c+1];
+	    VID c_lo = histo[c];
 #if SORT_ORDER >= 6
-	std::swap( c_up, c_lo );
+	    std::swap( c_up, c_lo );
 #endif
-	if( c_up == c_lo )
-	    continue;
-	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( c+1, fr_outer ) ) {
-#if ( TRAVERSAL_ORDER & 1 ) == 0
-	    continue; // increasing degeneracy -> skip
-#else
-	    break; // decreasing degeneracy -> skip
-#endif
-	}
-	parallel_loop( c_lo, c_up, (VID)1, [&]( VID w ) {
-#if ( TRAVERSAL_ORDER & 2 ) == 0
-	    VID v = w;
-#else
-	    VID v = c_up - ( w - c_lo ) - 1;
-#endif
-	    if( E.is_feasible( c+1, fr_outer ) )
-		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
-	} );
-    }
-
-#else // TRAVERSAL_ORDER & 4
-    // Note: a traversal whereby an increasing and decreasing
-    //       traversal are started in parallel, meeting halfway, i.e.,
-    //       lower half of range is traversed in increasing order, upper half
-    //       in decreasing order, bothin parallel.
-    for( VID cc=0; cc <= degeneracy; ++cc ) {
-#if ( TRAVERSAL_ORDER & 1 ) == 0
-	VID c = cc;
-#else
-	VID c = degeneracy - cc;
-#endif
-	VID c_up = histo[c+1];
-	VID c_lo = histo[c];
-#if SORT_ORDER >= 6
-	std::swap( c_up, c_lo );
-#endif
-	if( c_up == c_lo )
-	    continue;
-	++c_lo; // already did c_lo in preamble
-	if( !E.is_feasible( c+1, fr_outer ) ) {
-#if ( TRAVERSAL_ORDER & 1 ) == 0
-	    continue; // increasing degeneracy -> skip
-#else
-	    break; // decreasing degeneracy -> skip
-#endif
-	}
-
-	parallel_loop( (VID)0, (VID)2, (VID)1, [&,c_lo,c_up,c,degeneracy](
-			   VID half ) {
-	    VID c_mid = ( c_lo + c_up ) / 2;
-	    
-	    if( half == 0 ) {
-		parallel_loop( c_lo, c_mid, (VID)1, [&,c,degeneracy]( VID w ) {
-		    // Increasing order from low end
-		    VID v = w;
-
-		    if( E.is_feasible( c+1, fr_outer ) )
-			mc_top_level( H, E, v, degeneracy,
-				      remap_coreness.get() );
-		} );
-	    } else {
-		parallel_loop( c_mid, c_up, (VID)1, [&,c,c_mid,degeneracy](
-				   VID w ) {
-		    // Decreasing order from high end
-		    VID v = c_up - ( w - c_mid ) - 1;
-
-		    if( E.is_feasible( c+1, fr_outer ) )
-			mc_top_level( H, E, v, degeneracy,
-				      remap_coreness.get() );
-		} );
+	    if( c_up == c_lo )
+		return; // go to next c value
+	    ++c_lo; // already did c_lo in preamble
+	    if( !E.is_feasible( c+1, fr_outer ) ) {
+		if( cc_half == 0 )
+		    continue; // increasing degeneracy, more to come
+		else
+		    break; // decreasing degeneracy, no hope for better
 	    }
-	} );
-    }
+
+	    parallel_loop( (VID)0, (VID)2, (VID)1, [&,c_lo,c_up,c,degeneracy](
+			       VID c_half ) {
+#if ( TRAVERSAL_ORDER & 4 ) == 4
+		VID c_mid = ( c_lo + c_up ) / 2; // both up and downwards
+#elif ( TRAVERSAL_ORDER & 2 ) == 2
+		VID c_mid = c_lo; // only downwards direction
+#else
+		VID c_mid = c_up; // only upwards direction
 #endif
-    
+		VID c_b = c_half == 0 ? c_lo : c_mid;
+		VID c_e = c_half == 0 ? c_mid : c_up;
+	
+		parallel_loop( c_b, c_e, (VID)1, [&,c,degeneracy,c_mid](
+				   VID w ) {
+		    VID v = c_half == 0 ? w : ( c_up - ( w - c_mid ) - 1 );
+
+		    if( E.is_feasible( c+1, fr_outer ) )
+			mc_top_level( H, E, v, degeneracy,
+				      remap_coreness.get() );
+		} );
+	    } );
+	}
+    } );
+
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
