@@ -37,8 +37,8 @@ reorder_kcore( const GraphCSx & G,
     //       some graphs.
     kcore.run( prune_th );
     auto & coreness = kcore.getCoreness();
-    std::cout << "Calculating coreness time: " << tm.next() << "\n";
-    std::cout << "coreness=" << kcore.getLargestCore() << "\n";
+    std::cout << "Calculating degeneracy time: " << tm.next() << "\n";
+    std::cout << "degeneracy=" << kcore.getLargestCore() << "\n";
 
     VID n = G.numVertices();
     VID pn = n;
