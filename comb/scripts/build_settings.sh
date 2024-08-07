@@ -89,6 +89,9 @@ function get_flags() {
     if [[ "$v" == *_op2* ]] ; then
 	flags["OPERATION"]=2;
     fi
+    if [[ "$v" == *_op3* ]] ; then
+	flags["OPERATION"]=3;
+    fi
     if [[ "$v" == *_nofusion* ]] ; then
 	flags["FUSION"]=0;
     fi

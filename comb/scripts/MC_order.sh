@@ -87,15 +87,30 @@ function mce() {
 
     local variants=""
     if [ $heur == 1 ] ; then
-	for s in `seq 0 7` ; do
-	    for t in `seq 0 3` ; do
-		variants="$variants itrim_sort${s}_trav${t}_$vl"
+	for s in `seq 0 3` ; do
+	    for t in `seq 0 1` ; do
+		#variants="$variants itrim_sort${s}_trav${t}_$vl"
+		variants="$variants itrim_sort${s}_trav${t}_nopivc_nopivd_$vl"
+	    done
+	done
+	for s in `seq 4 7` ; do
+	    for t in `seq 0 4` ; do
+		#variants="$variants itrim_sort${s}_trav${t}_$vl"
+		variants="$variants itrim_sort${s}_trav${t}_nopivc_nopivd_$vl"
+	    done
+	done
+    elif [ $heur == 0 ] ; then
+	for s in `seq 4 5` ; do
+	    for t in 3 10 12 ; do
+		#variants="$variants itrim_sort${s}_trav${t}_$vl"
+		variants="$variants itrim_sort${s}_trav${t}_nopivc_nopivd_$vl"
 	    done
 	done
     else
 	for s in `seq 4 7` ; do
-	    for t in `seq 0 3` ; do
-		variants="$variants itrim_sort${s}_trav${t}_$vl"
+	    for t in `seq 0 5` 8 10 12 ; do
+		#variants="$variants itrim_sort${s}_trav${t}_$vl"
+		variants="$variants itrim_sort${s}_trav${t}_nopivc_nopivd_$vl"
 	    done
 	done
     fi
@@ -118,7 +133,8 @@ function mce() {
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 1
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 2
 
-commit=46dad933
+commit=a7e6b77a
 
 mce 16 128 $commit 1024 avx512 $commit 1
 mce 16 128 $commit 1024 avx512 $commit 2
+#mce 16 128 $commit 1024 avx512 $commit 0
