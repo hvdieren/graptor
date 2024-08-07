@@ -3937,8 +3937,9 @@ int main( int argc, char *argv[] ) {
 #if SORT_ORDER >= 6
 	    std::swap( c_up, c_lo );
 #endif
+
 	    if( c_up == c_lo )
-		return; // go to next c value
+		continue; // go to next c value
 	    ++c_lo; // already did c_lo in preamble
 	    if( !E.is_feasible( c+1, fr_outer ) ) {
 		if( cc_half == 0 )
@@ -3958,7 +3959,7 @@ int main( int argc, char *argv[] ) {
 #endif
 		VID c_b = c_half == 0 ? c_lo : c_mid;
 		VID c_e = c_half == 0 ? c_mid : c_up;
-	
+
 		parallel_loop( c_b, c_e, (VID)1, [&,c,degeneracy,c_mid](
 				   VID w ) {
 		    VID v = c_half == 0 ? w : ( c_up - ( w - c_mid ) - 1 );
