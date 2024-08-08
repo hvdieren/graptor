@@ -54,7 +54,8 @@ private:
 template <class GraphType>
 class KCv {
 public:
-    KCv( const GraphType & _GA, commandLine & P )
+    template<typename CommandLineType>
+    KCv( const GraphType & _GA, CommandLineType & P )
 	: GA( _GA ),
 	  num_buckets( P.getOptionLongValue( "-kc:buckets", 127 ) ),
 	  coreness( GA.get_partitioner(), "count-down degrees / coreness" ),
