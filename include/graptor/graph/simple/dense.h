@@ -2191,10 +2191,34 @@ private:
     bool vck_iterate( VID k, VID c, row_type eligible,
 		      VID & best_size, row_type & best_cover ) {
 	VID n = m_n;
-	auto [ max_v, max_deg, m ] = co_analyse<co>( eligible );
+	row_type deg1v, deg1ngh;
+	VID deg1cnt, max_v, max_deg;
+	EID m;
+	std::tie( deg1v, deg1ngh, deg1cnt, max_v, max_deg, m )
+	    = co_analyse_vc<co>( eligible );
 	if( k == 0 )
 	    return m == 0;
 
+	// Apply reduction rules to degree-1 vertices
+	if( deg1cnt != 0 ) {
+	    // If we need to include more folded vertices in the vertex cover
+	    // then we are allowed, we fail
+	    if( deg1cnt > k )
+		return false;
+	    // Remove degree-1 vertices and their neighbours; add the
+	    // neighbours to the cover
+	    row_type eligible1 = tr::bitwise_andnot( deg1v, eligible );
+	    eligible1 = tr::bitwise_andnot( deg1ngh, eligible1 );
+	    bool ok = vck_iterate<exists,co>(
+		k - deg1cnt, c, eligible1, best_size, best_cover );
+	    if( ok ) {
+		best_size += deg1cnt;
+		best_cover = tr::bitwise_or( best_cover, deg1ngh );
+	    }
+	    return ok;
+	}
+
+	// Special case of linear structures
 	if( max_deg <= 2 ) {
 	    VID sz = 0;
 	    row_type c = tr::setzero();
@@ -2451,6 +2475,90 @@ private:
 	}
 	return { max_v, max_deg, m };
     }
+
+    // Calculates a set of degree-1 vertices and their neighbours,
+    // ensuring that for a pair of neighbouring degree-1 vertices only
+    // one is returned.
+    template<bool co>
+    std::tuple<row_type,row_type,VID>
+    co_degree_one_vertices( row_type eligible ) const {
+	row_type deg1v = tr::setzero();
+	row_type deg1ngh = tr::setzero();
+	VID cnt = 0;
+	bitset<Bits> bx( eligible );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type vr = I.get_mask();
+	    row_type adj = co_get_row<co>( v, vr, eligible );
+	    if( !tr::is_zero( adj ) ) { // cheap check to filter out zero-degree
+		VID deg = get_size( adj );
+		if( deg == 1 ) {
+		    // Check if neighbour is included in list of degree-1
+		    // vertices. Only add it if not seen yet.
+		    if( tr::is_bitwise_and_zero( deg1v, adj ) ) {
+			// Check if neighbour has multiple degree-1
+			// neighbours. Count should reflect such.
+			if( tr::is_bitwise_and_zero( deg1ngh, adj ) ) {
+			    deg1ngh = tr::bitwise_or( deg1ngh, adj );
+			    ++cnt;
+			}
+			deg1v = tr::bitwise_or( deg1v, vr );
+		    }
+		}
+	    }
+	}
+	return { deg1v, deg1ngh, cnt };
+    }
+
+    // Returns degree-1 vertices, their neighbours, the number of
+    // unique neighbours, the max-degree-vertex, its degree,
+    // and number of edges in graph
+    template<bool co>
+    std::tuple<row_type,row_type,VID,VID,VID,EID>
+    co_analyse_vc( row_type eligible ) const {
+	row_type deg1v = tr::setzero();
+	row_type deg1ngh = tr::setzero();
+	VID deg1cnt = 0;
+	EID m = 0;
+	VID max_v = 0;
+	VID max_deg = 0;
+	bitset<Bits> bx( eligible );
+	for( auto I = bx.begin(), E = bx.end(); I != E; ++I ) {
+	    VID v = *I;
+	    row_type vr = I.get_mask();
+	    row_type adj = co_get_row<co>( v, vr, eligible );
+	    if( !tr::is_zero( adj ) ) { // cheap check to filter out zero-degree
+		VID deg = get_size( adj );
+
+		// Count number of edges
+		m += deg;
+
+		// Find highest-degree vertex
+		if( deg > max_deg ) {
+		    max_deg = deg;
+		    max_v = v;
+		}
+
+		// Find degree-1 vertices and their neighbours. Ensure only
+		// unique neighbours are counted
+		if( deg == 1 ) {
+		    // Check if neighbour is included in list of degree-1
+		    // vertices. Only add it if not seen yet.
+		    if( tr::is_bitwise_and_zero( deg1v, adj ) ) {
+			// Check if neighbour has multiple degree-1
+			// neighbours. Count should reflect such.
+			if( tr::is_bitwise_and_zero( deg1ngh, adj ) ) {
+			    deg1ngh = tr::bitwise_or( deg1ngh, adj );
+			    ++deg1cnt;
+			}
+			deg1v = tr::bitwise_or( deg1v, vr );
+		    }
+		}
+	    }
+	}
+	return { deg1v, deg1ngh, deg1cnt, max_v, max_deg, m };
+    }
+
     
     EID calculate_num_edges( row_type eligible ) const {
 	EID m = 0;
