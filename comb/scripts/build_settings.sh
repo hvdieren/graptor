@@ -68,8 +68,8 @@ function get_flags() {
     flags["INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
     flags["VERTEX_COVER_COMPONENTS"]=0
-    flags["PIVOT_COLOUR"]=1
-    flags["PIVOT_COLOUR_DENSE"]=1
+    flags["PIVOT_COLOUR"]=0
+    flags["PIVOT_COLOUR_DENSE"]=0
     flags["PROFILE_INCUMBENT_SIZE"]=0
     flags["VERTEX_COVER_ABSOLUTE"]=0
     flags["ABLATION_DISABLE_VC"]=0
