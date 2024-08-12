@@ -25,6 +25,33 @@ namespace graph {
 /*! CSR/CSC style graph with vertices and edges filtered based on a depth
  *  parameter.
  *
+ * The purpose of this class is to support algorithms where vertices are
+ * repeatedly removed from the graph, requiring an update on statistics such
+ * as degree and vertex and edge counts. We call removed vertices inactive,
+ * those still present as active. Vertices may become active again
+ * but only in the reverse order from which they were made inactive.
+ *
+ * The class supports only undirected graphs. The graph is represented
+ * immutably through a CSR/CSC representation of the full adjacency matrix
+ * (both upper and lower triangular parts). Self-edges are assumed to be absent.
+ * Additional data is maintained to track which vertices are present in the
+ * graph: a depth parameter is associated to each vertex to track presence
+ * in the graph; the degree of each vertex tracking present neighbours
+ * is stored (the CSR/CSC maintains the original degree of the vertex).
+ *
+ * Invariants:
+ *  + a vertex v has been removed from the graph if m_depth[v] <= m_cur_depth
+ *  + m_degree[v] tracks the number of active neighbours of v
+ *  + m_degree[v] == 0 iff m_depth[v] <= m_cur_depth
+ *    (vertices must be made inactive when their last incident edge is made
+ *     inactive)
+ *  + m_n_remain tracks number of active vertices
+ *  + m_n_remain equals number of vertices with m_degree[v] > 0
+ *  + m_n_remain equals number of vertices with m_depth[v] > m_cur_depth
+ *  + 0 <= m_n_remain and m_n_remain <= m_n
+ *  + m_m_remain equals number of edges between active vertices
+ *  + 0 <= m_m_remain and m_m_remain <= m_m
+ *
  * \tparam lVID type of a vertex identifier
  * \tparam lEID type of an edge identifier
  */
@@ -59,7 +86,7 @@ public:
     public:
 	checkpoint_type( const GraphCSxDepth & G )
 	    : m_degree(),
-	      m_cur_m( G.m_cur_m ),
+	      m_m_remain( G.m_m_remain ),
 	      m_cur_depth( G.m_cur_depth ),
 	      m_n_remain( G.m_n_remain ) {
 	    m_degree.insert( m_degree.end(), G.dbegin(), G.dend() );
@@ -67,7 +94,7 @@ public:
 
 	lVID get_degree( lVID v ) const { return m_degree[v]; }
 
-	lEID get_num_edges() const { return m_cur_m; }
+	lEID get_num_edges() const { return m_m_remain; }
 
 	lVID get_cur_depth() const { return m_cur_depth; }
 
@@ -75,7 +102,7 @@ public:
 
     private:
 	std::vector<lVID> m_degree;
-	lEID m_cur_m;
+	lEID m_m_remain;
 	lVID m_cur_depth;
 	lVID m_n_remain;
     };
@@ -96,7 +123,7 @@ public:
 	m_n( n ),
 	m_n_remain( n ),
 	m_m( m ),
-	m_cur_m( m ),
+	m_m_remain( m ),
 	m_cur_depth( 0 ),
 	m_index( n+1, alloc ),
 	m_depth( n, alloc ),
@@ -123,31 +150,43 @@ public:
 
     // capitalised interface
     lVID numVertices() const { return m_n; }
-    lEID numEdges() const { return m_cur_m; }
+    lEID numEdges() const { return m_m_remain; }
 
     // readable interface
     lVID get_num_vertices() const { return m_n; }
-    lEID get_num_edges() const { return m_cur_m; }
+    lEID get_num_edges() const { return m_m_remain; }
     lVID get_num_remaining_vertices() const { return m_n_remain; }
+    lEID get_num_remaining_edges() const { return m_m_remain; }
 
     lVID get_cur_depth() const { return m_cur_depth; }
     lVID get_depth( lVID v ) const { return m_depth[v]; }
-    lVID get_degree( lVID v ) const { return m_degree[v]; }
+    lVID get_degree( lVID v ) const { return m_index[v+1] - m_index[v]; }
+    lVID get_remaining_degree( lVID v ) const { return m_degree[v]; }
 
     lEID * getIndex() { return m_index.get(); }
     lEID * const getIndex() const { return m_index.get(); }
     lVID * getEdges() { return m_edges.get(); }
     lVID * const getEdges() const { return m_edges.get(); }
+
+    /*! Get access to the degree array.
+     * Warning: the degree array reflects the remaining degree and may be
+     * inconsistent with the differences between successive values in m_index.
+     */
     lVID * getDegree() { return m_degree.get(); }
     lVID * const getDegree() const { return m_degree.get(); }
     lVID * getDepth() { return m_depth.get(); }
     lVID * const getDepth() const { return m_depth.get(); }
 
-    lVID getDegree( lVID v ) const { return m_degree[v]; }
+    lVID getDegree( lVID v ) const { return get_degree( v ); }
 
     // Returns neighbours without considering depth-based filtering
     const lVID * get_neighbours( lVID v ) const {
 	return &m_edges[m_index[v]];
+    }
+
+    auto get_neighbours_set( lVID v ) const {
+	return graptor::make_array_slice(
+	    &m_edges[m_index[v]], &m_edges[m_index[v+1]] );
     }
 
 #if 0
@@ -221,7 +260,7 @@ public:
 	lVID min_deg = m_n;
 	lVID min_v = m_n;
 	for( lVID v=0; v < m_n; ++v ) {
-	    lVID deg = getDegree( v );
+	    lVID deg = get_remaining_degree( v );
 	    if( deg < min_deg && deg > 0 ) {
 		min_deg = deg;
 		min_v = v;
@@ -237,7 +276,7 @@ public:
     }
     std::pair<lVID,lVID> max_degree() const {
 	lVID v = max_degree_vertex();
-	return std::make_pair( v, getDegree( v ) );
+	return std::make_pair( v, get_remaining_degree( v ) );
     }
 
     /*! Sort neighbour list of \p v. This is a no-op.
@@ -263,7 +302,7 @@ public:
     void restore_checkpoint( const checkpoint_type & chkpt ) {
 	assert( m_cur_depth == chkpt.get_cur_depth()+1 );
 	
-	// TODO: checkpoint only removed vertices and reconstruct as single vertex
+	// TODO: checkpoint only inactive vertices and reconstruct as single vertex
 	lVID r = 0;
 	for( lVID v=0; v < m_n; ++v ) {
 	    if( m_depth[v] == m_cur_depth )
@@ -272,6 +311,8 @@ public:
 	    m_degree[v] = chkpt.get_degree( v );
 	    if( m_degree[v] > 0 )
 		++r;
+
+	    assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
 	}
 
 	m_n_remain = chkpt.get_num_remaining_vertices();
@@ -281,9 +322,11 @@ public:
 	assert( r == m_n_remain );
 
 	m_cur_depth = chkpt.get_cur_depth();
-	m_cur_m = chkpt.get_num_edges();
+	m_m_remain = chkpt.get_num_edges();
 
 	assert( m_n_remain <= m_n );
+	lEID mm = count_edges();
+	assert( m_m_remain == mm );
     }
     void restore_checkpoint( const single_vertex_checkpoint_type & chkpt ) {
 	restore_vertex( chkpt.get_vertex() );
@@ -291,6 +334,7 @@ public:
     }
 
     template<typename Fn>
+    [[deprecated]]
     void disable_incident_edges( Fn && to_remove ) {
 	assert( 0 && "NYI" );
     }
@@ -302,11 +346,10 @@ public:
     checkpoint_type disable_incident_edges( Iterator I, Iterator E ) {
 	auto cp = checkpoint();
 	++m_cur_depth;
-	lVID dd = std::distance( I, E );
 	for( ; I != E; ++I )
 	    disable_incident_edges_per_vertex( *I );
 
-#if 0
+#if 1
 	// Debugging code
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
@@ -318,10 +361,7 @@ public:
 	}
 	if( r != m_n_remain )
 	    std::cout << "r=" << r << " m_n_remain=" << m_n_remain << "\n";
-	if( dd != d )
-	    std::cout << "dd=" << dd << " d=" << d << "\n";
 	assert( r == m_n_remain );
-	assert( dd == d );
 #endif
 
 	assert( m_n_remain <= m_n );
@@ -334,23 +374,18 @@ public:
 	++m_cur_depth;
 	disable_incident_edges_per_vertex( v );
 
-#if 0
+#if 1
 	// Debugging code
-	lVID dd = 1;
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
-	    if( m_depth[v] == m_cur_depth )
-		++d;
+	    assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
 	    
 	    if( m_degree[v] > 0 )
 		++r;
 	}
 	if( r != m_n_remain )
 	    std::cout << "r=" << r << " m_n_remain=" << m_n_remain << "\n";
-	if( dd != d )
-	    std::cout << "dd=" << dd << " d=" << d << "\n";
 	assert( r == m_n_remain );
-	assert( dd == d );
 #endif
 
 	assert( m_n_remain <= m_n );
@@ -360,31 +395,41 @@ public:
 
 private:
     void disable_incident_edges_per_vertex( lVID v ) {
+	assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
+
 	if( m_depth[v] <= m_cur_depth )
 	    return;
 
-	lVID r = 0;
-	if( m_degree[v] > 0 )
-	    ++r;
-
 	m_depth[v] = m_cur_depth;
-	// lVID rm = 0;
+
+	lVID rv = 0;
+	lVID re = 0;
 
 	lEID se = m_index[v];
 	lEID ee = m_index[v+1];
 	for( lEID e=se; e != ee; ++e ) {
 	    lVID u = m_edges[e];
+
+	    assert( ( m_depth[u] != initial_depth ) == ( m_degree[u] == 0 ) );
+	    assert( m_depth[u] <= m_cur_depth || m_depth[u] == initial_depth ); 
+
 	    if( m_depth[u] > m_cur_depth ) {
-		// assert( m_degree[u] > 0 );
-		if( --m_degree[u] == 0 )
-		    ++r;
+		if( --m_degree[u] == 0 ) {
+		    m_depth[u] = m_cur_depth;
+		    ++rv;
+		}
+		++re;
 	    }
 	}
 
-	// assert( m_degree[v] == rm );
-	m_cur_m -= 2 * m_degree[v];
-	m_n_remain -= r;
+	assert( m_degree[v] == re );
+
+	m_m_remain -= 2 * (lEID)re;
+	m_n_remain -= rv + 1; // +1 for vertex v
 	m_degree[v] = 0;
+
+	lEID mm = count_edges();
+	assert( m_m_remain == mm );
     }
 
     void restore_vertex( lVID v ) {
@@ -392,37 +437,80 @@ private:
 
 	m_depth[v] = initial_depth;
 
-	lVID r = 0;
-	if( m_degree[v] == 0 )
-	    ++r;
+	lVID rv = 0;
+	lVID re = 0;
+	assert( m_degree[v] == 0 );
 
 	lEID se = m_index[v];
 	lEID ee = m_index[v+1];
-	lVID cnt = 0;
 	for( lEID e=se; e != ee; ++e ) {
 	    lVID u = m_edges[e];
+	    // The test >= is such that we consider all vertices at the
+	    // current depth (which is restored / popped from checkpoint stack)
+	    // to be / become active. This method is specific to restore a
+	    // single-vertex checkpoint, hence all vertices at depth m_cur_depth
+	    // must be neighbours of v.
 	    if( m_depth[u] >= m_cur_depth ) {
-		if( m_degree[u]++ == 0 )
-		    ++r;
-		++cnt;
+		assert( ( m_depth[u] != initial_depth ) == ( m_degree[u] == 0 ) );
+		if( m_degree[u] == 0 ) {
+		    m_depth[u] = initial_depth;
+		    ++rv;
+		}
+		++m_degree[u];
+		++re;
 	    }
 	}
 
-	m_cur_m += 2 * cnt;
-	m_degree[v] = cnt;
-	m_n_remain += r;
+	m_degree[v] = re; // total number of active neihbours
+	m_m_remain += 2 * (lEID)re;
+	m_n_remain += rv + 1; // +1 for vertex v
+
+	lEID mm = count_edges();
+	assert( m_m_remain == mm );
+    }
+
+    /*! Count the number of remaining edges in the graph.
+     *
+     * This method is provided for debugging purposes. It also tests a
+     * number of invariants that need to hold.
+     *
+     * @return The number of remaining edges in the graph.
+     */
+    lEID count_edges() const {
+	lEID m = 0;
+	lEID e = 0;
+	for( lVID v=0; v < m_n; ++v ) {
+	    lEID ee = m_index[v+1];
+	    assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
+	    assert( ( m_depth[v] > m_cur_depth ) == ( m_degree[v] != 0 ) );
+	    assert( m_depth[v] <= m_cur_depth || m_depth[v] == initial_depth );
+	    lVID d = 0;
+	    if( m_depth[v] > m_cur_depth ) {
+		for( ; e < ee; ++e ) {
+		    lVID u = m_edges[e];
+		    if( m_depth[u] > m_cur_depth ) {
+			++m;
+			++d;
+		    }
+		}
+	    } else {
+		e = ee;
+	    }
+	    assert( m_degree[v] == d );
+	}
+	return m;
     }
 
 private:
-    const lVID m_n;
-    lVID m_n_remain;
-    const lEID m_m;
-    lEID m_cur_m;
-    lVID m_cur_depth;
-    mm::buffer<lEID> m_index;
-    mm::buffer<lVID> m_depth;
-    mm::buffer<lVID> m_degree;
-    mm::buffer<lVID> m_edges;
+    const lVID m_n;		//!< Number of vertices in complete graph
+    lVID m_n_remain;		//!< Number of remaining vertices in graph
+    const lEID m_m;		//!< Number of edges in complete graph
+    lEID m_m_remain;		//!< Number of remaining edges in graph
+    lVID m_cur_depth;		//!< Current depth of stack of inactive vertices
+    mm::buffer<lEID> m_index;	//!< Index parameter of CSx representation
+    mm::buffer<lVID> m_edges;	//!< Neighbour list of CSx representation
+    mm::buffer<lVID> m_depth;	//!< Depth at which vertex deactivated
+    mm::buffer<lVID> m_degree;	//!< Remaining degree of vertex
 };
 
 } // namespace graph
