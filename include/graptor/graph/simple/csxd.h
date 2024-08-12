@@ -311,8 +311,6 @@ public:
 	    m_degree[v] = chkpt.get_degree( v );
 	    if( m_degree[v] > 0 )
 		++r;
-
-	    assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
 	}
 
 	m_n_remain = chkpt.get_num_remaining_vertices();
@@ -325,8 +323,10 @@ public:
 	m_m_remain = chkpt.get_num_edges();
 
 	assert( m_n_remain <= m_n );
+#if 0
 	lEID mm = count_edges();
 	assert( m_m_remain == mm );
+#endif
     }
     void restore_checkpoint( const single_vertex_checkpoint_type & chkpt ) {
 	restore_vertex( chkpt.get_vertex() );
@@ -349,7 +349,7 @@ public:
 	for( ; I != E; ++I )
 	    disable_incident_edges_per_vertex( *I );
 
-#if 1
+#if 0
 	// Debugging code
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
@@ -374,7 +374,7 @@ public:
 	++m_cur_depth;
 	disable_incident_edges_per_vertex( v );
 
-#if 1
+#if 0
 	// Debugging code
 	lVID r = 0, d = 0;
 	for( lVID v=0; v < m_n; ++v ) {
@@ -410,8 +410,10 @@ private:
 	for( lEID e=se; e != ee; ++e ) {
 	    lVID u = m_edges[e];
 
+#if 0
 	    assert( ( m_depth[u] != initial_depth ) == ( m_degree[u] == 0 ) );
 	    assert( m_depth[u] <= m_cur_depth || m_depth[u] == initial_depth ); 
+#endif
 
 	    if( m_depth[u] > m_cur_depth ) {
 		if( --m_degree[u] == 0 ) {
@@ -428,8 +430,10 @@ private:
 	m_n_remain -= rv + 1; // +1 for vertex v
 	m_degree[v] = 0;
 
+#if 0
 	lEID mm = count_edges();
 	assert( m_m_remain == mm );
+#endif
     }
 
     void restore_vertex( lVID v ) {
@@ -451,7 +455,9 @@ private:
 	    // single-vertex checkpoint, hence all vertices at depth m_cur_depth
 	    // must be neighbours of v.
 	    if( m_depth[u] >= m_cur_depth ) {
+#if 0
 		assert( ( m_depth[u] != initial_depth ) == ( m_degree[u] == 0 ) );
+#endif
 		if( m_degree[u] == 0 ) {
 		    m_depth[u] = initial_depth;
 		    ++rv;
@@ -465,8 +471,10 @@ private:
 	m_m_remain += 2 * (lEID)re;
 	m_n_remain += rv + 1; // +1 for vertex v
 
+#if 0
 	lEID mm = count_edges();
 	assert( m_m_remain == mm );
+#endif
     }
 
     /*! Count the number of remaining edges in the graph.
