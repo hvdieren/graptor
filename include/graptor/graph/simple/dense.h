@@ -958,9 +958,11 @@ public:
 	// searching for smaller covers.
 	if( k_max == 0 )
 	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
+	// This code assumes that a vertex cover of size k_max definitely
+	// exists and we are only interested in finding a better one.
 	VID best_size = k_max + 1;
 	row_type best_cover = tr::setzero();
-	VID k_up = k_max - 1;
+	VID k_up = k_max; // - 1; no pre-supposition that solution with k==k_max exists!
 	VID k_lo = 1;
 	VID k_best_size = k_max;
 	VID k = k_up;
@@ -1006,7 +1008,34 @@ public:
 	if( best_size > k_max )
 	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
 
+	// Validate that best_cover is indeed a vertex cover
+	assert( is_vertex_cover<co>( best_cover, best_size ) );
+
 	return std::make_pair( bitset<Bits>( best_cover ), best_size );
+    }
+
+    template<bool co>
+    bool is_vertex_cover( row_type cover, VID csize ) {
+	row_type all_vertices;
+	if constexpr ( co )
+	    all_vertices = tr::bitwise_andnot( m_fully_connected, m_allv_mask );
+	else
+	    all_vertices = m_allv_mask;
+
+	for( VID v=0; v < m_n; ++v ) {
+	    row_type v_row = create_row( v );
+	    row_type adj = co_get_row_unc<co>( v, v_row, all_vertices );
+	    if( tr::is_bitwise_and_zero( cover, v_row ) ) {
+		// Vertex v is not part of the cover. All its neighbours
+		// must be in the cover. 
+		row_type ungh = tr::bitwise_andnot( cover, adj );
+		if( !tr::is_zero( ungh ) )
+		    return false;
+	    } else {
+		// Vertex v is part of the cover. All good.
+	    }
+	}
+	return true;
     }
 
     bitset<Bits>
