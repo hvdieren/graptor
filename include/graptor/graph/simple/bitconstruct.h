@@ -378,9 +378,13 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    deg = local_deg;
 	}
     } else if constexpr ( sizeof(sVID) >= 4 && Bits == 128 ) {
+	// Specialised code to produce matrix with at most 128 columns and
+	// more than 64 columns.
 	// Do vectorized lookup operation, then handle each index one at a time
 	// Bitmask restrict to SSE subset
-	// Lookup vector length matches total vector width of bitmask vector.
+	// + Lookup vector length matches total vector width of bitmask vector.
+	// + RVL is number of matrix rows we can fit in a vector
+	// + IVL is number of total lanes to query, across RVL 128-bit rows.
 	static constexpr unsigned IVL = sizeof(row_type)*RVL/sizeof(sVID);
 	if( udeg >= IVL ) {
 	    // A vertex identifier is not wider than a row of the matrix.
@@ -404,8 +408,8 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 	    while( l+IVL <= udeg ) {
 		const itype v = itr::loadu( &ngh[l] );
 		// translate ID to cutout range
-		const itype b0 = xp_hash.template multi_contains<sVID,IVL>(
-		    v, target::mt_vmask() );
+		const itype b0 = xp_hash.template multi_lookup<sVID,IVL>(
+		    v, target::mt_vmask() ).second;
 
 		// like blend: if b0 < lobnd, then invalidate lane, else use b0
 		const itype b1 = itr::bitwise_or(
