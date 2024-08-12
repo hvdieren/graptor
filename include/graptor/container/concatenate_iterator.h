@@ -6,6 +6,7 @@ namespace graptor {
 
 // Assumes std::iterator_traits<Iterator?>::iterator_category is compatible
 // with input_iterator_tag
+// TODO: should be replaced by std::ranges / std::views in C++26
 template<typename Iterator1, typename Iterator2>
 class concatenate_iterator {
 public:
