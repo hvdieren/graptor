@@ -8,12 +8,14 @@ namespace graptor {
 
 // Assumes std::iterator_traits<Iterator>::iterator_category is compatible
 // with input_iterator_tag
+// TODO: should be replaced by std::ranges / std::views
 template<typename Iterator, typename Transform>
 class transform_iterator {
 public:
     // iterator traits
     using iterator_category = std::input_iterator_tag;
-    using value_type = std::iter_value_t<Iterator>;
+    using value_type = std::invoke_result_t<
+	Transform,std::iter_value_t<Iterator>>;
     using difference_type = std::iter_difference_t<Iterator>;
     using pointer = std::iter_value_t<Iterator>;
     using reference = std::iter_common_reference_t<Iterator>;
