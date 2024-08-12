@@ -4,6 +4,8 @@
 
 namespace graptor {
 
+// TODO: this is pretty much like a C++ std::ranges::view, adopt that
+// functionality
 template<typename T, typename I = size_t>
 struct array_slice {
     using type = T;
@@ -45,6 +47,11 @@ private:
 template<typename T, typename I = size_t>
 array_slice<T,I> make_array_slice( const T * b, const T * e ) {
     return array_slice<T,I>( b, e );
+}
+
+template<typename T, typename I = size_t>
+array_slice<T,I> make_array_slice( const std::vector<T> & v ) {
+    return array_slice<T,I>( &*v.begin(), &*v.end() );
 }
 
 } // namespace graptor
