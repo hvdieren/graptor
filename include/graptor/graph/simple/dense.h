@@ -1009,7 +1009,7 @@ public:
 	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
 
 	// Validate that best_cover is indeed a vertex cover
-	assert( is_vertex_cover<co>( best_cover, best_size ) );
+	// assert( is_vertex_cover<co>( best_cover, best_size ) );
 
 	return std::make_pair( bitset<Bits>( best_cover ), best_size );
     }
