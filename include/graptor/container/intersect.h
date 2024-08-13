@@ -245,25 +245,25 @@ private:
  * \tparam T type of elements in the sets.
  */
 template<typename T>
-struct intersection_size_exceed {
+struct intersection_size_gt_val {
     //! The type of elements in this set
     using type = T;
 
-    intersection_size_exceed( size_t min_arg_size, size_t exceed )
-	: m_options( min_arg_size - exceed ),
-	  m_exceed( exceed ),
-	  m_terminated( min_arg_size <= exceed ) { }
+    intersection_size_gt_val( size_t min_arg_size, size_t threshold )
+	: m_options( min_arg_size - threshold ),
+	  m_threshold( threshold ),
+	  m_terminated( min_arg_size <= threshold ) { }
 
     // This code currently only works with rhs == true
     // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
-    intersection_size_exceed( LSet && lset, RSet && rset, size_t exceed )
-	: intersection_size_exceed( lset.size(), // iterated set!
-				    exceed ) { }
+    intersection_size_gt_val( LSet && lset, RSet && rset, size_t threshold )
+	: intersection_size_gt_val( lset.size(), // iterated set!
+				    threshold ) { }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_options = lset.size() - m_exceed;
+	m_options = lset.size() - m_threshold;
     }
 
     // Version called by merge
@@ -316,14 +316,14 @@ struct intersection_size_exceed {
     }
 
     size_t return_value() const {
-	return m_terminated ? 0 : m_options + m_exceed;
+	return m_terminated ? 0 : m_options + m_threshold;
     }
 
     bool terminated() const { return m_terminated; }
 
 private:
     std::make_signed_t<size_t> m_options;
-    size_t m_exceed;
+    size_t m_threshold;
     bool m_terminated;
 };
 
@@ -338,24 +338,24 @@ struct intersection_collector_gt {
     using type = T;
 
     intersection_collector_gt(
-	type * pointer, size_t min_arg_size, size_t exceed )
+	type * pointer, size_t min_arg_size, size_t threshold )
 	: m_pointer( pointer ),
 	  m_pointer_start( pointer ),
-	  m_options( min_arg_size - exceed ),
-	  m_exceed( exceed ),
-	  m_terminated( min_arg_size <= exceed ) { }
+	  m_options( min_arg_size - threshold ),
+	  m_threshold( threshold ),
+	  m_terminated( min_arg_size <= threshold ) { }
 
     // This code currently only works with rhs == true
     // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
     intersection_collector_gt( type * pointer, LSet && lset, RSet && rset,
-			       size_t exceed )
+			       size_t threshold )
 	: intersection_collector_gt( pointer, lset.size(), // iterated set!
-				     exceed ) { }
+				     threshold ) { }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_options = lset.size() - m_exceed;
+	m_options = lset.size() - m_threshold;
     }
 
     // Version called by merge
@@ -418,7 +418,7 @@ struct intersection_collector_gt {
     type * return_value() const {
 	assert( m_terminated
 		|| ( std::distance( m_pointer_start, m_pointer )
-		     == m_options + m_exceed ) );
+		     == m_options + m_threshold ) );
 	return m_terminated ? m_pointer_start : m_pointer;
     }
 
@@ -427,7 +427,7 @@ struct intersection_collector_gt {
 private:
     type * m_pointer, * m_pointer_start;
     std::make_signed_t<size_t> m_options;
-    size_t m_exceed;
+    size_t m_threshold;
     bool m_terminated;
 };
 
@@ -438,31 +438,31 @@ private:
  * \tparam T type of elements in the sets.
  */
 template<typename T>
-struct intersection_size_exceed_two_sided {
+struct intersection_size_gt_val_two_sided {
     //! The type of elements in this set
     using type = T;
 
-    intersection_size_exceed_two_sided(
+    intersection_size_gt_val_two_sided(
 	size_t left_size,
 	size_t right_size,
-	size_t exceed )
-	: m_left_options( left_size - exceed ),
-	  m_right_options( right_size - exceed ),
-	  m_exceed( exceed ),
-	  m_terminated( left_size <= exceed || right_size <= exceed ) { }
+	size_t threshold )
+	: m_left_options( left_size - threshold ),
+	  m_right_options( right_size - threshold ),
+	  m_threshold( threshold ),
+	  m_terminated( left_size <= threshold || right_size <= threshold ) { }
 
     // This code currently only works with rhs == true
     // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
-    intersection_size_exceed_two_sided(
-	LSet && lset, RSet && rset, size_t exceed )
-	: intersection_size_exceed_two_sided(
-	    lset.size(), rset.size(), exceed ) { }
+    intersection_size_gt_val_two_sided(
+	LSet && lset, RSet && rset, size_t threshold )
+	: intersection_size_gt_val_two_sided(
+	    lset.size(), rset.size(), threshold ) { }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_left_options = lset.size() - m_exceed;
-	m_right_options = rset.size() - m_exceed;
+	m_left_options = lset.size() - m_threshold;
+	m_right_options = rset.size() - m_threshold;
     }
 
     // Version called by merge
@@ -523,14 +523,14 @@ struct intersection_size_exceed_two_sided {
     }
 
     size_t return_value() const {
-	return m_terminated ? 0 : m_left_options + m_exceed;
+	return m_terminated ? 0 : m_left_options + m_threshold;
     }
 
     bool terminated() const { return m_terminated; }
 
 private:
     std::make_signed_t<size_t> m_left_options, m_right_options;
-    size_t m_exceed;
+    size_t m_threshold;
     bool m_terminated;
 };
 
@@ -549,10 +549,10 @@ struct intersection_size_ge {
 	const type * const r_end,
 	size_t left_size,
 	size_t right_size,
-	size_t exceed )
-	: m_left_options( left_size - exceed ),
-	  m_exceed( exceed ),
-	  m_terminated( left_size <= exceed || right_size <= exceed ),
+	size_t threshold )
+	: m_left_options( left_size - threshold ),
+	  m_threshold( threshold ),
+	  m_terminated( left_size < threshold || right_size < threshold ),
 	  m_ge( false ),
 	  m_left_end( l_end ) { }
 
@@ -560,13 +560,13 @@ struct intersection_size_ge {
     // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
     intersection_size_ge(
-	LSet && lset, RSet && rset, size_t exceed )
+	LSet && lset, RSet && rset, size_t threshold )
 	: intersection_size_ge(
-	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), exceed ) { }
+	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), threshold ) { }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_left_options = lset.size() - m_exceed;
+	m_left_options = lset.size() - m_threshold;
 	m_left_end = &*lset.end();
     }
 
@@ -639,7 +639,7 @@ struct intersection_size_ge {
 
 private:
     std::make_signed_t<size_t> m_left_options;
-    size_t m_exceed;
+    size_t m_threshold;
     bool m_terminated, m_ge;
     const type * m_left_end;
 };
@@ -654,11 +654,11 @@ struct intersection_size_ge_two_sided {
 	const type * const r_end,
 	size_t left_size,
 	size_t right_size,
-	size_t exceed )
-	: m_left_options( left_size - exceed ),
-	  m_right_options( right_size - exceed ),
-	  m_exceed( exceed ),
-	  m_terminated( left_size <= exceed || right_size <= exceed ),
+	size_t threshold )
+	: m_left_options( left_size - threshold ),
+	  m_right_options( right_size - threshold ),
+	  m_threshold( threshold ),
+	  m_terminated( left_size < threshold || right_size < threshold ),
 	  m_ge( false ),
 	  m_left_end( l_end ),
 	  m_right_end( r_end ) { }
@@ -667,14 +667,15 @@ struct intersection_size_ge_two_sided {
     // When swapping lhs/rhs, we need to change the initial options.
     template<typename LSet, typename RSet>
     intersection_size_ge_two_sided(
-	LSet && lset, RSet && rset, size_t exceed )
+	LSet && lset, RSet && rset, size_t threshold )
 	: intersection_size_ge_two_sided(
-	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), exceed ) { }
+	    &*lset.end(), &*rset.end(), lset.size(), rset.size(), threshold ) {
+    }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) {
-	m_left_options = lset.size() - m_exceed;
-	m_right_options = rset.size() - m_exceed;
+	m_left_options = lset.size() - m_threshold;
+	m_right_options = rset.size() - m_threshold;
 	m_left_end = &*lset.end();
 	m_right_end = &*rset.end();
     }
@@ -760,7 +761,7 @@ struct intersection_size_ge_two_sided {
 
 private:
     std::make_signed_t<size_t> m_left_options, m_right_options;
-    size_t m_exceed;
+    size_t m_threshold;
     bool m_terminated, m_ge;
     const type * m_left_end;
     const type * m_right_end;
@@ -773,22 +774,22 @@ private:
  * \tparam S The collector type that is checked.
  */
 template<typename S>
-struct is_intersection_size_exceed : public std::false_type { };
+struct is_intersection_size_gt_val : public std::false_type { };
 
 template<typename T>
-struct is_intersection_size_exceed<intersection_size_exceed<T>>
+struct is_intersection_size_gt_val<intersection_size_gt_val<T>>
     : public std::true_type { };
 
 template<typename T>
-struct is_intersection_size_exceed<intersection_size_exceed_two_sided<T>>
+struct is_intersection_size_gt_val<intersection_size_gt_val_two_sided<T>>
     : public std::true_type { };
 
 /*! Variable to recognise collectors for the
  *  set_operation::intersect_size_exceed operation.
  */
 template<typename S>
-constexpr bool is_intersection_size_exceed_v =
-    is_intersection_size_exceed<S>::value;
+constexpr bool is_intersection_size_gt_val_v =
+    is_intersection_size_gt_val<S>::value;
 
 /*! \section Intersection approaches
  */
@@ -829,7 +830,7 @@ struct set_operations {
     template<typename LSet, typename RSet, typename Collector>
     static
     auto
-    intersect_gt_ds( LSet && lset, RSet && rset, size_t exceed,
+    intersect_gt_ds( LSet && lset, RSet && rset, size_t threshold,
 		     Collector & out ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
@@ -842,7 +843,7 @@ struct set_operations {
 	if constexpr ( std::is_same_v<std::decay_t<Collector>,
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector_gt<typename std::decay_t<LSet>::type>
-		cout( out, lset, rset, exceed );
+		cout( out, lset, rset, threshold );
 	    apply<so_intersect>( lset, rset, cout );
 	    return cout.return_value();
 	} else {
@@ -892,7 +893,7 @@ struct set_operations {
     template<typename LSet, typename RSet>
     static
     size_t
-    intersect_size_exceed_ds( LSet && lset, RSet && rset, size_t exceed ) {
+    intersect_size_exceed_ds( LSet && lset, RSet && rset, size_t threshold ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
@@ -905,13 +906,13 @@ struct set_operations {
 	// representation.
 	if constexpr ( std::is_same_v<so_traits,hash_scalar>
 		       || std::is_same_v<so_traits,hash_vector> ) {
-	    intersection_size_exceed<
-		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    intersection_size_gt_val<
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
 	    apply<so_intersect_size_exceed>( lset, rset, out );
 	    return out.return_value();
 	} else {
-	    intersection_size_exceed_two_sided<
-		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+	    intersection_size_gt_val_two_sided<
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
 	    apply<so_intersect_size_exceed>( lset, rset, out );
 	    return out.return_value();
 	}
@@ -920,7 +921,7 @@ struct set_operations {
     template<typename LSet, typename RSet>
     static
     bool
-    intersect_size_ge_ds( LSet && lset, RSet && rset, size_t exceed ) {
+    intersect_size_ge_ds( LSet && lset, RSet && rset, size_t threshold ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
@@ -934,12 +935,12 @@ struct set_operations {
 	if constexpr ( std::is_same_v<so_traits,hash_scalar>
 		       || std::is_same_v<so_traits,hash_vector> ) {
 	    intersection_size_ge<
-		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
 	    apply<so_intersect_size_exceed>( lset, rset, out );
 	    return out.return_value();
 	} else {
 	    intersection_size_ge_two_sided<
-		typename std::decay_t<LSet>::type> out( lset, rset, exceed );
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
 	    apply<so_intersect_size_exceed>( lset, rset, out );
 	    return out.return_value();
 	}
