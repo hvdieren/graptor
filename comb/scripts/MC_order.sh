@@ -133,7 +133,7 @@ function mce() {
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 1
 #mce 16 128 dc3fc239 1024 avx512 dc3fc239 2
 
-commit=a7e6b77a
+commit=96f2729f
 
 mce 16 128 $commit 1024 avx512 $commit 1
 mce 16 128 $commit 1024 avx512 $commit 2
