@@ -1645,17 +1645,7 @@ vertex_cover_vc3( GraphType & G,
 		  lVID k,
 		  lVID c,
 		  lVID & best_size,
-		  lVID * best_cover,
-		  lVID * motivation );
-
-#define VC_NONE 	0
-#define VC_DEG1 	1
-#define VC_INCLUDE 	2
-#define VC_EXCLUDE(v) 	(((v)<<3)|3)
-#define VC_BUSS(k) 	(((k)<<3)|4)
-#define VC_POLY 	5
-#define VC_DENSE 	6
-
+		  lVID * best_cover );
 
 // For path or cycle
 template<typename GraphType, typename lVID>
@@ -1664,7 +1654,6 @@ trace_path( const GraphType & G,
 	    bool * visited,
 	    lVID & best_size,
 	    lVID * best_cover,
-	    lVID * motivation,
 	    lVID cur,
 	    lVID nxt,
 	    bool incl ) {
@@ -1673,11 +1662,8 @@ trace_path( const GraphType & G,
 
     visited[nxt] = true;
 
-    if( incl ) {
-	best_cover[best_size] = nxt; // mark
-	motivation[best_size] = VC_POLY;
-	++best_size;
-    }
+    if( incl )
+	best_cover[best_size++] = nxt; // mark
 
     // const EID * const index = G.getBeginIndex();
     // const VID * const edges = G.getEdges();
@@ -1690,8 +1676,7 @@ trace_path( const GraphType & G,
 
 	lVID ngh = ngh1 == cur ? ngh2 : ngh1;
 
-	trace_path( G, visited, best_size, best_cover, motivation,
-		    nxt, ngh, !incl );
+	trace_path( G, visited, best_size, best_cover, nxt, ngh, !incl );
     }
 }
 
@@ -1700,8 +1685,7 @@ bool
 vertex_cover_poly( const GraphType & G,
 		   lVID k,
 		   lVID & best_size,
-		   lVID * best_cover,
-		   lVID * motivation ) {
+		   lVID * best_cover ) {
     lVID n = G.numVertices();
 
     std::vector<char> visited( n, false );
@@ -1715,7 +1699,7 @@ vertex_cover_poly( const GraphType & G,
 	if( deg == 1 && !visited[v] ) {
 	    visited[v] = true;
 	    trace_path( G, (bool*)&visited[0], best_size, best_cover,
-			motivation, v, *G.nbegin( v ), true );
+			v, *G.nbegin( v ), true );
 	}
     }
     
@@ -1726,10 +1710,9 @@ vertex_cover_poly( const GraphType & G,
 	if( deg == 2 && !visited[v] ) {
 	    visited[v] = true;
 	    best_cover[best_size] = v; // mark
-	    motivation[best_size] = VC_POLY;
 	    ++best_size;
 	    trace_path( G, (bool*)&visited[0], best_size, best_cover,
-			motivation, v, *G.nbegin( v ), false );
+			v, *G.nbegin( v ), false );
 	}
     }
 
@@ -1742,8 +1725,7 @@ vertex_cover_vc3_buss( GraphType & G,
 		       lVID k,
 		       lVID c,
 		       lVID & best_size,
-		       lVID * best_cover,
-		       lVID * motivation ) {
+		       lVID * best_cover ) {
     using lEID = typename GraphType::EID;
     
     // Set U of vertices of degree higher than k
@@ -1779,8 +1761,7 @@ vertex_cover_vc3_buss( GraphType & G,
     // Find a cover for the remaining vertices
     lVID gp_best_size = 0;
     bool rec = vertex_cover_vc3<exists>(
-	G, lVID( k - u_size ), c,
-	gp_best_size, &best_cover[best_size], &motivation[best_size] );
+	G, lVID( k - u_size ), c, gp_best_size, &best_cover[best_size] );
 
     if( rec ) {
 	// Debug
@@ -1794,7 +1775,6 @@ vertex_cover_vc3_buss( GraphType & G,
 	for( lVID v=0; v < n; ++v )
 	    if( chkpt.get_degree( v ) > k ) {
 		best_cover[best_size] = v;
-		best_cover[best_size] = VC_BUSS(k);
 		++best_size;
 	    }
 
@@ -1927,8 +1907,7 @@ vertex_cover_vc3( GraphType & G,
 		  lVID k,
 		  lVID c,
 		  lVID & best_size,
-		  lVID * best_cover,
-		  lVID * motivation ) {
+		  lVID * best_cover ) {
     using lEID = typename GraphType::EID;
     
     lVID n = G.numVertices();
@@ -1954,11 +1933,9 @@ vertex_cover_vc3( GraphType & G,
 	auto chkptv = G.disable_incident_edges_for( ngh );
 	lVID m_best_size = 0;
 	bool ok = vertex_cover_vc3<exists>(
-	    G, (lVID)(k-(lVID)1), c, m_best_size, &best_cover[best_size+1],
-	    &motivation[best_size+1] );
+	    G, (lVID)(k-(lVID)1), c, m_best_size, &best_cover[best_size+1] );
 	if( ok ) {
 	    best_cover[best_size] = ngh;
-	    motivation[best_size] = VC_DEG1;
 	    best_size += m_best_size + 1;
 	}
 	G.restore_checkpoint( chkptv );
@@ -1968,7 +1945,7 @@ vertex_cover_vc3( GraphType & G,
     lVID max_v, max_deg;
     std::tie( max_v, max_deg ) = G.max_degree();
     if( max_deg <= 2 )
-	return vertex_cover_poly( G, k, best_size, best_cover, motivation );
+	return vertex_cover_poly( G, k, best_size, best_cover );
 
 /* in-effective
     int ret
@@ -1979,8 +1956,7 @@ vertex_cover_vc3( GraphType & G,
 
     if( m/2 > c * k * k && max_deg > k ) {
 	// replace by Buss kernel
-	return vertex_cover_vc3_buss<exists>(
-	    G, k, c, best_size, best_cover, motivation );
+	return vertex_cover_vc3_buss<exists>( G, k, c, best_size, best_cover );
     }
 
 /*
@@ -2012,11 +1988,8 @@ vertex_cover_vc3( GraphType & G,
 	    lVID d_best_size = 0;
 	    bool ok = fptr[nlg-N_MIN_SIZE](
 		G, n_remain, k, d_best_size, &best_cover[best_size] );
-	    if( ok ) {
-		std::fill( &motivation[best_size],
-			   &motivation[best_size+d_best_size], VC_DENSE );
+	    if( ok )
 	        best_size += d_best_size;
-	    }
 	    return ok;
 	}
     }
@@ -2036,14 +2009,12 @@ vertex_cover_vc3( GraphType & G,
     // The first subproblem is stored direct in the best_cover storage space.
     // Tentatively add vertex to cover
     best_cover[best_size] = max_v;
-    motivation[best_size] = VC_INCLUDE;
 
     // First subproblem includes max_v, reduces target k by one
     lVID i_k = k-1;
     lVID i_best_size = 0;
     bool i_ok = vertex_cover_vc3<exists>(
-	G, i_k, c, i_best_size, &best_cover[best_size+1],
-	&motivation[best_size+1] ); // +1 for max_v
+	G, i_k, c, i_best_size, &best_cover[best_size+1] ); // +1 for max_v
 
     if constexpr ( exists ) {
 	if( i_ok ) {
@@ -2060,20 +2031,16 @@ vertex_cover_vc3( GraphType & G,
     // new storage space (exists=false).
     lVID x_best_size = 0;
     lVID * x_best_cover = nullptr;
-    lVID * x_motivation = nullptr;
     if constexpr ( exists ) {
 	// The first subproblem has failed, overwrite space. Discard max_v.
 	x_best_cover = &best_cover[best_size];
-	x_motivation = &motivation[best_size];
     } else {
 	if( i_ok ) {
 	    // Retain the first subproblem, we will pick the best one later.
 	    x_best_cover = new lVID[n-1-max_deg];
-	    x_motivation = new lVID[n-1-max_deg];
 	} else {
 	    // Overwrite the solution to the first subproblem as it is invalid.
 	    x_best_cover = &best_cover[best_size];
-	    x_motivation = &motivation[best_size];
 	}
     }
 
@@ -2095,8 +2062,7 @@ vertex_cover_vc3( GraphType & G,
 
     bool x_ok = false;
     if( k >= max_deg )
-	x_ok = vertex_cover_vc3<exists>(
-	    G, x_k, c, x_best_size, x_best_cover, x_motivation );
+	x_ok = vertex_cover_vc3<exists>( G, x_k, c, x_best_size, x_best_cover );
 
     // Restore checkpoints on the graph, putting back neighbours
     // as well as max_v
@@ -2114,7 +2080,6 @@ vertex_cover_vc3( GraphType & G,
 	    best_size += x_best_size;
 	    for( auto I=NI; I != NE; ++I ) {
 		best_cover[best_size] = *I;
-		motivation[best_size] = VC_EXCLUDE( max_v );
 		++best_size;
 	    }
 
@@ -2131,9 +2096,6 @@ vertex_cover_vc3( GraphType & G,
 		// Add neighbours of excluded vertex (max_v) to the cover.
 		best_size += x_best_size;
 		std::copy( NI, NE, &best_cover[best_size] );
-		std::fill( &motivation[best_size],
-			   &motivation[best_size+max_deg],
-			   VC_EXCLUDE(max_v) );
 		best_size += max_deg;
 
 		ret = true;
@@ -2150,19 +2112,12 @@ vertex_cover_vc3( GraphType & G,
 	    if( !x_ok || i_best_size+1 <= x_best_size+max_deg ) {
 		// Retain first solution
 		delete[] x_best_cover;
-		delete[] x_motivation;
 	    } else {
 		// Retain second solution.
 		std::copy( NI, NE, &best_cover[best_size] );
 		std::copy( &x_best_cover[0], &x_best_cover[x_best_size],
 			   &best_cover[best_size+max_deg] );
-		std::fill( &motivation[best_size],
-			   &motivation[best_size+max_deg],
-			   VC_EXCLUDE(max_v) );
-		std::copy( &x_motivation[0], &x_motivation[x_best_size],
-			   &motivation[best_size+max_deg] );
 		delete[] x_best_cover;
-		delete[] x_motivation;
 	    }
 	    best_size += x_best_size + max_deg;
 	    ret = true;
@@ -2263,7 +2218,7 @@ find_min_vertex_cover( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
     }
 
     constexpr lVID c = 1;
-    return vertex_cover_vc3<false>( G, cn, c, csize, cover, nullptr );
+    return vertex_cover_vc3<false>( G, cn, c, csize, cover );
 }
 
 template<typename lVID, typename lEID>
@@ -2309,7 +2264,7 @@ find_min_vertex_cover_existential( graptor::graph::GraphCSxDepth<lVID,lEID> & G,
     while( true ) {
 	constexpr lVID c = 1;
 	cur_size = 0;
-	bool any = vertex_cover_vc3<true>( G, k, c, cur_size, &cur_cover[0], nullptr );
+	bool any = vertex_cover_vc3<true>( G, k, c, cur_size, &cur_cover[0] );
 	if( verbose > 1 ) {
 	    std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 		      << k << ',' << k_up << "] bs=" << cur_size
@@ -2617,7 +2572,6 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	return 0; // return false;
 
     std::vector<lVID> best_cover( cn );
-    std::vector<lVID> best_motivation( cn );
     lVID best_size = 0;
 
     // Set initial k on the basis of best known clique by E
@@ -2640,7 +2594,6 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 
     if constexpr ( use_exist ) {
 	std::vector<lVID> cover( cn );
-	std::vector<lVID> motivation( cn );
 	lVID k_up = k_prior - 1;
 	// TODO: the minimum size of a vertex cover is at least half the number
 	//       of vertices with non-zero degree (?) 
@@ -2652,8 +2605,7 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	while( true ) {
 	    constexpr lVID c = 1;
 	    best_size = 0;
-	    bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0],
-					       &motivation[0] );
+	    bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
 	    if( verbose > 1 ) {
 		std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
 			  << k << ',' << k_up << "] bs=" << best_size
@@ -2667,8 +2619,6 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		if( k > k_best_size )
 		    k = k_best_size;
 		std::copy( &cover[0], &cover[best_size], best_cover.begin() );
-		std::copy( &motivation[0], &motivation[best_size],
-			   best_motivation.begin() );
 	    }
 
 	    // Reduce range
@@ -2693,7 +2643,7 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	constexpr lVID c = 1;
 	lVID k = k_prior - 1;
 	bool any = vertex_cover_vc3<false>(
-	    CG, k, c, best_size, &best_cover[0], &best_motivation[0] );
+	    CG, k, c, best_size, &best_cover[0] );
 	if( verbose > 1 ) {
 	    std::cout << " vc3 (abs): cn=" << cn << " k=" << k
 		      << " ok=" << any << ' ' << tm.next() << "\n";
