@@ -265,7 +265,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_adj_vec(
 
 		// TODO: optimise for AVX512F using mask instead of vmask
 		// bb is 0xffffffff if element present, 0x0 if not
-		itype bb = adj.template multi_contains<sVID,RVL>(
+		itype bb = adj.template multi_lookup<sVID,RVL>(
 		    v, target::mt_vmask() );
 		// Width conversion (if needed)
 		rtype br = conversion_traits<sVID,type,RVL>::convert( bb );
@@ -481,6 +481,13 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 		row_u = tr::bitwise_or( row_u, rtr::sse_subvector( mrow, ri ) );
 	    deg = target::allpopcnt<sVID,type,tr::vlen>::compute( row_u );
 	}
+	// TODO: construct longer rows recursively by selecting midpoint of
+	// sequentially accessed adjacency list and doing left and half
+	// rows. Need to adjust off. Check if lower half can run through beyond
+	// midpoint to fully vectorise depending how right-half elements
+	// get treated if the vector is too short (invalid lanes or
+	// wrong numbers?)
+	// } else if constexpr ( sizeof(sVID) >= 4 && Bits > 128 ) {
     }
 #endif // !ABLATION_BITCONSTRUCT_XP_VEC
     while( l < udeg ) {
