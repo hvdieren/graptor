@@ -60,7 +60,7 @@ enum ins_variant {
 enum operation {
     op_intersect = 0,		/**< intersection producing list */
     op_intersect_size = 1,	/**< intersection size */
-    op_intersect_size_exceed = 2,	/**< intersection size or abort */
+    op_intersect_size_gt_val = 2,	/**< intersection size or abort */
     op_N = 3			/**< number of options */
 };
 
@@ -87,13 +87,13 @@ std::ostream & operator << ( ostream & os, operation o ) {
     switch( o ) {
     case op_intersect: return os << "intersect";
     case op_intersect_size: return os << "intersect_size";
-    case op_intersect_size_exceed: return os << "intersect_size_exceed";
+    case op_intersect_size_gt_val: return os << "intersect_size_gt_val";
     default:
 	return os << "illegal-operation";
     }
 }
 
-/*! Determine the threshold to reach for @op_intersect_size_exceed operations
+/*! Determine the threshold to reach for @op_intersect_size_gt_val operations
  *
  * The chosen threshold is around three quarters of the shortest length
  * of the two sets, and at least 1. This ensures at least some operation
@@ -203,15 +203,15 @@ bench( const VID * lb, const VID * le,
 		levels, 0, 1<<levels, lidx, ridx );
 	else
 	    return traits::intersect_size( lb, le, rb, re );
-    } else if constexpr ( op == op_intersect_size_exceed ) {
+    } else if constexpr ( op == op_intersect_size_gt_val ) {
 	if constexpr ( traits::uses_hash )
-	    return traits::intersect_size_exceed( lb, le, ht, x );
+	    return traits::intersect_size_gt_val( lb, le, ht, x );
 	else if constexpr ( traits::uses_prestudy )
-	    return traits::intersect_size_exceed(
+	    return traits::intersect_size_gt_val(
 		lb, le, rb, re, ht,
 		levels, 0, 1<<levels, lidx, ridx, x );
 	else
-	    return traits::intersect_size_exceed( lb, le, rb, re, x );
+	    return traits::intersect_size_gt_val( lb, le, rb, re, x );
     } else {
 	assert( 0 && "Invalid operation" );
 	return 0;
@@ -233,9 +233,9 @@ bench( VID lv, VID rv,
     tm.start();
     for( int r=0; r < repeat; ++r ) {
 	size_t sz = bench<var,op>( lb, le, rb, re, ht, lidx, ridx, out, x );
-	if( ( sz != ref && op != op_intersect_size_exceed )
+	if( ( sz != ref && op != op_intersect_size_gt_val )
 	    || ( !( ( sz <= x && ref <= x ) || ( sz == ref ) )
-		 && op == op_intersect_size_exceed )
+		 && op == op_intersect_size_gt_val )
 	    ) {
 	    std::cerr << "FAIL: " << var
 		      << ", " << op << ": lv=" << lv << " rv=" << rv
@@ -425,7 +425,7 @@ int main( int argc, char *argv[] ) {
 		    &prestudy[u*(1+(1<<levels))],
 		    repetitions );
 #elif OPERATION == 2
-		bench<op_intersect_size_exceed>(
+		bench<op_intersect_size_gt_val>(
 		    v, u,
 		    &edges[index[v]], &edges[index[v+1]],
 		    &edges[index[u]], &edges[index[u+1]],

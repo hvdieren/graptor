@@ -2731,7 +2731,7 @@ mc_get_pivot(
 
 	// Abort during intersection_size if size will be less than tv_max
 	// Note: hash_vector is much slower in this instance
-	size_t tv = pset.intersect_size_exceed(
+	size_t tv = pset.intersect_size_gt_val(
 	    G.get_neighbours_set( v ), tv_max );
 	if( tv > tv_max ) {
 	    tv_max = tv;
@@ -3468,7 +3468,7 @@ void mc_top_level_select(
     EID m_est = 0;
     cut.filter( [&,best]( VID u ) {
 	VID d = graptor::set_operations<graptor::MC_intersect>
-	    ::intersect_size_exceed_ds(
+	    ::intersect_size_gt_val_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
 		best-2 ); // exceed checks >, we need >= best-1
@@ -3570,7 +3570,7 @@ void leaf_dense_fn(
 	xp_set.get_set(), xp_set.get_fill(),
 	[&]( VID u ) {
 	    VID d = graptor::set_operations<graptor::MC_intersect>
-		::intersect_size_exceed_ds(
+		::intersect_size_gt_val_ds(
 		    xp_set.hash_set(),
 		    H.get_neighbours_set( u ),
 		    req_deg );
@@ -3580,7 +3580,7 @@ void leaf_dense_fn(
     if( cut.get_num_vertices() != xp_set.get_fill() ) {
 	cut.filter( [&]( VID u ) {
 	    VID d = graptor::set_operations<graptor::MC_intersect>
-		::intersect_size_exceed_ds(
+		::intersect_size_gt_val_ds(
 		    cut.get_slice(),
 		    H.get_neighbours_set( u ),
 		    req_deg );

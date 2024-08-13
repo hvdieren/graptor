@@ -898,9 +898,9 @@ public:
     // Intersect-size-exceed PSet with adjacency list.
     // Consider all vertices.
     template<typename DualSet>
-    lVID intersect_size_exceed( const DualSet & adj, lVID x ) const {
+    lVID intersect_size_gt_val( const DualSet & adj, lVID x ) const {
 	return graptor::set_operations<graptor::MC_intersect>
-	    ::intersect_size_exceed_ds( adj, this->P_hash_set( 0 ), x );
+	    ::intersect_size_gt_val_ds( adj, this->P_hash_set( 0 ), x );
     }
 
     // Intersect-size PSet with adjacency list.

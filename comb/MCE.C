@@ -687,14 +687,14 @@ mc_get_pivot_xp(
 	size_t tv;
 	if( ce-ne > deg ) {
 	    const VID * n = G.get_neighbours( v );
-	    tv = graptor::hash_scalar::intersect_size_exceed(
+	    tv = graptor::hash_scalar::intersect_size_gt_val(
 		n, n+deg, xp_set.P_hash_set( ne ), tv_max );
 	} else {
-	    tv = graptor::hash_scalar::intersect_size_exceed(
+	    tv = graptor::hash_scalar::intersect_size_gt_val(
 		XP+ne, XP+ce, hadj, tv_max );
 	}
 #else
-	size_t tv = graptor::hash_scalar::intersect_size_exceed(
+	size_t tv = graptor::hash_scalar::intersect_size_gt_val(
 	    XP+ne, XP+ce, hadj, tv_max );
 #endif
 #else

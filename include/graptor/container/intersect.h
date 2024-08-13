@@ -35,7 +35,7 @@ enum set_operation {
     so_intersect = 0,			//!< intersection - list of elements
     so_intersect_xlat = 1,		//!< intersection - list + translate
     so_intersect_size = 2,		//!< intersection size
-    so_intersect_size_exceed = 3,	//!< intersection size > or abort
+    so_intersect_size_gt_val = 3,	//!< intersection size > or abort
     so_intersect_size_ge = 4,		//!< intersection size >=
     so_intersect_gt = 5,		//!< list elements if size gt threshold
     so_N = 6 	 	 	 	//!< number of set operations
@@ -239,7 +239,7 @@ private:
     size_t m_size;
 };
 
-/*! Collector type to support the set_operation::intersect_size_exceed
+/*! Collector type to support the set_operation::intersect_size_gt_val
  *  operation.
  *
  * \tparam T type of elements in the sets.
@@ -432,7 +432,7 @@ private:
 };
 
 
-/*! Collector type to support the set_operation::intersect_size_exceed
+/*! Collector type to support the set_operation::intersect_size_gt_val
  *  operation.
  *
  * \tparam T type of elements in the sets.
@@ -769,7 +769,7 @@ private:
 
 
 /*! Traits class to recognise collectors for the
- *  set_operation::intersect_size_exceed operation.
+ *  set_operation::intersect_size_gt_val operation.
  *
  * \tparam S The collector type that is checked.
  */
@@ -785,7 +785,7 @@ struct is_intersection_size_gt_val<intersection_size_gt_val_two_sided<T>>
     : public std::true_type { };
 
 /*! Variable to recognise collectors for the
- *  set_operation::intersect_size_exceed operation.
+ *  set_operation::intersect_size_gt_val operation.
  */
 template<typename S>
 constexpr bool is_intersection_size_gt_val_v =
@@ -893,7 +893,7 @@ struct set_operations {
     template<typename LSet, typename RSet>
     static
     size_t
-    intersect_size_exceed_ds( LSet && lset, RSet && rset, size_t threshold ) {
+    intersect_size_gt_val_ds( LSet && lset, RSet && rset, size_t threshold ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
@@ -908,12 +908,12 @@ struct set_operations {
 		       || std::is_same_v<so_traits,hash_vector> ) {
 	    intersection_size_gt_val<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	} else {
 	    intersection_size_gt_val_two_sided<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	}
     }
@@ -936,12 +936,12 @@ struct set_operations {
 		       || std::is_same_v<so_traits,hash_vector> ) {
 	    intersection_size_ge<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	} else {
 	    intersection_size_ge_two_sided<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_exceed>( lset, rset, out );
+	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	}
     }
@@ -1084,7 +1084,7 @@ struct merge_scalar {
 
     template<typename It>
     static
-    size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
+    size_t intersect_size_gt_val( It lb, It le, It rb, It re, size_t exceed ) {
 	size_t ld = std::distance( lb, le );
 	size_t rd = std::distance( rb, re );
 	if( ld > rd ) {
@@ -1328,7 +1328,7 @@ struct merge_scalar_jump {
 
     template<typename It>
     static
-    size_t intersect_size_exceed( It lb, It le, It rb, It re, size_t exceed ) {
+    size_t intersect_size_gt_val( It lb, It le, It rb, It re, size_t exceed ) {
 	size_t ld = std::distance( lb, le );
 	size_t rd = std::distance( rb, re );
 	if( ld > rd ) {
@@ -1669,7 +1669,7 @@ struct hash_scalar {
 
     template<typename It, typename HT>
     static
-    size_t intersect_size_exceed( It lb, It le, const HT & htable, size_t exceed ) {
+    size_t intersect_size_gt_val( It lb, It le, const HT & htable, size_t exceed ) {
 	size_t d = std::distance( lb, le );
 
 	if( d <= exceed )
@@ -1818,7 +1818,7 @@ struct hash_wide {
 
     template<typename It, typename HT>
     static
-    size_t intersect_size_exceed( It lb, It le, const HT & htable, size_t exceed ) {
+    size_t intersect_size_gt_val( It lb, It le, const HT & htable, size_t exceed ) {
 	size_t d = std::distance( lb, le );
 
 	if( d <= exceed )
@@ -1932,7 +1932,7 @@ private:
     template<unsigned VL, typename T, typename HT>
     static
     bool
-    detail_intersect_size_exceed(
+    detail_intersect_size_gt_val(
 	const T *& lb, const T * le, const HT & htable, size_t exceed,
 	size_t & sz ) {
 	using tr = vector_type_traits_vl<T,VL>;
@@ -2069,12 +2069,12 @@ public:
     template<typename T, typename HT>
     static
     size_t
-    intersect_size_exceed(
+    intersect_size_gt_val(
 	const T * lb, const T * le, const HT & htable, size_t exceed ) {
 	size_t sz0 = 0, sz1 = 0, sz2;
 
 #if __AVX512F__
-	if( !detail_intersect_size_exceed<64/sizeof(T)>(
+	if( !detail_intersect_size_gt_val<64/sizeof(T)>(
 		lb, le, htable, exceed, sz0 ) )
 	    return 0;
 	if( sz0 > exceed )
@@ -2082,14 +2082,14 @@ public:
 	exceed -= sz0;
 #endif
 #if __AVX2__
-	if( !detail_intersect_size_exceed<32/sizeof(T)>(
+	if( !detail_intersect_size_gt_val<32/sizeof(T)>(
 		lb, le, htable, exceed, sz1 ) )
 	    return 0;
 	if( sz1 > exceed )
 	    return sz0 + sz1 + hash_scalar::intersect_size( lb, le, htable );
 	exceed -= sz1;
 #endif
-	sz2 = hash_scalar::intersect_size_exceed( lb, le, htable, exceed );
+	sz2 = hash_scalar::intersect_size_gt_val( lb, le, htable, exceed );
 	if( !sz2 )
 	    return 0;
 
@@ -2402,7 +2402,7 @@ private:
     template<unsigned VL, typename T>
     static
     bool
-    detail_intersect_size_exceed(
+    detail_intersect_size_gt_val(
 	const T *& lb, const T *& le, const T *& rb, const T *& re,
 	size_t exceed, size_t & sz ) {
 	using tr = vector_type_traits_vl<T,VL>;
@@ -2492,12 +2492,12 @@ public:
     template<typename T>
     static
     size_t
-    intersect_size_exceed( const T* lb, const T* le, const T* rb, const T* re,
+    intersect_size_gt_val( const T* lb, const T* le, const T* rb, const T* re,
 			   size_t exceed ) {
 	size_t sz0 = 0, sz1 = 0, sz2;
 
 #if __AVX512F__
-	if( !detail_intersect_size_exceed<64/sizeof(T)>(
+	if( !detail_intersect_size_gt_val<64/sizeof(T)>(
 		lb, le, rb, re, exceed, sz0 ) )
 	    return 0;
 	if( sz0 > exceed )
@@ -2505,14 +2505,14 @@ public:
 	exceed -= sz0;
 #endif
 #if __AVX2__
-	if( !detail_intersect_size_exceed<32/sizeof(T)>(
+	if( !detail_intersect_size_gt_val<32/sizeof(T)>(
 		lb, le, rb, re, exceed, sz1 ) )
 	    return 0;
 	if( sz1 > exceed )
 	    return sz0 + sz1 + merge_scalar::intersect_size( lb, le, rb, re );
 	exceed -= sz1;
 #endif
-	sz2 = merge_scalar::intersect_size_exceed( lb, le, rb, re, exceed );
+	sz2 = merge_scalar::intersect_size_gt_val( lb, le, rb, re, exceed );
 	if( !sz2 )
 	    return 0;
 
@@ -2630,7 +2630,7 @@ struct merge_partitioned {
     template<typename T, typename HT, typename I>
     static
     size_t
-    intersect_size_exceed( const T* lb, const T* le,
+    intersect_size_gt_val( const T* lb, const T* le,
 			   const T* rb, const T* re,
 			   const HT & htable,
 			   size_t levels,
@@ -2645,10 +2645,10 @@ struct merge_partitioned {
 	else if( levels == 0 ) {
 	    assert( lo+1 == hi );
 	    if constexpr ( std::is_same_v<Underlying,hash_vector> )
-		return Underlying::intersect_size_exceed(
+		return Underlying::intersect_size_gt_val(
 		    &lb[lidx[lo]], &lb[lidx[hi]], htable, exceed );
 	    else
-		return Underlying::intersect_size_exceed(
+		return Underlying::intersect_size_gt_val(
 		    &lb[lidx[lo]], &lb[lidx[hi]], &rb[ridx[lo]], &rb[ridx[hi]],
 		    exceed );
 	} else {
@@ -2670,7 +2670,7 @@ struct merge_partitioned {
 	    // be faster by avoiding exceed checks and simply determine the
 	    // intersection size.
 	    if( exceed > d2 ) {
-		sz0 = intersect_size_exceed(
+		sz0 = intersect_size_gt_val(
 		    lb, le, rb, re, htable, levels-1,
 		    lo, mid, lidx, ridx, exceed-d2 );
 		// If this branch fails to find at least exceed-d2 elements,
@@ -2689,7 +2689,7 @@ struct merge_partitioned {
 		sz1 = intersect_size( lb, le, rb, re, htable, levels-1,
 				      mid, hi, lidx, ridx );
 	    else
-		sz1 = intersect_size_exceed(
+		sz1 = intersect_size_gt_val(
 		    lb, le, rb, re, htable, levels-1,
 		    mid, hi, lidx, ridx, exceed-sz0 );
 	    return sz0 + sz1;
@@ -2832,7 +2832,7 @@ struct adaptive_intersect {
 	} else if constexpr ( so == so_intersect_size ) {
 	    // do_hash = ( lcat != rcat );
 	    // do_hash = ( lcat + rcat >= 5 && std::abs( lcat - rcat ) > 1 ); // rule3
-	} else if constexpr ( so == so_intersect_size_exceed ) {
+	} else if constexpr ( so == so_intersect_size_gt_val ) {
 #if INTERSECTION_ALGORITHM == 6
 	    do_hash = std::abs( lcat - rcat ) > 1; // rule2
 #elif INTERSECTION_ALGORITHM == 7
@@ -2880,8 +2880,8 @@ struct adaptive_intersect_filter {
 	    return;
 	}
 
-	if constexpr ( so != so_intersect_size_exceed )
-	    // This class is designed strictly for so_intersect_size_exceed
+	if constexpr ( so != so_intersect_size_gt_val )
+	    // This class is designed strictly for so_intersect_size_gt_val
 	    return adaptive_intersect::template apply<so>( lset, rset, out );
 	else {
 	    static_assert( !is_hash_set_v<std::decay_t<LSet>>,
