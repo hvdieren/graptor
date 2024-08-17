@@ -101,9 +101,10 @@ struct fp_traits<double> {
 // Or convert against a truncated exponent that is always negative
 // and assumed to fit the range
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
-		     typename vector_type_traits_vl<DstTy,VL>::itype>
+typename vector_type_traits_vl<DstTy,VL>::itype
 cvt_float_widen_static( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
+    static_assert( sizeof(DstTy) >= sizeof(SrcTy), "widen operation" );
+    
     using src_traits = vector_type_traits_vl<SrcTy,VL>;
     using dst_traits = vector_type_traits_vl<DstTy,VL>;
 
@@ -253,10 +254,10 @@ cvt_float_widen_static( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
-		     typename vector_type_traits_vl<DstTy,VL>::itype>
+typename vector_type_traits_vl<DstTy,VL>::itype
 cvt_float_widen_dynamic( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
     static_assert( is_vcustomfp_v<SrcTy>, "special case for vcustomfp<>" );
+    static_assert( sizeof(DstTy) >= sizeof(SrcTy), "widen operation" );
     
     using src_traits = vector_type_traits_vl<SrcTy,VL>;
     using dst_traits = vector_type_traits_vl<DstTy,VL>;
@@ -389,9 +390,9 @@ cvt_float_widen_dynamic( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
-		     typename vector_type_traits_vl<DstTy,VL>::itype>
+typename vector_type_traits_vl<DstTy,VL>::itype
 cvt_float_widen( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
+    static_assert( sizeof(DstTy) >= sizeof(SrcTy), "widen operation" );
     if constexpr ( is_vcustomfp_v<SrcTy> )
 	return cvt_float_widen_dynamic<SrcTy,DstTy,VL>( a );
     else
@@ -399,10 +400,10 @@ cvt_float_widen( typename vector_type_traits_vl<DstTy,VL>::itype a ) {
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
-		 typename vector_type_traits_vl<SrcTy,VL>::itype>
+typename vector_type_traits_vl<SrcTy,VL>::itype
 cvt_float_narrowing_static(
     typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
+    static_assert( sizeof(DstTy) < sizeof(SrcTy), "narrowing operation" );
     using src_traits = vector_type_traits_vl<SrcTy,VL>;
     using dst_traits = vector_type_traits_vl<DstTy,VL>;
 
@@ -519,11 +520,11 @@ cvt_float_narrowing_static(
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
-		 typename vector_type_traits_vl<SrcTy,VL>::itype>
+typename vector_type_traits_vl<SrcTy,VL>::itype
 cvt_float_narrowing_dynamic(
     typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
     static_assert( is_vcustomfp_v<DstTy>, "special case for vcustomfp<>" );
+    static_assert( sizeof(DstTy) < sizeof(SrcTy), "narrowing operation" );
 
     using src_traits = vector_type_traits_vl<SrcTy,VL>;
     using dst_traits = vector_type_traits_vl<DstTy,VL>;
@@ -630,9 +631,9 @@ cvt_float_narrowing_dynamic(
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
-		 typename vector_type_traits_vl<SrcTy,VL>::itype>
+typename vector_type_traits_vl<SrcTy,VL>::itype
 cvt_float_narrowing( typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
+    static_assert( sizeof(DstTy) < sizeof(SrcTy), "narrowing operation" );
     if constexpr ( is_vcustomfp_v<DstTy> )
 	return cvt_float_narrowing_dynamic<SrcTy,DstTy,VL>( a );
     else
@@ -640,8 +641,7 @@ cvt_float_narrowing( typename vector_type_traits_vl<SrcTy,VL>::itype a ) {
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)>=sizeof(SrcTy)),
-		     typename vector_type_traits_vl<DstTy,VL>::type>
+typename vector_type_traits_vl<DstTy,VL>::type
 cvt_float_width( typename vector_type_traits_vl<SrcTy,VL>::type a ) {
     using src_traits = vector_type_traits_vl<SrcTy,VL>;
     using dst_traits = vector_type_traits_vl<DstTy,VL>;
@@ -649,44 +649,35 @@ cvt_float_width( typename vector_type_traits_vl<SrcTy,VL>::type a ) {
     using sitype = typename src_traits::int_type;
     using ditype = typename dst_traits::int_type;
 
-    auto aa = src_traits::castint( a );
+    if constexpr ( sizeof(DstTy) >= sizeof(SrcTy) ) {
+	auto aa = src_traits::castint( a );
     
-    // Widening conversion
-    auto b = conversion_traits<sitype,ditype,VL>::convert( aa );
+	// Widening conversion
+	auto b = conversion_traits<sitype,ditype,VL>::convert( aa );
 
-    // Modify bit pattern
-    auto c = cvt_float_widen<SrcTy,DstTy,VL>( b );
+	// Modify bit pattern
+	auto c = cvt_float_widen<SrcTy,DstTy,VL>( b );
 
-    // auto x = cvt_float_narrowing<DstTy,SrcTy,VL>( c );
-    // assert( dst_traits::int_traits::cmpeq( x, b, target::mt_bool() ) );
+	// auto x = cvt_float_narrowing<DstTy,SrcTy,VL>( c );
+	// assert( dst_traits::int_traits::cmpeq( x, b, target::mt_bool() ) );
 
-    auto f = dst_traits::int_traits::castfp( c );
+	auto f = dst_traits::int_traits::castfp( c );
 
-    return f;
-}
+	return f;
+    } else if constexpr ( sizeof(DstTy) < sizeof(SrcTy) ) {
+	auto aa = src_traits::castint( a );
 
-template<typename SrcTy, typename DstTy, unsigned short VL>
-std::enable_if_t<(sizeof(DstTy)<sizeof(SrcTy)),
-		     typename vector_type_traits_vl<DstTy,VL>::type>
-cvt_float_width( typename vector_type_traits_vl<SrcTy,VL>::type a ) {
-    using src_traits = vector_type_traits_vl<SrcTy,VL>;
-    using dst_traits = vector_type_traits_vl<DstTy,VL>;
+	// Float conversion process
+	auto b = cvt_float_narrowing<SrcTy,DstTy,VL>( aa );
 
-    using sitype = typename src_traits::int_type;
-    using ditype = typename dst_traits::int_type;
+	// Narrowing conversion
+	// auto
+	typename dst_traits::itype c = conversion_traits<sitype,ditype,VL>::convert( b );
 
-    auto aa = src_traits::castint( a );
+	auto f = dst_traits::int_traits::castfp( c );
 
-    // Float conversion process
-    auto b = cvt_float_narrowing<SrcTy,DstTy,VL>( aa );
-
-    // Narrowing conversion
-    // auto
-    typename dst_traits::itype c = conversion_traits<sitype,ditype,VL>::convert( b );
-
-    auto f = dst_traits::int_traits::castfp( c );
-
-    return f;
+	return f;
+    }
 }
 
 template<typename SrcTy, typename DstTy, unsigned short VL>
