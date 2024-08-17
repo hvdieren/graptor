@@ -5,6 +5,7 @@
 
 #include "graptor/graptor.h"
 #include "graptor/graph/cgraph.h"
+#include "graptor/cmdline.h"
 
 bool hasEdge( GraphCSx & G, VID src, VID dst ) {
     const EID * idx = G.getIndex();
@@ -27,14 +28,18 @@ bool hasEdge( graph<vertex> & G, VID src, VID dst ) {
 }
 
 int main( int argc, char *argv[] ) {
-    commandLine P( argc, argv, " help" );
-    bool symmetric = P.getOptionValue("-s");
-    bool binary = P.getOptionValue("-b");             //Galois binary format
+    CommandLine P(
+	argc, argv,
+	"\t-s\t\tinput graph is symmetric (only required for specific formats)\n"
+	"\t-i {file}\tinput file containing graph\n"
+	"\t-o {file}\toutput file containing graph\n"
+	);
 
-    const char * ofile = P.getOptionValue( "-o" );
-    const char * ifile = P.getOptionValue( "-i" );
+    const bool symmetric = P.get_bool_option( "-s" );
+    const char * ifile = P.get_string_option( "-i" );
+    const char * ofile = P.get_string_option( "-o" );
 
-    GraphCSx G( ifile, -1 );
+    GraphCSx G( ifile, -1, symmetric, nullptr );
 
     std::cerr << "Read graph '" << ifile << "'.\n";
     
