@@ -440,6 +440,55 @@ function graptor_graph()
     fi
 }
 
+# arguments: graph un_dir 
+function graptorv4_graph_path()
+{
+    local graph=$1
+    local un_dir=$2
+
+    graph_path $GRAPHPATH $graph $un_dir v4 v4
+}
+
+# arguments: graph un_dir weights
+function graptorv4_weights_file()
+{
+    local graph=$1
+    local un_dir=$2
+    local weights=$3
+
+    graph_path $GRAPHPATH $graph $un_dir v4 $weights
+}
+
+# arguments: graph-name weights
+function graptorv4_weights_file_from_name()
+{
+    local graph_name=$1
+    local weights=$2
+    # Remove shortest substring ending in _*dir
+    local graph=${graph_name%_*dir}
+    # Remove longest substring before the final _
+    local un_dir=${graph_name##*_}
+
+    graptorv4_weights_file $graph $un_dir $weights
+}
+
+# arguments: graph un_dir [weights]
+function graptorv4_graph()
+{
+    local graph=$1
+    local un_dir=$2
+    local weights=$3
+
+    # The graph topology
+    check_graph $GRAPHPATH $graph $un_dir v4 v4 $SRCPATH
+
+    # The edge weights
+    if [ x"$weights" != x -a x"$weights" != xnone ] ; then
+	check_graph $GRAPHPATH $graph $un_dir v4 $weights $SRCPATH
+    fi
+}
+
+
 # aux
 function list_include_item()
 {
@@ -513,7 +562,8 @@ if [ ${#command[@]} -ne 4 -a ${#command[@]} -ne 5 ] ; then
     exit 1
 fi
 
-if ! `list_include_item "graptor ligra gapbs mtxmkt" "${command[1]}"` ; then
+if ! `list_include_item "graptor graptorv4 ligra gapbs mtxmkt" "${command[1]}"`
+then
    echo "Format ${command[1]} is not a recognised format"
    exit 1;
 fi
