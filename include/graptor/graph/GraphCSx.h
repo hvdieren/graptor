@@ -344,31 +344,6 @@ public:
 	}
 	flags.del( "GraphCSx flags array" );
     }
-    template<typename vertex>
-    GraphCSx( const wholeGraph<vertex> & WG, int allocation )
-	: n( WG.n ), m( WG.m ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	import( WG );
-    }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG ) {
-	assert( n == WG.n && m == WG.m );
-
-	const vertex * V = WG.V.get();
-	EID nxt = 0;
-	for( VID v=0; v < n; ++v ) {
-	    index[v] = nxt;
-	    for( VID j=0; j < V[v].getOutDegree(); ++j )
-		edges[nxt++] = V[v].getOutNeighbor(j);
-	}
-	index[n] = m;
-	build_degree();
-    }
     GraphCSx( const GraphCSx & WG, int allocation )
 	: n( WG.n ), m( WG.m ), symmetric( WG.isSymmetric() ),
 	  weights( nullptr ) {
@@ -407,47 +382,6 @@ public:
     }
 */
 
-    template<typename vertex>
-    GraphCSx( const wholeGraph<vertex> & WG, int allocation,
-	      std::pair<const VID *, const VID *> remap )
-	: n( WG.n ), m( WG.m ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	import( WG, remap );
-	build_degree();
-    }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG,
-		 std::pair<const VID *, const VID *> remap ) {
-	// In w = remap.first[v], v is the new vertex ID, w is the old one
-	// In v = remap.second[w], v is the new vertex ID, w is the old one
-	assert( n == WG.n && m == WG.m );
-
-	const vertex * V = WG.V.get();
-	// 1. Build array for each v its degree (in parallel)
-	parallel_loop( (VID)0, n, [&]( VID v ) { 
-	    VID w = remap.first[v];
-	    index[v] = V[w].getOutDegree();
-	} );
-	index[n] = m;
-	// 2. Prefix-sum (parallel) => index array
-	EID mm = sequence::plusScan( index.get(), index.get(), n );
-	assert( mm == m && "Index array count mismatch" );
-
-	// 3. Fill out edge array (parallel)
-	parallel_loop( (VID)0, n, [&]( VID v ) { 
-	    VID w = remap.first[v];
-	    EID nxt = index[v];
-	    for( VID j=0; j < V[w].getOutDegree(); ++j )
-		edges[nxt++] = remap.second[V[w].getOutNeighbor(j)];
-	    std::sort( &edges[index[v]], &edges[nxt] );
-	} );
-	build_degree();
-    }
     void import( const GraphCSx & Gcsr, const RemapVertexIdempotent<VID> & ) {
 	import( Gcsr );
     }
@@ -2031,79 +1965,6 @@ public:
     }
 */
 
-    template<typename vertex>
-    GraphCSx( const wholeGraph<vertex> & WG,
-	      const partitioner & part, int p, int allocation )
-	: n( WG.numVertices() ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	m = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    m += V[i].getInDegree();
-
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	
-        EID nxt = 0;
-        for( VID s=0; s < n; s++ ) {
-	    index[s] = nxt;
-	    VID deg = V[s].getOutDegree();
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = V[s].getOutNeighbor(i);
-		if( rangeLow <= d && d < rangeHi )
-		    edges[nxt++] = d;
-	    }
-	}
-	assert( nxt == m );
-	index[n] = nxt;
-	build_degree();
-    }
-
-    template<typename vertex>
-    GraphCSx( const wholeGraph<vertex> & WG,
-	      const partitioner & part, int p,
-	      std::pair<const VID *, const VID *> remap )
-	: n( WG.numVertices() ),
-	  symmetric( std::is_same<vertex,symmetricVertex>::value ),
-	  weights( nullptr )  {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	m = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    m += V[remap.first[i]].getInDegree();
-
-	allocateLocal( part.numa_node_of( p ) );
-	
-        EID nxt = 0;
-        for( VID s=0; s < n; s++ ) {
-	    VID sr = remap.first[s];
-	    index[s] = nxt;
-	    VID deg = V[sr].getOutDegree();
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = remap.second[V[sr].getOutNeighbor(i)];
-		if( rangeLow <= d && d < rangeHi )
-		    edges[nxt++] = d;
-	    }
-	    std::sort( &edges[index[s]], &edges[nxt] );
-	}
-	assert( nxt == m );
-	index[n] = nxt;
-	build_degree();
-    }
     GraphCSx( const GraphCSx & WG,
 	      const partitioner & part, int p,
 	      std::pair<const VID *, const VID *> remap )

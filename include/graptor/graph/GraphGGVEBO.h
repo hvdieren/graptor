@@ -28,62 +28,6 @@ class GraphGGVEBO {
     EIDRetriever eid_retriever;
 
 public:
-    template<class vertex>
-    GraphGGVEBO( const wholeGraph<vertex> & WG, int npart )
-	: csr( &csr_act ),
-	  csc( std::is_same<vertex,symmetricVertex>::value
-	       ? &csr_act : &csc_act ),
-	  csr_act( WG.n, WG.m, -1, WG.isSymmetric() ),
-	  csc_act( std::is_same<vertex,symmetricVertex>::value ? 0 : WG.n,
-		   std::is_same<vertex,symmetricVertex>::value ? 0 : WG.m, -1 ),
-	  coo( new ThisGraphCOO[npart] ),
-	  part( npart, WG.numVertices() ) {
-
-#if OWNER_READS
-	assert( WG.isSymmetric() && "OWNER_READS requires symmetric graphs" );
-#endif
-
-	// Setup temporary CSC, try to be space-efficient
-	GraphCSx & csc_tmp = csr_act;
-	if( std::is_same<vertex,symmetricVertex>::value )
-	    csc_tmp.import( WG );
-	else {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_tmp.import( WG );
-	    WGc->transpose();
-	}
-
-	// Calculate remapping table
-	remap = VEBOReorder( csc_tmp, part );
-
-	// Setup CSR
-	std::cerr << "Remapping CSR...\n";
-	csr_act.import( WG, remap.maps() );
-
-	// Setup CSC
-	std::cerr << "Remapping CSC...\n";
-	if( !std::is_same<vertex,symmetricVertex>::value ) {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_act.import( WG, remap.maps() );
-	    WGc->transpose();
-	}
-	
-	// Create COO partitions in parallel
-	std::cerr << "Creating and remapping COO partitions...\n";
-	map_partitionL( part, [&]( int p ) {
-#if GGVEBO_COO_CSC_ORDER
-		createCOOPartitionFromCSC( WG.numVertices(),
-					   p, part.numa_node_of( p ) );
-#else
-		createCOOPartitionFromCSR( WG.numVertices(),
-					   p, p / part.numa_node_of( p ) );
-#endif
-	    } );
-	std::cerr << "GraphGGVEBO loaded\n";
-    }
-
     GraphGGVEBO( const GraphCSx & Gcsr, int npart )
 	: csr( &csr_act ),
 	  csc( &csc_act ),

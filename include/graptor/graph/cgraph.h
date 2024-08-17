@@ -68,27 +68,6 @@ public:
 	index.del();
 	edges.del();
     }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG,
-		 std::pair<const VID *, const VID *> remap ) {
-	// Short-hands
-	vertex *V = WG.V.get();
-
-        EID nxt = 0;
-        for( VID s=lo; s < hi; s++ ) {
-	    VID sr = remap.first[s];
-	    index[s-lo] = nxt;
-	    VID deg = V[sr].getOutDegree();
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = remap.second[V[sr].getOutNeighbor(i)];
-		edges[nxt++] = d;
-	    }
-	    std::sort( &edges[index[s-lo]], &edges[nxt] );
-	}
-	assert( nxt == m );
-	index[hi-lo] = nxt;
-    }
-
 public:
     EID *getIndex() { return index.get(); }
     const EID *getIndex() const { return index.get(); }
@@ -117,14 +96,6 @@ private:
 class GraphCSR : public GraphCSx {
 public:
     GraphCSR( const GraphCSx & WG, int allocation )
-	: GraphCSx( WG, allocation ), part( 1, WG.numVertices() ) {
-	part.as_array()[0] = numVertices(); // all vertices in first partition
-	part.as_array()[1] = numVertices(); // total number
-	part.compute_starts();
-    }
-
-    template<typename vertex>
-    GraphCSR( const wholeGraph<vertex> & WG, int allocation )
 	: GraphCSx( WG, allocation ), part( 1, WG.numVertices() ) {
 	part.as_array()[0] = numVertices(); // all vertices in first partition
 	part.as_array()[1] = numVertices(); // total number
@@ -168,131 +139,6 @@ public:
 	index.del();
 	vid.del();
 	edges.del();
-    }
-    template<typename vertex>
-    GraphCCSx( const wholeGraph<vertex> & WG, int allocation )
-	: n( WG.n ), nzn( countNZDeg( WG ) ), m( WG.m ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	import( WG );
-    }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG ) {
-	assert( n == WG.n && m == WG.m );
-	assert( nzn == countNZDeg( WG ) );
-
-	const vertex * V = WG.V.get();
-	EID nxt = 0;
-	VID vnxt = 0;
-	for( VID v=0; v < n; ++v ) {
-	    if( V[v].getOutDegree() > 0 ) {
-		vid[vnxt] = v;
-		index[vnxt] = nxt;
-		for( VID j=0; j < V[v].getOutDegree(); ++j )
-		    edges[nxt++] = V[v].getOutNeighbor(j);
-	    }
-	}
-	assert( vnxt == nzn );
-	index[nzn] = m;
-    }
-
-    template<typename vertex>
-    GraphCCSx( const wholeGraph<vertex> & WG, int allocation,
-	       std::pair<const VID *, const VID *> remap )
-	: n( WG.n ), nzn( countNZDeg( WG ) ), m( WG.m ) {
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	import( WG, remap );
-    }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG,
-		 std::pair<const VID *, const VID *> remap ) {
-	// In w = remap.first[v], v is the new vertex ID, w is the old one
-	// In v = remap.second[w], v is the new vertex ID, w is the old one
-	assert( n == WG.n && m == WG.m );
-
-	const vertex * V = WG.V.get();
-	EID nxt = 0;
-	VID vnxt = 0;
-	for( VID v=0; v < n; ++v ) {
-	    VID w = remap.first[v];
-	    if( V[w].getOutDegree() > 0 ) {
-		vid[vnxt] = v;
-		index[vnxt++] = nxt;
-		for( VID j=0; j < V[w].getOutDegree(); ++j )
-		    edges[nxt++] = remap.second[V[w].getOutNeighbor(j)];
-		std::sort( &edges[index[vnxt-1]], &edges[nxt] );
-	    }
-	}
-	assert( nxt == m );
-	assert( vnxt == nzn );
-	index[nzn] = m;
-    }
-
-    template<typename vertex>
-    GraphCCSx( const wholeGraph<vertex> & WG,
-	       const partitioner & part, int p,
-	       std::pair<const VID *, const VID *> remap )
-	: n( WG.numVertices() ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	// In w = remap.first[v], v is the new vertex ID, w is the old one
-	// In v = remap.second[w], v is the new vertex ID, w is the old one
-
-	// Visit all sources and count how many destinations are in the
-	// range rangeLow - rangeHi after remapping.
-	nzn = 0;
-	m = 0;
-        for( VID s=0; s < n; s++ ) {
-	    VID deg = V[s].getOutDegree();
-	    bool match = false;
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = V[s].getOutNeighbor(i);
-		VID dd = remap.second[d];
-		if( rangeLow <= dd && dd < rangeHi ) {
-		    match = true;
-		    m++;
-		}
-	    }
-	    if( match )
-		++nzn;
-	}
-
-	allocateLocal( part.numa_node_of( p ) );
-	
-        EID nxt = 0;
-	VID vnxt = 0;
-        for( VID s=0; s < n; s++ ) { // traverse in order of increasing new ID
-	    VID ss = remap.first[s];
-	    VID deg = V[ss].getOutDegree();
-	    index[vnxt] = nxt;
-	    vid[vnxt] = s;
-	    bool match = false;
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = V[ss].getOutNeighbor(i);
-		VID dd = remap.second[d];
-		if( rangeLow <= dd && dd < rangeHi ) {
-		    match = true;
-		    edges[nxt++] = dd;
-		}
-	    }
-	    if( match ) {
-		std::sort( &edges[index[vnxt]], &edges[nxt] );
-		vnxt++;
-	    }
-	}
-	assert( nxt == m );
-	assert( vnxt == nzn );
-	index[vnxt] = nxt;
     }
 
     GraphCCSx( const GraphCSx & WG,
@@ -614,63 +460,6 @@ public:
 	       CSxEIDRemapper<VID,EID> & eid_remap )
 	: GraphCCSx( WG, csc, part, p, remap, &eid_remap ) { }
 
-    template<typename vertex>
-    GraphCCSx( const wholeGraph<vertex> & WG,
-	       const partitioner & part, int p, int allocation )
-	: n( WG.numVertices() ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	nzn = 0;
-        for( VID s=0; s < n; s++ ) {
-	    VID deg = V[s].getOutDegree();
-	    bool match = false;
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = V[s].getOutNeighbor(i);
-		if( rangeLow <= d && d < rangeHi ) {
-		    match = true;
-		    break;
-		}
-	    }
-	    if( match )
-		++nzn;
-	}
-
-	m = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    m += V[i].getInDegree();
-
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-	
-        EID nxt = 0;
-	VID vnxt = 0;
-        for( VID s=0; s < n; s++ ) {
-	    index[vnxt] = nxt;
-	    vid[vnxt] = nxt;
-	    VID deg = V[s].getOutDegree();
-	    bool match = false;
-	    for( VID i=0; i < deg; i++ ) {
-		VID d = V[s].getOutNeighbor(i);
-		if( rangeLow <= d && d < rangeHi ) {
-		    match = true;
-		    edges[nxt++] = d;
-		}
-	    }
-	    if( match )
-		vnxt++;
-	}
-	assert( nxt == m );
-	assert( vnxt == nzn );
-	index[vnxt] = nxt;
-    }
-
 public:
     class edge_iterator {
     public:
@@ -808,17 +597,6 @@ private:
 	vid.allocate( nzn, numa_allocation_local( numa_node ) );
 	edges.allocate( m, numa_allocation_local( numa_node ) );
     }
-    template<typename vertex>
-    static VID countNZDeg( const wholeGraph<vertex> & WG ) {
-	VID nzn = 0;
-	VID n = WG.n;
-	const vertex * V = WG.V.get();
-	for( VID v=0; v < n; ++v ) {
-	    if( V[v].getOutDegree() > 0 )
-		++nzn;
-	}
-	return nzn;
-    }
 };
 
 class GraphCCSxParts {
@@ -898,26 +676,6 @@ class GraphPartCSR {
     partitioner part;
     
 public:
-    template<typename vertex>
-    GraphPartCSR( const wholeGraph<vertex> & WG, int npart,
-		  bool balance_vertices )
-	: csr( WG, -1 ),
-	  csrp( new GraphCSx[npart] ),
-	  part( npart, WG.numVertices() ) {
-	// Decide what partition each vertex goes into
-	if( balance_vertices )
-	    partitionBalanceDestinations( WG, part ); 
-	else
-	    partitionBalanceEdges( WG, part ); 
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ) {
-		GraphCSx & pcsr = csrp[p];
-		int node = part.numa_node_of( p );
-		new ( &pcsr ) GraphCSx( WG, part, p, node );
-	    } );
-    }
-
     void del() {
 	csr.del();
 	for( int p=0; p < part.get_num_partitions(); ++p )
@@ -960,50 +718,6 @@ class GraphVEBOPartCSR {
     VEBOReorder remap;
     
 public:
-    template<typename vertex>
-    GraphVEBOPartCSR( const wholeGraph<vertex> & WG, int npart )
-	: csr( WG.n, WG.m, -1 ),
-	  csrp( new GraphCSx[npart] ),
-	  part( npart, WG.numVertices() ) {
-
-	std::cerr << "VEBOPartCSR: "
-		  << " n=" << WG.numVertices()
-		  << " e=" << WG.numEdges()
-		  << "\n";
-
-	// We require a temporary CSC
-	GraphCSx csc( WG.n, WG.m, -1 );
-	if( std::is_same<vertex,symmetricVertex>::value )
-	    csc.import( WG );
-	else {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc.import( WG );
-	    WGc->transpose();
-	}
-
-	// Calculate remapping table
-	remap = VEBOReorder( csc, part );
-
-	// Setup CSR
-	csr.import( WG, remap.maps() );
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ){
-		GraphCSx & pcsr = csrp[p];
-		new ( &pcsr ) GraphCSx( WG, part, p, remap.maps() );
-
-		std::cerr << "VEBOPartCSR part " << p
-			  << " s=" << part.start_of(p)
-			  << " e=" << part.end_of(p)
-			  << " nv=" << pcsr.numVertices()
-			  << " ne=" << pcsr.numEdges()
-			  << "\n";
-	    } );
-
-	// Cleanup temporary data structures
-	csc.del();
-    }
     GraphVEBOPartCSR( const GraphCSx & WG, int npart )
 	: csr( WG.numVertices(), WG.numEdges(), -1 ),
 	  csrp( new GraphCSx[npart] ),
@@ -1105,50 +819,6 @@ public:
     static constexpr bool is_ccsr = true;
 
 public:
-    template<typename vertex>
-    GraphVEBOPartCCSR( const wholeGraph<vertex> & WG, int npart )
-	: csr( WG.n, WG.m, -1, WG.isSymmetric() ),
-	  csrp( new GraphCCSx[npart] ),
-	  part( npart, WG.numVertices() ) {
-
-#if OWNER_READS
-	assert( WG.isSymmetric() && "OWNER_READS requires symmetric graphs" );
-#endif
-
-	// We require a temporary CSC
-	GraphCSx csc( WG.n, WG.m, -1 );
-	if( std::is_same<vertex,symmetricVertex>::value )
-	    csc.import( WG );
-	else {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc.import( WG );
-	    WGc->transpose();
-	}
-
-	// Calculate remapping table
-	remap = VEBOReorder( csc, part );
-
-	// Setup CSR
-	csr.import( WG, remap.maps() );
-
-	// Setup EID remapper based on remapped (padded) vertices
-	CSxEIDRemapper<VID,EID> eid_remapper( csr );
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ){
-		GraphCCSx & pcsr = csrp[p];
-		new ( &pcsr ) GraphCCSx( WG, part, p, remap.maps(),
-					 eid_remapper );
-	    } );
-
-	eid_remapper.finalize( part );
-	eid_retriever = eid_remapper.create_retriever();
-
-	// Cleanup temporary data structures
-	csc.del();
-    }
-
     GraphVEBOPartCCSR( const GraphCSx & WG, int npart )
 	: csr( WG.numVertices(), WG.numEdges(), -1, WG.isSymmetric() ),
 	  csrp( new GraphCCSx[npart] ),
@@ -1570,88 +1240,6 @@ public:
 	index.del();
 	edges.del();
     }
-    template<typename vertex>
-    void import( const wholeGraph<vertex> & WG,
-		 VID lo, VID hi, unsigned short maxVL_,
-		 std::pair<const VID *, const VID *> remap,
-		 int allocation ) {
-	// This is written to be a CSC-style import, i.e., WG is transposed,
-	// lo/hi applied to 'sources'.
-	// Calculate dimensions of SIMD representation
-	maxVL = maxVL_;
-	n = WG.numVertices();
-	// m = WG.numEdges();
-	m = 0;
-	for( nv=lo; nv < hi; nv++ )
-	    m += WG.V[remap.first[nv]].getOutDegree();
-	mv = 0;
-	for( nv=lo; nv < hi; nv += maxVL ) {
-	    mv += maxVL * WG.V[remap.first[nv]].getOutDegree();
-	}
-	nv -= lo;
-	assert( nv >= (hi-lo) && nv < (hi-lo) + maxVL );
-	assert( mv >= m ); // && mv < m + (hi-lo) * maxVL );
-	    
-	// Allocate data structures
-	if( allocation == -1 )
-	    allocateInterleaved();
-	else
-	    allocateLocal( allocation );
-
-	// In w = remap.first[v], v is the new vertex ID, w is the old one
-	// In v = remap.second[w], v is the new vertex ID, w is the old one
-	// assert( n == WG.n && m == WG.m ); -- obvious
-	const vertex * V = WG.V.get();
-
-	VID maxdeg = V[remap.first[0]].getOutDegree();
-	VID * buf = new VID[maxdeg];
-
-	EID nxt = 0;
-	for( VID v=lo; v < lo+nv; v += maxVL ) {
-	    VID deg = V[remap.first[v]].getOutDegree();
-	    index[(v-lo)/maxVL] = std::min( nxt, mv ); // nxt > mv only when deg=0
-	    VID mlodeg = deg;
-	    for( unsigned short l=0; l < maxVL; ++l ) { // vector lane
-		VID vv = v + l;
-		EID lnxt = nxt + l;
-		if( vv < n ) {
-		    VID ww = remap.first[vv];
-		    VID ldeg = V[ww].getOutDegree();
-		    assert( ldeg <= deg );
-		    if( ldeg < mlodeg ) // track first SIMD group w/ mask
-			mlodeg = ldeg;
-		    // VID buf[ldeg];
-		    assert( ldeg <= maxdeg );
-		    for( VID j=0; j < ldeg; ++j )
-			buf[j] = remap.second[V[ww].getOutNeighbor(j)];
-		    std::sort( &buf[0], &buf[ldeg] );
-		    for( VID j=0; j < ldeg; ++j ) {
-			edges[lnxt] = buf[j];
-			lnxt += maxVL;
-		    } 
-		    for( VID j=ldeg; j < deg; ++j ) {
-			edges[lnxt] = ~(VID)0;
-			lnxt += maxVL;
-		    }
-		} else {
-		    mlodeg = 0;
-		    VID ww = ~(VID)0;
-		    for( VID j=0; j < deg; ++j ) {
-			edges[lnxt] = ~(VID)0;
-			lnxt += maxVL;
-		    } 
-		}
-	    }
-	    mindex[(v-lo)/maxVL] = index[(v-lo)/maxVL] + maxVL * mlodeg;
-	    nxt += maxVL * deg;
-	}
-	assert( nxt == mv );
-	// for( unsigned short l=0; l < maxVL; ++l )
-	// index[nv-maxVL+l] = mv;
-	index[nv/maxVL] = mv;
-	mindex[nv/maxVL] = mv;
-	delete[] buf;
-    }
     void import( const GraphCSx & Gcsc,
 		 VID lo, VID hi, unsigned short maxVL_,
 		 std::pair<const VID *, const VID *> remap,
@@ -1829,48 +1417,6 @@ class GraphVEBOSlimSell_template {
     }
 
 public:
-    template<class vertex>
-    GraphVEBOSlimSell_template( const wholeGraph<vertex> & WG,
-				int npart, unsigned short maxVL_ )
-	: csc( new GraphCSxSIMD[npart] ),
-	  csr( WG.n, WG.m, -1 ),
-	  part( npart, WG.numVertices() ),
-	  maxVL( maxVL_ ) {
-	// Setup temporary CSC
-	wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	WGc->transpose();
-	GraphCSx csc_tmp( WG, -1 );
-
-	// Calculate remapping table. Do not use the feature to interleave
-	// subsequent destinations over per-lane partitions.
-	if( doVEBO ) {
-	    remap = VEBOReorder( csc_tmp, part, 1, false, maxVL );
-	} else {
-	    partitioner vebo_part( 1, WG.numVertices() );
-	    remap = VEBOReorder( csc_tmp, vebo_part, 1, false, 1 );
-
-	    // Perform partitioning by destination. Ensure every partition
-	    // starts at a vertex ID that is a multiple of maxVL to allow
-	    // aligned vector load/store
-	    partitionBalanceEdges( csc_tmp, remap.getReverse(), part, maxVL );
-	}
-
-	// Setup CSC partitions
-	// This is inefficient. It repeatedly scans WG.
-	map_partitionL( part, [&]( int p ) {
-		new (&csc[p]) GraphCSxSIMD();
-		csc[p].import( WG, part.start_of(p), part.end_of(p),
-			       maxVL, remap.maps(), part.numa_node_of( p ) );
-	    } );
-	WGc->transpose();
-
-	// Setup CSR
-	csr.import( WG, remap.maps() );
-
-	// Clean up intermediates
-	csc_tmp.del();
-    }
-
     GraphVEBOSlimSell_template( const GraphCSx & Gcsr,
 				int npart, unsigned short maxVL_ )
 	: csc( new GraphCSxSIMD[npart] ),

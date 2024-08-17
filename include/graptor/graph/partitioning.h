@@ -6,52 +6,6 @@
 #include "graptor/graph/gtraits.h"
 #include "graptor/graph/CGraphCSx.h"
 
-template<typename vertex>
-inline void partitionBalanceDestinations( const wholeGraph<vertex> & WG,
-					  partitioner &part ) {
-    int p = part.get_num_partitions();
-    VID * size = part.as_array();
-
-    // Simple partitioning: every partition has same number of destinations
-    int done = 0;
-    for( int i=0; i < p-1; ++i ) {
-	size[i] = WG.n / p;
-	done += size[i];
-    }
-    size[p-1] = WG.n - done;
-
-    // Aggregate values
-    part.compute_starts();
-}
-
-template<typename vertex>
-inline void
-partitionBalanceEdges( const wholeGraph<vertex> & WG, partitioner &part ) {
-    int p = part.get_num_partitions();
-    VID * size = part.as_array();
-
-    EID edges[p];
-    for( int i=0; i < p; ++i )
-	edges[i] = 0;
-
-    // Calculate number of vertices in each partition
-    EID avgdeg = WG.m / p;
-    int cur = 0;
-    size[0] = 0;
-    for( VID v=0; v < WG.n; ++v ) {
-	edges[cur] += WG.V[v].getInDegree();
-	size[cur] += 1;
-	if( edges[cur] >= avgdeg && cur < p-1 ) {
-	    ++cur;
-	    size[cur] = 0;
-	}
-    }
-    assert( cur+1 == p );
-
-    // Aggregate values
-    part.compute_starts();
-}
-
 inline void
 partitionBalanceDestinations( const GraphCSx & WG, partitioner &part ) {
     int p = part.get_num_partitions();

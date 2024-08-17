@@ -53,7 +53,6 @@
 #include "graptor/legacy/utils.h"
 #include "graptor/legacy/parallel.h"
 #include "graptor/legacy/parseCommandLine.h"
-#include "graptor/legacy/graph-numa.h"
 
 /*======================================================================*
  * Graptor internals

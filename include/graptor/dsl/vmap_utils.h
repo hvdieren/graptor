@@ -58,13 +58,6 @@ void vertexMap(const partitioner &part, F add)
 //Note: this is the version of vertexMap in which only a subset of the
 //input partitioned_vertices is returned
 
-template <typename vertex, class F>
-frontier vertexFilter(const partitioned_graph<vertex> & GA, frontier V, F filter) {
-    frontier f = V.filter( GA.get_partitioner(), filter );
-    f.calculateActiveCounts( GA, f.nActiveVertices() );
-    return f;
-}
-
 template<typename GraphType, class F>
 frontier vertexFilter(const GraphType & GA, frontier V, F filter)
 {

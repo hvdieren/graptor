@@ -21,44 +21,6 @@ public:
 	else
 	    allocateLocal( allocation, weights );
     }
-    template<typename vertex>
-    GraphCOO( const wholeGraph<vertex> & WG,
-	      const partitioner & part, int p )
-	: n( WG.numVertices() ), weights( nullptr ) {
-	// Range of destination vertices to include
-	VID rangeLow = part.start_of(p);
-	VID rangeHi = part.start_of(p+1);
-	
-	// Short-hands
-	vertex *V = WG.V.get();
-
-	EID num_edges = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ )
-	    num_edges += V[i].getInDegree();
-
-	m = num_edges;
-	allocateLocal( part.numa_node_of( p ) );
-	
-        EID k = 0;
-        for( VID i=rangeLow; i < rangeHi; i++ ) {
-            for( VID j=0; j < V[i].getInDegree(); ++j ) {
-                VID d = V[i].getInNeighbor( j );
-		src[k] = d;
-		dst[k] = i;
-#ifdef WEIGHTED
-		wgh[k] = V[i].getInWeight( j );
-#endif
-		k++;
-	    }
-	}
-	assert( k == num_edges );
-
-#if EDGES_HILBERT
-	hilbert_sort();
-#else
-	CSR_sort();
-#endif
-    }
     GraphCOO( const GraphCSx & Gcsr, int allocation )
 	: n( Gcsr.numVertices() ), m( Gcsr.numEdges() ), weights( nullptr ) {
 	if( allocation == -1 )

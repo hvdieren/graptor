@@ -21,46 +21,6 @@ class GraphGG_tmpl {
     EIDRetriever eid_retriever;
 
 public:
-    template<class vertex>
-    GraphGG_tmpl( const wholeGraph<vertex> & WG,
-		  int npart, bool balance_vertices )
-	: csr( &csr_act ),
-	  csc( std::is_same<vertex,symmetricVertex>::value
-	       ? &csr_act : &csc_act ),
-	  csr_act( WG, -1 ),
-	  csc_act( std::is_same<vertex,symmetricVertex>::value ? 0 : WG.n,
-		   std::is_same<vertex,symmetricVertex>::value ? 0 : WG.m, -1 ),
-	  coo( new COOType[npart] ),
-	  part( npart, WG.numVertices() ) {
-	// Setup CSR and CSC
-	if( !std::is_same<vertex,symmetricVertex>::value ) {
-	    wholeGraph<vertex> * WGc = const_cast<wholeGraph<vertex> *>( &WG );
-	    WGc->transpose();
-	    csc_act.import( WG );
-	    WGc->transpose();
-	}
-	
-	// Decide what partition each vertex goes into
-	if( balance_vertices )
-	    partitionBalanceDestinations( WG, part ); 
-	else
-	    partitionBalanceEdges( WG, part ); 
-
-	// Create COO partitions in parallel
-	map_partitionL( part, [&]( int p ) {
-		COOType & el = coo[p];
-		new ( &el ) COOType( WG, part, p );
-	    } );
-
-	// set up edge partitioner - determines how to allocate edge properties
-	EID * counts = part.edge_starts();
-	EID ne = 0;
-	for( unsigned short p=0; p < npart; ++p ) {
-	    counts[p] = ne;
-	    ne += coo[p].numEdges();
-	}
-	counts[npart] = ne;	
-    }
     GraphGG_tmpl( const GraphCSx & Gcsr,
 		  int npart, bool balance_vertices )
 	: csr( &csr_act ),
