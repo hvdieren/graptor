@@ -4,6 +4,7 @@ function(graptor_create_tool tool)
     target_link_libraries(${tool} ${EXTRA_LIBS} graptorlib)
 endfunction()
 
+graptor_create_tool(CleanGraph)
 graptor_create_tool(CvtBinToV4)
 graptor_create_tool(CvtV4ToBin)
 graptor_create_tool(CvtMtxToBin)
