@@ -125,8 +125,7 @@ struct mask_type_traits<64> {
     }
     
     template<typename vindex_type>
-    static type gather( type * addr, vindex_type idx,
-			typename std::enable_if<sizeof(vindex_type) % 64 == 0>::type * = nullptr ) {
+    static type gather( type * addr, vindex_type idx ) {
 	using index_type
 	    = typename int_type_of_size<sizeof(vindex_type)/vlen>::type;
 	using itraits = vector_type_traits<index_type,sizeof(index_type)*vlen>;
@@ -164,8 +163,7 @@ struct mask_type_traits<64> {
 #endif
     }
     template<typename vindex_type>
-    static void scatter( type * addr, vindex_type idx, type val,
-			typename std::enable_if<sizeof(vindex_type) % 64 == 0>::type * = nullptr ) {
+    static void scatter( type * addr, vindex_type idx, type val ) {
 	using index_type
 	    = typename int_type_of_size<sizeof(vindex_type)/vlen>::type;
 	using itraits = vector_type_traits<index_type,sizeof(index_type)*vlen>;
@@ -179,8 +177,7 @@ struct mask_type_traits<64> {
 	}
     }
     template<typename vindex_type>
-    static void scatter( type * addr, vindex_type idx, type val, type mask,
-			typename std::enable_if<sizeof(vindex_type) % 64 == 0>::type * = nullptr ) {
+    static void scatter( type * addr, vindex_type idx, type val, type mask ) {
 	assert( 0 && "NYI" );
     }
 

@@ -160,13 +160,11 @@ struct mask_type_traits {
 	return setzero();
     }
     template<typename vindex_type>
-    static void scatter( type * addr, vindex_type idx, type val,
-			typename std::enable_if<sizeof(vindex_type) % 8 == 0>::type * = nullptr ) {
+    static void scatter( type * addr, vindex_type idx, type val ) {
 	assert( 0 && "NYI" );
     }
     template<typename vindex_type>
-    static void scatter( type * addr, vindex_type idx, type val, type mask,
-			typename std::enable_if<sizeof(vindex_type) % 16 == 0>::type * = nullptr ) {
+    static void scatter( type * addr, vindex_type idx, type val, type mask ) {
 	assert( 0 && "NYI" );
     }
 };

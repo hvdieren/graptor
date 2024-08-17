@@ -248,6 +248,7 @@ public:
     static vmask_type asvector( mask_type mask ) {
 	return int_traits::asvector( mask );
     }
+#if 0 // seems redundant to itype variant
     template<typename IdxT>
     static auto
     gather( member_type *a, IdxT b,
@@ -255,6 +256,7 @@ public:
 	) {
 	return _mm512_i32gather_ps( b, a, W );
     }
+#endif
     static type
     gather( member_type *a, itype b, mask_type mask ) {
 	return _mm512_mask_i32gather_ps( setzero(), mask, b, a, W );

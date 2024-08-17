@@ -227,17 +227,6 @@ public:
     static typename vector_type_traits<T2,sizeof(T2)*8>::vmask_type
     asvector( vmask_type mask );
 
-/*
-    using vtraits = vector_type_traits_vl<T,8>;
-    static type asvector(
-	vmask_type mask // ,
-	// typename std::enable_if<sizeof(T2)==sizeof(member_type)>::type * = nullptr
-	) {
-	return mask;
-    }
-*/
-
-    // static type asmask( vmask_type mask ) { return mask; }
     static mask_type asmask( vmask_type mask ) {
 	return movemask( mask );
 /*

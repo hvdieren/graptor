@@ -17,6 +17,8 @@ struct vt_longint_select;
 
 #define VT_LONGINT_SELECT_BASE 0
 
+// TODO: AVX512 version...
+
 #if __AVX2__
 // AVX2 supports everything up to 32 bytes
 #if VT_LONGINT_SELECT_BASE < 32
@@ -24,8 +26,8 @@ struct vt_longint_select;
 #define VT_LONGINT_SELECT_BASE 32
 #endif
 
-template<typename T, unsigned short W, unsigned short nbytes>
-struct vt_longint_select<T, W, nbytes, std::enable_if_t<(W==16 && nbytes==32)>> {
+template<typename T>
+struct vt_longint_select<T, 16, 32> {
     using type = target::avx2_16x2<T>;
 };
 #endif
@@ -36,16 +38,16 @@ struct vt_longint_select<T, W, nbytes, std::enable_if_t<(W==16 && nbytes==32)>> 
 #undef VT_LONGINT_SELECT_BASE
 #define VT_LONGINT_SELECT_BASE 16
 #endif
-template<typename T, unsigned short W, unsigned short nbytes>
-struct vt_longint_select<T, W, nbytes, std::enable_if_t<(W==16 && nbytes==16)>> {
+template<typename T>
+struct vt_longint_select<T, 16, 16> {
     using type = target::sse42_16x1<T>;
 };
 #endif
 
 // Default case. Enable only for cases with more bytes than the bases cases
 template<typename T, unsigned short W, unsigned short nbytes>
-struct vt_longint_select<T, W, nbytes,
-			 std::enable_if_t<(nbytes>VT_LONGINT_SELECT_BASE)>> {
+struct vt_longint_select<T, W, nbytes> {
+    static_assert( nbytes > VT_LONGINT_SELECT_BASE, "case for large longint" );
     using type = target::vt_recursive<
 	T, W, nbytes, typename vt_longint_select<T, W, nbytes/2>::type >;
 };

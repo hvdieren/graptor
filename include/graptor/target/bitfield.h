@@ -11,12 +11,11 @@
 
 namespace target {
 
-
 /***********************************************************************
  * bitfields of 2 or 4 bits; vector fits in scalar register
  ***********************************************************************/
-template<unsigned short Bits, unsigned short nbytes, typename Enable = void>
-struct bitfield_24_byte {
+template<unsigned short Bits, unsigned short nbytes>
+struct bitfield_24_byte_scalar_reg {
     static_assert( Bits == 1 || Bits == 2 || Bits == 4,
 		   "assuming a whole number of bitfields per byte" );
     static_assert( nbytes <= 8,
@@ -253,11 +252,10 @@ public:
  * bitfields of 2 or 4 bits; vector fits in vector register
  ***********************************************************************/
 template<unsigned short Bits, unsigned short nbytes>
-struct bitfield_24_byte<Bits,nbytes,std::enable_if_t<(nbytes>8)>> {
+struct bitfield_24_byte { // default version for nbytes > 8
     static_assert( Bits == 1 || Bits == 2 || Bits == 4,
 		   "assuming a whole number of bitfields per byte" );
-    static_assert( nbytes > 8,
-		   "specialised to non-scalar registers" );
+    // static_assert( nbytes > 8, "specialised to non-scalar registers" );
 public:
     static constexpr unsigned short bits = Bits;
     // static constexpr size_t W = nbytes;
@@ -436,6 +434,24 @@ public:
     }
 };
 
+/***********************************************************************
+ * bitfields of 2 or 4 bits; vector fits in scalar register (again)
+ ***********************************************************************/
+template<unsigned short Bits>
+struct bitfield_24_byte<Bits,1>
+    : public bitfield_24_byte_scalar_reg<Bits,1> { };
+
+template<unsigned short Bits>
+struct bitfield_24_byte<Bits,2>
+    : public bitfield_24_byte_scalar_reg<Bits,2> { };
+
+template<unsigned short Bits>
+struct bitfield_24_byte<Bits,4>
+    : public bitfield_24_byte_scalar_reg<Bits,4> { };
+
+template<unsigned short Bits>
+struct bitfield_24_byte<Bits,8>
+    : public bitfield_24_byte_scalar_reg<Bits,8> { };
 
 /***********************************************************************
  * scalar bitfields

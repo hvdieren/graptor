@@ -105,24 +105,17 @@ struct vint_traits_select {
 	typename vint_traits_select<T,nbytes-next_ipow2(nbytes/2)>::type>;
 };
 
-#if 0
-// Requires some fixes around the use of vector_type_int_traits in
-// native_1x4.
-template<typename T>
-struct vint_traits_select<T,4,std::enable_if_t<sizeof(T)==1>> {
-    using type = target::native_1x4<T>;
-};
-#endif
-
 template<unsigned short nbits>
-struct vint_traits_select<
-    bitfield<nbits>,0,std::enable_if_t<nbits==1||nbits==2||nbits==4>> {
+struct vint_traits_select<bitfield<nbits>,0> {
+    static_assert( nbits==1 || nbits==2 || nbits==4,
+		   "Only 1, 2 and 4-bit bitfields supported" );
     using type = target::bitfield_scalar<nbits>;
 };
 
 template<unsigned short nbits,unsigned short nbytes>
-struct vint_traits_select<
-    bitfield<nbits>,nbytes,std::enable_if_t<nbits==1||nbits==2||nbits==4>> {
+struct vint_traits_select<bitfield<nbits>,nbytes> {
+    static_assert( nbits==1 || nbits==2 || nbits==4,
+		   "Only 1, 2 and 4-bit bitfields supported" );
     using type = target::bitfield_24_byte<nbits,nbytes>;
 };
 
@@ -138,20 +131,6 @@ template<>
 struct vint_traits_select<bool,1> {
     using type = target::scalar_bool;
 };
-
-/*
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 2)>> {
-    using type = pseudo_1x<T,2>;
-};
-
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 4)>> {
-    using type = pseudo_1x<T,4>;
-};
-*/
 
 #if __MMX__ && __SSE4_2__
 template<typename T, unsigned short nbytes>
@@ -193,14 +172,6 @@ struct vint_traits_select<
     T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 8)>> {
     using type = mmx_4x2<T>;
 };
-#else
-/*
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 8)>> {
-    using type = pseudo_1x<T,8>;
-};
-*/
 #endif // __MMX__
 
 #if __SSE4_2__

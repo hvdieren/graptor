@@ -53,8 +53,10 @@ public:
     static member_type lane0( type a ) { return member_type(a); }
 
     template<typename U>
-    static typename std::enable_if<std::is_integral<U>::value,type>::type
-    convert( U u ) { return u; }
+    type convert( U u ) {
+	static_assert( std::is_integral_v<U>, "requires integral type" );
+	return u;
+    }
     
     // Casting here is to do a signed cast of a bitmask for logical masks
     template<typename T2>
@@ -123,22 +125,22 @@ public:
     static void ntstore( member_type *addr, type val ) { store( addr, val ); }
 
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value,type>
+    static type
     gather( member_type *addr, IdxT idx ) {
 	return addr[idx];
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value,type>
+    static type
     gather( member_type *addr, IdxT idx, mask_type mask ) {
 	return mask ? addr[idx] : 0;
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value>
+    static void
     scatter( member_type *a, IdxT b, type c ) {
 	a[b] = lane0(c);
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value>
+    static void
     scatter( member_type *a, IdxT b, type c, vmask_type mask ) {
 	if( lane0(mask) )
 	    a[b] = lane0(c);

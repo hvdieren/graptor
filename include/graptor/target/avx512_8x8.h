@@ -498,13 +498,13 @@ public:
 	_mm512_i32scatter_epi64( (void *)a, b, c, W );
     }
     template<typename IdxT>
-    static typename std::enable_if<sizeof(IdxT)==sizeof(type)/2>::type
-    scatter( member_type *a, IdxT b, type c, mask_type mask ) {
+    static void
+    scatter( member_type *a, typename half_traits::itype b, type c, mask_type mask ) {
 	_mm512_mask_i32scatter_epi64( (void *)a, mask, b, c, W );
     }
     template<typename IdxT>
-    static typename std::enable_if<sizeof(IdxT)==sizeof(type)/2>::type
-    scatter( member_type *a, IdxT b, type c, vmask_type mask ) {
+    static void
+    scatter( member_type *a, typename half_traits::itype b, type c, vmask_type mask ) {
 	_mm512_mask_i32scatter_epi64( (void *)a, asmask(mask), b, c, W );
     }
 };

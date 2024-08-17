@@ -165,12 +165,6 @@ public:
 			 &avx2_1x4_convert_to_8x4_lut[idx] ) );
 #endif
     }
-    template<typename T2>
-    static type asvector(
-	vmask_type mask,
-	typename std::enable_if<sizeof(T2)==sizeof(member_type)>::type * = nullptr ) {
-	return mask;
-    }
 
     static mask_type asmask( vmask_type a ) {
 #if __AVX512VL__ && __AVX512DQ__

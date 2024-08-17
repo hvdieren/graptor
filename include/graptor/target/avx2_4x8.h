@@ -261,17 +261,6 @@ public:
 #endif // __AVX512F__ && __AVX512VL__
     }
 
-
-/*
-    using vtraits = vector_type_traits_vl<T,8>;
-    static type asvector(
-	vmask_type mask // ,
-	// typename std::enable_if<sizeof(T2)==sizeof(member_type)>::type * = nullptr
-	) {
-	return mask;
-    }
-*/
-
     static uint32_t find_first( type v ) {
 	// Needs to return 8 when all lanes of v are zero. Happens because
 	// of the bitwise inversion of the mask, which puts default 0 bits

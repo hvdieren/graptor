@@ -78,8 +78,10 @@ public:
     static type setlane( type a, member_type b, int idx ) { return type(b); }
 
     template<typename U>
-    static typename std::enable_if<std::is_integral<U>::value,type>::type
-    convert( U u ) { return u; }
+    type convert( U u ) {
+	static_assert( std::is_integral_v<U>, "requires integral type" );
+	return u;
+    }
     
     // Casting here is to do a signed cast of a bitmask for logical masks
     template<typename T2>
@@ -230,22 +232,22 @@ public:
     static member_type reduce_max( type val ) { return val; }
 
     template<typename U>
-    static std::enable_if_t<std::is_integral_v<U>,member_type>
+    static type
     sllv( member_type val, U sh ) {
 	return val << sh;
     }
     template<typename U>
-    static std::enable_if_t<std::is_integral_v<U>,member_type>
+    static type
     srlv( member_type val, U sh ) {
 	return val >> sh;
     }
     template<typename U>
-    static std::enable_if_t<std::is_integral_v<U>,member_type>
+    static type
     sll( member_type val, U sh ) {
 	return val << sh;
     }
     template<typename U>
-    static std::enable_if_t<std::is_integral_v<U>,member_type>
+    static type
     srl( member_type val, U sh ) {
 	return val >> sh;
     }
@@ -350,7 +352,7 @@ public:
 	    store( addr, val );
     }
     template<unsigned short Scale, typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value,type>
+    static type
     gather_w( const member_type *addr, IdxT idx ) {
 	const char * p = reinterpret_cast<const char *>( addr );
 	const char * q = p + Scale * idx;
@@ -358,7 +360,7 @@ public:
 	return r[idx];
     }
     template<unsigned short Scale, typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value,type>
+    static type
     gather_w( const member_type *addr, IdxT idx, mask_type mask ) {
 	if( mask ) {
 	    const char * p = reinterpret_cast<const char *>( addr );
@@ -373,17 +375,17 @@ public:
 	return addr[idx];
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value,type>
+    static type
     gather( const member_type *addr, IdxT idx, mask_type mask ) {
 	return mask ? addr[idx] : member_type(0);
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value>
+    static void
     scatter( member_type *a, IdxT b, type c ) {
 	a[b] = lane0(c);
     }
     template<typename IdxT>
-    static std::enable_if_t<std::is_integral<IdxT>::value>
+    static void
     scatter( member_type *a, IdxT b, type c, vmask_type mask ) {
 	if( scalar_int<vmask_type>::lane0(mask) )
 	    a[b] = lane0(c);
