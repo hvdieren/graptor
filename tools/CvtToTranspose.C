@@ -4,17 +4,19 @@
 #include <string>
 
 #include "graptor/graptor.h"
+#include "graptor/cmdline.h"
 
 int main( int argc, char *argv[] ) {
-    commandLine P( argc, argv, " help" );
-    char* ifile = P.getArgument(0);
-    bool binary = P.getOptionValue("-b");             //Galois binary format
+    CommandLine P(
+	argc, argv,
+	"\t-i {file}\tinput file containing graph\n"
+	"\t-o {file}\toutput file for transposed graph\n"
+	);
 
-    const char * ofile = P.getOptionValue( "-o" );
+    const char * ifile = P.get_string_option( "-i" );
+    const char * ofile = P.get_string_option( "-o" );
 
-    // wholeGraph<asymmetricVertex> WG =
-    // readGraph<asymmetricVertex>(iFile,symmetric,binary);
-    GraphCSx G( ifile, -1 );
+    GraphCSx G( ifile, -1, false, nullptr );
 
     const EID * idx = G.getIndex();
     const VID * edge = G.getEdges();
