@@ -2034,6 +2034,13 @@ public:
     }
     void writeToGraptorV4File( const std::string & stem ) {
 	using namespace libconfig;
+
+	size_t pos = stem.rfind( "/" );
+	if( pos == std::string::npos ) // take whole string if no / present
+	    pos = 0;
+	else
+	    ++pos; // skip "/"
+	const std::string basename = stem.substr( pos, stem.size() );
 	
 	const std::string ifile = stem + ".index";
 	const std::string efile = stem + ".edges";
@@ -2049,8 +2056,8 @@ public:
 	root.add( "symmetric", ty ) = (int64_t)(isSymmetric()?1:0);
 	root.add( "vid_size", ty ) = (int64_t)sizeof(VID);
 	root.add( "eid_size", ty ) = (int64_t)sizeof(EID);
-	root.add( "index", fty ) = ".index";
-	root.add( "edges", fty ) = ".edges";
+	root.add( "index", fty ) = basename + ".index";
+	root.add( "edges", fty ) = basename + ".edges";
 	if( weights )
 	    root.add( "vertex_weights", fty ) = ".vweights";
 
@@ -2287,8 +2294,12 @@ public:
 	m = (int64_t)root["num_edges"];
 	symmetric = 0 != (int64_t)root["symmetric"];
 
-	const std::string ifile = stem + std::string(root["index"]);
-	const std::string efile = stem + std::string(root["edges"]);
+	size_t pos = stem.rfind( "/" );
+	std::string dirname = "";
+	if( pos != std::string::npos )
+	    dirname = stem.substr( 0, pos+1 ); // include "/"
+	const std::string ifile = dirname + std::string(root["index"]);
+	const std::string efile = dirname + std::string(root["edges"]);
 
 	// allocate( alloc );
 
