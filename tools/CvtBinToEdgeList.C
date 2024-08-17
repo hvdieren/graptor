@@ -53,6 +53,29 @@ int main( int argc, char *argv[] ) {
     std::stringstream buffer;
 
     if( mtx_mkt ) {
+	// MatrixMarket format does not allow self-edges
+	EID m_self = 0;
+	for( VID u=0; u < n; ++u ) {
+	    EID es = index[u];
+	    EID ee = index[u+1];
+	    for( EID e=es; e < ee; ++e ) {
+		VID v = edges[e];
+
+		if( u == v )
+		    ++m_self;
+	    }
+	}
+
+	std::cout << "Detected " << m_self << " self_edges\n";
+
+	m -= m_self;
+
+	assert( ( !symmetric || m % 2 == 0 )
+		&& "Symmetric graph must have even number of edges" );
+    }
+
+
+    if( mtx_mkt ) {
 	    buffer << "%%MatrixMarket matrix coordinate ";
 	if( weights )
 	    buffer << "real ";
@@ -64,6 +87,7 @@ int main( int argc, char *argv[] ) {
 	buffer << n << ' ' << n << ' ' << ( symmetric ? m/2 : m ) << "\n";
     }
 
+    EID mm = 0;
     for( VID u=0; u < n; ++u ) {
 	EID es = index[u];
 	EID ee = index[u+1];
@@ -76,18 +100,20 @@ int main( int argc, char *argv[] ) {
 	    }
 
 	    if( mtx_mkt && symmetric ) {
-		// Note: do not drop self-edges
-		if( u <= v ) {
+		// Note: drop self-edges
+		if( u > v ) {
 		    buffer << (u+vup) << ' ' << (v+vup);
 		    if( weights )
 			buffer << ' ' << weights[e];
 		    buffer << '\n';
+		    ++mm;
 		}
 	    } else {
 		buffer << (u+vup) << ' ' << (v+vup);
 		if( weights )
 		    buffer << ' ' << weights[e];
 		buffer << '\n';
+		++mm;
 	    }
 	}
     }
@@ -95,6 +121,12 @@ int main( int argc, char *argv[] ) {
     file << buffer.rdbuf();
     file.close();
     std::cerr << "Wrote edge list.\n";
+
+    if( 2*mm != m ) {
+	std::cout << "Edge count check error: expected m=" << m
+		  << " found mm=" << mm << "\n";
+	exit( 1 );
+    }
 
     return 0;
 }
