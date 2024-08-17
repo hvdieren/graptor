@@ -7,15 +7,22 @@
 
 #include "graptor/graptor.h"
 #include "graptor/graph/cgraph.h"
+#include "graptor/cmdline.h"
 
 int main( int argc, char *argv[] ) {
-    commandLine P( argc, argv, " help" );
+    CommandLine P(
+	argc, argv,
+	"\t-i {file}\tinput file containing graph\n"
+	"\t-o {file}\toutput file for converted graph\n"
+	"\t-weights {file}\toutput file for weights of graph\n"
+	"\t-vdown {shift}\tdownward shift to vertex IDs in output file\n"
+	);
     bool symmetric = false;
     bool weighted = false;
-    size_t vdown = P.getOptionLongValue( "-vdown", 1 );
-    const char * ofile = P.getOptionValue( "-o" );
-    const char * ifile = P.getOptionValue( "-i" );
-    const char * wfile = P.getOptionValue("-w"); // file for weights
+    size_t vdown = P.get_long_option( "-vdown", 1 );
+    const char * ofile = P.get_string_option( "-o" );
+    const char * ifile = P.get_string_option( "-i" );
+    const char * wfile = P.get_string_option( "-w" ); // file for weights
 
     std::cerr << "Reading Matrix Market file " << ifile << "...\n";
 
@@ -118,6 +125,9 @@ int main( int argc, char *argv[] ) {
 	dst[enxt] = strtoull( q, &qq, 10 ) - vdown;
 	assert( dst[enxt] < n );
 	assert( q != qq );
+
+	assert( src[enxt] < n );
+	assert( dst[enxt] < n );
 
 	if( weighted ) {
 	    assert( *qq == ' ' || *qq == '\t' );
