@@ -21,10 +21,14 @@ int main( int argc, char *argv[] ) {
     const char * weights = P.get_string_option( "-weights" );
     const EID max_err = P.get_long_option( "--max", 100 );
 
-    std::cerr << "Reading graph " << ifile << "...\n";
     GraphCSx G( ifile, -1, symmetric, weights );
 
+    std::cout << "Vertices: " << G.numVertices()
+	      << "\nEdges: " << G.numEdges() << "\n";
+    
     EID err_sort = 0, err_dup = 0, err_range = 0;
+    EID m_self = 0;
+    VID n_isolated = 0;
 
     // Validate if all neighbour lists are sorted, and unique
     const EID * index = G.getIndex();
@@ -33,7 +37,14 @@ int main( int argc, char *argv[] ) {
     parallel_for( VID v=0; v < n; ++v ) {
 	EID es = index[v];
 	EID ee = index[v+1];
+
+	if( es == ee )
+	    ++n_isolated;
+	
 	for( EID e=es+1; e < ee; ++e ) {
+	    if( edges[e] == v )
+		++m_self;
+	    
 	    if( edges[e] >= n ) {
 		if( err_range++ < max_err )
 		    std::cerr << "edge " << e << " connecting to vertex " << v
@@ -55,16 +66,22 @@ int main( int argc, char *argv[] ) {
 	}
     }
 
+    bool any_error = err_sort > 0 || err_dup > 0 || err_range > 0;
+
     EID m = G.numEdges();
-    if( index[n] != m )
+    if( index[n] != m ) {
 	std::cerr << "End of edge list marker " << index[n]
 		  << " does not match number of edges " << m << "\n";
+	any_error = true;
+    }
 
     std::cerr << "checked " << n << " vertices\n"
 	      << "sort order errors: " << err_sort
 	      << "\nduplicate edges errors: " << err_dup
 	      << "\nvertex out of range errors: " << err_range
+	      << "\nisolated vertices: " << n_isolated
+	      << "\nself-edges: " << m_self
 	      << "\n";
 
-    return 0;
+    return error ? 0 : 1;
 }
