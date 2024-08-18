@@ -122,7 +122,8 @@ int main( int argc, char *argv[] ) {
     file.close();
     std::cerr << "Wrote edge list.\n";
 
-    if( 2*mm != m ) {
+    EID target_mm = mtx_mkt && symmetric ? 2*mm : mm;
+    if( target_mm != m ) {
 	std::cout << "Edge count check error: expected m=" << m
 		  << " found mm=" << mm << "\n";
 	exit( 1 );
