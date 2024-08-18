@@ -50,6 +50,78 @@ struct is_vpair<vpair<U,V>> : public std::true_type { };
 template<typename T>
 static constexpr bool is_vpair_v = is_vpair<T>::value;
 
+/***********************************************************************
+ * Hardware registers
+ * This class was introduced to avoid dependencies between target
+ * implementation traits and among themselves and vector_type_traits.
+ * Using this class, methods can accept a hw_reg of a specific length.
+ *
+ * A pending issue is disambiguation between hw_reg of the same total
+ * length but different makeup. Normally, this should not be necessary,
+ * except in the case of storing 8-byte vectors in a 16-byte SSE vector,
+ * where an index may be supplied at different width, e.g., gather of
+ * W=2, VL=4 requiring indices with W=4, where we can't know if
+ * the index is W=2 or W=4.
+ ***********************************************************************/
+template<unsigned short W, unsigned short VL>
+struct hw_reg { // recursive case; base cases follow through overrides
+    using half = hw_reg<W,VL/2>;
+    using itype = vpair<typename half::itype,typename half::itype>;
+    using dtype = vpair<typename half::dtype,typename half::dtype>;
+    using ftype = vpair<typename half::ftype,typename half::ftype>;
+};
+
+#if __SSE4_2__
+struct sse42_hw_reg {
+    using itype = __m128i;
+    using dtype = __m128d;
+    using ftype = __m128;
+};
+
+template<>
+struct hw_reg<8,2> : public sse42_hw_reg { };
+template<>
+struct hw_reg<4,4> : public sse42_hw_reg { };
+template<>
+struct hw_reg<2,8> : public sse42_hw_reg { };
+template<>
+struct hw_reg<1,16> : public sse42_hw_reg { };
+#endif
+
+#if __AVX2__
+struct avx2_hw_reg {
+    using itype = __m256i;
+    using dtype = __m256d;
+    using ftype = __m256;
+};
+
+template<>
+struct hw_reg<8,4> : public avx2_hw_reg { };
+template<>
+struct hw_reg<4,8> : public avx2_hw_reg { };
+template<>
+struct hw_reg<2,16> : public avx2_hw_reg { };
+template<>
+struct hw_reg<1,32> : public avx2_hw_reg { };
+#endif
+
+#if __AVX512F__
+struct avx512_hw_reg {
+    using itype = __m512i;
+    using dtype = __m512d;
+    using ftype = __m512;
+};
+
+template<>
+struct hw_reg<8,8> : public avx512_hw_reg { };
+template<>
+struct hw_reg<4,16> : public avx512_hw_reg { };
+template<>
+struct hw_reg<2,32> : public avx512_hw_reg { };
+template<>
+struct hw_reg<1,64> : public avx512_hw_reg { };
+#endif
+
 
 namespace target {
 

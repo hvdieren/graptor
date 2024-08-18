@@ -13,10 +13,6 @@
 #include "graptor/target/avx2_8x4.h"
 #endif // __AVX2__
 
-#if __AVX512F__
-#include "graptor/target/avx512_8x8.h"
-#endif // __AVX512F__
-
 #if __SSE4_2__
 #include "graptor/target/sse42_bitwise.h"
 #endif // __SSE4_2__
@@ -596,8 +592,8 @@ public:
 #endif // __AVX2__
 #if __AVX512F__
     static type
-    gather( member_type *a, typename avx512_8x8<uint64_t>::type b ) {
-	using itraits = avx512_8x8<uint64_t>;
+    gather( member_type *a, typename vector_type_traits_vl<uint64_t,vlen>::type b ) {
+	using itraits = vector_type_traits<uint64_t,vlen>;
 	return set( a[itraits::lane7(b)], a[itraits::lane6(b)],
 		    a[itraits::lane5(b)], a[itraits::lane4(b)],
 		    a[itraits::lane3(b)], a[itraits::lane2(b)],
@@ -685,8 +681,8 @@ public:
 #endif // __AVX2__
 #if __AVX512F__
     static void
-    scatter( member_type *a, typename avx512_8x8<uint64_t>::type b, type c ) {
-	using itraits = avx512_8x8<uint64_t>;
+    scatter( member_type *a, typename vector_type_traits_vl<uint64_t,vlen>::type b, type c ) {
+	using itraits = vector_type_traits_vl<uint64_t,vlen>;
 	a[itraits::lane0(b)] = lane0(c);
 	a[itraits::lane1(b)] = lane1(c);
 	a[itraits::lane2(b)] = lane2(c);

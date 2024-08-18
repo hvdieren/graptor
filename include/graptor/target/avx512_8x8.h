@@ -9,10 +9,6 @@
 #include "graptor/target/decl.h"
 #include "graptor/target/avx512_bitwise.h"
 
-#if __AVX512F__ // AVX2 implies SSE4.2
-// #include "graptor/target/sse42_4x4.h" // for half-sized indices
-#endif // __AVX2__
-
 alignas(64) extern const uint64_t increasing_sequence_epi64[16];
 
 namespace target {
@@ -499,12 +495,12 @@ public:
     }
     template<typename IdxT>
     static void
-    scatter( member_type *a, typename half_traits::itype b, type c, mask_type mask ) {
+    scatter( member_type *a, typename hw_reg<4,vlen>::itype b, type c, mask_type mask ) {
 	_mm512_mask_i32scatter_epi64( (void *)a, mask, b, c, W );
     }
     template<typename IdxT>
     static void
-    scatter( member_type *a, typename half_traits::itype b, type c, vmask_type mask ) {
+    scatter( member_type *a, typename hw_reg<4,vlen>::itype b, type c, vmask_type mask ) {
 	_mm512_mask_i32scatter_epi64( (void *)a, asmask(mask), b, c, W );
     }
 };
