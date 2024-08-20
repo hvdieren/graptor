@@ -911,8 +911,13 @@ struct set_operations {
 	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	} else {
+#if INTERSECT_ONE_SIDED
+	    intersection_size_gt_val<
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
+#else
 	    intersection_size_gt_val_two_sided<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
+#endif
 	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	}
@@ -939,8 +944,13 @@ struct set_operations {
 	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	} else {
+#if INTERSECT_ONE_SIDED
 	    intersection_size_ge_two_sided<
 		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
+#else
+	    intersection_size_ge<
+		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
+#endif
 	    apply<so_intersect_size_gt_val>( lset, rset, out );
 	    return out.return_value();
 	}
