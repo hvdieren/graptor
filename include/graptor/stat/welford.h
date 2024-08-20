@@ -276,8 +276,52 @@ public:
     }
 
 private:
-    size_t m_samples;
+    stat_type m_samples;
 };
+
+template<typename type, typename stat_type>
+class descriptive_statistics : public variance_estimator<type,stat_type> {
+public:
+    using parent_type = variance_estimator<type,stat_type>;
+    
+    descriptive_statistics()
+	: m_min( std::numeric_limits<type>::max() ),
+	  m_max( std::numeric_limits<type>::lowest() ) { }
+
+    void update( type x ) {
+	parent_type::update( x );
+	m_min = std::min( m_min, x );
+	m_max = std::max( m_max, x );
+    }
+
+    stat_type get_samples() const {
+	return parent_type::get_samples();
+    }
+    type get_mean() const {
+	return parent_type::get_mean();
+    }
+    type get_stdev() const {
+	return parent_type::get_stdev();
+    }
+    type get_variance() const {
+	return parent_type::get_variance();
+    }
+    type get_min() const { return m_min; }
+    type get_max() const { return m_max; }
+
+    void show( std::ostream & os ) const {
+	os << "mean=" << get_mean()
+	   << " var=" << get_variance()
+	   << " #" << get_samples()
+	   << " min=" << get_min()
+	   << " max=" << get_max();
+    }
+
+private:
+    type m_min;		//!< The smallest sample observed
+    type m_max;		//!< The largest sample observed
+};
+
 
 template<typename... T, typename S>
 class variance_estimator<std::tuple<T...>,S> {
