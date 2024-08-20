@@ -91,6 +91,10 @@
 #define PROFILE_INCUMBENT_SIZE 0
 #endif
 
+#ifndef PROFILE_DENSITY
+#define PROFILE_DENSITY 0
+#endif
+
 #ifndef USE_512_VECTOR
 #if __AVX512F__
 #define USE_512_VECTOR 1
@@ -155,6 +159,8 @@
 #include "graptor/container/intersect.h"
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
+#include "graptor/stat/welford.h"
+#include "graptor/cmdline.h"
 #include "reorder_kcore.h"
 
 float density_threshold = 0.9f;
@@ -424,13 +430,14 @@ private:
     }
 
     size_t grow_clique( VID top_v, std::vector<VID> & clique ) const {
-	VID sz = clique.size();
+	VID csz = clique.size();
 	std::sort( clique.begin(), clique.end() );
 
 	auto top_adj = m_graph.get_neighbours_set( top_v );
-	std::vector<VID> ins( top_adj.size() );
-	std::copy( top_adj.begin(), top_adj.end(), ins.begin() );
-	std::vector<VID> reconstruct( ins.size() );
+	std::vector<VID> ins;
+	ins.reserve( top_adj.size() + 16 );
+	ins.insert( ins.end(), top_adj.begin(), top_adj.end() );
+	std::vector<VID> reconstruct( top_adj.size()+16 );
 	
 	for( VID v : clique ) {
 	    auto ins_slice = graptor::make_array_slice( ins );
@@ -438,12 +445,16 @@ private:
 	    VID * end = graptor::set_operations<graptor::MC_intersect>::
 		intersect_ds( ins_slice, m_graph.get_neighbours_set( v ),
 			      start );
-	    reconstruct.resize( end - start );
+	    size_t sz = end - start;
+	    reconstruct.resize( sz );
+	    ins.resize( sz );
 	    std::swap( ins, reconstruct );
 	}
 
-	if( ins.size() > 0 )
-	    std::copy( ins.begin(), ins.end(), clique.end() );
+	if( ins.size() > 0 ) {
+	    clique.reserve( csz + ins.size() );
+	    clique.insert( clique.end(), ins.begin(), ins.end() );
+	}
 
 	return clique.size();
     }
@@ -3340,7 +3351,7 @@ void mc_top_level_vc(
 #else
     constexpr bool use_exist = true;
 #endif
-    if( false && cut.get_num_vertices() < (VID(1) << 16) ) {
+    if( cut.get_num_vertices() < (VID(1) << 16) ) {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
@@ -3360,9 +3371,35 @@ void mc_top_level_vc(
     stats.record_gen( av_vc, tm.next() );
 }
 
+float induced_density(
+    const HFGraphTy & H,
+    graptor::array_slice<VID,VID> cut
+    ) {
+    VID n = cut.size();
+    EID m = 0;
+    for( VID u : cut ) {
+	VID d = graptor::set_operations<graptor::MC_intersect>
+	    ::intersect_size_ds( cut, H.get_neighbours_set( u ) );
+	m += d;
+    }
+
+    return float(m) / float(n) / float(n-1);
+}
+    
+
 //! Largest and average right-hand neighbour list size observed
 //  by mc_top_level_select
 std::atomic<VID> g_largest_rhs, g_sum_rhs, g_count_rhs;
+
+#if PROFILE_DENSITY
+std::mutex g_density_mux;
+
+graptor::descriptive_statistics<float,size_t> g_size_rhs_all,
+    g_size_rhs, g_size_filtered;
+
+graptor::descriptive_statistics<float,size_t> g_density_rhs_all,
+    g_density_rhs, g_density_filtered;
+#endif
 
 template<int select>
 void mc_top_level_select(
@@ -3402,6 +3439,15 @@ void mc_top_level_select(
 		       std::memory_order_relaxed ) ) { }
 	}
     }
+
+#if PROFILE_DENSITY
+    float d_rhs = induced_density( H, v_radj.get_seq() );
+    if( !std::isnan( d_rhs ) ) {
+	std::lock_guard<std::mutex> guard( g_density_mux );
+	g_density_rhs_all.update( d_rhs );
+	g_size_rhs_all.update( v_radj.size() );
+    }
+#endif
 
     // Filter out vertices where coreness in main graph < best.
     // With coreness == best, we can make a clique of size best+1 at best.
@@ -3482,6 +3528,18 @@ void mc_top_level_select(
     if( num < best || num == 0 )
 	return;
 
+#if PROFILE_DENSITY
+    float d_filtered = induced_density( H, cut.get_slice() );
+    if( !std::isnan( d_rhs ) ) {
+	std::lock_guard<std::mutex> guard( g_density_mux );
+	g_density_rhs.update( d_rhs );
+	g_density_filtered.update( d_filtered );
+
+	g_size_rhs.update( v_radj.size() );
+	g_size_filtered.update( cut.get_num_vertices() );
+    }
+#endif
+
 #if !ABLATION_DISABLE_TOP_DENSE
     // Needs to be determined if it is useful to engage the dense cutout
     // sooner when not all filtering is done. This would be useful when the
@@ -3508,6 +3566,10 @@ void mc_top_level_select(
     }
 }
 
+#if PROFILE_INCUMBENT_SIZE != 0
+static double incumbent_profiling_limit = 0.0;
+#endif
+
 void mc_top_level(
     const HFGraphTy & H,
     MC_Enumerator & E,
@@ -3519,6 +3581,7 @@ void mc_top_level(
     std::vector<double> timings;
     timings.reserve( deg );
     std::vector<VID> empty;
+    VID mc = 0;
     for( VID is=0; is <= deg; ++is ) {
 	// Clear the enumerator (should execute sequentially for this to work)
 	E.reset();
@@ -3534,12 +3597,19 @@ void mc_top_level(
 		H, E, v, degeneracy, remap_coreness );
 	    timings.push_back( tm.next() );
 	}
+
+	// The actual maximum clique size for this vertex's subgraph
+	if( is == 0 )
+	    mc = E.get_max_clique_size();
     }
 
-    std::cout << v << " deg=" << deg;
-    for( double t : timings )
-	std::cout << ' ' << t;
-    std::cout << "\n";
+    auto mx = *std::max_element( timings.begin(), timings.end() );
+    if( mx >= incumbent_profiling_limit ) {
+	std::cout << v << " deg=" << deg << " mc=" << mc;
+	for( double t : timings )
+	    std::cout << ' ' << t;
+	std::cout << "\n";
+    }
 
     // Make sure future filtering in outer loop is disabled
     E.reset();
@@ -3696,16 +3766,10 @@ void heuristic_expand(
     clique_set<VID> R_new( v, R );
     graptor::array_slice<VID,size_t> s( P_begin, P_end-1 );
 
-    // TODO: it could be helpful to define also a function intersect_exceed,
-    //       which aborts the intersection if it does not meet a given size.
-    //       Additionally, checking feasibility of depth + size of P seems
-    //       meaningful.
+    // Perform intersection in such a way that we abort the intersection
+    // operation if it will not lead to an improvement in maximum clique size.
     std::vector<VID> ins( s.size() );
     VID * out = &ins[0];
-#if 0
-    size_t sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
-	s, v_adj, out ) - out;
-#else
     size_t cur_size = E.get_max_clique_size();
     size_t sz;
     if( cur_size <= depth )
@@ -3714,7 +3778,6 @@ void heuristic_expand(
     else
 	sz = graptor::set_operations<graptor::MC_intersect>::intersect_gt_ds(
 	    s, v_adj, cur_size - depth, out ) - out;
-#endif
 
     heuristic_expand( H, &R_new, top_v, out, out+sz, E, depth+1 );
 }
@@ -3755,15 +3818,31 @@ void heuristic_search(
 /*! Main method for maximum clique search
  */
 int main( int argc, char *argv[] ) {
-    commandLine P( argc, argv, " help" );
-    bool symmetric = P.getOptionValue( "-s" );
-    bool early_pruning = P.getOptionValue( "-p" );
-    int heuristic = P.getOptionLongValue( "-h", 0 );
-    VID pre = P.getOptionLongValue( "-pre", -1 );
-    VID what_if = P.getOptionLongValue( "-what-if", -1 );
-    verbose = P.getOptionLongValue( "-v", 0 );
-    density_threshold = P.getOptionDoubleValue( "-d", 0.9f );
-    const char * ifile = P.getOptionValue( "-i" );
+    CommandLine P(
+	argc, argv,
+	"\t-s\t\tinput graph is symmetric\n"
+	"\t-p\t\tapply pruning before reordering\n"
+	"\t-H [012]\theuristic search (default 0)\n"
+	"\t-v {level}\tverbosity level (default 0)\n"
+	"\t-pre {vertex}\tpre-trial vertex heuristic search\n"
+	"\t-what-if {size}\tassuming clique of given size exists\n"
+	"\t--incumbent-limit {lim}\treport only timings larger than lim\n"
+	"\t-d {threshold}\tdensity threshold for applying vertex cover\n"
+	"\t-i {file}\tinput file containing graph\n"
+	"\t-h, --help\tprint help message and exit\n"
+	);
+    bool symmetric = P.get_bool_option( "-s" );
+    bool early_pruning = P.get_bool_option( "-p" );
+    int heuristic = P.get_long_option( "-H", 0 );
+    VID pre = P.get_long_option( "-pre", -1 );
+    VID what_if = P.get_long_option( "-what-if", -1 );
+    verbose = P.get_long_option( "-v", 0 );
+    density_threshold = P.get_double_option( "-d", 0.9f );
+    const char * ifile = P.get_string_option( "-i" );
+
+#if PROFILE_INCUMBENT_SIZE != 0
+    incumbent_profiling_limit = P.get_double_option( "--incumbent-limit", 0.0 );
+#endif
 
     timer tm;
     tm.start();
@@ -3891,6 +3970,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tSORT_ORDER=" << SORT_ORDER
 	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
 	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
+	      << "\n\tPROFILE_DENSITY=" << PROFILE_DENSITY
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
 	      << "\n\tdensity_threshold=" << density_threshold
@@ -4164,7 +4244,23 @@ int main( int argc, char *argv[] ) {
 	      << ( (float)g_sum_rhs.load() / (float)g_count_rhs.load() )
 	      << "\n";
 
-    // Note: reported top-level vertex not translated back after reordering
+#if PROFILE_DENSITY
+    std::cout << "Size of top-level cutouts:\nAll cutouts (RHS): ";
+    g_size_rhs_all.show( std::cout );
+    std::cout << "\nAll retained cutouts before filtering: ";
+    g_size_rhs.show( std::cout );
+    std::cout << "\nAll retained cutouts after filtering: ";
+    g_size_filtered.show( std::cout );
+    std::cout << "\nDensity of top-level cutouts:\nAll cutouts (RHS): ";
+    g_density_rhs_all.show( std::cout );
+    std::cout << "\nAll retained cutouts before filtering: ";
+    g_density_rhs.show( std::cout );
+    std::cout << "\nAll retained cutouts after filtering: ";
+    g_density_filtered.show( std::cout );
+    std::cout << "\n";
+#endif
+
+    // Report maximum clique found
     E.report( std::cout );
 
     // Validate clique. Note: do this after reporting as the top-level
