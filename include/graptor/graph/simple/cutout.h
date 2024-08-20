@@ -201,6 +201,9 @@ public:
 	return array_slice<lVID,lVID>( m_iset, m_num_iset );
     }
 
+    const lVID * begin() const { return m_iset; }
+    const lVID * end() const { return m_iset+m_num_iset; }
+
 private:
     lVID * m_iset;
     lVID m_num_iset;
