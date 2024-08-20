@@ -65,10 +65,11 @@ function mce() {
     local commit=$3
     local dir=$4
     
-    local graphs="CAroad LiveJournal M87127560 USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
+    local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
 
-    #local variants="vl8 abBc_abDc_abGc_vl8 abTy_abTd_abL_vl8 abDxph_abBxph_abAxph_vl8 abPxph_vl8 abxpv_vl8 abpdeg_vl8"
-    local variants="itrim_sort5_trav1_vl$vl"
+    #local graphs="USAroad CAroad pokec Yahoo_mem cit-patents bio-HS-CX wiki-topcats keller4 dblp2012 higgs-twitter wiki-talk mawi bio-WormNet-v3 sinaweibo sx-stackoverflow orkut hudong friendster_full LiveJournal it-2004 uk-2005 flickr warwiki ppminer bio-human-gene2 hollywood2009 dimacs webcc"
+
+    local variants="itrim_sort4_trav3_vl$vl"
     echo VL=$vl
     echo $subprob
     (
@@ -85,7 +86,7 @@ function mce() {
     echo
 }
 
-commit=46dad933
+commit=174e5cf6
 
 for algo in BK VC
 do

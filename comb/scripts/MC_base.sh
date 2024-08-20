@@ -89,13 +89,14 @@ function base() {
     local threads=$1
     local commit=$2
     local arch=$3
-    local graphs="CAroad LiveJournal xxx USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 xxx friendster_full higgs-twitter hollywood2009 hudong it-2004 xxx orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
+
+    local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
 
     if [ x$dir = x ] ; then
 	dir=$commit
     fi
 
-    local algo="pmc cliquer dOmega_LS dOmega_BS"
+    local algo="cliquer pmc dOmega_LS dOmega_BS"
 
     echo "base threads=$threads commit=$commit"
     (

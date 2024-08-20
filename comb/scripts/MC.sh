@@ -10,6 +10,10 @@ what="Completed search in"
 #what="filter2"
 whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
+#graphs="CAroad LiveJournal USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats uk-2005 dimacs bio-human-gene2 mawi ppminer"
+
+graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
+
 function get_avg() {
     local commit=$1
     local threads=$2
@@ -20,13 +24,14 @@ function get_avg() {
     local part=$7
     local dir=$8
     local arch=$9
+    local heur=${10}
 
     local sum=0
     local count=0
     local fail=0
     
     #echo graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r0.${bench}_${version}_${opts}.${graph}_undir 
-    for file in `ls -1 graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r*.h2.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
+    for file in `ls -1 graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r*.h${heur}.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 ; then
 		fail=1
@@ -74,7 +79,7 @@ function get_stats() {
     local count=0
     local fail=2
     
-    for file in `ls -1 graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r0.h2.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
+    for file in graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r0.h2.${bench}_${version}_${opts}.${graph}_undir ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 ; then
 		fail=1
@@ -86,7 +91,7 @@ function get_stats() {
 		else
 		    echo V E d dmax davg
 		fi
-		( grep "^coreness=" $file 2> /dev/null || echo nada=ABORT ) | cut -d= -f2
+		( grep "^degeneracy=" $file 2> /dev/null || echo nada=ABORT ) | cut -d= -f2
 		( grep "^Maximum clique size:" $file 2> /dev/null || echo m c s: ABORT ) | cut -d' ' -f4
 		perl -ne 'BEGIN { $cl="FAIL"; } END { print "$cl\n"; } chomp; $cl=$1 if m/^max_clique: ([0-9]*) /; do { exit 0; } if m/^heuristic 2:/;' < $file 2> /dev/null
 		fail=0
@@ -116,8 +121,9 @@ function one() {
     local part=$7
     local dir=$8
     local arch=$9
+    local heur=${10}
 
-    get_avg "$commit" "$threads" "$bench" "$version" "$opts" "$graph" "$part" "$dir" "$arch"
+    get_avg "$commit" "$threads" "$bench" "$version" "$opts" "$graph" "$part" "$dir" "$arch" "$heur"
 }
 
 function mce() {
@@ -127,7 +133,6 @@ function mce() {
     local part=$4
     local arch=$5
     local dir=$6
-    local graphs="CAroad LiveJournal M87127560 USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
 
     if [ x$dir = x ] ; then
 	dir=$commit
@@ -144,7 +149,7 @@ function mce() {
 	for graph in $graphs ; do
 	    echo $graph
 	    for variant in $variants ; do
-		one $commit $threads MC "" ${variant} ${graph} ${part} ${dir} ${arch}
+		one $commit $threads MC "" ${variant} ${graph} ${part} ${dir} ${arch} 2
 	    done
 	done
     ) | paste - $(echo $variants | sed -e 's/\b[a-zA-Z0-9_]*\b/-/g')
@@ -158,7 +163,6 @@ function scalability() {
     local commit=$3
     local arch=$4
     local dir=$commit
-    local graphs="CAroad LiveJournal M87127560 USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
 
     local threads="1 8 16 32 64 128"
     local variant="itrim_sort4_trav3_vl${vl}"
@@ -169,13 +173,41 @@ function scalability() {
         for graph in $graphs ; do
             echo $graph
             for thr in $threads ; do
-                one $commit $thr MC "" ${variant} ${graph} ${part} ${dir} ${arch}
+                one $commit $thr MC "" ${variant} ${graph} ${part} ${dir} ${arch} 2
             done
         done
     ) | paste - $(echo $threads | sed -e 's/\b[a-zA-Z0-9_]*\b/-/g')
 
     echo
 }
+
+function vc() {
+    local vl=$1
+    local threads=$2
+    local part=$3
+    local commit=$4
+    local arch=$5
+    local dir=$commit
+
+    local density="0.5 0.7 0.9 0.95 1"
+    local variant="itrim_sort4_trav3_vl${vl}"
+    echo "VL=$vl commit=$commit part=$part"
+    (
+        echo -ne "\"\" "
+        echo " $density" | tr ' ' "\n"
+        for graph in $graphs ; do
+            echo $graph
+            for d in $density ; do
+		local heur=2
+		if [ $d != 0.9 ] ; then heur=2.d`echo $d | tr . _` ; fi
+                one $commit $threads MC "" ${variant} ${graph} ${part} ${dir} ${arch} $heur
+            done
+        done
+    ) | paste - $(echo $density | sed -e 's/\b[a-zA-Z0-9_\.]*\b/-/g')
+
+    echo
+}
+
 
 function stats() {
     local vl=vl$1
@@ -184,13 +216,12 @@ function stats() {
     local part=$4
     local arch=$5
     local dir=$6
-    local graphs="CAroad LiveJournal M87127560 USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats"
 
     if [ x$dir = x ] ; then
 	dir=$commit
     fi
 
-    local variant="itrim_sort4_trav1_$vl"
+    local variant="itrim_sort4_trav3_$vl"
     local stats="vertices edges density maxdegree avgdegree degeneracy maxclique heurclique"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
@@ -206,10 +237,12 @@ function stats() {
     echo
 }
 
-commit=96f2729f
+commit=174e5cf6
 
 mce 16 128 $commit 1024 avx512 $commit
 
 scalability 16 1024 $commit avx512
+
+vc 16 128 1024 $commit avx512
 
 stats 16 128 $commit 1024 avx512 $commit

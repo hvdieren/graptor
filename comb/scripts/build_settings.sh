@@ -71,6 +71,7 @@ function get_flags() {
     flags["PIVOT_COLOUR"]=0
     flags["PIVOT_COLOUR_DENSE"]=0
     flags["PROFILE_INCUMBENT_SIZE"]=0
+    flags["PROFILE_DENSITY"]=0
     flags["VERTEX_COVER_ABSOLUTE"]=0
     flags["ABLATION_DISABLE_VC"]=0
 
@@ -264,6 +265,12 @@ function get_flags() {
     fi
     if [[ "$v" == *_incumbent* ]] ; then
 	flags["PROFILE_INCUMBENT_SIZE"]=`echo "${v}_" | sed -e 's/^.*_incumbent\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
+    if [[ "$v" == *_density* ]] ; then
+	flags["PROFILE_DENSITY"]=1;
+    fi
+    if [[ "$v" == *_onesided* ]] ; then
+	flags["INTERSECT_ONE_SIDED"]=1
     fi
     if [[ "$v" == *_vcabs* ]] ; then
 	flags["VERTEX_COVER_ABSOLUTE"]=1

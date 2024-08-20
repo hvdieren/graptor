@@ -32,20 +32,25 @@ function run()
     local heur=$8
     local density=$9
 
-    if [ x$density = x ] ; then density=0.9 ; fi
+    local dens=''
+    if [ x$density = x ] ; then
+	density=0.5
+    else
+	dens=.d`echo $density | tr . _`
+    fi
 
     bindir=bin_avx512_$commit
     arg=""
 
     local outdir=./graptor_avx512/$commit
     [ -d $outdir ] || mkdir -p $outdir
-    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.h${heur}.${prog}.${graph_name} 
+    local file=$outdir/output.${commit}.t${threads}.c${part}.r${round}.h${heur}${dens}.${prog}.${graph_name} 
 
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -h ${heur} -c ${part} -s -i ${graph_path} > $file"
-	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -h ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -87,12 +92,14 @@ function for_gg()
     local is_avx512f=0
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
-    for r in `seq 0 2` ; do
-	ins intersect_ds__op3_vl16 $graph_path $g 1 $commit $r
-	ins intersect_ds__op2_vl16 $graph_path $g 1 $commit $r
-	ins intersect_ds__op0_vl16 $graph_path $g 1 $commit $r
-	ins intersect_ds__op1_vl16 $graph_path $g 1 $commit $r
-    done
+#    for r in 0 ; do
+#	ins intersect_ds__op3_vl16 $graph_path $g 128 $commit $r
+#	ins intersect_ds__op2_vl16 $graph_path $g 128 $commit $r
+#	ins intersect_ds__op0_vl16 $graph_path $g 128 $commit $r
+#	ins intersect_ds__op1_vl16 $graph_path $g 128 $commit $r
+#	ins intersect_ds__op3_onesided_vl16 $graph_path $g 128 $commit $r
+#	ins intersect_ds__op2_onesided_vl16 $graph_path $g 128 $commit $r
+#    done
 
 #    #for r in `seq 0 2` ; do
 #    for r in 0 ; do
@@ -115,7 +122,7 @@ function for_gg()
     for r in `seq 0 2` ; do
 	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2
 	run MC__itrim_sort4_trav3_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort4_trav3_pivc_pivd_vl16 $graph_path $g 128 $commit $r 1024 2
+	run MC__itrim_sort4_trav3_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
     done
 
     for r in `seq 0 2` ; do
@@ -136,9 +143,10 @@ function for_gg()
 
     # Incumbent clique profiling
     #verbose=0
-    run MC__itrim_sort4_trav3_incumbent1_vl16 $graph_path $g 1 $commit 0 1024 0
-    run MC__itrim_sort4_trav3_incumbent2_vl16 $graph_path $g 1 $commit 0 1024 0
-    run MC__itrim_sort4_trav3_incumbent2_vcabs_vl16 $graph_path $g 1 $commit 0 1024 0
+#    run MC__itrim_sort4_trav3_density_vl16 $graph_path $g 128 $commit 0 1024 0
+#    run MC__itrim_sort4_trav3_incumbent1_vl16 $graph_path $g 1 $commit 0 1024 0
+#    run MC__itrim_sort4_trav3_incumbent2_vl16 $graph_path $g 1 $commit 0 1024 0
+#    run MC__itrim_sort4_trav3_incumbent2_vcabs_vl16 $graph_path $g 1 $commit 0 1024 0
 }
 
 true
