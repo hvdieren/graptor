@@ -297,17 +297,21 @@ public:
 	  m_order( nullptr ) {
 	m_timer.start();
     }
-    MC_Enumerator(  const GraphCSx & G, size_t degen, const VID * const order )
+    MC_Enumerator(  const GraphCSx & G, size_t degen, const VID * const order,
+		    const VID * const coreness = nullptr )
 	: m_graph( G ),
 	  m_degeneracy( degen ),
 	  m_best( degen > 0 ? 1 : 0 ),
-	  m_order( order ) {
+	  m_order( order ),
+	  m_coreness( coreness ) {
 	m_timer.start();
     }
 
-    void rebase( size_t degen, const VID * const order ) {
+    void rebase( size_t degen, const VID * const order,
+		 const VID * const coreness = nullptr ) {
 	m_degeneracy = degen;
 	m_order = order;
+	m_coreness = coreness;
 	if( m_best == 0 && degen > 0 )
 	    m_best = 1;
     }
@@ -418,6 +422,8 @@ private:
 			  << s << ") at "
 			  << m_timer.elapsed()
 			  << " top-level vertex: " << top_v;
+		if( m_coreness != nullptr )
+		    std::cout << " coreness: " << m_coreness[top_v];
 		if( m_order != nullptr )
 		    std::cout << " (" << m_order[top_v] << ')';
 		std::cout << '\n';
@@ -466,6 +472,7 @@ private:
     std::array<std::atomic<size_t>,filter_reason_num> m_reason;
     timer m_timer;
     const VID * m_order; //!< to translate IDs back to input file IDs
+    const VID * m_coreness;
     std::mutex m_mutex;
     std::vector<VID> m_max_clique; //!< max clique contents, not thread-safe
 };
@@ -3822,7 +3829,7 @@ int main( int argc, char *argv[] ) {
 	argc, argv,
 	"\t-s\t\tinput graph is symmetric\n"
 	"\t-p\t\tapply pruning before reordering\n"
-	"\t-H [012]\theuristic search (default 0)\n"
+	"\t-H [012]\theuristic search (default 2)\n"
 	"\t-v {level}\tverbosity level (default 0)\n"
 	"\t-pre {vertex}\tpre-trial vertex heuristic search\n"
 	"\t-what-if {size}\tassuming clique of given size exists\n"
@@ -3833,11 +3840,11 @@ int main( int argc, char *argv[] ) {
 	);
     bool symmetric = P.get_bool_option( "-s" );
     bool early_pruning = P.get_bool_option( "-p" );
-    int heuristic = P.get_long_option( "-H", 0 );
+    int heuristic = P.get_long_option( "-H", 2 );
     VID pre = P.get_long_option( "-pre", -1 );
     VID what_if = P.get_long_option( "-what-if", -1 );
     verbose = P.get_long_option( "-v", 0 );
-    density_threshold = P.get_double_option( "-d", 0.9f );
+    density_threshold = P.get_double_option( "-d", 0.5 );
     const char * ifile = P.get_string_option( "-i" );
 
 #if PROFILE_INCUMBENT_SIZE != 0
@@ -3849,16 +3856,18 @@ int main( int argc, char *argv[] ) {
 
     GraphCSx G0( ifile, -1, symmetric );
 
-    std::cout << "Reading graph: " << tm.stop() << "\n";
-
-    // Reset timer as graph I/O has high variability, and comparator frameworks
-    // don't measure I/O or tend to perform poorly on I/O.
-    tm = timer();
-    tm.start();
+    std::cout << "Reading graph: " << tm.next() << "\n";
 
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
     std::cout << "Removed self-edges: " << tm.next() << "\n";
+
+    // Reset timer as graph I/O has high variability, and comparator frameworks
+    // don't measure I/O or tend to perform poorly on I/O.
+    // Also exclude time removing self-edges. This is part of data set
+    // preparation.
+    tm = timer();
+    tm.start();
 
     MC_Enumerator E( G );
 
@@ -3962,6 +3971,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
 	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
+	      << "\n\tINTERSECT_ONE_SIDED=" << INTERSECT_ONE_SIDED
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
 	      << "\n\tPIVOT_COLOUR=" << PIVOT_COLOUR
@@ -3988,14 +3998,28 @@ int main( int argc, char *argv[] ) {
 
 #if PAPI_REGION == 1 
     map_workers( [&]( uint32_t t ) {
-	if( PAPI_OK != PAPI_hl_region_begin( "MC" ) ) {
-	    std::cerr << "Error initialising PAPI\n";
-	    exit(1);
+	int ret = PAPI_hl_region_begin( "MC" );
+	if( ret != PAPI_OK ) {
+	    {
+		static std::mutex mux;
+		std::lock_guard<std::mutex> guard( mux );
+		static bool once = true;
+		if( once ) {
+		    once = false;
+		    std::cerr << "PAPI_ENOTRUN: " << PAPI_ENOTRUN << "\n";
+		    std::cerr << "PAPI_ESYS: " << PAPI_ESYS << "\n";
+		    std::cerr << "PAPI_EMISC: " << PAPI_EMISC << "\n";
+		    std::cerr << "PAPI_ENOMEM: " << PAPI_ENOMEM << "\n";
+		}
+		std::cerr << "Error " << ret << " initialising PAPI on worker "
+			  << t << "\n";
+	    }
+	    // exit(1);
 	}
     } );
 #endif
 
-    E.rebase( degeneracy, order.get() );
+    E.rebase( degeneracy, order.get(), remap_coreness.get() );
 
     std::cout << "setup: " << tm.next() << std::endl;
     std::cout << "Start enumeration at " << tm.total() << std::endl;
@@ -4158,7 +4182,7 @@ int main( int argc, char *argv[] ) {
 	    std::swap( c_up, c_lo );
 #endif
 
-	    if( c_up == c_lo )
+	    if( c_up == c_lo || c_up == c_lo+1 )
 		continue; // go to next c value
 	    ++c_lo; // already did c_lo in preamble
 	    if( !E.is_feasible( c+1, fr_outer ) ) {
@@ -4199,7 +4223,7 @@ int main( int argc, char *argv[] ) {
 #if PAPI_REGION == 1
     map_workers( [&]( uint32_t t ) {
 	if( PAPI_OK != PAPI_hl_region_end( "MC" ) ) {
-	    std::cerr << "Error initialising PAPI\n";
+	    std::cerr << "Error ending PAPI\n";
 	    exit(1);
 	}
     } );
@@ -4208,6 +4232,10 @@ int main( int argc, char *argv[] ) {
     std::cout << "Enumeration: " << tm.next() << " seconds\n";
     std::cout << "Completed search in " << tm_search.next() << " seconds\n";
     std::cout << "Completed MC in " << tm.total() << " seconds\n";
+
+    // std::string what = "numastat -vmp ";
+    // what += argv[0];
+    // system( what.c_str() );
 
     all_variant_statistics stats = mc_stats.sum();
 
@@ -4263,9 +4291,17 @@ int main( int argc, char *argv[] ) {
     // Report maximum clique found
     E.report( std::cout );
 
-    // Validate clique. Note: do this after reporting as the top-level
+    // Get clique this after reporting as the top-level
     // will now get sorted in line with the rest of the clique
     auto mc = E.sort_and_get_max_clique();
+
+    // Report on coreness of clique members
+    std::cout << "clique coreness:";
+    for( VID v : mc )
+	std::cout << ' ' << remap_coreness[rev_order[v]];
+    std::cout << "\n";
+
+    // Validate clique
     validate_clique( G, mc );
 
     G.del();
