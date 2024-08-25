@@ -19,6 +19,14 @@
 #define INTERSECTION_TRIM 1
 #endif
 
+#ifndef INTERSECT_ONE_SIDED
+#define INTERSECT_ONE_SIDED 1
+#endif
+
+#ifndef INTERSECT_GE_ABOVE
+#define INTERSECT_GE_ABOVE 1
+#endif
+
 #include <iterator>
 #include <type_traits>
 #include <immintrin.h>
@@ -579,11 +587,14 @@ struct intersection_size_ge {
 		m_ge = false;
 		return false;
 	    }
-	} else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	}
+#if INTERSECT_GE_ABOVE
+	else if( m_left_options >= std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
 	}
+#endif
 	return true;
     }
 
@@ -597,6 +608,13 @@ struct intersection_size_ge {
 		return false;
 	    }
 	}
+#if INTERSECT_GE_ABOVE
+	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+#endif
 	return true;
     }
 
@@ -695,7 +713,9 @@ struct intersection_size_ge_two_sided {
 		m_ge = false;
 		return false;
 	    }
-	} else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	}
+#if INTERSECT_GE_ABOVE
+	else if( m_left_options >= std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -704,6 +724,7 @@ struct intersection_size_ge_two_sided {
 	    m_ge = true;
 	    return false;
 	}
+#endif
 	return true;
     }
 
@@ -717,6 +738,13 @@ struct intersection_size_ge_two_sided {
 		return false;
 	    }
 	}
+#if INTERSECT_GE_ABOVE
+	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	    m_terminated = true;
+	    m_ge = true;
+	    return false;
+	}
+#endif
 	return true;
     }
 
