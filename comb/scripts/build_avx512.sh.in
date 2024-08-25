@@ -89,13 +89,14 @@ for i in `seq 0 8` ; do
 done
 fi
 
-one intersect_ds _op0_vl16 &
-one intersect_ds _op1_vl16
-one intersect_ds _op2_vl16 &
-one intersect_ds _op3_vl16
-
-one intersect_ds _op2_onesided_vl16 &
-one intersect_ds _op3_onesided_vl16
+for op in 0 1 2 3 ; do
+    for side in onesided twosided ; do
+	for above geabove nogeabove ; do
+	    one intersect_ds _op${op}_${side}_${above}_vl16 &
+	done
+	wait
+    done
+done
 
 if false ; then
 for s in `seq 0 3` ; do
@@ -118,8 +119,11 @@ done
 fi
 
 one MC _itrim_sort4_trav3_vl16 &
+one MC _itrim_sort4_trav3_onesided_vl16 &
 
 one MC _itrim_sort4_trav3_vccc_vl16 &
+one MC _itrim_sort4_trav3_novc_vl16 &
+one MC _itrim_sort4_trav3_vcabs_vl16 &
 one MC _itrim_sort4_trav3_pivc_pivd_vl16 
 
 one MC _itrim_sort4_trav3_density_vl16  &
@@ -129,5 +133,7 @@ one MC _itrim_sort4_trav3_incumbent2_vl16  &
 one MC _itrim_sort4_trav3_incumbent2_vcabs_vl16  
 
 one MC _itrim_sort4_trav3_vl16_noavx512 
+
+one MC _itrim_sort4_trav3_vl16_papi
 
 wait

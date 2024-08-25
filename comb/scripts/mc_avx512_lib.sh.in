@@ -39,6 +39,16 @@ function run()
 	dens=.d`echo $density | tr . _`
     fi
 
+    # persia node numbering due to SMT
+    local numa=''
+    if [ $threads -le 16 ] ; then
+	numa="numactl --membind 0"
+    elif [ $threads -le 32 ] ; then
+	numa="numactl --membind 0,1"
+    elif [ $threads -le 48 ] ; then
+	numa="numactl --membind 0,1,2"
+    fi
+
     bindir=bin_avx512_$commit
     arg=""
 
@@ -49,8 +59,8 @@ function run()
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file"
-	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -62,20 +72,20 @@ function ins()
     local graph_name=$3
     local threads=$4
     local commit=$5
-    local round=$6
+    local repetitions=$6
 
     bindir=bin_avx512_$commit
     arg=""
 
     local outdir=./graptor_avx512/$commit
     [ -d $outdir ] || mkdir -p $outdir
-    local file=$outdir/output.${commit}.t${threads}.r${round}.${prog}.${graph_name} 
+    local file=$outdir/output.${commit}.t${threads}.r${repetitions}.${prog}.${graph_name} 
 
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -v ${verbose} -s -i ${graph_path} > $file"
-	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s ./${bindir}/${prog} -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -r $repetitions -s -i ${graph_path} > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -r $repetitions -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -92,7 +102,7 @@ function for_gg()
     local is_avx512f=0
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
-#    for r in 0 ; do
+#    for r in 50 ; do
 #	ins intersect_ds__op3_vl16 $graph_path $g 128 $commit $r
 #	ins intersect_ds__op2_vl16 $graph_path $g 128 $commit $r
 #	ins intersect_ds__op0_vl16 $graph_path $g 128 $commit $r
@@ -120,30 +130,36 @@ function for_gg()
 #    done
 
     for r in `seq 0 2` ; do
+	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 1 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_vl16 $graph_path $g 1 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 128 $commit $r 1024 2
 	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort4_trav3_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort4_trav3_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
+	run MC__itrim_sort4_trav3_vl16_papi $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_novc_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_vcabs_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
     done
 
-    for r in `seq 0 2` ; do
-	for d in 0.5 0.7 0.95 1 ; do
-	    run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 $d
-	done
-    done
+#    for r in `seq 0 2` ; do
+#	for d in 0.9 0.7 0.95 1 ; do
+#	    run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 $d
+#	done
+#    done
 
-    for r in `seq 0 2` ; do
-	for threads in 1 4 8 16 32 64 128 ; do
-	    run MC__itrim_sort4_trav3_vl16 $graph_path $g $threads $commit $r 1024 2
-	done
-    done
+#    for r in `seq 0 2` ; do
+#	for threads in 1 4 8 16 32 64 128 ; do
+#	    run MC__itrim_sort4_trav3_vl16 $graph_path $g $threads $commit $r 1024 2
+#	done
+#    done
 
-    for r in `seq 0 2` ; do
-	run MC__itrim_sort4_trav3_vl16_noavx512 $graph_path $g 128 $commit $r 1024 2
-    done
+#    for r in `seq 0 2` ; do
+#	run MC__itrim_sort4_trav3_vl16_noavx512 $graph_path $g 128 $commit $r 1024 2
+#    done
 
     # Incumbent clique profiling
     #verbose=0
-#    run MC__itrim_sort4_trav3_density_vl16 $graph_path $g 128 $commit 0 1024 0
+    #run MC__itrim_sort4_trav3_density_vl16 $graph_path $g 128 $commit 0 1024 0
 #    run MC__itrim_sort4_trav3_incumbent1_vl16 $graph_path $g 1 $commit 0 1024 0
 #    run MC__itrim_sort4_trav3_incumbent2_vl16 $graph_path $g 1 $commit 0 1024 0
 #    run MC__itrim_sort4_trav3_incumbent2_vcabs_vl16 $graph_path $g 1 $commit 0 1024 0

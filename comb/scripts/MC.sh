@@ -140,7 +140,7 @@ function mce() {
 
     #local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
     #local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vccc_$vl itrim_sort5_trav1_nopivc_$vl itrim_sort5_trav1_nopivd_$vl itrim_sort5_trav1_nopivc_nopivd_$vl"
-    local variants="itrim_sort4_trav0_$vl itrim_sort4_trav1_$vl itrim_sort4_trav3_$vl itrim_sort5_trav1_$vl itrim_sort4_trav3_vccc_$vl itrim_sort4_trav3_nopivc_nopivd_$vl itrim_sort4_trav3_${vl}_noavx512"
+    local variants="itrim_sort4_trav0_$vl itrim_sort4_trav1_$vl itrim_sort4_trav3_$vl itrim_sort5_trav1_$vl itrim_sort4_trav3_onesided_$vl itrim_sort4_trav3_vccc_$vl itrim_sort4_trav3_nopivc_nopivd_$vl itrim_sort4_trav3_${vl}_noavx512"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
     (
@@ -237,12 +237,13 @@ function stats() {
     echo
 }
 
-commit=174e5cf6
+commit=7cb42a05
 
 mce 16 128 $commit 1024 avx512 $commit
+mce 16 1 $commit 1024 avx512 $commit
 
-scalability 16 1024 $commit avx512
+#scalability 16 1024 $commit avx512
 
-vc 16 128 1024 $commit avx512
+#vc 16 128 1024 $commit avx512
 
-stats 16 128 $commit 1024 avx512 $commit
+#stats 16 128 $commit 1024 avx512 $commit

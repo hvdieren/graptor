@@ -24,7 +24,7 @@ function build() {
     local cxxflags="${CXXFLAGS} -O4 -std=c++2a"
     local PAPIFLAGS=
     if echo $flags | grep PAPI_REGION=1 > /dev/null 2>&1 ; then
-	PAPI_FLAGS=-lpapi
+	PAPI_FLAGS=${HOME}/lib/libpapi.so
     fi
     if [[ "$dstfile" == *_noavx512* ]] ; then
 	cxxflags="${cxxflags} -mno-avx512f"
@@ -67,6 +67,8 @@ function get_flags() {
     flags["PAPI_REGION"]=0;
     flags["INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
+    flags["INTERSECTION_ONE_SIDED"]=1
+    flags["INTERSECTION_GE_ABOVE"]=1
     flags["VERTEX_COVER_COMPONENTS"]=0
     flags["PIVOT_COLOUR"]=0
     flags["PIVOT_COLOUR_DENSE"]=0
@@ -272,10 +274,13 @@ function get_flags() {
     if [[ "$v" == *_onesided* ]] ; then
 	flags["INTERSECT_ONE_SIDED"]=1
     fi
+    if [[ "$v" == *_twosided* ]] ; then
+	flags["INTERSECT_ONE_SIDED"]=0
+    fi
     if [[ "$v" == *_vcabs* ]] ; then
 	flags["VERTEX_COVER_ABSOLUTE"]=1
     fi
-    if [[ "$v" == *_abVC* ]] ; then
+    if [[ "$v" == *_novc* ]] ; then
 	flags["ABLATION_DISABLE_VC"]=1
     fi
 
