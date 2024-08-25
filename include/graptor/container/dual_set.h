@@ -150,6 +150,11 @@ struct dual_set {
     //! Returns a constant iterator to the end of the sequential representation
     const auto end() const { return m_seq.end(); }
 
+    //! Returns first element. Requires non-empty set.
+    auto front() const { return m_seq.front(); }
+    //! Returns last element. Requires non-empty set.
+    auto back() const { return m_seq.back(); }
+
     //! Returns a reference to the sequential representation
     seq_type get_seq() const { return m_seq; }
 
@@ -214,6 +219,11 @@ struct dual_set {
 	return m_hash.template multi_lookup<U,VL>( index );
     }
 
+    //! Trim the sequential representation from the left-hand side.
+    dual_set<seq_type,hash_type> trim_l( const type * l ) const {
+	return dual_set<seq_type,hash_type>( m_seq.trim_l( l ), m_hash );
+    }
+
     //! Trim the sequential representation from the right-hand side.
     dual_set<seq_type,hash_type> trim_r( const type * r ) const {
 	return dual_set<seq_type,hash_type>( m_seq.trim_r( r ), m_hash );
@@ -223,6 +233,16 @@ struct dual_set {
     dual_set<seq_type,hash_type> trim_range( type lo, type hi ) const {
 	return dual_set<seq_type,hash_type>( m_seq.trim_range( lo, hi ),
 					     m_hash );
+    }
+
+    //! Trim the sequential representation from the left-hand side.
+    dual_set<seq_type,hash_type> trim_front( type lo ) const {
+	return dual_set<seq_type,hash_type>( m_seq.trim_front( lo ), m_hash );
+    }
+
+    //! Trim the sequential representation from the left- and right-hand sides.
+    dual_set<seq_type,hash_type> trim_back( type hi ) const {
+	return dual_set<seq_type,hash_type>( m_seq.trim_back( hi ), m_hash );
     }
 
 private:

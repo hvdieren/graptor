@@ -10,7 +10,7 @@ template<typename T, typename I = size_t>
 struct array_slice {
     using type = T;
     using index_type = I;
-
+    
     array_slice( const type * begin_, const type * end_ )
 	: m_begin( begin_ ), m_end( end_ ) { }
     array_slice( const type * begin_, index_type len_ )
@@ -28,16 +28,45 @@ struct array_slice {
     const type * begin() const { return m_begin; }
     const type * end() const { return m_end; }
 
+    // Assumes non-empty list
+    type front() const { return *begin(); }
+    type back() const { return *std::prev( end() ); }
+
     type at( size_t idx ) const { return *std::next( m_begin, idx ); }
 
-    array_slice<T,I> trim_r( const type * r ) const {
-	return array_slice<T,I>( m_begin, r );
+    array_slice<type,index_type> trim_r( const type * r ) const {
+	return array_slice<type,index_type>( m_begin, r );
+    }
+    array_slice<type,index_type> trim_l( const type * l ) const {
+	return array_slice<type,index_type>( l, m_end );
     }
 
-    array_slice<T,I> trim_range( type lo, type hi ) const {
-	auto b = std::lower_bound( begin(), end(), lo );
-	auto e = std::upper_bound( b, end(), hi );
-	return array_slice<T,I>( b, e );
+    array_slice<type,index_type> trim_range( type lo, type hi ) const {
+	const type * b = begin();
+	const type * e = end();
+	if( lo < front() )
+	    b = std::lower_bound( begin(), end(), lo );
+	if( hi > back() )
+	    e = std::upper_bound( b, end(), hi );
+	return array_slice<type,index_type>( b, e );
+    }
+
+    // Assumes non-empty list; retain lo in list but nothing smaller
+    array_slice<type,index_type> trim_front( type lo ) const {
+	if( lo < front() )
+	    return *this;
+	else
+	    return array_slice<type,index_type>(
+		std::lower_bound( begin(), end(), lo ), m_end );
+    }
+
+    // Assumes non-empty list; retain hi in list but nothing larger
+    array_slice<type,index_type> trim_back( type hi ) const {
+	if( hi > back() )
+	    return *this;
+	else
+	    return array_slice<type,index_type>(
+		m_begin, std::upper_bound( begin(), end(), hi ) );
     }
 
 private:

@@ -175,6 +175,8 @@ public:
 	    else
 		return m_xp.begin() + m_ne;
 	}
+	lVID front() const { return *begin(); }
+	lVID back() const { return *std::prev( end() ); }
 	const size_t size() const {
 	    if constexpr ( present_p )
 		return m_xp.size() - m_ne;
@@ -182,7 +184,22 @@ public:
 		return m_ne;
 	}
 
+	const hash_set_interface & trim_l( const lVID * l ) const {
+	    // TODO: trim P or X range; may adjust ne to accomplish this
+	    return *this;
+	}
+
 	const hash_set_interface & trim_range( lVID lo, lVID hi ) const {
+	    // TODO: trim P or X range; may adjust ne to accomplish this
+	    return *this;
+	}
+
+	const hash_set_interface & trim_front( lVID lo ) const {
+	    // TODO: trim P or X range; may adjust ne to accomplish this
+	    return *this;
+	}
+
+	const hash_set_interface & trim_back( lVID hi ) const {
 	    // TODO: trim P or X range; may adjust ne to accomplish this
 	    return *this;
 	}
@@ -642,7 +659,22 @@ public:
 	const lVID * begin() const { return m_xp.begin(); }
 	const lVID * end() const { return m_xp.end(); }
 
+	lVID front() const { return *begin(); }
+	lVID back() const { return *std::prev( end() ); }
+
+	const p_hash_set_interface & trim_l( const lVID * l ) const {
+	    // TODO: trim range
+	    return *this;
+	}
 	const p_hash_set_interface & trim_range( lVID lo, lVID hi ) const {
+	    // TODO: trim range
+	    return *this;
+	}
+	const p_hash_set_interface & trim_front( lVID lo ) const {
+	    // TODO: trim range
+	    return *this;
+	}
+	const p_hash_set_interface & trim_back( lVID hi ) const {
 	    // TODO: trim range
 	    return *this;
 	}

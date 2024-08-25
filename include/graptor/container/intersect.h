@@ -16,7 +16,7 @@
 #endif
 
 #ifndef INTERSECTION_TRIM
-#define INTERSECTION_TRIM 1
+#define INTERSECTION_TRIM 0
 #endif
 
 #ifndef INTERSECT_ONE_SIDED
@@ -995,20 +995,15 @@ struct set_operations {
 
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
-	auto & trset = rset;
 #else
-	// Trim ranges
-	auto llo = *lset.begin();
-	auto lhi = *std::prev( lset.end() );
-	auto rlo = *rset.begin();
-	auto rhi = *std::prev( rset.end() );
+	// Trim front of range.
+	// There is no benefit in trimming the end of the range for merge
+	// intersections, although there is for hash intersection.
+	auto tlset = lset.trim_front( rset.front() );
 
-	auto tlset = lset.trim_range( rlo, rhi );
-	auto trset = rset.trim_range( llo, lhi );
-
-	out.swap( tlset, trset );
+	out.swap( tlset, rset );
 #endif
-	so_traits::template apply<so>( tlset, trset, out );
+	so_traits::template apply<so>( tlset, rset, out );
     }
 };
 
@@ -1585,8 +1580,14 @@ struct hash_scalar {
     static
     void
     intersect_task( LSet && lset, RSet && rset, Collector & out ) {
-	auto lb = lset.begin();
-	auto le = lset.end();
+#if INTERSECTION_TRIM == 0
+	auto & tlset = lset;
+#else
+	auto tlset = lset.trim_back( rset.back() );
+	out.swap( tlset, rset );
+#endif
+	auto lb = tlset.begin();
+	auto le = tlset.end();
 	intersect_task<so,rhs>( lb, le, rset, out );
     }
 
@@ -1609,8 +1610,13 @@ struct hash_scalar {
 	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
-	    out.swap( rset, lset );
-	    return intersect_task<so,false>( rset, lset, out );
+#if INTERSECTION_TRIM == 0
+	    auto & trset = rset;
+#else
+	    auto trset = rset.trim_front( lset.front() );
+#endif
+	    out.swap( trset, lset );
+	    return intersect_task<so,false>( trset, lset, out );
 	}
     }
     
@@ -2181,8 +2187,15 @@ public:
     intersect_task( LSet && lset, RSet && rset, Collector & out ) {
 	using T = typename std::decay_t<LSet>::type;
 
-	auto lb = lset.begin();
-	auto le = lset.end();
+#if INTERSECTION_TRIM == 0
+	auto & tlset = lset;
+#else
+	auto tlset = lset.trim_back( rset.back() );
+	out.swap( tlset, rset );
+#endif
+
+	auto lb = tlset.begin();
+	auto le = tlset.end();
 
 #if __AVX512F__
 	lb = intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rset, out );
@@ -2214,8 +2227,14 @@ public:
 	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
 	    return intersect_task<so,true>( lset, rset, out );
 	} else {
-	    out.swap( rset, lset );
-	    return intersect_task<so,false>( rset, lset, out );
+#if INTERSECTION_TRIM == 0
+	    auto & trset = rset;
+#else
+	    auto trset = rset.trim_front( lset.front() );
+#endif
+
+	    out.swap( trset, lset );
+	    return intersect_task<so,false>( trset, lset, out );
 	}
     }
     
