@@ -18,7 +18,8 @@ namespace target {
  ***********************************************************************/
 template<typename T>
 struct scalar_int {
-    static_assert( is_integral_or_logical<T>::value
+    static_assert( ( is_integral_or_logical<T>::value
+		     || is_customfp_v<T> || is_vcustomfp_v<T> )
 		   && !std::is_same<T,bool>::value,
 		   "version of template class for integers, non-bool" );
 public:

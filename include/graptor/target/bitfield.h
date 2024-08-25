@@ -435,25 +435,6 @@ public:
 };
 
 /***********************************************************************
- * bitfields of 2 or 4 bits; vector fits in scalar register (again)
- ***********************************************************************/
-template<unsigned short Bits>
-struct bitfield_24_byte<Bits,1>
-    : public bitfield_24_byte_scalar_reg<Bits,1> { };
-
-template<unsigned short Bits>
-struct bitfield_24_byte<Bits,2>
-    : public bitfield_24_byte_scalar_reg<Bits,2> { };
-
-template<unsigned short Bits>
-struct bitfield_24_byte<Bits,4>
-    : public bitfield_24_byte_scalar_reg<Bits,4> { };
-
-template<unsigned short Bits>
-struct bitfield_24_byte<Bits,8>
-    : public bitfield_24_byte_scalar_reg<Bits,8> { };
-
-/***********************************************************************
  * scalar bitfields
  ***********************************************************************/
 template<unsigned short Bits>
@@ -478,7 +459,7 @@ public:
 
     using int_traits = bitfield_scalar<bits>;
 
-    using vtraits = bitfield_24_byte<bits,1>;
+    using vtraits = bitfield_24_byte_scalar_reg<bits,1>;
     using pointer_type = typename vtraits::pointer_type;
     
     static type setzero() { return 0; }
@@ -551,6 +532,32 @@ public:
     }
 };
 
+/***********************************************************************
+ * bitfield traits class
+ ***********************************************************************/
+template<unsigned short nbits, unsigned short nbytes>
+struct vector_type_bitfield_traits
+    : public bitfield_24_byte<nbits,nbytes> { };
+
+template<unsigned short nbits>
+struct vector_type_bitfield_traits<nbits,1>
+    : public bitfield_24_byte_scalar_reg<nbits,1> { };
+
+template<unsigned short nbits>
+struct vector_type_bitfield_traits<nbits,2>
+    : public bitfield_24_byte_scalar_reg<nbits,2> { };
+
+template<unsigned short nbits>
+struct vector_type_bitfield_traits<nbits,4>
+    : public bitfield_24_byte_scalar_reg<nbits,4> { };
+
+template<unsigned short nbits>
+struct vector_type_bitfield_traits<nbits,8>
+    : public bitfield_24_byte_scalar_reg<nbits,8> { };
+
+template<unsigned short nbits>
+struct vector_type_bitfield_traits<nbits,0>
+    : public bitfield_scalar<nbits> { };
 
 } // namespace target
 

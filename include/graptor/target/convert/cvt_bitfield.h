@@ -15,7 +15,7 @@ namespace conversion {
 
 template<unsigned short B, typename U, unsigned short VL>
 struct bf_conversion_traits<bitfield<B>, U, VL> {
-    using src_traits = target::bitfield_24_byte<B, B*VL/8>;
+    using src_traits = target::vector_type_bitfield_traits<B, B*VL/8>;
     using dst_traits = vector_type_traits_vl<U, VL>;
 
     static typename dst_traits::type convert( typename src_traits::type a ) {
@@ -140,7 +140,7 @@ struct bf_conversion_traits<bitfield<B>, U, VL> {
 template<typename T, unsigned short B, unsigned short VL>
 struct bf_conversion_traits<T, bitfield<B>, VL> {
     using src_traits = vector_type_traits_vl<T, VL>;
-    using dst_traits = target::bitfield_24_byte<B, B*VL/8>;
+    using dst_traits = target::vector_type_bitfield_traits<B, B*VL/8>;
 
     static typename dst_traits::type convert( typename src_traits::type a ) {
 	using U = bitfield<B>;

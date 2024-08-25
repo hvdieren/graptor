@@ -96,173 +96,147 @@ alignas(64) extern const uint32_t movemask_lut_epi32[16*4];
 
 namespace target {
 
-template<typename T, unsigned short nbytes, typename = void>
+/*! Selection of vector traits implementation for integral types and logical
+ */
+template<unsigned short type_size, unsigned short nbytes>
 struct vint_traits_select {
-    static_assert( nbytes > sizeof(T), "recursive case" );
+    static_assert( nbytes > type_size, "recursive case" );
+    template<typename T> // assumes type_size == sizeof(T)
     using type = vt_recursive<
 	T,sizeof(T),nbytes,
-	typename vint_traits_select<T,next_ipow2(nbytes/2)>::type,
-	typename vint_traits_select<T,nbytes-next_ipow2(nbytes/2)>::type>;
+	typename vint_traits_select<sizeof(T),next_ipow2(nbytes/2)>::template type<T>,
+	typename vint_traits_select<sizeof(T),nbytes-next_ipow2(nbytes/2)>::template type<T>>;
 };
 
-template<unsigned short nbits>
-struct vint_traits_select<bitfield<nbits>,0> {
-    static_assert( nbits==1 || nbits==2 || nbits==4,
-		   "Only 1, 2 and 4-bit bitfields supported" );
-    using type = target::bitfield_scalar<nbits>;
-};
-
-template<unsigned short nbits,unsigned short nbytes>
-struct vint_traits_select<bitfield<nbits>,nbytes> {
-    static_assert( nbits==1 || nbits==2 || nbits==4,
-		   "Only 1, 2 and 4-bit bitfields supported" );
-    using type = target::bitfield_24_byte<nbits,nbytes>;
-};
-
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<!std::is_same<T,bool>::value
-			      && sizeof(T) == nbytes
-			      && !is_bitfield_v<T>>> {
-    using type = target::scalar_int<T>;
-};
-
-template<>
-struct vint_traits_select<bool,1> {
-    using type = target::scalar_bool;
+template<unsigned short type_size>
+struct vint_traits_select<type_size,type_size> {
+    template<typename T> // assumes type_size == sizeof(T)
+    using type = std::conditional_t<std::is_same_v<T,bool>,
+				    target::scalar_bool,
+				    target::scalar_int<T>>;
 };
 
 #if __MMX__ && __SSE4_2__
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 8
-			       && !is_bitfield_v<T>)>> {
+
 #if GRAPTOR_USE_MMX
-    using type = mmx_1x8<T>;
-#else
-    using type = sse42_1x8<T>;
-#endif
+template<>
+struct vint_traits_select<1,8> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::mmx_1x8<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 4
-			       && !is_bitfield_v<T>)>> {
-#if GRAPTOR_USE_MMX && 0 
-    // using type = mmx_1x4<T>; NYI
+template<>
+struct vint_traits_select<2,8> {
+    template<typename T> // assumes 2 == sizeof(T)
+    using type = target::mmx_2x4<T>;
+};
 #else
-    using type = sse42_1x4<T>;
-#endif
+template<>
+struct vint_traits_select<1,8> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::sse42_1x8<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 2 && nbytes == 8)>> {
-#if GRAPTOR_USE_MMX
-    using type = mmx_2x4<T>;
-#else
-    using type = sse42_2x4<T>;
-#endif
+template<>
+struct vint_traits_select<2,8> {
+    template<typename T> // assumes 2 == sizeof(T)
+    using type = target::sse42_2x4<T>;
 };
+#endif // GRAPTOR_USE_MMX
+
 #endif // __MMX__ && __SSE4_2__
 
+#if __SSE4_2__
+template<>
+struct vint_traits_select<1,4> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::sse42_1x4<T>;
+};
+#endif // __SSE4_2__
+
 #if __MMX__
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 8)>> {
-    using type = mmx_4x2<T>;
+template<>
+struct vint_traits_select<4,8> {
+    template<typename T> // assumes 4 == sizeof(T)
+    using type = target::mmx_4x2<T>;
 };
 #endif // __MMX__
 
 #if __SSE4_2__
-// Requires some fixes around the use of vector_type_int_traits
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && !is_bitfield_v<T>
-			       && nbytes == 16)>> {
-    using type = sse42_1x16<T>;
+template<>
+struct vint_traits_select<1,16> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::sse42_1x16<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 2 && !is_bitfield_v<T>
-			        && nbytes == 16)>> {
-    using type = sse42_2x8<T>;
+template<>
+struct vint_traits_select<2,16> {
+    template<typename T> // assumes 2 == sizeof(T)
+    using type = target::sse42_2x8<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && !is_bitfield_v<T>
-			        && nbytes == 16)>> {
-    using type = sse42_4x4<T>;
+template<>
+struct vint_traits_select<4,16> {
+    template<typename T> // assumes 4 == sizeof(T)
+    using type = target::sse42_4x4<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && !is_bitfield_v<T>
-			        && nbytes == 16)>> {
-    using type = sse42_8x2<T>;
+template<>
+struct vint_traits_select<8,16> {
+    template<typename T> // assumes 8 == sizeof(T)
+    using type = target::sse42_8x2<T>;
 };
 #endif // __SSE4_2__
 
 #if __AVX2__
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && !is_bitfield_v<T>
-			       && nbytes == 32)>> {
-    using type = avx2_1x32<T>;
+template<>
+struct vint_traits_select<1,32> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::avx2_1x32<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 2 && nbytes == 32)>> {
-    using type = avx2_2x16<T>;
+template<>
+struct vint_traits_select<2,32> {
+    template<typename T> // assumes 2 == sizeof(T)
+    using type = target::avx2_2x16<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 32)>> {
-    using type = avx2_4x8<T>;
+template<>
+struct vint_traits_select<4,32> {
+    template<typename T> // assumes 4 == sizeof(T)
+    using type = target::avx2_4x8<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 32)>> {
-    using type = avx2_8x4<T>;
-};
-
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 16 && nbytes == 32)>> {
-    using type = avx2_16x2<T>;
+template<>
+struct vint_traits_select<8,32> {
+    template<typename T> // assumes 8 == sizeof(T)
+    using type = target::avx2_8x4<T>;
 };
 #endif // __AVX2__
 
 #if __AVX512F__
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 1 && nbytes == 64)
-			      && !is_bitfield_v<T>>> {
-    using type = avx512_1x64<T>;
+template<>
+struct vint_traits_select<1,64> {
+    template<typename T> // assumes 1 == sizeof(T)
+    using type = target::avx512_1x64<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 2 && nbytes == 64)
-			      && !is_bitfield_v<T>>> {
-    using type = avx512_2x32<T>;
+template<>
+struct vint_traits_select<2,64> {
+    template<typename T> // assumes 2 == sizeof(T)
+    using type = target::avx512_2x32<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 4 && nbytes == 64)>> {
-    using type = avx512_4x16<T>;
+template<>
+struct vint_traits_select<4,64> {
+    template<typename T> // assumes 4 == sizeof(T)
+    using type = target::avx512_4x16<T>;
 };
 
-template<typename T, unsigned short nbytes>
-struct vint_traits_select<
-    T,nbytes,std::enable_if_t<(sizeof(T) == 8 && nbytes == 64)>> {
-    using type = avx512_8x8<T>;
+template<>
+struct vint_traits_select<8,64> {
+    template<typename T> // assumes 8 == sizeof(T)
+    using type = target::avx512_8x8<T>;
 };
 #endif // __AVX512F__
 
@@ -347,133 +321,47 @@ struct vfp_traits_select<
 
 } // namespace target
 
-#include "graptor/target/customfp_21x3.h"
-#include "graptor/target/customfp_21x12.h"
-#include "graptor/target/customfp_21x24.h"
-
-namespace target {
-
-#if __MMX__
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,
-    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
-		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16
-		      && nbytes == 8)>> {
-    using type = mmx_2x4<detail::customfp_em<S,E,M,Z,B>>;
-};
-
-template<typename Cfg, unsigned short nbytes>
-struct vfp_traits_select<
-    vcustomfp<Cfg>,nbytes,
-    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
-		      && nbytes == 8)>> {
-    using type = mmx_2x4<vcustomfp<Cfg>>;
-};
-#endif // __MMX__
-
-#if __SSE4_2__
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,
-    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
-		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16 && nbytes == 16)>> {
-    using type = target::sse42_2x8<detail::customfp_em<S,E,M,Z,B>>;
-};
-
-template<typename Cfg, unsigned short nbytes>
-struct vfp_traits_select<
-    vcustomfp<Cfg>,nbytes,
-    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
-		      && nbytes == 16)>> {
-    using type = sse42_2x8<vcustomfp<Cfg>>;
-};
-#endif // __SSE4_2__
-
-#if __AVX2__
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,
-    std::enable_if_t<(detail::customfp_em<S,E,M,Z,B>::bit_size > 8
-		      && detail::customfp_em<S,E,M,Z,B>::bit_size <= 16 && nbytes == 32)>> {
-    using type = target::avx2_2x16<detail::customfp_em<S,E,M,Z,B>>;
-};
-
-template<typename Cfg, unsigned short nbytes>
-struct vfp_traits_select<
-    vcustomfp<Cfg>,nbytes,
-    std::enable_if_t<(Cfg::bit_size > 8 && Cfg::bit_size <= 16
-		      && nbytes == 32)>> {
-    using type = avx2_2x16<vcustomfp<Cfg>>;
-};
-
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 8>> {
-    using type = target::customfp_21x3<E,M>;
-};
-
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 32>> {
-    using type = target::customfp_21x12<E,M>;
-};
-
-template<bool S, unsigned short E, unsigned short M, bool Z, int B,
-	 unsigned short nbytes>
-struct vfp_traits_select<
-    detail::customfp_em<S,E,M,Z,B>,nbytes,std::enable_if_t<detail::customfp_em<S,E,M,Z,B>::bit_size == 21 && nbytes == 64>> {
-    using type = target::customfp_21x24<E,M>;
-};
-#endif // __AVX2__
-
-} // namespace target
-
-// template<typename T, unsigned short nbytes, typename = void>
-// struct vector_type_int_traits;
-
-template<typename T, unsigned short nbytes>
-using vector_type_int_traits =
-    typename target::vint_traits_select<T,nbytes>::type;
-
-template<typename T, unsigned short nbytes>
-struct vector_type_traits<
-    T,nbytes,std::enable_if_t<std::is_floating_point<T>::value
-			      || is_vcustomfp_v<T> || is_customfp_v<T>>>
-    : public target::vfp_traits_select<T,nbytes>::type { };
-
-/***********************************************************************
- * Mask traits (AVX-512)
- ***********************************************************************/
-#include "graptor/target/bitmask.h"
-
 /***********************************************************************
  * Vector traits
  ***********************************************************************/
 
 template<typename T, unsigned short nbytes>
+using vector_type_int_traits =
+    typename target::vint_traits_select<sizeof(T),nbytes>::template type<T>;
+
+template<typename T, unsigned short nbytes>
+struct vector_type_traits<
+    T,nbytes,std::enable_if_t<std::is_floating_point_v<T>>>
+    : public target::vfp_traits_select<T,nbytes>::type { };
+
+template<bool S, unsigned short E, unsigned short M, bool Z, int B,
+	 unsigned short nbytes>
+struct vector_type_traits<detail::customfp_em<S,E,M,Z,B>,nbytes>
+    : public target::vint_traits_select<(7+detail::customfp_em<S,E,M,Z,B>::bit_size)/8,nbytes>::template type<detail::customfp_em<S,E,M,Z,B>> { };
+
+template<typename Cfg, unsigned short nbytes>
+struct vector_type_traits<vcustomfp<Cfg>,nbytes>
+    : public target::vint_traits_select<(7+Cfg::bit_size)/8,nbytes>::template type<vcustomfp<Cfg>> { };
+
+template<typename T, unsigned short nbytes>
 struct vector_type_traits<T,
 			  nbytes,
-			  std::enable_if_t<std::is_integral_v<T>
-					   || is_bitfield_v<T>>>
+			  std::enable_if_t<std::is_integral_v<T>>>
     : public vector_type_int_traits<T,nbytes> { };
 
+template<unsigned short nbits, unsigned short nbytes>
+struct vector_type_traits<bitfield<nbits>,nbytes>
+    : public target::vector_type_bitfield_traits<nbits,nbytes> { };
 
 // Wider logical types are defined in vt_longint.h
-#if __AVX512F__ || __AVX2__
 template<unsigned short W, unsigned short nbytes>
 struct vector_type_traits<logical<W>, nbytes, std::enable_if_t<(W<=8)>>
     : public vector_type_int_traits<logical<W>,nbytes> { };
-#else
-template<unsigned short W, unsigned short nbytes>
-struct vector_type_traits<logical<W>, nbytes, std::enable_if_t<(W<=8)>>
-    : public vector_type_int_traits<logical<W>,nbytes> { };
-#endif
+
+/***********************************************************************
+ * Mask traits (AVX-512)
+ ***********************************************************************/
+#include "graptor/target/bitmask.h"
 
 /***********************************************************************
  * Alternative ways to access vector_type_traits
