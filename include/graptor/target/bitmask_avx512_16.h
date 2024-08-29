@@ -161,6 +161,9 @@ struct mask_type_traits<16> {
     static uint32_t popcnt( type m ) {
 	return _popcnt32( m );
     }
+    static uint32_t tzcnt( type m ) {
+	return _tzcnt_u32( m );
+    }
 };
 
 #endif // __AVX512F__
