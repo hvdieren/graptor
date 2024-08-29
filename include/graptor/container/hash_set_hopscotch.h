@@ -51,8 +51,7 @@ public:
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[(1<<m_log_size)+2*H-1] ),
-	  m_hash( m_log_size ),
-	  m_pre_allocated( false ) {
+	  m_hash( m_log_size ) {
 	clear();
     }
     template<typename It>
@@ -66,8 +65,7 @@ public:
     hash_set_hopscotch & operator = ( const hash_set_hopscotch & ) = delete;
 
     ~hash_set_hopscotch() {
-	if( !m_pre_allocated )
-	    delete[] m_table;
+	delete[] m_table;
     }
 
     void clear() {
@@ -144,9 +142,6 @@ public:
 
 	// Could not identify a free bucket close enough to the home_index.
 	// Resize and retry.
-	assert( !m_pre_allocated && "Cannot resize if not owning the storage" );
-
-	// Rehash
 	size_type old_log_size = m_log_size + 1;
 	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
 	using std::swap;
@@ -267,7 +262,6 @@ private:
     size_type m_log_size;
     type * m_table;
     hash_type m_hash;
-    bool m_pre_allocated;
 };
 
 } // namespace graptor
