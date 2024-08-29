@@ -44,9 +44,9 @@ struct array_slice {
     array_slice<type,index_type> trim_range( type lo, type hi ) const {
 	const type * b = begin();
 	const type * e = end();
-	if( lo < front() )
+	if( lo > front() )
 	    b = std::lower_bound( begin(), end(), lo );
-	if( hi > back() )
+	if( hi < back() )
 	    e = std::upper_bound( b, end(), hi );
 	return array_slice<type,index_type>( b, e );
     }
