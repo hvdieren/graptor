@@ -8,6 +8,7 @@
 #include "graptor/mm/mm.h"
 
 #include "graptor/container/hash_set.h"
+#include "graptor/container/hash_set_hopscotch.h"
 #include "graptor/container/hash_table.h"
 #include "graptor/container/intersect.h"
 
@@ -43,7 +44,7 @@ public:
     using Hash = lHash;
     using UnderlyingGraphCSx = UGCSx; // GraphCSx or graptor::graph::GraphCSx<>
     using self_type = GraphHAdj<VID,EID,UnderlyingGraphCSx,Hash>;
-    using hash_set_type = graptor::hash_set<VID,Hash>;
+    using hash_set_type = graptor::hash_set_hopscotch<VID,Hash>;
 
     using vertex_iterator = range_iterator<VID>;
     using edge_iterator = generic_edge_iterator<VID,EID>;
@@ -185,10 +186,10 @@ private:
 };
 #endif
 
-template<bool dual_rep, bool left_base, typename Hash>
+template<bool dual_rep, bool left_base, typename HashSet>
 struct hash_pa_insert_iterator {
     hash_pa_insert_iterator(
-	hash_set<VID,Hash> & table, VID * list, const VID * start )
+	HashSet & table, VID * list, const VID * start )
 	: m_table( table ), m_list( list ), m_start( start ) { }
 
     template<typename LSet, typename RSet>
@@ -240,21 +241,22 @@ struct hash_pa_insert_iterator {
     bool terminated() const { return false; }
 
 private:
-    hash_set<VID,Hash> & m_table;
+    HashSet & m_table;
     VID * m_list;
     const VID * m_start;
 };
 
 template<typename lVID, typename lEID,
 	 bool dual_rep,
-	 typename lHash = std::hash<lVID>>
+	 bool preallocate,
+	 typename lHashSet>
 class GraphHAdjPA {
 public:
+    using self_type = GraphHAdjPA<lVID,lEID,dual_rep,preallocate,lHashSet>;
     using VID = lVID;
     using EID = lEID;
-    using Hash = lHash;
-    using self_type = GraphHAdjPA<VID,EID,dual_rep,Hash>;
-    using hash_set_type = graptor::hash_set<VID,Hash>;
+    using hash_set_type = lHashSet;
+    using Hash = typename hash_set_type::hash_type;
     using hash_table_type = graptor::hash_table<VID,VID,Hash>;
     using ngh_set_type = graptor::array_slice<VID,VID>;
     using dual_set_type = graptor::dual_set<ngh_set_type,hash_set_type>;
@@ -265,41 +267,62 @@ public:
     using const_neighbour_iterator = const VID *;
 
     static constexpr bool has_dual_rep = dual_rep;
+    static constexpr bool preallocate_storage = preallocate;
 
 public:
     explicit GraphHAdjPA( const ::GraphCSx & G,
 			  numa_allocation && alloc ) :
 	m_n( G.numVertices() ),
+	m_index( G.numVertices()+1, alloc ),
 	m_adjacency( G.numVertices(), alloc ) {
+
 	VID n = m_n;
 	const EID * const gindex = G.getIndex();
 	const VID * const gedges = G.getEdges();
 
-	mm::buffer<EID> index_buf( G.numVertices()+1, alloc );
-	EID * index = index_buf.get();
+	EID * index = m_index.get();
 	EID h = 0;
 	parallel_loop( VID(0), n, [&]( VID v ) {
-	    EID deg = gindex[v+1] - gindex[v];
-	    index[v] = /*deg == 0 ? 0 :*/ get_hash_slots( deg );
-	    if constexpr ( dual_rep )
-		index[v] += ( deg == 0 ? 0 : index[v] );
+	    if constexpr ( preallocate_storage ) {
+		EID deg = gindex[v+1] - gindex[v];
+		index[v] = get_hash_slots( deg );
+		if constexpr ( dual_rep )
+		    index[v] += ( deg == 0 ? 0 : index[v] );
+	    } else {
+		if constexpr ( dual_rep )
+		    index[v] = gindex[v];
+		else
+		    index[v] = 0;
+	    }
 	} );
-	index[n] = sequence::plusScan( index, index, n );
+	if constexpr ( preallocate_storage )
+	    index[n] = sequence::plusScan( index, index, n );
+	else
+	    index[n] = gindex[n];
+
+	assert( index[n] == G.numEdges() );
 
 	new ( &m_storage ) mm::buffer<VID>( index[n], alloc );
 	VID * hashes = m_storage.get();
 	parallel_loop( VID(0), n, [&]( VID v ) {
 	    EID deg = gindex[v+1] - gindex[v];
 	    VID s = index[v+1] - index[v];
-	    VID t = dual_rep && deg != 0 ? s/2 : 0;
-	    if constexpr ( dual_rep )
-		if( deg != 0 )
-		    s /= 2;
-	    VID logs = s == 0 ? 0 : rt_ilog2( s );
-	    hash_set_type & a = m_adjacency[v];
-	    new ( &a ) hash_set_type( &hashes[index[v]+t], 0, logs );
-	    // a.clear(); // initialise to invalid element
-	    a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
+	    if constexpr ( preallocate_storage ) {
+		VID t = dual_rep && deg != 0 ? s/2 : 0;
+		if constexpr ( dual_rep )
+		    if( deg != 0 )
+			s /= 2;
+		VID logs = s == 0 ? 0 : rt_ilog2( s );
+		hash_set_type & a = m_adjacency[v];
+		new ( &a ) hash_set_type( &hashes[index[v]+t], 0, logs );
+		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
+	    } else {
+		hash_set_type & a = m_adjacency[v];
+		new ( &a ) hash_set_type();
+		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
+		assert( a.size() == gindex[v+1] - gindex[v] );
+		assert( a.size() == index[v+1] - index[v] );
+	    }
 	    if constexpr ( dual_rep ) {
 		std::copy( &gedges[gindex[v]], &gedges[gindex[v+1]],
 			   &hashes[index[v]] );
@@ -307,7 +330,9 @@ public:
 	    }
 	} );
 
-	index_buf.del();
+	// Discard if not needed
+	if constexpr ( preallocate_storage || !has_dual_rep )
+	    m_index.del();
     }
     // CSxGraphTy: some kind of graph storing neighbour list
     // HGraphTy: some kind of hashed graph
@@ -321,6 +346,8 @@ public:
 	m_n( ce ),
 	m_adjacency( ce, alloc ) {
 	// Constructor taking cut-out and remapping vertex IDs
+
+	assert( preallocate_storage );
 
 	// TODO: allocate using StackLikeAllocator
 	EID h = 0;
@@ -435,7 +462,7 @@ public:
 		if constexpr ( has_dual_rep ) {
 		    // X-P edges: include edges linking to X
 		    if( su >= ne ) { // su is a P vertex
-			hash_pa_insert_iterator<dual_rep,false,Hash>
+			hash_pa_insert_iterator<dual_rep,false,hash_set_type>
 			    out( a, arr, XP );
 			graptor::merge_scalar::intersect<true>(
 			    n, n+deg,	// X+P; shorter list
@@ -445,7 +472,7 @@ public:
 
 		    // P-P edges
 		    // New iterator to count elements already included
-		    hash_pa_insert_iterator<dual_rep,false,Hash>
+		    hash_pa_insert_iterator<dual_rep,false,hash_set_type>
 			out( a, arr+a.size(), XP );
 		    graptor::merge_scalar::intersect<true>(
 			n_start, n+deg, // P; shorter list
@@ -476,7 +503,7 @@ public:
 		VID s = 1 << logs;
 		new ( &a ) hash_set_type(
 		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
-		hash_pa_insert_iterator<dual_rep,true,Hash>
+		hash_pa_insert_iterator<dual_rep,true,hash_set_type>
 		    out( a, &hashes[s_next], XP );
 		graptor::hash_scalar::intersect<true>(
 		    su < ne ? XP+ne : XP, XP+ce,
@@ -490,7 +517,7 @@ public:
 		VID s = 1 << logs;
 		new ( &a ) hash_set_type(
 		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
-		hash_pa_insert_iterator<dual_rep,true,Hash>
+		hash_pa_insert_iterator<dual_rep,true,hash_set_type>
 		    out( a, &hashes[s_next], XP );
 		graptor::hash_scalar::intersect<true>(
 		    su < ne ? XP+ne : XP, XP+ce,
@@ -513,16 +540,24 @@ public:
 	m_adjacency( ce, alloc ) {
 	// Constructor taking cut-out and remapping vertex IDs
 
-	// TODO: allocate using StackLikeAllocator
+	if constexpr ( !preallocate_storage && has_dual_rep )
+	    new ( &m_index ) mm::buffer<EID>( ce+1, alloc );
+
 	EID h = 0;
+	// TODO: allocate using StackLikeAllocator
 	for( VID su=0; su < ce; ++su ) {
 	    VID u = XP[su];
 	    VID deg = std::min( (VID)G.getDegree( u ), ce );
 	    VID s = get_hash_slots( deg );
-	    if constexpr ( has_dual_rep )
-		h += 2 * s;
-	    else
-		h += s;
+	    if constexpr ( preallocate_storage ) {
+		if constexpr ( has_dual_rep )
+		    h += 2 * s;
+		else
+		    h += s;
+	    } else {
+		if constexpr ( has_dual_rep )
+		    h += deg;
+	    }
 	}
 
 	// Note: if this is only called from top level, and in this case
@@ -531,7 +566,8 @@ public:
 	// the adjacency lists of its elements, except in rare circumstances.
 	auto XP_slice = ngh_set_type( XP, XP+ce );
 
-	new ( &m_storage ) mm::buffer<VID>( h, alloc );
+	if constexpr ( preallocate_storage || has_dual_rep )
+	    new ( &m_storage ) mm::buffer<VID>( h, alloc );
 
 	VID * hashes = m_storage.get();
 	EID s_next = 0;
@@ -548,22 +584,41 @@ public:
 	    VID sdeg = std::min( deg, ce );
 	    VID logs = get_log_hash_slots( sdeg );
 	    VID s = 1 << logs;
-	    new ( &a ) hash_set_type(
-		&hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
-	    // Remap values: XP[i] -> i, same as hash table mapping
-	    hash_pa_insert_iterator<dual_rep,true,Hash>
-		out( a, &hashes[s_next], XP );
-	    graptor::set_operations<graptor::hash_scalar>::intersect_ds(
-		u_adj, XP_slice, out );
-	    s_next += has_dual_rep ? 2*s : s;
+
+	    if constexpr ( preallocate_storage ) {
+		new ( &a ) hash_set_type(
+		    &hashes[has_dual_rep?(s_next+s):s_next], 0, logs );
+		// Remap values: XP[i] -> i, same as hash table mapping
+		hash_pa_insert_iterator<dual_rep,true,hash_set_type>
+		    out( a, &hashes[s_next], XP );
+		graptor::set_operations<graptor::hash_scalar>::intersect_ds(
+		    u_adj, XP_slice, out );
+		s_next += has_dual_rep ? 2*s : s;
+	    } else {
+		static_assert( has_dual_rep, "To be completed" );
+		new ( &a ) hash_set_type();
+		// Remap values: XP[i] -> i, same as hash table mapping
+		hash_pa_insert_iterator<dual_rep,true,hash_set_type>
+		    out( a, &hashes[s_next], XP );
+		m_index[ce] = s_next;
+		graptor::set_operations<graptor::hash_scalar>::intersect_ds(
+		    u_adj, XP_slice, out );
+		s_next += a.size();
+	    }
 	}
+
+	if constexpr ( !preallocate_storage )
+	    m_index[ce] = s_next;
     }
 
     GraphHAdjPA( const GraphHAdjPA & ) = delete;
 
     ~GraphHAdjPA() {
 	m_adjacency.del();
-	m_storage.del();
+	if constexpr ( preallocate_storage || has_dual_rep )
+	    m_storage.del();
+	if constexpr ( !preallocate_storage && has_dual_rep )
+	    m_index.del();
     }
 
     VID numVertices() const { return m_n; }
@@ -585,9 +640,12 @@ public:
     hash_set_type & get_adjacency( VID v ) { return m_adjacency[v]; }
 
     const VID * get_neighbours( VID v ) const {
-	if constexpr ( dual_rep )
-	    return m_adjacency[v].get_table() - m_adjacency[v].capacity();
-	else
+	if constexpr ( dual_rep ) {
+	    if constexpr ( preallocate_storage )
+		return m_adjacency[v].get_table() - m_adjacency[v].capacity();
+	    else
+		return &m_storage[m_index[v]];
+	} else
 	    return nullptr;
     }
 
@@ -648,6 +706,7 @@ private:
 private:
     VID m_n;
     mm::buffer<VID> m_storage;
+    mm::buffer<EID> m_index;
     mm::buffer<hash_set_type> m_adjacency;
 };
 
