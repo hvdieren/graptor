@@ -82,7 +82,7 @@ public:
     explicit hash_set_hopscotch( size_t expected_elms = 0 )
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
-	  m_table( new type[(1<<m_log_size)+2*H-1] ),
+	  m_table( new type[(1<<m_log_size)+H-1] ),
 	  m_metadata( new metadata_t[1<<m_log_size] ),
 	  m_hash( m_log_size + bloom_bits ) {
 	clear();
@@ -104,7 +104,7 @@ public:
 
     void clear() {
 	m_elements = 0;
-	std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
+	std::fill( m_table, m_table+capacity()+H-1, invalid_element );
 	std::fill( m_metadata, m_metadata+capacity(), metadata_t(0) );
     }
 
@@ -115,13 +115,14 @@ public:
     const type * get_table() const { return m_table; }
 
     auto begin() const { return m_table; }
-    auto end() const { return m_table+capacity()+H; }
+    auto end() const { return m_table+capacity()+H-1; }
 
     static size_type required_log_size( size_type num_elements ) {
-	// Maintain fill factor of 50% at most
-	// Make sure at least one size of H elements is included
-	// (adding 2 to the log will make the table at least 4H elements).
-	return rt_ilog2( std::max( H, num_elements ) ) + 1;
+	// Fill factor is determined as a consequence of contention within
+	// each group of H buckets.
+	// Make sure at least one size of H buckets is provided. Another
+	// H-1 buckets will be added to help vectorisation.
+	return rt_ilog2( std::max( H, num_elements ) );
     }
 
     bool insert( type value ) {
@@ -187,7 +188,7 @@ public:
 	// Could not identify a free bucket close enough to the home_index.
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
-	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
+	type * old_table = new type[(size_type(1)<<old_log_size) + H-1];
 	metadata_t * old_metadata = new metadata_t[size_type(1)<<old_log_size];
 	using std::swap;
 	swap( old_log_size, m_log_size );
