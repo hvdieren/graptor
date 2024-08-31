@@ -464,11 +464,20 @@ public:
 	return setzero();
     }
     static member_type reduce_add( type val ) {
-	assert( VL == 16 && "NYI - only correct VL16" );
-	type p = pruneVL( val );
-	type s = _mm_hadd_epi16( p, p );
-	type t = _mm_hadd_epi16( s, s );
-	return lane0( t ) + lane1( t );
+	if constexpr ( VL == 16 && std::is_unsigned_v<member_type> ) {
+	    // type p = pruneVL( val );
+	    // type s = _mm_hadd_epi16( p, p );
+	    // type t = _mm_hadd_epi16( s, s );
+	    // return lane0( t ) + lane1( t );
+	    type p = _mm_sad_epu8( val, setzero() );
+	    type q = _mm_shuffle_epi32( p, 0b00001000);
+	    type r = _mm_hadd_epi32( q, q );
+	    return _mm_extract_epi32( r, 0 );
+	} else if constexpr ( VL == 8 && std::is_unsigned_v<member_type> ) {
+	    type p = _mm_sad_epu8( val, setzero() );
+	    return _mm_extract_epi32( p, 0 );
+	}
+	assert( "NYI" );
     }
     static member_type reduce_add( type val, mask_type mask ) {
 	assert( 0 && "NYI" );
