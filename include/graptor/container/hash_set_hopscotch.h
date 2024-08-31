@@ -41,7 +41,12 @@ public:
     static constexpr size_type H = 32 / sizeof( type );
 #endif
 
-    static constexpr size_type DH = std::min( size_type(16), H ); // at least SSE4 vector
+    using bitmask_t = int_type_of_size_t<H/8>;
+
+    //! Padding for bitmask vector.
+    // A bitmask vector should be at least an SSE4 vector as a 1x8 vector
+    // (H=8) is implemented with SSE4 operations.
+    static constexpr size_type DH = std::min( size_type(16), H );
 
     using tr = vector_type_traits_vl<type,H>;
     using vtype = typename tr::type;
@@ -53,9 +58,9 @@ public:
     using mkind = target::mt_vmask;
 #endif
 
-    // Vector access to delta's
-    using dtr = vector_type_traits_vl<uint8_t,H>;
-    using dvtype = typename dtr::type;
+    // Vector access to bitmask
+    using btr = vector_type_traits_vl<bitmask_t,H>;
+    using bvtype = typename btr::type;
 
     static constexpr type invalid_element = ~type(0);
 
@@ -64,7 +69,7 @@ public:
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[(1<<m_log_size)+2*H-1] ),
-	  m_delta( new uint8_t[(1<<m_log_size)+2*DH-1]+DH ),
+	  m_bitmask( new bitmask_t[(1<<m_log_size)+2*DH-1]+DH ),
 	  m_hash( m_log_size ) {
 	clear();
     }
@@ -80,13 +85,13 @@ public:
 
     ~hash_set_hopscotch() {
 	delete[] m_table;
-	delete[] ( m_delta - DH );
+	delete[] ( m_bitmask - DH );
     }
 
     void clear() {
 	m_elements = 0;
 	std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
-	std::fill( m_delta-DH, m_delta+capacity()+DH-1, uint8_t(0) );
+	std::fill( m_bitmask-DH, m_bitmask+capacity()+DH-1, bitmask_t(0) );
     }
 
     size_type size() const { return m_elements; }
@@ -120,20 +125,13 @@ public:
 	if( !tr::is_zero( tr::cmpeq( data, v, target::mt_vmask() ) ) )
 	    return false; // do not insert if already present
 
-	// Locate the end of the linked list
-	size_type tail_index = find_tail( index );
-
 	// Try to find an empty slot in the next H buckets.
 	typename tr::mask_type e = tr::cmpeq( data, vinv, target::mt_mask() );
 	if( e != 0 ) {
 	    size_type lane = tr::mask_traits::tzcnt( e );
 	    index += lane;
 	    m_table[index] = value;
-	    // If home_index == tail_index and != index, set first delta
-	    // on home_index; otherwise set next delta on tail_index.
-	    set_delta( tail_index, // which cell
-		       home_index == tail_index, // first (true) or next (false)
-		       index - tail_index ); // delta
+	    set_bitmask( home_index, index );
 	    ++m_elements;
 	    return true;
 	}
@@ -154,7 +152,7 @@ public:
 	    size_type free_index = index + lane;
 
 	    // Do the hopscotch trick
-	    index = hopscotch_move( value, home_index, tail_index, free_index );
+	    index = hopscotch_move( value, home_index, free_index );
 
 	    // Only if we found a moveable element...
 	    if( ~index != size_type(0) ) {
@@ -162,12 +160,7 @@ public:
 		assert( m_table[index] == invalid_element );
 
 		m_table[index] = value;
-		if( tail_index < index )
-		    set_delta( tail_index, // which cell
-			       home_index == tail_index, // first (true) or next
-			       index - tail_index ); // delta
-		else
-		    insert_in_list( home_index, home_index, index );
+		set_bitmask( home_index, index );
 		++m_elements;
 		return true;
 	    }
@@ -177,11 +170,11 @@ public:
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
 	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
-	uint8_t * old_delta = new uint8_t[(size_type(1)<<old_log_size) + 2*DH-1] + DH;
+	bitmask_t * old_bitmask = new bitmask_t[(size_type(1)<<old_log_size) + 2*DH-1] + DH;
 	using std::swap;
 	swap( old_log_size, m_log_size );
 	swap( old_table, m_table );
-	swap( old_delta, m_delta );
+	swap( old_bitmask, m_bitmask );
 	clear(); // sets m_elements=0; will be reset when rehashing
 
 	size_type old_size = size_type(1) << old_log_size;
@@ -190,7 +183,7 @@ public:
 	    if( old_table[i] != invalid_element )
 		insert( old_table[i] );
 	delete[] old_table;
-	delete[] ( old_delta - DH );
+	delete[] ( old_bitmask - DH );
 
 	// Retry insertion. Hope for tail recursion optimisation.
 	return insert( value );
@@ -233,35 +226,51 @@ public:
 
 	const vtype zero = tr::setzero();
 	const vtype ones = tr::setone();
-	const vtype one = tr::setoneval();
+	// const vtype one = tr::setoneval();
 	const vtype hmask = tr::srli( ones, tr::B - m_log_size );
+	const vtype hi = tr::srli( ones, 1 );
 
+#if 0
+	vtype hval = m_hash.template vectorized<VL>( v );
+	vtype home_index = tr::bitwise_and( hval, hmask );
+	vtype vidx = home_index;
+
+	mtype notfound = mtr::setone();
+
+	for( size_type h=0; h < H; ++h ) {
+	    vtype e = tr::gather( m_table+h, vidx );
+	    notfound = mtr::logical_and( notfound, tr::cmpne( e, v, mkind() ) );
+	}
+#else
 	vtype hval = m_hash.template vectorized<VL>( v );
 	vtype home_index = tr::bitwise_and( hval, hmask );
 	vtype vidx = home_index;
 
 	vtype e = tr::gather( m_table, vidx );
-	vtype d = vget_delta<VL>( vidx, true, mtr::setone() );
+	// Aligns bitmask to top such that sllv+slli drops consumed bits
+	vtype b = vget_bitmask<VL>( vidx );
 	mtype notfound = tr::cmpne( e, v, mkind() );
-	mtype hasmore = tr::cmpne( d, zero, mkind() );
-	mtype active = mtr::logical_and( notfound, hasmore );
+	mtype active = tr::cmpne( notfound, b, zero, mkind() );
+
+	b = tr::srli( b, 1 ); // helps to count +1 for the position of 1-bit
 
 	while( !mtr::is_zero( active ) ) {
-	    vidx = tr::add( vidx, d );
+	    vtype off = tr::lzcnt( b );
+	    vidx = tr::add( vidx, off );
 	    e = tr::gather( m_table, vidx, active );
-	    d = vget_delta<VL>( vidx, false, active );
-	    notfound = mtr::logical_and( notfound, tr::cmpne( e, v, mkind() ) );
-	    hasmore = tr::cmpne( d, zero, mkind() );
-	    active = mtr::logical_and( notfound, hasmore );
+	    b = tr::sllv( b, off );
+	    b = tr::bitwise_and( b, hi ); // disable 1-bit in top position
+	    notfound = tr::cmpne( notfound, e, v, mkind() );
+	    active = tr::cmpne( notfound, b, zero, mkind() );
 	}
+#endif
 
-	mtype found = tr::bitwise_invert( notfound );
 	if constexpr ( std::is_same_v<MT,mkind> )
-	    return found;
+	    return mtr::logical_invert( notfound );
 	else if constexpr ( std::is_same_v<MT,target::mt_mask> )
-	    return tr::asmask( found );
+	    return tr::mask_traits::logical_invert( tr::asmask( notfound ) );
 	else
-	    return tr::asvector( found );
+	    return tr::asvector( mtr::logical_invert( notfound ) );
     }
 
     template<typename Fn>
@@ -273,8 +282,7 @@ public:
 
 private:
     size_type
-    hopscotch_move( type v, size_type home_index, size_type tail_index,
-		    size_type free_index ) {
+    hopscotch_move( type v, size_type home_index, size_type free_index ) {
 	while( free_index - home_index >= H ) {
 	    bool fnd = false;
 	    for( size_type b=0; b < H-1; ++b ) {
@@ -283,36 +291,7 @@ private:
 		    size_type h = m_hash( m_table[idx] ) & ( capacity() - 1 );
 		    // Element is movable
 		    if( ( free_index - h ) < H ) {
-			// Unlink element at idx from its list
-			size_type pred = find_predecessor( h, idx );
-			size_type idx_delta = get_delta( idx, idx == h );
-			size_type succ = idx + idx_delta;
-			if( pred != idx ) {
-			    size_type pred_delta =
-				idx_delta != 0 ? succ - pred : 0;
-			    set_delta( pred, pred == h, pred_delta );
-			}
-			// Reinsert into list
-			insert_in_list( h, pred, free_index );
-
-			// Empty slot is not in any linked list, however,
-			// a new list should be rooted here if idx == h.
-			set_deltas_moved( h, idx, free_index - idx );
-
-			// Alternative view
-			// free_index and h are no more than H apart, hence
-			// can load vector to look at delta's over this range.
-			// Then we can get a mask of which elements belong to
-			// our linked list, adding idx to it. Can do this based
-			// on hash_fn. Better?
-			// Then recalculate delta's from indices
-			//
-			// The element at position idx is moved to free_index
-			// The problem with maintaining linked list are elements
-			// between idx and free_index, which exist only if
-			// next_delta(idx) != 0 OR h == idx and first_delta(idx) != 0
-			// Can turn bitmask of our positions into a sequence
-			// of delta's using repeated application of bsf
+			move_bitmask( h, idx, free_index );
 
 			m_table[free_index] = m_table[idx];
 			m_table[idx] = invalid_element; // redundant
@@ -329,122 +308,44 @@ private:
 	return free_index;
     }
 
-    size_type find_tail( size_type idx ) const {
-	size_type delta = get_delta( idx, true );
-	while( delta != 0 ) {
-	    idx += delta;
-	    delta = get_delta( idx, false );
-	}
-	return idx;
-    }
-
-    size_type find_predecessor( size_type home_index, size_type idx ) const {
-#if 1
-	size_type home_delta = get_delta( home_index, true );
-	if( home_index + home_delta == idx )
-	    return home_index;
-
-	// Note that the first lane receives H, which may not fit in a nibble.
-	// This is however OK, it will never match an extracted nibble.
-	// There is always one lane that cannot match, either the first lane
-	// as done here, or the final lane (which is idx). An empty bucket
-	// at idx, however, would have next delta equal to zero and look like
-	// a match, which we need to avoid.
-	const dvtype vH = dtr::set1( H );	// H,   H,   H, ...,   H
-	const dvtype inc = dtr::set1inc0();	// 0,   1,   2, ..., H-1
-	const dvtype dec = dtr::sub( vH, inc );	// H, H-1, H-2, ...,   1
-	const dvtype msk = dtr::srli( dtr::setone(), 4 ); // 0xf repeated
-	dvtype fn = dtr::loadu( &m_delta[idx] - H ); // unsigned ...
-	dvtype lo = dtr::bitwise_and( fn, msk );
-	dvtype eqlo = dtr::cmpeq( lo, dec, target::mt_vmask() );
-	dvtype val = dtr::bitwise_and( eqlo, dec );
-	size_type delta = dtr::reduce_add( val );
-	return idx - delta;
-#else
-	size_type bmax = std::min( H, idx+1 );
-	for( size_type b=1; b < bmax; ++b ) {
-	    if( get_delta( idx - b, home_index == idx - b ) == b )
-		return idx - b;
-	}
-	return idx;
-#endif
-    }
-
-    void insert_in_list( size_type home_index,
-			 size_type pred_index,
-			 size_type pos ) {
-	while( true ) {
-	    size_type succ =
-		pred_index + get_delta( pred_index, pred_index == home_index );
-	    if( succ == pred_index ) {
-		// succ is tail; just append
-		set_delta( succ, succ == home_index, pos - succ );
-		break;
-	    } else if( succ > pos ) {
-		// Create list pred_index -> pos -> succ
-		set_delta( pred_index, pred_index == home_index,
-			   pos - pred_index );
-		set_delta( pos, false, succ - pos );
-		break;
-	    } else {
-		pred_index = succ;
-	    }
+    void set_bitmask( size_type home_index, size_type index ) {
+	if( index != home_index ) {
+	    size_type pos = 8*sizeof(bitmask_t) - ( index - home_index );
+	    m_bitmask[home_index] |= bitmask_t(1) << pos;
 	}
     }
 
-    size_type get_delta( size_type idx, bool get_first ) const {
-	assert( idx < capacity()+H-1 );
-	size_type shift = get_first ? 4 : 0;
-	uint8_t d = ( m_delta[idx] >> shift ) & uint8_t(0xfu);
-	assert( d < H );
-	return d;
+    void move_bitmask( size_type home_index,
+		       size_type erase_index,
+		       size_type add_index ) {
+	bitmask_t b = m_bitmask[home_index];
+	size_type epos = 8*sizeof(bitmask_t) - ( erase_index - home_index );
+	size_type apos = 8*sizeof(bitmask_t) - ( add_index - home_index );
+	b &= ~( bitmask_t(1) << epos );
+	b |= bitmask_t(1) << apos;
+	m_bitmask[home_index] = b;
     }
 
-    void set_delta( size_type idx, bool set_first, size_type delta ) {
-	assert( idx < capacity()+H-1 );
-	assert( delta < H );
-	size_type shift = set_first ? 4 : 0;
-	uint8_t fld = uint8_t(delta) << shift;
-	uint8_t mask = uint8_t(0xf0u) >> shift;
-	m_delta[idx] = ( m_delta[idx] & mask ) | fld;
-    }
-
-    void set_deltas_moved( size_type home_index,
-			   size_type index,
-			   size_type delta ) {
-	// Set deltas corresponding to moving item at index, with home index
-	// home_index over a distance of delta.
-	// If index is the home_index, then set first delta to delta and
-	// clear next delta.
-	// Otherwise, clear next delta.
-	size_type d = home_index == index ? ( delta << 4 ) : 0;
-	m_delta[index] = d;
-    }
-
-    template<unsigned short VL, typename M>
+    template<unsigned short VL>
     typename vector_type_traits_vl<type,VL>::type
-    vget_delta( typename vector_type_traits_vl<type,VL>::type idx,
-		bool get_first, M active ) const {
+    vget_bitmask( typename vector_type_traits_vl<type,VL>::type idx ) const {
 	using tr = vector_type_traits_vl<type,VL>;
 	using vtype = typename tr::type;
 
-	vtype raw = tr::template gather_w<1>(
-	    reinterpret_cast<const type *>( m_delta ), idx, active );
+	vtype raw = tr::template gather_w<sizeof(bitmask_t)>(
+	    reinterpret_cast<const type *>( m_bitmask ), idx );
 
-	if( get_first )
-	    raw = tr::srli( raw, 4 );
+	// Place bitmask top-aligned in lane
+	vtype bitmask = tr::slli( raw, tr::B - 8*sizeof(bitmask_t) );
 
-	const vtype mask = tr::srli( tr::setone(), tr::B - 4 );
-	vtype delta = tr::bitwise_and( raw, mask );
-
-	return delta;
+	return bitmask;
     }
 
 private:
     size_type m_elements;
     size_type m_log_size;
     type * m_table;
-    uint8_t * m_delta;
+    bitmask_t * m_bitmask;
     hash_type m_hash;
 };
 
