@@ -71,6 +71,9 @@ struct mask_type_traits<8> {
     static uint32_t tzcnt( type m ) {
 	return _tzcnt_u32( m );
     }
+    static uint32_t lzcnt( type m ) {
+	return _lzcnt_u32( m ) - 24;
+    }
 
     static type blend( type c, type no, type yes ) {
 	return ( ~c & no ) | ( c & yes );
