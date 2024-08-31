@@ -156,6 +156,7 @@
 
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
+#include "graptor/container/hash_set_hopscotch.h"
 #include "graptor/container/intersect.h"
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
@@ -183,13 +184,15 @@ static std::vector<graptor::binary_vfdt<
 
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
+using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
+// using hash_set_type2 = graptor::hash_set<VID,hash_fn>;
 
 #if ABLATION_HADJPA_DISABLE_XP_HASH
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,false,hash_set_type>;
 #else
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,false,hash_set_type>;
 #endif
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,false,hash_set_type>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::PSet;
@@ -1118,8 +1121,8 @@ auto make_alternative_selector( Fn && ... fn ) {
 template<typename GraphType>
 class GraphBuilderInduced;
 
-template<typename VID, typename EID, bool dual_rep, typename Hash>
-class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash>> {
+template<typename VID, typename EID, bool dual_rep, bool preallocate, typename HashSet>
+class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,HashSet>> {
 public:
     template<typename HGraph>
     GraphBuilderInduced(
@@ -1161,7 +1164,7 @@ public:
     VID get_start_pos() const { return start_pos; }
 
 private:
-    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash> S;
+    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,HashSet> S;
     VID start_pos;
 };
 
