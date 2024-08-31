@@ -300,8 +300,6 @@ public:
 	else
 	    index[n] = gindex[n];
 
-	assert( index[n] == G.numEdges() );
-
 	new ( &m_storage ) mm::buffer<VID>( index[n], alloc );
 	VID * hashes = m_storage.get();
 	parallel_loop( VID(0), n, [&]( VID v ) {
