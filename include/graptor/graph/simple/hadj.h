@@ -316,7 +316,7 @@ public:
 		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 	    } else {
 		hash_set_type & a = m_adjacency[v];
-		new ( &a ) hash_set_type();
+		new ( &a ) hash_set_type( deg ); // size hint
 		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
 		assert( a.size() == gindex[v+1] - gindex[v] );
 		assert( a.size() == index[v+1] - index[v] );
