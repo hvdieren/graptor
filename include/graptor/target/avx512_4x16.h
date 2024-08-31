@@ -491,7 +491,7 @@ public:
 	}
     }
 
-    template<typename ReturnTy>
+    template<typename ReturnTy = member_type>
     static auto lzcnt( type a ) {
 #if __AVX512CD__
 	type cnt = _mm512_lzcnt_epi32( a );
