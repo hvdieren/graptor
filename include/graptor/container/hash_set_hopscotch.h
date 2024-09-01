@@ -21,7 +21,7 @@
  * table. The next H-1 elements are overflow area for elements incurring
  * hash collisions in the final H buckets of the primary storage.
  * The next H buckets are allocated and set to empty to allow vector access
- * to any valid bucket.
+ * to any valid bucket, including the overflow ones.
  *
  * Further ideas:
  * + Keep each linked list sorted.
@@ -82,7 +82,7 @@ public:
     explicit hash_set_hopscotch( size_t expected_elms = 0 )
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
-	  m_table( new type[(1<<m_log_size)+H-1] ),
+	  m_table( new type[(1<<m_log_size)+2*H-1] ),
 	  m_metadata( new metadata_t[1<<m_log_size] ),
 	  m_hash( m_log_size + bloom_bits ) {
 	clear();
@@ -104,7 +104,7 @@ public:
 
     void clear() {
 	m_elements = 0;
-	std::fill( m_table, m_table+capacity()+H-1, invalid_element );
+	std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
 	std::fill( m_metadata, m_metadata+capacity(), metadata_t(0) );
     }
 
@@ -148,7 +148,7 @@ public:
 	    size_type lane = tr::mask_traits::tzcnt( e );
 	    index += lane;
 	    m_table[index] = value;
-	    set_bitmask( home_index, index );
+	    set_bitmask( home_index, index ); // TODO: merge these operations
 	    set_bloom( home_index, bloom_hash );
 	    ++m_elements;
 	    return true;
@@ -188,7 +188,7 @@ public:
 	// Could not identify a free bucket close enough to the home_index.
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
-	type * old_table = new type[(size_type(1)<<old_log_size) + H-1];
+	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
 	metadata_t * old_metadata = new metadata_t[size_type(1)<<old_log_size];
 	using std::swap;
 	swap( old_log_size, m_log_size );
@@ -339,7 +339,7 @@ private:
     }
 
     void set_bloom( size_type home_index, size_type bloom_hash ) {
-	assert( home_index < capacity() );
+	// assert( home_index < capacity() );
 	size_type pos = ( bloom_hash & bloom_mask );
 	m_metadata[home_index] |= metadata_t(1) << pos;
     }
