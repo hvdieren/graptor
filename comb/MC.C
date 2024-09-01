@@ -157,6 +157,7 @@
 #include "graptor/container/bitset.h"
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/hash_set_hopscotch.h"
+#include "graptor/container/hash_set_hopscotch_delta.h"
 #include "graptor/container/intersect.h"
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
@@ -184,15 +185,28 @@ static std::vector<graptor::binary_vfdt<
 
 //! Choice of hash function for compilation unit
 using hash_fn = graptor::rand_hash<uint32_t>;
+
+#ifndef HOPSCOTCH_HASHING
+#define HOPSCOTCH_HASHING 2
+#endif
+
+#if HOPSCOTCH_HASHING == 1
 using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
-// using hash_set_type2 = graptor::hash_set<VID,hash_fn>;
+static constexpr bool hash_set_prealloc = false;
+#elif HOPSCOTCH_HASHING == 2
+using hash_set_type = graptor::hash_set_hopscotch_delta<VID,hash_fn>;
+static constexpr bool hash_set_prealloc = false;
+#else
+using hash_set_type = graptor::hash_set<VID,hash_fn>;
+static constexpr bool hash_set_prealloc = true;
+#endif
 
 #if ABLATION_HADJPA_DISABLE_XP_HASH
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,false,hash_set_type>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_set_prealloc,hash_set_type>;
 #else
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,false,hash_set_type>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,hash_set_type>;
 #endif
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,false,hash_set_type>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,hash_set_type>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::PSet;
@@ -3986,6 +4000,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tPROFILE_DENSITY=" << PROFILE_DENSITY
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
+	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
 	      << "\n\tdensity_threshold=" << density_threshold
 	      << '\n';
     
