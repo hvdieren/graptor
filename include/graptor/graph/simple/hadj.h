@@ -9,6 +9,7 @@
 
 #include "graptor/container/hash_set.h"
 #include "graptor/container/hash_set_hopscotch.h"
+#include "graptor/container/hash_set_hopscotch_delta.h"
 #include "graptor/container/hash_table.h"
 #include "graptor/container/intersect.h"
 
@@ -316,10 +317,14 @@ public:
 		hash_set_type & a = m_adjacency[v];
 		new ( &a ) hash_set_type( &hashes[index[v]+t], 0, logs );
 		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
+		if constexpr ( graptor::is_hash_set_hopscotch_delta_v<hash_set_type> )
+		    a.finalise();
 	    } else {
 		hash_set_type & a = m_adjacency[v];
 		new ( &a ) hash_set_type( deg ); // size hint
 		a.insert( &gedges[gindex[v]], &gedges[gindex[v+1]] );
+		if constexpr ( graptor::is_hash_set_hopscotch_delta_v<hash_set_type> )
+		    a.finalise();
 		assert( a.size() == gindex[v+1] - gindex[v] );
 		assert( a.size() == index[v+1] - index[v] );
 	    }
@@ -593,16 +598,20 @@ public:
 		    out( a, &hashes[s_next], XP );
 		graptor::set_operations<graptor::hash_scalar>::intersect_ds(
 		    u_adj, XP_slice, out );
+		if constexpr ( graptor::is_hash_set_hopscotch_delta_v<hash_set_type> )
+		    a.finalise();
 		s_next += has_dual_rep ? 2*s : s;
 	    } else {
 		static_assert( has_dual_rep, "To be completed" );
-		new ( &a ) hash_set_type();
+		new ( &a ) hash_set_type( deg ); // size hint
 		// Remap values: XP[i] -> i, same as hash table mapping
 		hash_pa_insert_iterator<dual_rep,true,hash_set_type>
 		    out( a, &hashes[s_next], XP );
 		m_index[ce] = s_next;
 		graptor::set_operations<graptor::hash_scalar>::intersect_ds(
 		    u_adj, XP_slice, out );
+		if constexpr ( graptor::is_hash_set_hopscotch_delta_v<hash_set_type> )
+		    a.finalise();
 		s_next += a.size();
 	    }
 	}
