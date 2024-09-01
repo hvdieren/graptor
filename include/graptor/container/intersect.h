@@ -828,6 +828,144 @@ struct merge_vector;
 struct merge_scalar_jump;
 struct merge_vector_jump;
 
+/*! Describes a set_operation and its arguments and allows to create
+ *  a suitable collector
+ *
+ * This is the default version of the class which includes a collector
+ *
+ * \tparam op the set_operation to apply
+ * \tparam Collector a pre-defined collector, if relevant to the operation
+ */
+template<set_operation op, typename Collector>
+struct intersection_task {
+    static constexpr set_operation operation = op;
+
+    intersection_task( Collector & c ) : m_collector( c ) { }
+
+    template<typename so_traits, typename LSet, typename RSet>
+    auto & create_collector( LSet && lset, RSet && rset ) {
+	return m_collector;
+    }
+
+    auto return_value_empty_set() { return m_collector.return_value(); }
+
+private:
+    Collector & m_collector;
+};
+
+/*! Specialisation for so_intersect_gt
+ */
+template<typename type>
+struct intersection_task<so_intersect_gt,type> {
+    static constexpr set_operation operation = so_intersect_gt;
+
+    intersection_task( type * pointer, size_t threshold )
+	: m_pointer( pointer ), m_threshold( threshold ) { }
+
+    template<typename so_traits, typename LSet, typename RSet>
+    auto create_collector( LSet && lset, RSet && rset ) {
+	return intersection_collector_gt<typename std::decay_t<LSet>::type>(
+	    m_pointer, lset, rset, m_threshold );
+    }
+
+    type * return_value_empty_set() { return m_pointer; }
+
+private:
+    type * m_pointer;
+    size_t m_threshold;
+};
+
+/*! Specialisation for so_intersect_size
+ */
+template<>
+struct intersection_task<so_intersect_size,void> {
+    static constexpr set_operation operation = so_intersect_size;
+
+    template<typename so_traits, typename LSet, typename RSet>
+    auto create_collector( LSet && lset, RSet && rset ) {
+	return intersection_size<typename std::decay_t<LSet>::type>();
+    }
+
+    size_t return_value_empty_set() { return 0; }
+};
+
+/*! Specialisation for so_intersect_size_gt_val
+ */
+template<>
+struct intersection_task<so_intersect_size_gt_val,void> {
+    static constexpr set_operation operation = so_intersect_size_gt_val;
+
+    intersection_task( size_t threshold ) : m_threshold( threshold ) { }
+
+    template<typename so_traits, typename LSet, typename RSet>
+    auto create_collector( LSet && lset, RSet && rset ) {
+	// Two-sided operation has no merit for hashed representations
+	// as we cannot count missed opportunites in the RHS.
+	// Although this may work differently for a dual representation where
+	// we can cheaply relate the hashed data structure to the sequential
+	// representation.
+	if constexpr ( std::is_same_v<so_traits,hash_scalar>
+		       || std::is_same_v<so_traits,hash_vector> ) {
+	    return intersection_size_gt_val<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+	} else {
+#if INTERSECT_ONE_SIDED
+	    return intersection_size_gt_val<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+#else
+	    return intersection_size_gt_val_two_sided<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+#endif
+	}
+    }
+
+    size_t return_value_empty_set() { return 0; }
+
+private:
+    size_t m_threshold;
+};
+
+/*! Specialisation for so_intersect_size_ge
+ */
+template<>
+struct intersection_task<so_intersect_size_ge,void> {
+    static constexpr set_operation operation = so_intersect_size_ge;
+
+    intersection_task( size_t threshold ) : m_threshold( threshold ) { }
+
+    template<typename so_traits, typename LSet, typename RSet>
+    auto create_collector( LSet && lset, RSet && rset ) {
+	// Two-sided operation has no merit for hashed representations
+	// as we cannot count missed opportunites in the RHS.
+	// Although this may work differently for a dual representation where
+	// we can cheaply relate the hashed data structure to the sequential
+	// representation.
+	if constexpr ( std::is_same_v<so_traits,hash_scalar>
+		       || std::is_same_v<so_traits,hash_vector> ) {
+	    return intersection_size_ge<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+	} else {
+#if INTERSECT_ONE_SIDED
+	    return intersection_size_ge<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+#else
+	    return intersection_size_ge_two_sided<
+		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
+#endif
+	}
+    }
+
+    bool return_value_empty_set() { return m_threshold == 0; }
+
+private:
+    size_t m_threshold;
+};
+
+template<set_operation op, typename Collector>
+auto create_intersection_task( Collector & c ) {
+    return intersection_task<op,Collector>( c );
+}
+
 template<typename so_traits>
 struct set_operations {
 
@@ -847,11 +985,11 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector<false,typename std::decay_t<LSet>::type>
 		cout( out );
-	    apply<so_intersect>( lset, rset, cout );
-	    return cout.return_value();
+	    auto task = create_intersection_task<so_intersect>( cout );
+	    return apply( lset, rset, task );
 	} else {
-	    apply<so_intersect>( lset, rset, out );
-	    return out;
+	    auto task = create_intersection_task<so_intersect>( out );
+	    return apply( lset, rset, task );
 	}
     }
 
@@ -870,13 +1008,14 @@ struct set_operations {
 	// for storing intersection with pointer or with a custom class.
 	if constexpr ( std::is_same_v<std::decay_t<Collector>,
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
-	    intersection_collector_gt<typename std::decay_t<LSet>::type>
-		cout( out, lset, rset, threshold );
-	    apply<so_intersect>( lset, rset, cout );
-	    return cout.return_value();
+	    using type = typename std::decay_t<LSet>::type;
+	    intersection_task<so_intersect_gt,type> task( out, threshold );
+	    return apply( lset, rset, task );
 	} else {
-	    apply<so_intersect>( lset, rset, out );
-	    return out;
+	    // In the case of a custom collector, we cannot guarantee the
+	    // ability to apply the threshold.
+	    auto task = create_intersection_task<so_intersect>( out );
+	    return apply( lset, rset, task );
 	}
     }
 
@@ -896,11 +1035,11 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    intersection_collector<true,typename std::decay_t<LSet>::type>
 		cout( out );
-	    apply<so_intersect_xlat>( lset, rset, cout );
-	    return cout.return_value();
+	    auto task = create_intersection_task<so_intersect_xlat>( cout );
+	    return apply( lset, rset, task );
 	} else {
-	    apply<so_intersect_xlat>( lset, rset, out );
-	    return out;
+	    auto task = create_intersection_task<so_intersect_xlat>( out );
+	    return apply( lset, rset, task );
 	}
     }
 
@@ -913,9 +1052,8 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 	
-	intersection_size<typename std::decay_t<LSet>::type> out;
-	apply<so_intersect_size>( lset, rset, out );
-	return out.return_value();
+	intersection_task<so_intersect_size,void> task;
+	return apply( lset, rset, task );
     }
 
     template<typename LSet, typename RSet>
@@ -926,29 +1064,9 @@ struct set_operations {
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
-	
-	// Two-sided operation has no merit for hashed representations
-	// as we cannot count missed opportunites in the RHS.
-	// Although this may work differently for a dual representation where
-	// we can cheaply relate the hashed data structure to the sequential
-	// representation.
-	if constexpr ( std::is_same_v<so_traits,hash_scalar>
-		       || std::is_same_v<so_traits,hash_vector> ) {
-	    intersection_size_gt_val<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_gt_val>( lset, rset, out );
-	    return out.return_value();
-	} else {
-#if INTERSECT_ONE_SIDED
-	    intersection_size_gt_val<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-#else
-	    intersection_size_gt_val_two_sided<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-#endif
-	    apply<so_intersect_size_gt_val>( lset, rset, out );
-	    return out.return_value();
-	}
+
+	intersection_task<so_intersect_size_gt_val,void> task( threshold );
+	return apply( lset, rset, task );
     }
 
     template<typename LSet, typename RSet>
@@ -959,39 +1077,18 @@ struct set_operations {
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
-	
-	// Two-sided operation has no merit for hashed representations
-	// as we cannot count missed opportunites in the RHS.
-	// Although this may work differently for a dual representation where
-	// we can cheaply relate the hashed data structure to the sequential
-	// representation.
-	if constexpr ( std::is_same_v<so_traits,hash_scalar>
-		       || std::is_same_v<so_traits,hash_vector> ) {
-	    intersection_size_ge<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-	    apply<so_intersect_size_gt_val>( lset, rset, out );
-	    return out.return_value();
-	} else {
-#if INTERSECT_ONE_SIDED
-	    intersection_size_ge_two_sided<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-#else
-	    intersection_size_ge<
-		typename std::decay_t<LSet>::type> out( lset, rset, threshold );
-#endif
-	    apply<so_intersect_size_gt_val>( lset, rset, out );
-	    return out.return_value();
-	}
+
+	intersection_task<so_intersect_size_gt_val,void> task( threshold );
+	return apply( lset, rset, task );
     }
 
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
-    void
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
-	    return;
+	    return task.return_value_empty_set();
 
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
@@ -1000,10 +1097,8 @@ struct set_operations {
 	// There is no benefit in trimming the end of the range for merge
 	// intersections, although there is for hash intersection.
 	auto tlset = lset.trim_front( rset.front() );
-
-	out.swap( tlset, rset );
 #endif
-	so_traits::template apply<so>( tlset, rset, out );
+	return so_traits::apply( tlset, rset, task );
     }
 };
 
@@ -1057,12 +1152,13 @@ struct merge_scalar {
 	intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
-	return intersect_task<so,true>( lset, rset, out );
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out = task.template create_collector<merge_scalar>( lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 
     template<typename It, typename Ot>
@@ -1205,12 +1301,14 @@ struct merge_scalar_jump {
 	intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
-	return intersect_task<so,true>( lset, rset, out );
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out =
+	    task.template create_collector<merge_scalar_jump>( lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 
 
@@ -1524,12 +1622,14 @@ struct merge_vector_jump {
 	merge_scalar::intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
-	return intersect_task<so,true>( lset, rset, out );
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out =
+	    task.template create_collector<merge_vector_jump>( lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 };
 
@@ -1591,32 +1691,41 @@ struct hash_scalar {
 	intersect_task<so,rhs>( lb, le, rset, out );
     }
 
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    apply( LSet && lset, RSet && rset, Task & task ) {
 	static_assert( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       && is_hash_set_v<std::decay_t<RSet>> ) {
-	    if( lset.size() <= rset.size() )
-		return intersect_task<so,true>( lset, rset, out );
-	    else {
-		out.swap( rset, lset );
-		return intersect_task<so,false>( rset, lset, out );
+	    if( lset.size() <= rset.size() ) {
+		auto out = task.template create_collector<hash_scalar>(
+		    lset, rset );
+		intersect_task<Task::operation,true>( lset, rset, out );
+		return out.return_value();
+	    } else {
+		auto out = task.template create_collector<hash_scalar>(
+		    rset, lset );
+		intersect_task<Task::operation,false>( rset, lset, out );
+		return out.return_value();
 	    }
 	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
-	    return intersect_task<so,true>( lset, rset, out );
+	    auto out = task.template create_collector<hash_scalar>(
+		lset, rset );
+	    intersect_task<Task::operation,true>( lset, rset, out );
+	    return out.return_value();
 	} else {
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
 	    auto trset = rset.trim_front( lset.front() );
 #endif
-	    out.swap( trset, lset );
-	    return intersect_task<so,false>( trset, lset, out );
+	    auto out = task.template create_collector<hash_scalar>(
+		trset, lset );
+	    intersect_task<Task::operation,false>( trset, lset, out );
+	    return out.return_value();
 	}
     }
     
@@ -1790,31 +1899,41 @@ struct hash_scalar_jump {
 	intersect_task<so,rhs>( lb, le, rset, out );
     }
 
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    apply( LSet && lset, RSet && rset, Task & task ) {
 	static_assert( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       && is_hash_set_v<std::decay_t<RSet>> ) {
-	    if( lset.size() <= rset.size() )
-		return intersect_task<so,true>( lset, rset, out );
-	    else {
-		out.swap( rset, lset );
-		return intersect_task<so,false>( rset, lset, out );
+	    if( lset.size() <= rset.size() ) {
+		auto out = task.template create_collector<hash_scalar_jump>(
+		    lset, rset );
+		intersect_task<Task::operation,true>( lset, rset, out );
+		return out.return_value();
+	    } else {
+		auto out = task.template create_collector<hash_scalar_jump>(
+		    rset, lset );
+		intersect_task<Task::operation,false>( rset, lset, out );
+		return out.return_value();
 	    }
 	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
-	    return intersect_task<so,true>( lset, rset, out );
+	    auto out = task.template create_collector<hash_scalar_jump>(
+		lset, rset );
+	    intersect_task<Task::operation,true>( lset, rset, out );
+	    return out.return_value();
 	} else {
-	    out.swap( rset, lset );
-	    return intersect_task<so,false>( rset, lset, out );
+	    auto out = task.template create_collector<hash_scalar_jump>(
+		rset, lset );
+	    intersect_task<Task::operation,false>( rset, lset, out );
+	    return out.return_value();
 	}
     }
 };
 
+#if 0
 struct hash_wide {
 
     static constexpr bool uses_hash = true;
@@ -1882,6 +2001,7 @@ struct hash_wide {
     }
 
 };
+#endif
 
 
 struct hash_vector {
@@ -2206,26 +2326,31 @@ public:
 	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
     }
 
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    apply( LSet && lset, RSet && rset, Task & task ) {
 	static_assert( is_multi_hash_set_v<std::decay_t<LSet>>
 		       || is_multi_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
-	// static_assert( is_multi_collector_v<std::decay_t<Collector>>,
-		//        "collector must accept vectors of values" );
 	if constexpr ( is_multi_hash_set_v<std::decay_t<LSet>>
 		       && is_multi_hash_set_v<std::decay_t<RSet>> ) {
-	    if( lset.size() <= rset.size() )
-		return intersect_task<so,true>( lset, rset, out );
-	    else {
-		out.swap( rset, lset );
-		return intersect_task<so,false>( rset, lset, out );
+	    if( lset.size() <= rset.size() ) {
+		auto out = task.template create_collector<hash_vector>(
+		    lset, rset );
+		intersect_task<Task::operation,true>( lset, rset, out );
+		return out.return_value();
+	    } else {
+		auto out = task.template create_collector<hash_vector>(
+		    rset, lset );
+		intersect_task<Task::operation,false>( rset, lset, out );
+		return out.return_value();
 	    }
-	} else if constexpr ( is_hash_set_v<std::decay_t<RSet>> ) {
-	    return intersect_task<so,true>( lset, rset, out );
+	} else if constexpr ( is_multi_hash_set_v<std::decay_t<RSet>> ) {
+	    auto out = task.template create_collector<hash_vector>(
+		lset, rset );
+	    intersect_task<Task::operation,true>( lset, rset, out );
+	    return out.return_value();
 	} else {
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
@@ -2233,13 +2358,16 @@ public:
 	    auto trset = rset.trim_front( lset.front() );
 #endif
 
-	    out.swap( trset, lset );
-	    return intersect_task<so,false>( trset, lset, out );
+	    auto out = task.template create_collector<hash_vector>(
+		trset, lset );
+	    intersect_task<Task::operation,false>( trset, lset, out );
+	    return out.return_value();
 	}
     }
     
 };
 
+#if 0
 struct hash_vector_jump {
     template<set_operation so, typename T, unsigned VL, bool rhs,
 	     typename LIt, typename RSet, typename Collector>
@@ -2331,6 +2459,7 @@ struct hash_vector_jump {
 	}
     }
 };
+#endif
 
 
 /*!=====================================================================*
@@ -2413,12 +2542,14 @@ struct merge_vector {
 	merge_scalar::intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
-	return intersect_task<so,true>( lset, rset, out );
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out = task.template create_collector<merge_vector>(
+	    lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 
 private:
@@ -2803,36 +2934,36 @@ struct something {
 	intersect_task<so,rhs>( lb, le, rb, re, out );
     }
     
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
-	return intersect_task<so,true>( lset, rset, out );
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out = task.template create_collector<something>(
+	    lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 
 };
 
 struct MC_intersect {
-    template<set_operation so,
-	     typename LSet, typename RSet, typename Collector>
+    template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    apply( LSet && lset, RSet && rset, Task & task ) {
 	// Corner case
-	if( lset.size() == 0 || rset.size() == 0 ) {
-	    out.template remainder<true>( lset.size(), rset.size() );
-	    return;
-	}
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return task.return_value_empty_set();
 
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>> )
-	    return hash_vector::template apply<so>( lset, rset, out );
+	    return hash_vector::apply( lset, rset, task );
 	else
-	    return merge_vector_jump::template apply<so>( lset, rset, out );
+	    return merge_vector_jump::apply( lset, rset, task );
     }
 };
 
+#if 0
 struct adaptive_intersect {
     template<set_operation so,
 	     typename LSet, typename RSet, typename Collector>
@@ -2920,7 +3051,9 @@ struct adaptive_intersect {
 #endif
     }
 };
+#endif
 
+#if 0
 /*! The adaptive_intersect_filter class optimises the intersection algorithm
  *  for the filtering step. Filtering is applied on a sequential (non-hashed)
  *  list and an adjacency list. There is thus only one option for hashing.
@@ -2986,6 +3119,7 @@ struct adaptive_intersect_filter {
 	}
     }
 };
+#endif
 
 
 } // namespace graptor

@@ -195,6 +195,8 @@ struct hash_pa_insert_iterator {
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) { }
 
+    size_t return_value() { return 0; } // whatever
+
     void push_back( const VID * lt, const VID * rt = nullptr ) {
 	VID v = ( left_base ? lt : rt ) - m_start;
 	m_table.insert( v );
