@@ -21,7 +21,7 @@
  * table. The next H-1 elements are overflow area for elements incurring
  * hash collisions in the final H buckets of the primary storage.
  * The next H buckets are allocated and set to empty to allow vector access
- * to any valid bucket, including the overflow ones.
+ * to any valid bucket.
  *
  * Further ideas:
  * + Keep each linked list sorted.
@@ -36,6 +36,12 @@
  *   can distinguish values that hash to the same bucket.
  *   We currently take the lower bits of the hash function; could
  *   settle for taking the next log_2 H higher bits for the hash.
+ *   Conclusion: bloom filter adds slight overhead and the extra filtering
+ *   does not pay of performance wise, probably because linked lists are
+ *   short to start with, and the filtering is only useful if it removes
+ *   all lanes.
+ *   The efficacy of this will also depend on whether a typical query
+ *   finds the elements in the hash set or not. 
  *======================================================================*/
 
 namespace graptor {
@@ -55,16 +61,7 @@ public:
     static constexpr size_type H = 32 / sizeof( type );
 #endif
 
-    // The metadata per linked list consists of one H-bit bitmask and
-    // one H-bit Bloom filter. The Bloom filter is stored in the lower
-    // part of the metadata.
-    using metadata_t = int_type_of_size_t<2*H/8>;
-
     using bitmask_t = int_type_of_size_t<H/8>;
-    using bloom_t = bitmask_t;
-
-    static constexpr size_type bloom_bits = 3 + ilog2( sizeof(bloom_t) );
-    static constexpr size_type bloom_mask = ( size_type(1) << bloom_bits ) - 1;
 
     using tr = vector_type_traits_vl<type,H>;
     using vtype = typename tr::type;
@@ -83,8 +80,8 @@ public:
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[(1<<m_log_size)+2*H-1] ),
-	  m_metadata( new metadata_t[1<<m_log_size] ),
-	  m_hash( m_log_size + bloom_bits ) {
+	  m_bitmask( new bitmask_t[1<<m_log_size] ),
+	  m_hash( m_log_size ) {
 	clear();
     }
     template<typename It>
@@ -99,13 +96,13 @@ public:
 
     ~hash_set_hopscotch() {
 	delete[] m_table;
-	delete[] m_metadata;
+	delete[] m_bitmask;
     }
 
     void clear() {
 	m_elements = 0;
 	std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
-	std::fill( m_metadata, m_metadata+capacity(), metadata_t(0) );
+	std::fill( m_bitmask, m_bitmask+capacity(), bitmask_t(0) );
     }
 
     size_type size() const { return m_elements; }
@@ -115,20 +112,17 @@ public:
     const type * get_table() const { return m_table; }
 
     auto begin() const { return m_table; }
-    auto end() const { return m_table+capacity()+H-1; }
+    auto end() const { return m_table+capacity()+H; }
 
     static size_type required_log_size( size_type num_elements ) {
-	// Fill factor is determined as a consequence of contention within
-	// each group of H buckets.
-	// Make sure at least one size of H buckets is provided. Another
-	// H-1 buckets will be added to help vectorisation.
-	return rt_ilog2( std::max( H, num_elements ) );
+	// Maintain fill factor of 50% at most
+	// Make sure at least one size of H elements is included
+	// (adding 2 to the log will make the table at least 4H elements).
+	return rt_ilog2( std::max( H, num_elements ) ) + 2;
     }
 
     bool insert( type value ) {
-	size_type hash = m_hash( value );
-	size_type home_index = hash & ( capacity() - 1 );
-	size_type bloom_hash = ( hash >> m_log_size ) & bloom_mask;
+	size_type home_index = m_hash( value ) & ( capacity() - 1 );
 	size_type index = home_index;
 	vtype v = tr::set1( value );
 	vtype vinv = tr::setone();
@@ -148,8 +142,7 @@ public:
 	    size_type lane = tr::mask_traits::tzcnt( e );
 	    index += lane;
 	    m_table[index] = value;
-	    set_bitmask( home_index, index ); // TODO: merge these operations
-	    set_bloom( home_index, bloom_hash );
+	    set_bitmask( home_index, index );
 	    ++m_elements;
 	    return true;
 	}
@@ -179,7 +172,6 @@ public:
 
 		m_table[index] = value;
 		set_bitmask( home_index, index );
-		set_bloom( home_index, bloom_hash );
 		++m_elements;
 		return true;
 	    }
@@ -189,20 +181,20 @@ public:
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
 	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
-	metadata_t * old_metadata = new metadata_t[size_type(1)<<old_log_size];
+	bitmask_t * old_bitmask = new bitmask_t[size_type(1)<<old_log_size];
 	using std::swap;
 	swap( old_log_size, m_log_size );
 	swap( old_table, m_table );
-	swap( old_metadata, m_metadata );
+	swap( old_bitmask, m_bitmask );
 	clear(); // sets m_elements=0; will be reset when rehashing
 
 	size_type old_size = size_type(1) << old_log_size;
-	m_hash.resize( m_log_size + bloom_hash );
+	m_hash.resize( m_log_size );
 	for( size_type i=0; i < old_size+H; ++i )
 	    if( old_table[i] != invalid_element )
 		insert( old_table[i] );
 	delete[] old_table;
-	delete[] old_metadata;
+	delete[] old_bitmask;
 
 	// Retry insertion. Hope for tail recursion optimisation.
 	return insert( value );
@@ -245,36 +237,33 @@ public:
 
 	const vtype zero = tr::setzero();
 	const vtype ones = tr::setone();
-	const vtype one = tr::setoneval();
 	const vtype hmask = tr::srli( ones, tr::B - m_log_size );
-	const vtype fmask = tr::srli( ones, tr::B - bloom_bits );
-	const vtype bmask = tr::slli( ones, tr::B - 8*sizeof(bloom_t) );
 	const vtype hi = tr::srli( ones, 1 );
 
+#if 0
+	// This is a simplistic version that probes all H possible locations.
+	// Retained for debugging purposes.
+	vtype hval = m_hash.template vectorized<VL>( v );
+	vtype home_index = tr::bitwise_and( hval, hmask );
+	vtype vidx = home_index;
+
+	mtype notfound = mtr::setone();
+
+	for( size_type h=0; h < H; ++h ) {
+	    vtype e = tr::gather( m_table+h, vidx );
+	    notfound = mtr::logical_and( notfound, tr::cmpne( e, v, mkind() ) );
+	}
+#else
 	vtype hval = m_hash.template vectorized<VL>( v );
 	vtype home_index = tr::bitwise_and( hval, hmask );
 	vtype vidx = home_index;
 
 	vtype e = tr::gather( m_table, vidx );
-	mtype notfound = tr::cmpne( e, v, mkind() );
-
-	vtype meta = vget_metadata<VL>( vidx );
-
-	// Bloom indexing
-	vtype fidx = tr::bitwise_and( tr::srli( hval, m_log_size ), fmask );
-	vtype fsel = tr::sllv( one, fidx );
-	// fmat = ( fsel | bmask ) & meta using ternary logic if available
-	// fmat contains all bitmask bits and the selected bit from
-	// the bloom filter
-	vtype fmat = tr::bitwise_or_and( fsel, bmask, meta );
-	
-	// Both the bloom selection (active bit) and the bitmask
-	// must be non-zero for the search to continue
-	mtype active = tr::cmpne( notfound, fmat, zero, mkind() );
-
 	// Aligns bitmask to top such that sllv drops consumed bits
-	// Clear bloom filter bits
-	vtype b = tr::bitwise_and( bmask, fmat ); // can use meta or fmat
+	vtype b = vget_bitmask<VL>( vidx );
+	mtype notfound = tr::cmpne( e, v, mkind() );
+	mtype active = tr::cmpne( notfound, b, zero, mkind() );
+
 	b = tr::srli( b, 1 ); // helps to count +1 for the position of 1-bit
 
 	while( !mtr::is_zero( active ) ) {
@@ -286,6 +275,7 @@ public:
 	    notfound = tr::cmpne( notfound, e, v, mkind() );
 	    active = tr::cmpne( notfound, b, zero, mkind() );
 	}
+#endif
 
 	if constexpr ( std::is_same_v<MT,mkind> )
 	    return mtr::logical_invert( notfound );
@@ -333,31 +323,21 @@ private:
     void set_bitmask( size_type home_index, size_type index ) {
 	if( index != home_index ) {
 	    size_type pos = 8*sizeof(bitmask_t) - ( index - home_index );
-	    pos += 8*sizeof(bloom_t);
-	    m_metadata[home_index] |= metadata_t(1) << pos;
+	    m_bitmask[home_index] |= bitmask_t(1) << pos;
 	}
-    }
-
-    void set_bloom( size_type home_index, size_type bloom_hash ) {
-	// assert( home_index < capacity() );
-	size_type pos = ( bloom_hash & bloom_mask );
-	m_metadata[home_index] |= metadata_t(1) << pos;
     }
 
     void move_bitmask( size_type home_index,
 		       size_type erase_index,
 		       size_type add_index ) {
-	bitmask_t * bm =
-	    reinterpret_cast<bitmask_t*>( &m_metadata[home_index] );
-	bitmask_t b = bm[1]; // assuming sizeof(bloom_t) == sizeof(bitmask_t)
+	bitmask_t b = m_bitmask[home_index];
 	size_type epos = 8*sizeof(bitmask_t) - ( erase_index - home_index );
 	size_type apos = 8*sizeof(bitmask_t) - ( add_index - home_index );
-	b &= ~( metadata_t(1) << epos );
-	b |= metadata_t(1) << apos;
-	bm[1] = b;
+	b &= ~( bitmask_t(1) << epos );
+	b |= bitmask_t(1) << apos;
+	m_bitmask[home_index] = b;
     }
 
-#if 0
     template<unsigned short VL>
     typename vector_type_traits_vl<type,VL>::type
     vget_bitmask( typename vector_type_traits_vl<type,VL>::type idx ) const {
@@ -373,37 +353,11 @@ private:
 	return bitmask;
     }
 
-    template<unsigned short VL>
-    typename vector_type_traits_vl<type,VL>::type
-    vget_bloom( typename vector_type_traits_vl<type,VL>::type idx ) const {
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	vtype raw = tr::template gather_w<sizeof(bloom_t)>(
-	    reinterpret_cast<const type *>( m_bloom ), idx );
-
-	return raw;
-    }
-#endif
-
-    template<unsigned short VL>
-    typename vector_type_traits_vl<type,VL>::type
-    vget_metadata( typename vector_type_traits_vl<type,VL>::type idx ) const {
-	static_assert( sizeof(type) >= sizeof(metadata_t) );
-	using tr = vector_type_traits_vl<type,VL>;
-	using vtype = typename tr::type;
-
-	vtype raw = tr::template gather_w<sizeof(metadata_t)>(
-	    reinterpret_cast<const type *>( m_metadata ), idx );
-
-	return raw;
-    }
-
 private:
     size_type m_elements;
     size_type m_log_size;
     type * m_table;
-    metadata_t * m_metadata;
+    bitmask_t * m_bitmask;
     hash_type m_hash;
 };
 
