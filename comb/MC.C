@@ -3498,12 +3498,17 @@ std::pair<VID,EID> mc_top_level_select(
     // Cut-out constructed filters out left-neighbours.
     graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
 	cut( v_radj, [&]( VID u ) { return remap_coreness[u] >= best; } );
+#else
+    // For purposes of analysis: take full neighbourhood.
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID>
+	cut( v_radj, [&]( VID u ) { return true; } );
+#endif
+
     stats.record_filter0( tm.next() );
 
     VID hn1 = cut.get_num_vertices();
     if( hn1 < best || hn1 == 0 )
 	return -2;
-#endif
 
 #if ABLATION_FILTER_STEPS >= 2
     // Make a second pass over the vertices in the cut-out and check
