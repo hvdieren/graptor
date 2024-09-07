@@ -1051,6 +1051,7 @@ public:
 	// best_cover = tr::bitwise_invert(
 	// tr::bitwise_or( best_cover, get_himask( m_n ) ) );
 	best_cover = tr::bitwise_andnot( best_cover, m_allv_mask );
+#if 0
 	best_size = m_n - best_size; // for completeness; unused hereafter
 
 	// Check for clique (debugging)
@@ -1068,6 +1069,7 @@ public:
 	    else
 		assert( sz == best_size );
 	}
+#endif
 	
 	return bitset<Bits>( best_cover );
     }
@@ -2095,7 +2097,7 @@ private:
 	EID m = std::get<2>( co_analyse<co>( gp_eligible ) );
 
 	// If G has more than k(k-|U|) edges, reject
-	if( m > k * ( k - u_size ) )
+	if( m/2 > k * ( k - u_size ) )
 	    return false;
 
 	// Find a cover for the remaining vertices
