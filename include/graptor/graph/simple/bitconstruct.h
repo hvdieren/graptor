@@ -124,8 +124,8 @@ struct bitmask_lhs_sorted_output_iterator {
 		b[1+word/VL] |= mtr::srli( mm, VL - off );
 	    }
 	    type vdsp = tr::set1( m_deg_start_pos );
-	    mm = tr::cmpge( mm, vns, vdsp, target::mt_mask() );
-	    m_deg += mtr::popcnt( mm );
+	    mask_type mmd = tr::cmpge( mm, vns, vdsp, target::mt_mask() );
+	    m_deg += mtr::popcnt( mmd );
 	}
     }
 
