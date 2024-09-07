@@ -401,6 +401,15 @@ public:
 	return hash_table_interface( *this );
     }
 
+    template<typename It>
+    void insert( It b, It e ) {
+	for( ; b != e; ++b ) {
+	    VID v = *b;
+	    m_pos[v] = m_fill;
+	    m_set[m_fill++] = v;
+	}
+    }
+
     /*const*/ lVID * get_set() const { return m_set; }
     lVID at( lVID pos ) const { return m_set[pos]; }
     lVID get_fill() const { return m_fill; }
@@ -950,8 +959,11 @@ public:
     }
 };
 
-
 } // namespace graph
+
+template<>
+struct is_fast_array<typename graph::PSet<VID>::p_hash_set_interface>
+    : public std::true_type { };
 
 } // namespace graptor
 
