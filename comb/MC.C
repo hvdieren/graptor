@@ -47,6 +47,10 @@
 #define ABLATION_DENSE_PIVOT_FILTER 0
 #endif
 
+#ifndef ABLATION_FILTER_STEPS
+#define ABLATION_FILTER_STEPS 3
+#endif 
+
 #ifndef BK_MIN_LEAF
 #define BK_MIN_LEAF 8
 #endif
@@ -57,6 +61,10 @@
 
 #ifndef ABLATION_DISABLE_VC
 #define ABLATION_DISABLE_VC 0
+#endif
+
+#ifndef ABLATION_DISABLE_BK
+#define ABLATION_DISABLE_BK 0
 #endif
 
 #ifndef PIVOT_COLOUR
@@ -89,6 +97,18 @@
  */
 #ifndef PROFILE_INCUMBENT_SIZE
 #define PROFILE_INCUMBENT_SIZE 0
+#endif
+
+#if PROFILE_INCUMBENT_SIZE == 1
+#undef ABLATION_DISABLE_VC 
+#define ABLATION_DISABLE_VC 1
+#undef ABLATION_GROW_CLIQUE
+#define ABLATION_GROW_CLIQUE 1
+#elif PROFILE_INCUMBENT_SIZE == 2
+#undef ABLATION_DISABLE_BK 
+#define ABLATION_DISABLE_BK 1
+#undef ABLATION_GROW_CLIQUE
+#define ABLATION_GROW_CLIQUE 1
 #endif
 
 #ifndef PROFILE_DENSITY
@@ -422,10 +442,10 @@ private:
 	// maximal). This is possible as the clique was searched using
 	// the right-neighbourhood of top_v. Now we also consider the
 	// left-neighbourhood.
-#if !ABLATION_GROW_CLIQUE
-	VID rs = grow_clique( top_v, clique );
-#else
 	VID rs = s;
+#if !ABLATION_GROW_CLIQUE
+	if( clique.size() == s )
+	    rs = grow_clique( top_v, clique );
 #endif
 	
 	// Acquire mutex to update m_max_clique and m_best atomically.
@@ -2931,14 +2951,11 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 	// VID i = s-1 - j;
     for( VID i=0; i < s; ++i ) {
 	VID v = xp.at( i );
-	const auto & adj = G.get_neighbours_set( v );
 
+	// Left neighbours only
+	const auto & adj = G.get_left_neighbours_set( v );
 	auto nb = adj.begin();
 	auto ne = adj.end();
-	// Right neighbours only
-	// nb = std::upper_bound( nb, ne, v );
-	// Left neighbours only
-	ne = std::lower_bound( nb, ne, v );
 
 	// Intersect and check colours
 	const VID * pb = xp.get_set(); //  + i + 1;
@@ -2980,22 +2997,17 @@ mc_bron_kerbosch_recpar_xps(
     const clique_set<VID> * R,
     PSet<VID> & xp,
     int depth ) {
+
+    // This code is expected to be called from bk_recursive_call().
+    // Hence, it is expcted that ce != 0 and that depth + ce is a feasible
+    // solution.
     VID ce = xp.size();
-    
-    // Termination condition
-    if( 0 == ce ) {
-	E.record( depth, R->begin(), R->end() );
-	return;
-    }
     const VID n = G.numVertices();
 
     if constexpr ( io_trace ) {
 	std::lock_guard<std::mutex> guard( io_mux );
 	std::cout << "XPS loop: ce=" << ce << " depth=" << depth << "\n";
     }
-
-    if( !E.is_feasible( depth + xp.size(), fr_pset ) )
-	return;
 
     // Instruct count_colours to abort procedure if a sufficient
     // number of colours is reached to make the set feasible.
@@ -3128,7 +3140,7 @@ mc_bron_kerbosch_recpar_top_xps(
 }
 
 template<unsigned Bits, typename HGraph, typename Enumerator>
-void mc_dense_fn(
+std::pair<VID,EID> mc_dense_fn(
     const HGraph & H,
     Enumerator & E,
     VID v,
@@ -3158,7 +3170,7 @@ void mc_dense_fn(
     VID k_max = n < bc ? 0 : n - bc + 1;
 
 #if TOP_DENSE_SELECT == 0
-#if !ABLATION_DISABLE_VC
+#if !ABLATION_DISABLE_VC && !ABLATION_DISABLE_BK
     if( d > density_threshold ) {
 	do_vc = true;
 	av = av_vc;
@@ -3166,9 +3178,12 @@ void mc_dense_fn(
 	do_bk = true;
 	av = av_bk;
     }
-#else
+#elif !ABLATION_DISABLE_BK
     do_bk = true;
     av = av_bk;
+#else
+    do_vc = true;
+    av = av_vc;
 #endif
 #else
     // by predictor
@@ -3237,9 +3252,11 @@ void mc_dense_fn(
     variant_statistics & s = stats.get( av, cl );
     s.record_build( tc );
     s.record( av == av_bk ? t_bk : t_vc );
+
+    return std::make_pair( n, m );
 }
 
-typedef void (*mc_func)(
+typedef std::pair<VID,EID> (*mc_func)(
     const HFGraphTy &,
     MC_CutOutEnumerator &,
     VID,
@@ -3395,7 +3412,7 @@ void mc_top_level_vc(
     stats.record_gen( av_vc, tm.next() );
 }
 
-float induced_density(
+std::pair<float,EID> induced_density(
     const HFGraphTy & H,
     graptor::array_slice<VID,VID> cut
     ) {
@@ -3407,7 +3424,7 @@ float induced_density(
 	m += d;
     }
 
-    return float(m) / float(n) / float(n-1);
+    return std::make_pair( float(m) / float(n) / float(n-1), m );
 }
     
 
@@ -3426,7 +3443,7 @@ graptor::descriptive_statistics<float,size_t> g_density_rhs_all,
 #endif
 
 template<int select>
-void mc_top_level_select(
+std::pair<VID,EID> mc_top_level_select(
     const HFGraphTy & H,
     MC_Enumerator & E,
     VID v,
@@ -3440,11 +3457,13 @@ void mc_top_level_select(
 
     VID best = E.get_max_clique_size();
 
+#if ABLATION_FILTER_STEPS >= 0
     // No point analysing a vertex of too low degree
     if( remap_coreness[v] < best ) {
 	stats.record_filter0( tm.next() );
-	return;
+	return -1;
     }
+#endif
 
     // Profiling: check largest right-hand neighbour list encountered.
     // Good performance is expected when this does not exceed the degeneracy
@@ -3465,7 +3484,7 @@ void mc_top_level_select(
     }
 
 #if PROFILE_DENSITY
-    float d_rhs = induced_density( H, v_radj.get_seq() );
+    float d_rhs = induced_density( H, v_radj.get_seq() ).first;
     if( !std::isnan( d_rhs ) ) {
 	std::lock_guard<std::mutex> guard( g_density_mux );
 	g_density_rhs_all.update( d_rhs );
@@ -3473,6 +3492,7 @@ void mc_top_level_select(
     }
 #endif
 
+#if ABLATION_FILTER_STEPS >= 1
     // Filter out vertices where coreness in main graph < best.
     // With coreness == best, we can make a clique of size best+1 at best.
     // Cut-out constructed filters out left-neighbours.
@@ -3482,8 +3502,10 @@ void mc_top_level_select(
 
     VID hn1 = cut.get_num_vertices();
     if( hn1 < best || hn1 == 0 )
-	return;
+	return -2;
+#endif
 
+#if ABLATION_FILTER_STEPS >= 2
     // Make a second pass over the vertices in the cut-out and check
     // that their common neighbours with the cut-out is at least best
     // (using intersect-size-exceeds). If not, throw them out also.
@@ -3525,8 +3547,11 @@ void mc_top_level_select(
     // should log 1-clique in case num == 0.
     VID hn2 = cut.get_num_vertices();
     if( hn2 < best || hn2 == 0 )
-	return;
+	return -3;
+#endif
 
+    EID m_est = 0;
+#if ABLATION_FILTER_STEPS >= 3
     // The previous filtering loop uses the size_ge primitive to maximise
     // performance under the expectation that the filtering loop is most
     // often successful at proving that the subproblem does not need to be
@@ -3535,13 +3560,16 @@ void mc_top_level_select(
     // out. This loop additionally filters as well (only if the previous
     // filtering loop managed to filter out vertices), which is doubly
     // useful.
-    EID m_est = 0;
     cut.filter( [&,best]( VID u ) {
+	// d > best-2 is impossible to meet when best == 0 or best == 1
+	// due to wrap-around of unsigned numbers.
+	// Adjust the threshold for it to make sense.
 	VID d = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_gt_val_ds(
 		cut.get_slice(),
 		H.get_neighbours_set( u ),
-		best-2 ); // exceed checks >, we need >= best-1
+		best <= 2 ? VID(0)
+		: best-2 ); // exceed checks >, we need >= best-1
 	if( d+1 >= best )
 	    m_est += d;
 	return d+1 >= best;
@@ -3550,10 +3578,16 @@ void mc_top_level_select(
     stats.record_filter2( tm.next() );
     VID num = cut.get_num_vertices();
     if( num < best || num == 0 )
-	return;
+	return -4;
+#else
+    VID num = cut.get_num_vertices();
+#endif
 
+    float d_ret = 0;
+    
 #if PROFILE_DENSITY
-    float d_filtered = induced_density( H, cut.get_slice() );
+    float d_filtered = d_filtered = induced_density( H, cut.get_slice() ).first;
+    d_ret = d_filtered;
     if( !std::isnan( d_rhs ) ) {
 	std::lock_guard<std::mutex> guard( g_density_mux );
 	g_density_rhs.update( d_rhs );
@@ -3577,6 +3611,8 @@ void mc_top_level_select(
 #endif
 
     float d = float(m_est) / ( float(num) * float(num) );
+    if( d_ret == 0 )
+	d_ret = d;
     if constexpr ( select == 0 ) {
 	if( d > density_threshold ) {
 	    mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
@@ -3588,50 +3624,104 @@ void mc_top_level_select(
     } else {
 	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
     }
+
+    return std::make_pair( num, m_est );
 }
 
 #if PROFILE_INCUMBENT_SIZE != 0
 static double incumbent_profiling_limit = 0.0;
+static VID incumbent_profiling_degree = 0;
+static VID incumbent_profiling_vertex = ~(VID)0;
 #endif
 
 void mc_top_level(
     const HFGraphTy & H,
+    const GraphCSx & G,
     MC_Enumerator & E,
     VID v,
     VID degeneracy,
-    const VID * const remap_coreness ) {
+    const VID * const remap_coreness,
+    const VID * const rev_order ) {
 #if PROFILE_INCUMBENT_SIZE != 0
+    if( H.get_right_neighbours_set( v ).size() < incumbent_profiling_degree )
+	return;
+
+    if( incumbent_profiling_vertex != ~(VID)0
+	&& incumbent_profiling_vertex != v )
+	return;
+    
     VID deg = H.getDegree( v );
-    std::vector<double> timings;
+    std::vector<std::pair<double,double>> timings;
     timings.reserve( deg );
     std::vector<VID> empty;
     VID mc = 0;
-    for( VID is=0; is <= deg; ++is ) {
+    VID cnt = deg;
+    for( VID is=0; is <= cnt; ++is ) {
 	// Clear the enumerator (should execute sequentially for this to work)
 	E.reset();
 
 	// Register a clique of size is
 	E.record( is, v, empty.begin(), empty.end() );
 
+	assert( E.get_max_clique_size() == std::max( is, VID(1) ) );
+
 	// Execute top-level code
 	{
 	    timer tm;
 	    tm.start();
-	    mc_top_level_select<PROFILE_INCUMBENT_SIZE>(
+	    std::pair<VID,EID> nm = mc_top_level_select<PROFILE_INCUMBENT_SIZE>(
 		H, E, v, degeneracy, remap_coreness );
-	    timings.push_back( tm.next() );
+	    timings.push_back( std::make_pair( tm.next(), nm ) );
 	}
 
+#if 0
+	// Report maximum clique found
+	E.report( std::cout );
+
+	// Get clique this after reporting as the top-level
+	// will now get sorted in line with the rest of the clique
+	auto mcs = E.sort_and_get_max_clique();
+
+	// Report on coreness of clique members
+	std::cout << "clique coreness:";
+	for( VID u : mcs )
+	    std::cout << ' ' << remap_coreness[rev_order[u]];
+	std::cout << "\n";
+
+	validate_clique( G, mcs );
+#endif
+
 	// The actual maximum clique size for this vertex's subgraph
-	if( is == 0 )
+	if( is == 0 ) {
 	    mc = E.get_max_clique_size();
+	    cnt = std::min( cnt, 2*mc );
+	} else {
+	    if( E.get_max_clique_size() != std::max( mc, is ) )
+		std::cout << v << ' ' << E.get_max_clique_size() << ' ' << mc << ' ' << is << "\n";
+	    assert( E.get_max_clique_size() == std::max( mc, is ) );
+	}
     }
 
-    auto mx = *std::max_element( timings.begin(), timings.end() );
+    auto mx = std::max_element( timings.begin(), timings.end() )->first;
     if( mx >= incumbent_profiling_limit ) {
 	std::cout << v << " deg=" << deg << " mc=" << mc;
-	for( double t : timings )
-	    std::cout << ' ' << t;
+	for( auto t : timings )
+	    std::cout << ' ' << t.first;
+	std::cout << "\n";
+	std::cout << v << " cutout vertices";
+	for( auto t : timings )
+	    std::cout << ' ' << t.second.first;
+	std::cout << "\n";
+	std::cout << v << " cutout edges";
+	for( auto t : timings )
+	    std::cout << ' ' << t.second.second;
+	std::cout << "\n";
+	std::cout << v << " cutout density";
+	for( auto t : timings ) {
+	    double d = double(t.second.second) / double(t.second.first)
+		/ double(t.second.first-1);
+	    std::cout << ' ' << d;
+	}
 	std::cout << "\n";
     }
 
@@ -3639,10 +3729,12 @@ void mc_top_level(
     E.reset();
 
 #else
-#if !ABLATION_DISABLE_VC
+#if !ABLATION_DISABLE_VC && !ABLATION_DISABLE_BK
     mc_top_level_select<0>( H, E, v, degeneracy, remap_coreness );
-#else
+#elif !ABLATION_DISABLE_BK
     mc_top_level_select<1>( H, E, v, degeneracy, remap_coreness );
+#else
+    mc_top_level_select<2>( H, E, v, degeneracy, remap_coreness );
 #endif
 #endif // PROFILE_INCUMBENT_SIZE
 }
@@ -3700,7 +3792,7 @@ void leaf_dense_fn(
 
     MC_DenseEnumerator DE( E, R, xp_set.get_set() ); // cut.get_vertices() );
     algo_variant av = av_bk;
-#if !ABLATION_DISABLE_VC
+#if !ABLATION_DISABLE_VC && !ABLATION_DISABLE_BK
     if( d > density_threshold ) {
 	VID init_k = n - ( E.get_max_clique_size() - depth );
 	auto bs = D.clique_via_vertex_cover( init_k );
@@ -3709,8 +3801,13 @@ void leaf_dense_fn(
     } else {
 	D.mc_search( DE, depth );
     }
-#else
+#elif !ABLATION_DISABLE_BK
     D.mc_search( DE, depth );
+#else
+    VID init_k = n - ( E.get_max_clique_size() - depth );
+    auto bs = D.clique_via_vertex_cover( init_k );
+    DE.record( depth + bs.size(), bs.begin(), bs.end() );
+    av = av_vc;
 #endif
 
     float tbk = tm.next();
@@ -3851,6 +3948,7 @@ int main( int argc, char *argv[] ) {
 	"\t-pre {vertex}\tpre-trial vertex heuristic search\n"
 	"\t-what-if {size}\tassuming clique of given size exists\n"
 	"\t--incumbent-limit {lim}\treport only timings larger than lim\n"
+	"\t--incumbent-degree {deg}\tonly analyse vertices with degree deg or above\n"
 	"\t-d {threshold}\tdensity threshold for applying vertex cover\n"
 	"\t-i {file}\tinput file containing graph\n"
 	"\t-h, --help\tprint help message and exit\n"
@@ -3866,6 +3964,8 @@ int main( int argc, char *argv[] ) {
 
 #if PROFILE_INCUMBENT_SIZE != 0
     incumbent_profiling_limit = P.get_double_option( "--incumbent-limit", 0.0 );
+    incumbent_profiling_degree = P.get_long_option( "--incumbent-degree", 0 );
+    incumbent_profiling_vertex = P.get_long_option( "--incumbent-vertex", ~(VID)0 );
 #endif
 
     timer tm;
@@ -3985,9 +4085,12 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
 	      <<  ABLATION_DENSE_PIVOT_FILTER
 	      << "\n\tABLATION_DISABLE_VC=" << ABLATION_DISABLE_VC
+	      << "\n\tABLATION_DISABLE_BK=" << ABLATION_DISABLE_BK
+	      << "\n\tABLATION_FILTER_STEPS=" << ABLATION_FILTER_STEPS
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
 	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
+	      << "\n\tMC_INTERSECTION_ALGORITHM=" << MC_INTERSECTION_ALGORITHM
 	      << "\n\tINTERSECT_ONE_SIDED=" << INTERSECT_ONE_SIDED
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
@@ -4001,6 +4104,11 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
 	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
+#ifdef LOAD_FACTOR
+	      << "\n\tLOAD_FACTOR=" << LOAD_FACTOR
+#else
+	      << "\n\tLOAD_FACTOR=undef"
+#endif
 	      << "\n\tdensity_threshold=" << density_threshold
 	      << '\n';
     
@@ -4069,7 +4177,8 @@ int main( int argc, char *argv[] ) {
 		  << " deg=" << H.getDegree( v )
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
-	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+		      rev_order.get());
 	std::cout << "pre-trial: " << tm.next() << "\n";
     }
 
@@ -4083,7 +4192,8 @@ int main( int argc, char *argv[] ) {
 		  << " deg=" << H.getDegree( v )
 		  << " rho=" << remap_coreness[v]
 		  << "\n";
-	mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+		      rev_order.get() );
 
 	// Successfully found a clique larger than postulated size?
 	// If not, erase result.
@@ -4149,7 +4259,8 @@ int main( int argc, char *argv[] ) {
 	VID v = n-1-w;
 #endif
 	if( E.is_feasible( remap_coreness[v]+1, fr_outer ) )
-	    mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+	    mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+			  rev_order.get()  );
     } );
 
 #elif SORT_ORDER >= 4 && SORT_ORDER <= 7
@@ -4172,7 +4283,8 @@ int main( int argc, char *argv[] ) {
 	if( c_up != c_lo ) {
 	    VID v = c_lo;
 	    if( E.is_feasible( c+1, fr_outer ) )
-		mc_top_level( H, E, v, degeneracy, remap_coreness.get() );
+		mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+			      rev_order.get()  );
 	}
     } );
     std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
@@ -4227,8 +4339,8 @@ int main( int argc, char *argv[] ) {
 		    VID v = c_half == 0 ? w : ( c_up - ( w - c_mid ) - 1 );
 
 		    if( E.is_feasible( c+1, fr_outer ) )
-			mc_top_level( H, E, v, degeneracy,
-				      remap_coreness.get() );
+			mc_top_level( H, G, E, v, degeneracy,
+				      remap_coreness.get(), rev_order.get() );
 		} );
 	    } );
 	}
