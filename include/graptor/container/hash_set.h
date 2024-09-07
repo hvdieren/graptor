@@ -10,6 +10,12 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/conditional_iterator.h"
 
+#ifdef LOAD_FACTOR
+#define HASH_SET_LOAD_FACTOR LOAD_FACTOR
+#else
+#define HASH_SET_LOAD_FACTOR 2
+#endif
+
 /*!=====================================================================*
  * TODO:
  * + ensure that high-degree vertices are closer to their intended position
@@ -99,7 +105,7 @@ public:
 	// ilog2( num_elements-1 ) + 1 -> next higher power of two
 	// but ensure #elms+1 does not exceed 50%
 	// + 1: fill factor not exceeding 50%
-	return rt_ilog2( num_elements ) + 2;
+	return rt_ilog2( num_elements ) + HASH_SET_LOAD_FACTOR;
     }
 
     bool insert( type value ) {

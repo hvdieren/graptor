@@ -8,6 +8,12 @@
 
 #include "graptor/container/hash_fn.h"
 
+#ifdef LOAD_FACTOR
+#define HASH_SET_HOPSCOTCH_DELTA_LOAD_FACTOR LOAD_FACTOR
+#else
+#define HASH_SET_HOPSCOTCH_DELTA_LOAD_FACTOR 1
+#endif
+
 /*!=====================================================================*
  * TODO:
  * + ensure that high-degree vertices are closer to their intended position
@@ -111,7 +117,8 @@ public:
 	// Maintain fill factor of 50% at most
 	// Make sure at least one size of H elements is included
 	// (adding 2 to the log will make the table at least 4H elements).
-	return rt_ilog2( std::max( H, num_elements ) );
+	return rt_ilog2( std::max( H, num_elements ) )
+	    + HASH_SET_HOPSCOTCH_DELTA_LOAD_FACTOR;
     }
 
     bool insert( type value ) {
