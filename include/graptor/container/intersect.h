@@ -15,8 +15,12 @@
 #define FILTER_INTERSECTION_ALGORITHM 0
 #endif
 
+#ifndef MC_INTERSECTION_ALGORITHM
+#define MC_INTERSECTION_ALGORITHM 0
+#endif
+
 #ifndef INTERSECTION_TRIM
-#define INTERSECTION_TRIM 0
+#define INTERSECTION_TRIM 1
 #endif
 
 #ifndef INTERSECT_ONE_SIDED
@@ -36,6 +40,13 @@
 #include "graptor/container/array_slice.h"
 
 namespace graptor {
+
+template<typename T>
+struct is_fast_array : public std::false_type { };
+
+template<typename T>
+constexpr bool is_fast_array_v = is_fast_array<T>::value;
+
 
 /*! Enumeration of set operation types
  */
@@ -1078,7 +1089,7 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
-	intersection_task<so_intersect_size_gt_val,void> task( threshold );
+	intersection_task<so_intersect_size_ge,void> task( threshold );
 	return apply( lset, rset, task );
     }
 
@@ -1609,11 +1620,10 @@ struct merge_vector_jump {
 	auto le = lset.end();
 	auto rb = rset.begin();
 	auto re = rset.end();
-#if __AVX512F__
+#if defined( __AVX512F__ )
 	std::tie( lb, rb ) =
 	    intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rb, re, out );
-#endif
-#if __AVX2__
+#elif defined( __AVX2__ )
 	std::tie( lb, rb ) =
 	    intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rb, re, out );
 #endif
@@ -2317,10 +2327,9 @@ public:
 	auto lb = tlset.begin();
 	auto le = tlset.end();
 
-#if __AVX512F__
+#if defined( __AVX512F__ )
 	lb = intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rset, out );
-#endif
-#if __AVX2__
+#elif defined( __AVX2__ )
 	lb = intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rset, out );
 #endif
 	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
@@ -2424,10 +2433,9 @@ struct hash_vector_jump {
 	auto lb = lset.begin();
 	auto le = lset.end();
 
-#if __AVX512F__
+#if defined( __AVX512F__ )
 	lb = intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rset, out );
-#endif
-#if __AVX2__
+#elif defined( __AVX2__ )
 	lb = intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rset, out );
 #endif
 	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
@@ -2531,11 +2539,10 @@ struct merge_vector {
 	auto le = lset.end();
 	auto rb = rset.begin();
 	auto re = rset.end();
-#if __AVX512F__
+#if defined( __AVX512F__ )
 	std::tie( lb, rb ) =
 	    intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rb, re, out );
-#endif
-#if __AVX2__
+#elif defined( __AVX2__ )
 	std::tie( lb, rb ) =
 	    intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rb, re, out );
 #endif
@@ -2649,10 +2656,9 @@ public:
     static
     Out
     intersect( const T* lb, const T* le, const T* rb, const T* re, Out out ) {
-#if __AVX512F__
+#if defined( __AVX512F__ )
 	detail_intersect<send_lhs_ptr,64/sizeof(T),true>( lb, le, rb, re, out );
-#endif
-#if __AVX2__
+#elif defined( __AVX2__ )
 	detail_intersect<send_lhs_ptr,32/sizeof(T),true>( lb, le, rb, re, out );
 #endif
 	out = graptor::merge_scalar::template intersect<send_lhs_ptr>(
@@ -2955,11 +2961,22 @@ struct MC_intersect {
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return task.return_value_empty_set();
 
-	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		       || is_hash_set_v<std::decay_t<RSet>> )
+#if MC_INTERSECTION_ALGORITHM == 1
+	if constexpr ( graptor::is_fast_array_v<std::decay_t<LSet>>
+		       || graptor::is_fast_array_v<std::decay_t<RSet>> )
 	    return hash_vector::apply( lset, rset, task );
+	else if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+			      || is_hash_set_v<std::decay_t<RSet>> )
+	    return hash_scalar::apply( lset, rset, task );
 	else
 	    return merge_vector_jump::apply( lset, rset, task );
+#else
+    if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		   || is_hash_set_v<std::decay_t<RSet>> )
+	return hash_vector::apply( lset, rset, task );
+    else
+	return merge_vector_jump::apply( lset, rset, task );
+#endif
     }
 };
 
