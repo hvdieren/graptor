@@ -36,7 +36,7 @@ public:
     }
     bool operator == ( concatenate_iterator other ) const {
 	return m_it1_begin == other.m_it1_begin
-	    && m_it2 == m_it2
+	    && m_it2 == other.m_it2
 	    && m_it1_end == other.m_it1_end;
     }
     bool operator != ( concatenate_iterator other ) const {
