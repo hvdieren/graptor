@@ -72,7 +72,7 @@ struct mask_type_traits<16> {
 	type ne = _knot_mask16( eq );
 	return _kortestz_mask16_u8( ne, ne );
     }
-    static auto logical_invert( type k ) {
+    static type logical_invert( type k ) {
 	return _knot_mask16( k );
     }
     static type logical_and( type l, type r ) {

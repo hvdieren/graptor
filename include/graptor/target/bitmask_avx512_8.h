@@ -58,7 +58,7 @@ struct mask_type_traits<8> {
     static auto blend( type c, type no, type yes ) {
 	return logical_or( logical_andnot( c, no ), logical_and( c, yes ) );
     }
-    static auto logical_invert( type k ) {
+    static type logical_invert( type k ) {
 	return _knot_mask8( k );
     }
     static type logical_and( type l, type r ) {
