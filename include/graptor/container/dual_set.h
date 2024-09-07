@@ -255,7 +255,11 @@ private:
  */
 template<typename Seq, typename Hash>
 auto make_dual_set( Seq && seq, const Hash & hash ) {
-    return dual_set<Seq,Hash>( seq, hash );
+    if constexpr ( std::is_reference_v<Seq> ) {
+	using Seq2 = std::decay_t<Seq>;
+	return dual_set<Seq2,Hash>( seq, hash );
+    } else
+	return dual_set<Seq,Hash>( seq, hash );
 }
 
 } // namespace graptor
