@@ -42,7 +42,7 @@ public:
     bool operator != ( concatenate_iterator other ) const {
 	return !( *this == other );
     }
-    typename concatenate_iterator::reference operator*() const {
+    typename concatenate_iterator::value_type operator*() const {
 	return m_it1_begin == m_it1_end ? *m_it2 : *m_it1_begin;
     }
 
