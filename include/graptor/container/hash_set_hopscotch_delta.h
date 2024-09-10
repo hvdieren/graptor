@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <ostream>
+#include <mutex>
 
 #include "graptor/container/hash_fn.h"
 
@@ -306,6 +307,10 @@ public:
 
     void finalise() { build_deltas(); }
 
+    std::mutex & get_lock() {
+	return m_mux;
+    }
+
 private:
     void build_deltas() {
 	std::array<size_type,H> tail;
@@ -576,6 +581,7 @@ private:
     type * m_table;
     uint8_t * m_delta;
     hash_type m_hash;
+    std::mutex m_mux;
 };
 
 template<typename HashSet>

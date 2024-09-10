@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <ostream>
+#include <mutex>
 
 #include "graptor/container/hash_fn.h"
 
@@ -82,11 +83,17 @@ public:
     static constexpr type invalid_element = ~type(0);
 
 public:
-    explicit hash_set_hopscotch( size_t expected_elms = 0 )
+    explicit hash_set_hopscotch()
+	: m_elements( 0 ),
+	  m_log_size( 0 ),
+	  m_table( nullptr ),
+	  m_bitmask( nullptr ),
+	  m_hash( m_log_size ) { }
+    explicit hash_set_hopscotch( size_t expected_elms )
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[(1<<m_log_size)+2*H-1] ),
-	  m_bitmask( new bitmask_t[1<<m_log_size] ),
+	  m_bitmask( new bitmask_t[(1<<m_log_size)+3] ), // to allow reads of size 4
 	  m_hash( m_log_size ) {
 	clear();
     }
@@ -101,18 +108,24 @@ public:
     hash_set_hopscotch & operator = ( const hash_set_hopscotch & ) = delete;
 
     ~hash_set_hopscotch() {
-	delete[] m_table;
-	delete[] m_bitmask;
+	if( m_table != nullptr )
+	    delete[] m_table;
+	if( m_bitmask != nullptr )
+	    delete[] m_bitmask;
     }
 
     void clear() {
-	m_elements = 0;
-	std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
-	std::fill( m_bitmask, m_bitmask+capacity(), bitmask_t(0) );
+	if( is_initialised() ) {
+	    m_elements = 0;
+	    std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
+	    std::fill( m_bitmask, m_bitmask+capacity()+3, bitmask_t(0) );
+	}
     }
 
     size_type size() const { return m_elements; }
-    size_type capacity() const { return size_type(1) << m_log_size; }
+    size_type capacity() const {
+	return m_log_size == 0 ? size_type(0) : size_type(1) << m_log_size;
+    }
     bool empty() const { return size() == 0; }
 
     const type * get_table() const { return m_table; }
@@ -129,6 +142,8 @@ public:
     }
 
     bool insert( type value ) {
+	create_if_uninitialised();
+
 	size_type home_index = m_hash( value ) & ( capacity() - 1 );
 	size_type index = home_index;
 	vtype v = tr::set1( value );
@@ -188,7 +203,7 @@ public:
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
 	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
-	bitmask_t * old_bitmask = new bitmask_t[size_type(1)<<old_log_size];
+	bitmask_t * old_bitmask = new bitmask_t[(size_type(1)<<old_log_size)+3];
 	using std::swap;
 	swap( old_log_size, m_log_size );
 	swap( old_table, m_table );
@@ -209,11 +224,16 @@ public:
 
     template<typename It>
     void insert( It && I, It && E ) {
+	create_if_uninitialised();
+	
 	while( I != E )
 	    insert( *I++ );
     }
 
     bool contains( type value ) const {
+	if( empty() ) // also catches uninitialised case
+	    return false;
+
 	size_type index = m_hash( value ) & ( capacity() - 1 );
 	vtype v = tr::set1( value );
 
@@ -241,6 +261,13 @@ public:
 	using mkind = target::mt_vmask;
 #endif
 	using mtype = typename mtr::type;
+
+	if( empty() ) { // also catches uninitialised case
+	    if constexpr ( std::is_same_v<MT,target::mt_vmask> )
+		return tr::setzero();
+	    else
+		return tr::mask_traits::setzero();
+	}
 
 	const vtype zero = tr::setzero();
 	const vtype ones = tr::setone();
@@ -294,12 +321,31 @@ public:
 
     template<typename Fn>
     void for_each( Fn && fn ) const {
+	if( empty() ) // also catched uninitialised case
+	    return;
+	
 	for( size_type i=0; i < capacity()+H; ++i )
 	    if( m_table[i] != invalid_element )
 		fn( m_table[i] );
     }
 
+    std::mutex & get_lock() {
+	return m_mux;
+    }
+
 private:
+    bool is_initialised() const { return m_log_size != 0; }
+    void create_if_uninitialised() {
+	if( !is_initialised() ) {
+	    m_elements = H;
+	    m_log_size = required_log_size( m_elements );
+	    m_table = new type[(1<<m_log_size)+2*H-1];
+	    m_bitmask = new bitmask_t[(1<<m_log_size)+3];
+	    m_hash.resize( m_log_size );
+	    clear();
+	}
+    }
+    
     size_type
     hopscotch_move( type v, size_type home_index, size_type free_index ) {
 	while( free_index - home_index >= H ) {
@@ -366,6 +412,7 @@ private:
     type * m_table;
     bitmask_t * m_bitmask;
     hash_type m_hash;
+    std::mutex m_mux;
 };
 
 } // namespace graptor
