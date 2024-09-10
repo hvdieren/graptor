@@ -564,7 +564,7 @@ fi
 
 if ! `list_include_item "graptor graptorv4 ligra gapbs mtxmkt" "${command[1]}"`
 then
-   echo "Format ${command[1]} is not a recognised format"
+   echo "Format ${command[1]} is not a recognised format" >2&
    exit 1;
 fi
 
