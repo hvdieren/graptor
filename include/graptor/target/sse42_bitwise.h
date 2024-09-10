@@ -78,8 +78,29 @@ struct sse42_bitwise {
     static type bitwise_andnot( type a, type b ) { return _mm_andnot_si128( a, b ); }
     static type bitwise_or( type a, type b ) { return _mm_or_si128( a, b ); }
     static type bitwise_xor( type a, type b ) { return _mm_xor_si128( a, b ); }
+    static type bitwise_xor( type a, type b, type c ) {
+	// 0 0 0: 0 0: 0
+	// 0 0 1: 0 1: 1
+	// 0 1 0: 1 0: 1
+	// 0 1 1: 1 1: 0
+	// 1 0 0: 1 0: 1
+	// 1 0 1: 1 1: 0
+	// 1 1 0: 0 0: 0
+	// 1 1 1: 0 1: 1
+	if constexpr ( has_ternary )
+	    return ternary<0x96>( a, b, c );
+	else
+	    return bitwise_xor( bitwise_xor( a, b ), c );
+    }
     static type bitwise_xnor( type a, type b ) {
-	return bitwise_xor( bitwise_invert( a ), b );
+	// 0 0: 1 0: 1
+	// 0 1: 1 1: 0
+	// 1 0: 0 0: 0
+	// 1 1: 0 1: 1
+	if constexpr ( has_ternary )
+	    return ternary<0x99>( a, b, b /* anything */ );
+	else
+	    return bitwise_xor( bitwise_invert( a ), b );
     }
     static type bitwise_andnot( type a, type b, type c ) {
 	if constexpr ( has_ternary )
