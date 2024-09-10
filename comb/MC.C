@@ -51,6 +51,10 @@
 #define ABLATION_FILTER_STEPS 3
 #endif 
 
+#ifndef ABLATION_DISABLE_CONNECTED_FILTERING
+#define ABLATION_DISABLE_CONNECTED_FILTERING 1
+#endif 
+
 #ifndef BK_MIN_LEAF
 #define BK_MIN_LEAF 8
 #endif
@@ -77,6 +81,17 @@
 
 #ifndef CLIQUER_PRUNE
 #define CLIQUER_PRUNE 0
+#endif
+
+#ifdef FILTER_NEIGHBOUR_CLIQUE
+#undef FILTER_NEIGHBOUR_CLIQUE
+#endif
+#define FILTER_NEIGHBOUR_CLIQUE 0
+
+#if CLIQUER_PRUNE || FILTER_NEIGHBOUR_CLIQUE
+#define MEMOIZE_MC_PER_VERTEX 1
+#else
+#define MEMOIZE_MC_PER_VERTEX 0
 #endif
 
 #ifndef VERTEX_COVER_COMPONENTS
@@ -142,6 +157,7 @@
 
 #include <ranges>
 
+#include <sched.h>
 #include <signal.h>
 #include <sys/time.h>
 
@@ -204,29 +220,51 @@ static std::vector<graptor::binary_vfdt<
 #endif
 
 //! Choice of hash function for compilation unit
-using hash_fn = graptor::rand_hash<uint32_t>;
+// The random hash function was used by Blanusa VLDB 2020 (MCE), however,
+// it shows to be inferior for MC especially in the context of hopscotch
+// hashing (also used by Blanusa).
+// using hash_fn = graptor::rand_hash<uint32_t>;
+using hash_fn = graptor::java_hash<uint32_t>;
 
 #ifndef HOPSCOTCH_HASHING
-#define HOPSCOTCH_HASHING 2
+#define HOPSCOTCH_HASHING 1
 #endif
 
+#ifndef ABLATION_DISABLE_LAZY_HASHING
+#define ABLATION_DISABLE_LAZY_HASHING 0
+#endif
+
+//! Hopscotch hashing is a more efficient hash function than the general
+// open-addressed hashing in graptor::hash_set. However, it is hard to
+// predict the required size of hash table in advance for hopscotch hashing
+// as it depends on how conflicts play out for the particular values used.
+// By consequence, we cannot pre-allocate all storage for the full graph
+// and need to work with many small allocations.
+// One option to mitigate this would be to construct the hash sets on the
+// fly, only for those vertices that need them. Post heuristic search, only
+// the high-degeneracy vertices would need a hash set representation of their
+// neighbourhood.
 #if HOPSCOTCH_HASHING == 1
 using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = false;
+static constexpr bool lazy_hashing = true;
 #elif HOPSCOTCH_HASHING == 2
 using hash_set_type = graptor::hash_set_hopscotch_delta<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = false;
+static constexpr bool lazy_hashing = true;
 #else
 using hash_set_type = graptor::hash_set<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = true;
+static constexpr bool lazy_hashing = false;
 #endif
 
 #if ABLATION_HADJPA_DISABLE_XP_HASH
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_set_prealloc,hash_set_type>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_set_prealloc,false,hash_set_type>;
 #else
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,hash_set_type>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,false,hash_set_type>;
 #endif
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,hash_set_type>;
+// using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,lazy_hashing,hash_set_type>;
+using HFGraphTy = graptor::graph::GraphLazyHashedAdj<VID,EID,lazy_hashing,hash_set_type>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::PSet;
@@ -522,7 +560,7 @@ public:
     // Record solution
     template<typename It>
     void record( size_t s, It && begin, It && end ) {
-	auto fn = [&]( VID v ) { return m_order[v]; };
+	auto fn = [&]( VID v ) { return m_order != nullptr ? m_order[v] : v; };
 	m_E.record( s, m_top_vertex,
 		    graptor::make_transform_iterator( begin, fn ),
 		    graptor::make_transform_iterator( end, fn ) );
@@ -557,19 +595,30 @@ public:
     // Record solution
     template<typename It>
     void record( size_t s, It && begin, It && end ) {
-	if( m_remap ) {
-	    auto fn = [&]( VID v ) { return m_remap[v]; };
-	    auto b = graptor::make_transform_iterator( begin, fn );
-	    auto e = graptor::make_transform_iterator( end, fn );
-	    m_E.record(
-		s,
-		graptor::make_concatenate_iterator( b, e, m_R->begin() ),
-		graptor::make_concatenate_iterator( e, e, m_R->end() ) );
+	if( m_R != nullptr ) {
+	    if( m_remap ) {
+		auto fn = [&]( VID v ) { return m_remap[v]; };
+		auto b = graptor::make_transform_iterator( begin, fn );
+		auto e = graptor::make_transform_iterator( end, fn );
+		m_E.record(
+		    s,
+		    graptor::make_concatenate_iterator( b, e, m_R->begin() ),
+		    graptor::make_concatenate_iterator( e, e, m_R->end() ) );
+	    } else {
+		m_E.record(
+		    s,
+		    graptor::make_concatenate_iterator( begin, end, m_R->begin() ),
+		    graptor::make_concatenate_iterator( end, end, m_R->end() ) );
+	    }
 	} else {
-	    m_E.record(
-		s,
-		graptor::make_concatenate_iterator( begin, end, m_R->begin() ),
-		graptor::make_concatenate_iterator( end, end, m_R->end() ) );
+	    if( m_remap ) {
+		auto fn = [&]( VID v ) { return m_remap[v]; };
+		auto b = graptor::make_transform_iterator( begin, fn );
+		auto e = graptor::make_transform_iterator( end, fn );
+		m_E.record( s, b, e );
+	    } else {
+		m_E.record( s, begin, end );
+	    }
 	}
     }
 
@@ -1156,7 +1205,7 @@ template<typename GraphType>
 class GraphBuilderInduced;
 
 template<typename VID, typename EID, bool dual_rep, bool preallocate, typename HashSet>
-class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,HashSet>> {
+class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,false,HashSet>> {
 public:
     template<typename HGraph>
     GraphBuilderInduced(
@@ -1198,7 +1247,7 @@ public:
     VID get_start_pos() const { return start_pos; }
 
 private:
-    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,HashSet> S;
+    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,preallocate,false,HashSet> S;
     VID start_pos;
 };
 
@@ -2371,12 +2420,12 @@ T complement_set( T n, const T * b, const T * e, T * x, Fn && fn ) {
     return k;
 }
 
-template<typename lVID, typename lEID>
+template<typename lVID, typename lEID, typename Enumerator>
 lVID
 clique_via_vc3_cc( graptor::graph::GraphCSx<lVID,lEID> & CG,
 		   lVID v,
 		   lVID degeneracy,
-		   MC_CutOutEnumerator & E,
+		   Enumerator & E,
 		   int depth ) {
     // PSet<VID> pset = PSet<VID>::create_full_set( G );
     // lVID ce = pset.size();
@@ -2591,12 +2640,12 @@ validate_vertex_cover( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     }
 }
     
-template<typename lVID, typename lEID, bool use_exist>
+template<typename lVID, typename lEID, bool use_exist, typename Enumerator>
 lVID
 clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		     lVID v,
 		     lVID degeneracy,
-		     MC_CutOutEnumerator & E,
+		     Enumerator & E,
 		     int depth ) {
     // PSet<VID> pset = PSet<VID>::create_full_set( G );
     // lVID ce = pset.size();
@@ -2616,7 +2665,9 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     // If no edges remain after pruning, then cover has size 0 and
     // clique has size cn.
     if( cm == 0 ) {
-	PSet<VID> pset = PSet<VID>::create_full_set( CG );
+	// PSet<VID> pset = PSet<VID>::create_full_set( CG );
+	std::vector<VID> pset( cn );
+	std::iota( pset.begin(), pset.end(), 0 );
 	E.record( depth+cn, pset.begin(), pset.end() );
 	return depth+cn; // return true;
     }
@@ -2716,8 +2767,8 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 		std::cout << "clique_via_vc3: max_clique: "
 			  << ( depth + cn - k_best_size )
 			  << " E.best: " << bc << "\n";
-	    // Create complement set
-	    std::vector<lVID> clique( cn - k_best_size );
+	    // Create complement set. Store at full width (VID)
+	    std::vector<VID> clique( cn - k_best_size );
 	    std::sort( &best_cover[0], &best_cover[k_best_size] );
 	    for( lVID i=0, j=0, k=0; i < cn; ++i ) {
 		if( best_cover[j] == i ) {
@@ -2738,7 +2789,7 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
  * recursively parallel version of Bron-Kerbosch w/ pivoting
  *======================================================================*/
 
-#if CLIQUER_PRUNE
+#if MEMOIZE_MC_PER_VERTEX
 static VID * max_clique_per_vertex = nullptr;
 #endif
 
@@ -3107,7 +3158,9 @@ void
 mc_bron_kerbosch_recpar_top_xps(
     const HGraphTy & G,
     VID degeneracy,
-    MC_CutOutEnumerator & E ) {
+    MC_CutOutEnumerator & E,
+    const clique_set<VID> * root,
+    VID depth ) {
     const VID n = G.numVertices();
 
     // 1. find pivot, e.g., highest degree
@@ -3124,7 +3177,7 @@ mc_bron_kerbosch_recpar_top_xps(
     for( VID i=0; i < it_size; ++i ) {
 	VID v = it_elm[i];
 	VID deg = G.getDegree( v ); 
-	clique_set<VID> R_new( v );
+	clique_set<VID> R_new( v, root );
 
 	if( deg == 0 ) {
 	    // avoid overheads of copying and cutout
@@ -3134,7 +3187,7 @@ mc_bron_kerbosch_recpar_top_xps(
 	} else {
 	    auto adj = G.get_neighbours_set( v ); 
 	    PSet<VID> xp_new = PSet<VID>::left_union_right( n, v, p_adj, adj );
-	    bk_recursive_call<true>( G, degeneracy, E, &R_new, xp_new, 2 );
+	    bk_recursive_call<true>( G, degeneracy, E, &R_new, xp_new, depth+1 );
 	}
     }
 }
@@ -3145,6 +3198,8 @@ std::pair<VID,EID> mc_dense_fn(
     Enumerator & E,
     VID v,
     const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
+    const clique_set<VID> * root,
+    VID depth,
     all_variant_statistics & stats ) {
 
     timer tm;
@@ -3212,8 +3267,9 @@ std::pair<VID,EID> mc_dense_fn(
 		      << " k_max=" << k_max << "\n";
 #endif
     
+	MC_DenseEnumerator DE( E, root );
 	auto bs = IG.clique_via_vertex_cover( k_max );
-	E.record( 1 + bs.size(), bs.begin(), bs.end() );
+	DE.record( depth + bs.size(), bs.begin(), bs.end() );
 	t_vc = tm.next();
     }
 
@@ -3224,9 +3280,8 @@ std::pair<VID,EID> mc_dense_fn(
 		      << " density=" << d << "\n";
 #endif
     
-	clique_set<VID> R( v );
-	MC_DenseEnumerator DE( E, &R );
-	IG.mc_search( DE, 1 );
+	MC_DenseEnumerator DE( E, root );
+	IG.mc_search( DE, depth );
 	t_bk = tm.next();
     }
 
@@ -3261,6 +3316,8 @@ typedef std::pair<VID,EID> (*mc_func)(
     MC_CutOutEnumerator &,
     VID,
     const graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
+    const clique_set<VID> *,
+    VID,
     all_variant_statistics & );
     
 static mc_func mc_dense_func[N_DIM+1] = {
@@ -3278,7 +3335,9 @@ void mc_top_level_bk(
     VID degeneracy,
     float density,
     const VID * const remap_coreness,
-    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
+    const clique_set<VID> * root,
+    VID depth ) {
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
@@ -3296,9 +3355,9 @@ void mc_top_level_bk(
     stats.record_genbuild( av_bk, tm.next() );
 
     MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE );
+    mc_bron_kerbosch_recpar_top_xps( HG, degeneracy, CE, root, depth );
 
-#if CLIQUER_PRUNE
+#if MEMOIZE_MC_PER_VERTEX
     max_clique_per_vertex[v] = CE.get_max_clique_size();
 #endif
 
@@ -3359,7 +3418,9 @@ void mc_top_level_vc(
     VID degeneracy,
     float density,
     const VID * const remap_coreness,
-    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut ) {
+    graptor::graph::NeighbourCutOutDegeneracyOrderFiltered<VID,EID> & cut,
+    const clique_set<VID> * root,
+    VID depth ) {
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
@@ -3373,18 +3434,20 @@ void mc_top_level_vc(
 
     stats.record_genbuild( av_vc, tm.next() );
 
-    MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
+    // Enumeration: vertices on root chain are also translated.
+    MC_CutOutEnumerator PE( E, v, cut.get_vertices() );
+    MC_DenseEnumerator CE( PE, root, nullptr );
 #if VERTEX_COVER_COMPONENTS
     if( cut.get_num_vertices() < (VID(1) << 16) ) {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSx<uint16_t,uint32_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_cc<uint16_t,uint32_t>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_cc<uint16_t,uint32_t>( CG, v, degeneracy, CE, depth );
     } else {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSx<uint32_t,uint64_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_cc<VID,EID>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_cc<VID,EID>( CG, v, degeneracy, CE, depth );
     }
 #else
 #if VERTEX_COVER_ABSOLUTE
@@ -3396,16 +3459,16 @@ void mc_top_level_vc(
 	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint16_t,uint32_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_mono<uint16_t,uint32_t,use_exist>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_mono<uint16_t,uint32_t,use_exist>( CG, v, degeneracy, CE, depth );
     } else {
 	GraphBuilderInducedComplement<graptor::graph::GraphCSxDepth<uint32_t,uint64_t>>
 	    cbuilder( H, cut.get_slice() );
 	auto & CG = cbuilder.get_graph();
-	clique_via_vc3_mono<VID,EID,use_exist>( CG, v, degeneracy, CE, 1 );
+	clique_via_vc3_mono<VID,EID,use_exist>( CG, v, degeneracy, CE, depth );
     }
 #endif
 
-#if CLIQUER_PRUNE
+#if MEMOIZE_MC_PER_VERTEX
     max_clique_per_vertex[v] = CE.get_max_clique_size();
 #endif
 
@@ -3461,7 +3524,7 @@ std::pair<VID,EID> mc_top_level_select(
     // No point analysing a vertex of too low degree
     if( remap_coreness[v] < best ) {
 	stats.record_filter0( tm.next() );
-	return -1;
+	return std::make_pair( VID(0), EID(1) );
     }
 #endif
 
@@ -3508,7 +3571,7 @@ std::pair<VID,EID> mc_top_level_select(
 
     VID hn1 = cut.get_num_vertices();
     if( hn1 < best || hn1 == 0 )
-	return -2;
+	return std::make_pair( VID(0), EID(2) );
 
 #if ABLATION_FILTER_STEPS >= 2
     // Make a second pass over the vertices in the cut-out and check
@@ -3539,7 +3602,7 @@ std::pair<VID,EID> mc_top_level_select(
 	bool ge = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_ge_ds(
 		cut.get_slice(),
-		H.get_neighbours_set( u ),
+		H.get_lazy_neighbours_set( u ),
 		best-1 ); // keep if intersection size >= best-1
 	return ge;
     }, best );
@@ -3552,9 +3615,11 @@ std::pair<VID,EID> mc_top_level_select(
     // should log 1-clique in case num == 0.
     VID hn2 = cut.get_num_vertices();
     if( hn2 < best || hn2 == 0 )
-	return -3;
+	return std::make_pair( VID(0), EID(3) );
 #endif
 
+    clique_set<VID> * root = nullptr;
+    VID depth = 1;
     EID m_est = 0;
 #if ABLATION_FILTER_STEPS >= 3
     // The previous filtering loop uses the size_ge primitive to maximise
@@ -3565,6 +3630,68 @@ std::pair<VID,EID> mc_top_level_select(
     // out. This loop additionally filters as well (only if the previous
     // filtering loop managed to filter out vertices), which is doubly
     // useful.
+#if !ABLATION_DISABLE_CONNECTED_FILTERING
+    // Try to decide upon vertices that must be included.
+    std::vector<VID> selected;
+    VID hn3;
+    VID num = hn2;
+    VID threshold = best;
+    //  do
+    {
+	hn3 = cut.get_num_vertices();
+	cut.filter( [&]( VID u ) {
+	    // d > best-2 is impossible to meet when best == 0 or best == 1
+	    // due to wrap-around of unsigned numbers.
+	    // Adjust the threshold for it to make sense.
+	    VID d = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_gt_val_ds(
+		    cut.get_slice(),
+		    H.get_neighbours_set( u ),
+		    threshold <= 2 ? VID(0)
+		    : threshold-2 ); // exceed checks >, we need >= best-1
+
+	    // Reduction rules based on degree
+	    // Chang KDD'19
+	    if( d == cut.get_num_vertices()-1 ) {
+		// Is this vertex connected to all other vertices?
+		// If so, adopt this vertex and reduce search problem
+		selected.push_back( u );
+		if( threshold > 0 )
+		    --threshold;
+		return false;
+	    } /* else if( d == cut.get_num_vertices()-2 ) {
+		// Either u or the vertex it is not connected to make up the
+		// maximum clique for this subgraph. Can include either this
+		// one or the other one (but the other one is unknown).
+		// The other one *must* be removed too, otherwise we could
+		// decide to include it too in case of a truss.
+How to know the odd one out?
+		selected.push_back( u );
+		return false;
+		} */
+
+	    if( d+1 >= threshold )
+		m_est += d;
+	    return d+1 >= threshold;
+	}, threshold );
+
+	num = cut.get_num_vertices() + selected.size();
+    } //  while( cut.get_num_vertices() < hn3 && num != 0 && num >= best );
+
+    // if( !selected.empty() )
+    // std::cout << "selected size: " << selected.size() << "\n";
+
+    std::vector<clique_set<VID>> r_nodes;
+    r_nodes.reserve( selected.size() );
+    VID off = cut.get_num_vertices();
+    for( VID v : selected ) {
+	r_nodes.emplace_back( off, root ); // will be translated ...
+	const_cast<VID *>( cut.get_vertices() )[off] = v; // off is valid index because v was removed
+	root = &r_nodes.back();
+	++depth;
+	++off;
+    }
+#else
     cut.filter( [&,best]( VID u ) {
 	// d > best-2 is impossible to meet when best == 0 or best == 1
 	// due to wrap-around of unsigned numbers.
@@ -3580,13 +3707,38 @@ std::pair<VID,EID> mc_top_level_select(
 	return d+1 >= best;
     }, best );
 
-    stats.record_filter2( tm.next() );
     VID num = cut.get_num_vertices();
+#endif
+    stats.record_filter2( tm.next() );
+
     if( num < best || num == 0 )
-	return -4;
+	return std::make_pair( VID(0), EID(4) );
 #else
     VID num = cut.get_num_vertices();
 #endif
+
+// #if FILTER_NEIGHBOUR_CLIQUE
+    // Check for each vertex in the cutout if an MC is known for them.
+    // If an MC is known for all neighbours, it provides us with an upper bound
+    // on the maximum clique in the current cutout (see Cliquer).
+    // If any vertex has an unknown maximum clique, then we cannot deduce
+    // anything for the current cutout.
+    // Although we could deduce that any vertex v has an MC in its RHS
+    // neighbourhood of at most u-v+MC(u) for any of its RHS neighbours u.
+    // This could be an improvement over the coreness as an upper bound.
+    // However, if u and v have different coreness, then u-v will by far
+    // exceed the degeneracy of the graph and the upper bound u-v+MC(u) will
+    // not be useful. This trick seems to only really apply in sequential
+    // execution where the MC for all RHS neighbours is known.
+    //
+    // Parallelism more generally causes also issues with initiating the
+    // evaluation of certain vertices than can be provably if we wait for
+    // other vertices to be evaluated.
+    //
+    // Consider a DAG such that any vertex can be evaluated only when its
+    // RHS neighbours have been evaluated, limiting both the unnecessary
+    // evaluation of cliques and the availability of RHS neighbours' MC UB.
+// #endif 
 
     float d_ret = 0;
     
@@ -3611,7 +3763,7 @@ std::pair<VID,EID> mc_top_level_select(
 
     if( nlg <= N_MAX_SIZE ) {
 	MC_CutOutEnumerator CE( E, v, cut.get_vertices() );
-	return mc_dense_func[nlg-N_MIN_SIZE]( H, CE, v, cut, stats );
+	return mc_dense_func[nlg-N_MIN_SIZE]( H, CE, v, cut, root, depth, stats );
     }
 #endif
 
@@ -3620,14 +3772,18 @@ std::pair<VID,EID> mc_top_level_select(
 	d_ret = d;
     if constexpr ( select == 0 ) {
 	if( d > density_threshold ) {
-	    mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
+	    mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut,
+			     root, depth );
 	} else {
-	    mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
+	    mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut,
+			     root, depth );
 	}
     } else if constexpr ( select == 1 ) {
-	mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut );
+	mc_top_level_bk( H, E, v, degeneracy, d, remap_coreness, cut,
+			 root, depth );
     } else {
-	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut );
+	mc_top_level_vc( H, E, v, degeneracy, d, remap_coreness, cut,
+			 root, depth );
     }
 
     return std::make_pair( num, m_est );
@@ -3656,7 +3812,7 @@ void mc_top_level(
 	return;
     
     VID deg = H.getDegree( v );
-    std::vector<std::pair<double,double>> timings;
+    std::vector<std::pair<double,std::pair<VID,EID>>> timings;
     timings.reserve( deg );
     std::vector<VID> empty;
     VID mc = 0;
@@ -3872,7 +4028,63 @@ bool mc_leaf(
 }
 
 template<typename GraphType>
-void heuristic_expand(
+void heuristic_suffix(
+    const GraphType & H,
+    MC_Enumerator & E,
+    const VID * const coreness ) {
+
+    timer tm;
+    tm.start();
+
+    all_variant_statistics & stats = mc_stats.get_statistics();
+
+    VID n = H.get_num_vertices();
+
+    const auto & adj = H.get_neighbours_set( n-1 );
+    if( adj.size() == 0 )
+	return;
+
+    std::vector<VID> pset;
+    pset.reserve( adj.size() );
+
+    // Only interested in vertices that can make a clique larger than th
+    // th is likely 0 or 1
+    VID th = E.get_max_clique_size();
+    for( auto u : adj )
+	if( coreness[u] >= th ) 
+	    pset.push_back( u );
+
+    std:vector<VID> clique;
+    clique.push_back( n-1 );
+    
+    for( VID v=n-2; v > 0; --v ) {
+	const auto & adj = H.get_neighbours_set( v );
+
+	std::vector<VID> ins( std::min( pset.size(), adj.size() ) );
+
+	graptor::array_slice<VID,size_t> s( &pset[0], &pset[pset.size()-1] );
+	VID * out = &ins[0];
+	size_t sz =
+	    graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+		s, adj, out ) - out;
+	ins.resize( sz );
+
+	std::swap( pset, ins );
+
+	if( pset.size() > 0 )
+	    clique.push_back( v );
+	else
+	    break;
+    }
+
+    E.record( clique.size(), n-1, clique.begin(), clique.end() );
+
+    stats.record_heuristic( tm.stop() );
+}
+
+
+template<typename GraphType>
+VID heuristic_expand(
     const GraphType & H,
     const clique_set<VID> * R,
     VID top_v,
@@ -3883,7 +4095,7 @@ void heuristic_expand(
 
     if( P_begin == P_end ) {
 	E.record( depth, top_v, R->begin(), R->end() );
-	return;
+	return depth;
     }
 
     // Assume highest-core vertices have higher vertex ID, at end of list
@@ -3905,13 +4117,13 @@ void heuristic_expand(
 	sz = graptor::set_operations<graptor::MC_intersect>::intersect_gt_ds(
 	    s, v_adj, cur_size - depth, out ) - out;
 
-    heuristic_expand( H, &R_new, top_v, out, out+sz, E, depth+1 );
+    return heuristic_expand( H, &R_new, top_v, out, out+sz, E, depth+1 );
 }
 
 /*! Heuristic search method for maximum clique
  */
 template<typename GraphType>
-void heuristic_search(
+VID heuristic_search(
     const GraphType & H,
     MC_Enumerator & E,
     VID v,
@@ -3924,7 +4136,7 @@ void heuristic_search(
 
     const auto & adj = H.get_neighbours_set( v );
     if( adj.size() == 0 )
-	return;
+	return 1;
 
     std::vector<VID> pset;
     pset.reserve( adj.size() );
@@ -3936,10 +4148,209 @@ void heuristic_search(
 	    pset.push_back( u );
 
     // Heuristically expand a clique.
-    heuristic_expand( H, nullptr, v, &pset[0], &pset[pset.size()], E, 1 );
+    VID mc =
+	heuristic_expand( H, nullptr, v, &pset[0], &pset[pset.size()], E, 1 );
 
     stats.record_heuristic( tm.stop() );
+
+    return mc;
 }
+
+class DAGScheduler {
+public:
+    DAGScheduler( const HFGraphTy & graph_H, const GraphCSx & graph_G,
+		  MC_Enumerator & E,
+		  VID degeneracy, const VID * const coreness,
+		  const VID * const rev_order )
+	: m_graph_H( graph_H ), m_graph_G( graph_G ), m_E( E ),
+	  m_degeneracy( degeneracy ), m_coreness( coreness ),
+	  m_rev_order( rev_order ),
+	  m_deps( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
+	  m_rhs_mc( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
+	  m_queue( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
+	  m_queue_pos( 0 ),
+	  m_num_outstanding( 0 ) {
+	// Set known RHS clique size for each vertex to zero. This is clearly
+	// absence of information as every vertex is a member of a 1-clique.
+	std::fill( &m_rhs_mc[0], &m_rhs_mc[graph_H.get_num_vertices()], (VID)0 );
+    }
+    
+    //! Record MC on execution of a phase 1 search.
+    // This preceeds construction of the DAG and initialisation of the queues.
+    void record_phase1( VID v, VID mc ) {
+	std::lock_guard<std::mutex> guard( m_mutex );
+	m_phase1.push_back( std::make_pair( v, mc ) );
+    }
+
+    //! Construct DAG dependencies
+    // Account for those vertices already executed in phase 1
+    void setup() {
+	const VID n = m_graph_H.get_num_vertices();
+
+	// Initialise RHS dependency counters
+	parallel_loop( VID(0), n, [&]( VID v ) {
+	    VID rhs_count = m_graph_H.get_num_right_neighbours( v );
+	    new ( &m_deps[v] ) std::atomic<VID>( rhs_count );
+	} );
+
+	// Now check for ready and infeasible vertices
+	parallel_loop( VID(0), n, [&]( VID v ) {
+	    // Query again right neighbourhood size for correctness
+	    VID rhs_count = m_graph_H.get_num_right_neighbours( v );
+	    if( rhs_count == 0 )
+		wakeup( v );
+	} );
+
+	// Initialise RHS dependency counters
+	// Might use parallel loop if we have high counts of LHS neighbours.
+	for( auto p : m_phase1 ) {
+	    VID v = p.first, mc = p.second;
+
+	    // Record RHS clique size for this vertex
+	    m_rhs_mc[v] = mc;
+
+	    // Deduct dependency of LHS neighbours
+	    deduct_lhs_dep( v );
+
+	    // Increase our own dependency by one such that we are
+	    // never woken up
+	    ++m_deps[v];
+	}
+
+	std::cout << "DAG setup: " << m_queue_pos << " elements in queue\n";
+    }
+    
+    //! Pop a vertex from the queue.
+    // This method blocks until a vertex is available, or there is no hope that
+    // any new vertex will become available, in which case an error code is
+    // returned.
+    VID pop() {
+	while( m_num_outstanding.load() != 0 ) {
+	    VID v;
+	    while( (v = try_pop()) != ~(VID)0 ) {
+		if( is_feasible( v ) )
+		    return v;
+		else {
+		    if( m_coreness[v] >= m_E.get_max_clique_size() )
+			// Needs some thought when waking up an infeasible
+			// vertex is necessary.
+			// It seems that it is definitely not necessary if its
+			// coreness is too low, as all LHS neighbours do not
+			// have higher coreness. Any other reasons may still
+			// require wakeup.
+			deduct_lhs_dep( v );
+		    --m_num_outstanding;
+		}
+	    }
+
+	    // Failing to find a feasible vertex ...
+
+	    // Snooze
+	    sched_yield();
+	}
+
+	return ~VID(0);
+    }
+
+    //! Run parallel loop processing all vertices in graph in DAG order.
+    void process() {
+	map_workers( [&]( uint32_t thr ) {
+	    while( m_num_outstanding.load() != 0 ) {
+		VID v = pop();
+
+		// Error code
+		if( v == ~(VID)0 )
+		    break;
+
+		// Process and have MC for this vertex recorded.
+		mc_top_level( m_graph_H, m_graph_G, m_E, v, m_degeneracy,
+			      m_coreness, m_rev_order );
+
+		// This may be a very loose upper bound
+		// Needs some restructing of enumerators to record the MC
+		// for a specific top-level vertex.
+		VID mc = m_E.get_max_clique_size();
+
+		// m_rhs_mc[v] is owned by a single thread
+		if( m_rhs_mc[v] == 0 || mc < m_rhs_mc[v] )
+		    m_rhs_mc[v] = mc;
+
+		// Deduct dependencies for left neighbours and wake them up
+		deduct_lhs_dep( v );
+
+		// Vertex processed
+		--m_num_outstanding;
+	    }
+	} );
+    }
+
+private:
+    bool is_feasible( VID v ) const {
+	if( m_coreness[v] < m_E.get_max_clique_size() )
+	    return false;
+
+	// Calculate largest RHS neighbour's clique size, add 1, and
+	// compare to incumbent clique.
+
+	return true;
+    }
+
+    void deduct_lhs_dep( VID v ) {
+	// Make sure we don't trigger creation of a hash set in case of
+	// lazy hashing. We don't need a hash set for this operation anyway.
+	const VID * ngh = m_graph_H.get_neighbours( v );
+	const VID deg = m_graph_H.get_degree( v );
+
+	for( VID i=0; i < deg; ++i ) {
+	    VID u = ngh[i];
+
+	    if( u > v ) // only LHS neighbours
+		break;
+
+	    if( --m_deps[u] == 0 )
+		wakeup( u );
+	}
+    }
+
+    //! Try to pop an element
+    VID try_pop() {
+	std::lock_guard<std::mutex> guard( m_mutex );
+	if( m_queue_pos > 0 )
+	    return m_queue[--m_queue_pos];
+	else
+	    return ~(VID)0;
+    }
+
+    //! Push a ready vertex onto the queue
+    void push_queue( VID v ) {
+	std::lock_guard<std::mutex> guard( m_mutex );
+	m_queue[m_queue_pos++] = v;
+    }
+
+    //! Wakeup: push in queue if feasible, else decide to deduct LHS dep ctrs
+    void wakeup( VID v ) {
+	if( is_feasible( v ) ) {
+	    push_queue( v );
+	    ++m_num_outstanding;
+	} else if( m_coreness[v] >= m_E.get_max_clique_size() )
+	    deduct_lhs_dep( v );
+    }
+
+private:
+    std::mutex m_mutex;
+    const HFGraphTy & m_graph_H;
+    const GraphCSx & m_graph_G;
+    MC_Enumerator & m_E;
+    VID m_degeneracy;
+    const VID * const m_coreness;
+    const VID * const m_rev_order;
+    mm::buffer<std::atomic<VID>> m_deps;
+    mm::buffer<VID> m_rhs_mc;
+    std::vector<std::pair<VID,VID>> m_phase1;
+    mm::buffer<VID> m_queue;
+    VID m_queue_pos;
+    std::atomic<VID> m_num_outstanding;
+};
 
 /*! Main method for maximum clique search
  */
@@ -3949,6 +4360,7 @@ int main( int argc, char *argv[] ) {
 	"\t-s\t\tinput graph is symmetric\n"
 	"\t-p\t\tapply pruning before reordering\n"
 	"\t-H [012]\theuristic search (default 2)\n"
+	"\t--suffix\theuristic search for suffix clique\n"
 	"\t-v {level}\tverbosity level (default 0)\n"
 	"\t-pre {vertex}\tpre-trial vertex heuristic search\n"
 	"\t-what-if {size}\tassuming clique of given size exists\n"
@@ -3960,6 +4372,7 @@ int main( int argc, char *argv[] ) {
 	);
     bool symmetric = P.get_bool_option( "-s" );
     bool early_pruning = P.get_bool_option( "-p" );
+    bool suffix_clique = P.get_bool_option( "--suffix" );
     int heuristic = P.get_long_option( "-H", 2 );
     VID pre = P.get_long_option( "-pre", -1 );
     VID what_if = P.get_long_option( "-what-if", -1 );
@@ -4043,14 +4456,15 @@ int main( int argc, char *argv[] ) {
 				     P, prune_th, dmax_v );
     std::cout << "Building pruned and remapped graph: " << tm.next() << "\n";
 
-    HFGraphTy H( R, numa_allocation_interleaved() );
+    HFGraphTy H( R, numa_allocation_interleaved(), degeneracy );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
     // Cleanup remapped graph now; we won't need it any more.
     // Note: keep graph G around for validation
-    R.del();
+    // R required for GraphLazyHashedAdj
+    // R.del();
 
-#if CLIQUER_PRUNE
+#if MEMOIZE_MC_PER_VERTEX
     max_clique_per_vertex = new VID[pn];
     std::fill( max_clique_per_vertex, max_clique_per_vertex+pn, VID(0) );  
 #endif
@@ -4092,13 +4506,17 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tABLATION_DISABLE_VC=" << ABLATION_DISABLE_VC
 	      << "\n\tABLATION_DISABLE_BK=" << ABLATION_DISABLE_BK
 	      << "\n\tABLATION_FILTER_STEPS=" << ABLATION_FILTER_STEPS
+	      << "\n\tABLATION_DISABLE_CONNECTED_FILTERING="
+	      << ABLATION_DISABLE_CONNECTED_FILTERING
 	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
 	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
 	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
 	      << "\n\tMC_INTERSECTION_ALGORITHM=" << MC_INTERSECTION_ALGORITHM
+	      << "\n\tABLATION_DISABLE_ADV_INTERSECT=" << ABLATION_DISABLE_ADV_INTERSECT
 	      << "\n\tINTERSECT_ONE_SIDED=" << INTERSECT_ONE_SIDED
 	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
 	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
+	      // << "\n\tFILTER_NEIGHBOUR_CLIQUE=" << FILTER_NEIGHBOUR_CLIQUE
 	      << "\n\tPIVOT_COLOUR=" << PIVOT_COLOUR
 	      << "\n\tPIVOT_COLOUR_DENSE=" << PIVOT_COLOUR_DENSE
 	      << "\n\tVERTEX_COVER_COMPONENTS=" << VERTEX_COVER_COMPONENTS
@@ -4109,6 +4527,8 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
 	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
 	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
+	      << "\n\tABLATION_DISABLE_LAZY_HASHING="
+	      << ABLATION_DISABLE_LAZY_HASHING
 #ifdef LOAD_FACTOR
 	      << "\n\tLOAD_FACTOR=" << LOAD_FACTOR
 #else
@@ -4151,6 +4571,11 @@ int main( int argc, char *argv[] ) {
 #endif
 
     E.rebase( degeneracy, order.get(), remap_coreness.get() );
+
+#if TRAVERSAL_ORDER & 16
+    DAGScheduler dag_scheduler(
+	H, G, E, degeneracy, remap_coreness.get(), rev_order.get() );
+#endif
 
     std::cout << "setup: " << tm.next() << std::endl;
     std::cout << "Start enumeration at " << tm.total() << std::endl;
@@ -4208,6 +4633,11 @@ int main( int argc, char *argv[] ) {
 	std::cout << "what-if: " << tm.next() << "\n";
     }
 
+    if( suffix_clique ) {
+	heuristic_suffix( H, E, remap_coreness.get() );
+	std::cout << "heuristic suffix: " << tm.next() << "\n";
+    }
+    
     if( heuristic == 1 ) {
 	// Heuristic 1: explore all vertices in a greedy manner, finding one
 	// clique per vertex. Traverse from high to low vertex number.
@@ -4231,8 +4661,14 @@ int main( int argc, char *argv[] ) {
 #endif
 	    if( c_up != c_lo ) {
 		VID v = c_lo;
-		if( E.is_feasible( c+1, fr_outer ) )
-		    heuristic_search( H, E, v, remap_coreness.get() );
+		if( E.is_feasible( c+1, fr_outer ) ) {
+		    VID mc = heuristic_search( H, E, v, remap_coreness.get() );
+#if TRAVERSAL_ORDER & 16
+		    // Note: heurstic_search does not give a strict upper
+		    // bound as it cuts the search short depending on E
+		    dag_scheduler.record_phase1( v, mc );
+#endif
+		}
 
 		// if( !E.is_feasible( c+1, fr_outer ) )
 		// break;
@@ -4247,7 +4683,7 @@ int main( int argc, char *argv[] ) {
     }
 
 #if PROFILE_INCUMBENT_SIZE != 0
-    // Dsiable filtering 
+    // Disable filtering 
     E.reset();
 #endif
 
@@ -4269,6 +4705,32 @@ int main( int argc, char *argv[] ) {
     } );
 
 #elif SORT_ORDER >= 4 && SORT_ORDER <= 7
+#if TRAVERSAL_ORDER & 16
+    parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
+#if ( TRAVERSAL_ORDER & 1 ) == 0
+	VID c = cc;
+#else
+	VID c = degeneracy - cc;
+#endif
+	VID c_up = histo[c+1];
+	VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+	std::swap( c_up, c_lo );
+#endif
+	if( c_up != c_lo ) {
+	    VID v = c_lo;
+	    if( E.is_feasible( c+1, fr_outer ) ) {
+		mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+			      rev_order.get()  );
+		dag_scheduler.record_phase1( v, E.get_max_clique_size() );
+	    }
+	}
+    } );
+    std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
+    dag_scheduler.setup();
+    std::cout << "DAG setup: " << tm.next() << "\n";
+    dag_scheduler.process();
+#else // not TRAVERSAL_ORDER & 16
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
@@ -4351,6 +4813,7 @@ int main( int argc, char *argv[] ) {
 	}
     } );
 
+#endif // TRAVERSAL_ORDER & 16
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
@@ -4439,12 +4902,22 @@ int main( int argc, char *argv[] ) {
     // Validate clique
     validate_clique( G, mc );
 
+    if constexpr ( lazy_hashing ) {
+	VID num_init = 0;
+	for( VID v=0; v < n; ++v )
+	    if( H.is_adjacency_initialised( v ) )
+		++num_init;
+	std::cerr << "Lazy initialisation: " << num_init << " / "
+		  << n << " hash sets initialised\n";
+    }
+
+    R.del();
     G.del();
     remap_coreness.del();
     rev_order.del();
     order.del();
 
-#if CLIQUER_PRUNE
+#if MEMOIZE_MC_PER_VERTEX
     delete[] max_clique_per_vertex;
     max_clique_per_vertex = nullptr;
 #endif
