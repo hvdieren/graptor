@@ -33,10 +33,10 @@ struct java_hash<uint32_t> {
 
 	vtype h20 = tr::srli( h, 20 );
 	vtype h12 = tr::srli( h, 12 );
-	h = tr::bitwise_xor( h20, tr::bitwise_xor( h, h12 ) );
+	h = tr::bitwise_xor( h20, h, h12 );
 	vtype h7 = tr::srli( h, 7 );
 	vtype h4 = tr::srli( h, 4 );
-	h = tr::bitwise_xor( h7, tr::bitwise_xor( h, h4 ) );
+	h = tr::bitwise_xor( h7, h, h4 );
 	return h;
     }
 };
