@@ -2703,6 +2703,8 @@ public:
     const VID *getEdges() const { return edges.get(); }
     VID *getDegree() { return degree.get(); }
     const VID *getDegree() const { return degree.get(); }
+    VID *get_degree() { return degree.get(); }
+    const VID *get_degree() const { return degree.get(); }
 
     const VID * get_neighbours( VID v ) const {
 	return &getEdges()[getIndex()[v]];
@@ -2715,13 +2717,16 @@ public:
     }
 
     VID numVertices() const { return n; }
+    VID get_num_vertices() const { return n; }
     EID numEdges() const { return m; }
+    EID get_num_edges() const { return m; }
 
     // Very specific interface
     [[deprecated("This interface should not normally be used!")]]
     void setNumEdges( EID um ) { m = um; }
 
     VID getDegree( VID v ) const { return index[v+1] - index[v]; }
+    VID get_degree( VID v ) const { return index[v+1] - index[v]; }
     VID getNeighbor( VID v, VID pos ) const { return edges[index[v]+pos]; }
     bool hasNeighbor( VID v, VID ngh ) const {
 	return std::binary_search( &edges[index[v]], &edges[index[v+1]], ngh );
