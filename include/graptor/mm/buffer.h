@@ -90,8 +90,10 @@ public:
 		   elements, reason ) ) { }
 
     void del( const char * reason = nullptr ) {
-	if( alc.ptr() )
+	if( alc.ptr() ) {
 	    methods::deallocate( alc );
+	    alc.clear();
+	}
     }
     
     value_type * get() const {

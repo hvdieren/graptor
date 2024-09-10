@@ -22,6 +22,12 @@ public:
     size_t size() const { return m_size; }
     bool is_mapped() const { return m_mapped; }
     bool is_aligned() const { return m_aligned; }
+    void clear() {
+	m_ptr = 0;
+	m_size = 0;
+	m_mapped = false;
+	m_aligned = false;
+    }
 private:
     intptr_t m_ptr; //!< address of the allocation
     size_t m_size;  //!< size of the allocation
