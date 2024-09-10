@@ -1502,26 +1502,113 @@ private:
 	row_type pivot_ngh, x;
 
 	while( true ) {
-	    // pivot = target::alltzcnt<sVID,type,VL>::compute( P );
+	    // TODO: add low-degree reduction rule (Chang KDD'19):
+	    // if the number of remaining neighbours in P is less than
+	    // the required MC - depth, then the vertex can be removed
+	    // in this part of the search tree.
 	    pivot = mc_get_pivot( P );
 	    pivot_ngh = get_row( pivot );
 	    x = tr::bitwise_andnot( pivot_ngh, P );
 	    nset = get_size( x );
 
 	    if( nset == 0 )
-		// P\N(pivot) is empty. If we were to proceed without
-		// pivoting, the pivot would remain in X as it
-		// is a neighbour of all elements of P.
+		// P\N(pivot) is empty. Done.
+		// (Where did the pivot go? should this be possible only with
+		//  MCE where the pivot can be in X?)
 		return;
-	    else if( nset == 1 ) {
-		// Only one vertex is iterated over. Simply adopt
-		// and search for next, to reduce depth of recursion
-		sVID u = target::alltzcnt<sVID,type,VL>::compute( x );
-		row_type u_ngh = get_row( u );
-		row_type u_only = x;
 
-		P = tr::bitwise_and( P, u_ngh );
-		R = tr::bitwise_or( R, u_only );
+#if 0 // marginal added value
+	    if( nset == 4 ) {
+		// A vertex is connected to all other vertices except three.
+		// We can remove all three if no edges exist between them.
+		// We can remove one if there is one edge between the other two.
+		row_type pivot_only = create_row( pivot );
+		row_type non_ngh = tr::bitwise_andnot( pivot_only, x );
+		sVID u1 = target::alltzcnt<sVID,type,VL>::compute( non_ngh );
+		row_type u1_only = create_row( u1 );
+		row_type non_ngh2 = tr::bitwise_andnot( u1_only, non_ngh );
+		row_type u1_ngh = get_row( u1 );
+		sVID u2 = target::alltzcnt<sVID,type,VL>::compute( non_ngh2 );
+		row_type u2_ngh = get_row( u2 );
+/*
+		bitset<Bits> b( non_ngh );
+		auto I = b.begin();
+		sVID u1 = *I;
+		row_type u1_ngh = get_row( u1 );
+		++I;
+		sVID u2 = *I;
+		row_type u2_ngh = get_row( u2 );
+*/
+		row_type intle = tr::bitwise_or_and( u1_ngh, u2_ngh, non_ngh );
+		if( tr::is_zero( intle ) ) {
+		    // No edges between non-neighbours at all. Remove all.
+		    x = pivot_only;
+		    nset = 1;
+		} else if( !tr::cmpeq( intle, non_ngh, target::mt_bool() ) ) {
+		    // There is at least one vertex not connected to the other
+		    // two, hence, at most one edge out of three possible.
+		    // Remove the unlinked vertex.
+		    row_type unlinked = tr::bitwise_andnot( intle, non_ngh );
+		    P = tr::bitwise_andnot( unlinked, P );
+		    x = tr::bitwise_andnot( unlinked, x );
+		    nset = 3;
+		    // No point to consider further. We don't handle the
+		    // reduced case for nset == 3 either.
+		    break;
+		} else {
+		    // Remaining cases too complex.
+		    break;
+		}
+	    }
+#endif
+	    if( nset == 3 ) {
+		// We have a vertex connected to all other vertices except
+		// two. Two cases arise: the other two vertices are neighbours,
+		// or not.
+		row_type pivot_only = create_row( pivot );
+		row_type non_ngh = tr::bitwise_andnot( pivot_only, x );
+		sVID u1 = target::alltzcnt<sVID,type,VL>::compute( non_ngh );
+		row_type u1_ngh = get_row( u1 );
+		// Are u1 and u2 neighbours?
+		bool u1u2 = !tr::is_bitwise_and_zero( u1_ngh, non_ngh );
+
+		if( !u1u2 ) {
+		    // This is a case we can handle easily. Retain the pivot
+		    // and remove both u1 and u2.
+		    x = pivot_only;
+		    nset = 1;
+		} else {
+		    // In this case, a new vertex needs to be created
+		    // by contracting u1 and u2. This requires a modification
+		    // of the adjacency matrix (Chang KDD'19) which we will
+		    // not do here.
+		    break;
+		}
+	    } else if( nset == 2 ) {
+		// We have a vertex connected to all other vertices except one
+		// The maximum clique can be found by considering this vertex
+		// and we can ignore the one we are not a neighbour to
+		// (Chang KDD'19)
+		// Remove the non-neighbour from P and x, reduce nset,
+		// and continue with nset == 1
+		row_type pivot_only = create_row( pivot );
+		// The non-neighbour will be removed as part of nset == 1
+		// actions, as the non-neighbour is not in pivot_ngh
+		// row_type non_ngh = tr::bitwise_andnot( pivot_only, x );
+		// P = tr::bitwise_andnot( non_ngh, P );
+		x = pivot_only; // == tr::bitwise_and( pivot_row, x );
+		nset = 1;
+	    }
+	    
+	    if( nset == 1 ) {
+		// Only one vertex is iterated over. Simply adopt
+		// and search for next, to reduce depth of recursion.
+		// In MC, the pivot is a member of P, so if only one
+		// vertex is retained in x, it must be the pivot.
+		row_type pivot_only = x;
+
+		P = tr::bitwise_and( P, pivot_ngh );
+		R = tr::bitwise_or( R, pivot_only );
 		++depth;
 
 		if( tr::is_zero( P ) ) {
