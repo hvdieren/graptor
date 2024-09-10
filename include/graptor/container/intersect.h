@@ -31,6 +31,10 @@
 #define INTERSECT_GE_ABOVE 1
 #endif
 
+#ifndef ABLATION_DISABLE_ADV_INTERSECT
+#define ABLATION_DISABLE_ADV_INTERSECT 0
+#endif
+
 #include <iterator>
 #include <type_traits>
 #include <immintrin.h>
@@ -1013,7 +1017,10 @@ struct set_operations {
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
-	
+
+#if ABLATION_DISABLE_ADV_INTERSECT
+	return intersect_ds( lset, rset, out );
+#else
 	// Collector is of type pointer to element of set
 	// Construct custom collector object to have unified code base
 	// for storing intersection with pointer or with a custom class.
@@ -1028,6 +1035,7 @@ struct set_operations {
 	    auto task = create_intersection_task<so_intersect>( out );
 	    return apply( lset, rset, task );
 	}
+#endif
     }
 
     template<typename LSet, typename RSet, typename Collector>
@@ -1076,8 +1084,12 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
+#if ABLATION_DISABLE_ADV_INTERSECT
+	return intersect_size_ds( lset, rset, out );
+#else
 	intersection_task<so_intersect_size_gt_val,void> task( threshold );
 	return apply( lset, rset, task );
+#endif
     }
 
     template<typename LSet, typename RSet>
@@ -1089,8 +1101,12 @@ struct set_operations {
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
+#if ABLATION_DISABLE_ADV_INTERSECT
+	return intersect_size_ds( lset, rset ) >= threshold;
+#else
 	intersection_task<so_intersect_size_ge,void> task( threshold );
 	return apply( lset, rset, task );
+#endif
     }
 
     template<typename LSet, typename RSet, typename Task>
