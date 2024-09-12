@@ -247,11 +247,19 @@ using hash_fn = graptor::java_hash<uint32_t>;
 #if HOPSCOTCH_HASHING == 1
 using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = false;
+#if ABLATION_DISABLE_LAZY_HASHING
+static constexpr bool lazy_hashing = false;
+#else
 static constexpr bool lazy_hashing = true;
+#endif
 #elif HOPSCOTCH_HASHING == 2
 using hash_set_type = graptor::hash_set_hopscotch_delta<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = false;
+#if ABLATION_DISABLE_LAZY_HASHING
+static constexpr bool lazy_hashing = false;
+#else
 static constexpr bool lazy_hashing = true;
+#endif
 #else
 using hash_set_type = graptor::hash_set<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = true;
@@ -263,7 +271,6 @@ using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_set_prealloc,fal
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,false,hash_set_type>;
 #endif
-// using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,lazy_hashing,hash_set_type>;
 using HFGraphTy = graptor::graph::GraphLazyHashedAdj<VID,EID,lazy_hashing,hash_set_type>;
 
 using graptor::graph::DenseMatrix;
@@ -3755,6 +3762,16 @@ How to know the odd one out?
     }
 #endif
 
+    // Note prefix heuristic mentioned in Tomita & Kameda, J Glob Optim 2007,
+    // allowing to deduce a clique in the lowest-degree vertices, under
+    // certain circumstances. Only likely to improve the maximum clique known
+    // in what appear to be rare circumstances, i.e., the cutout must be
+    // substantially larger than the incumbent clique size, or, all vertices
+    // in cutout have the same degree.
+    // We could check if this heuristic helps here.
+    // If it does help to improve incumbent clique size, we could then consider
+    // to redo the filtering from the top (checking coreness).
+
 #if !ABLATION_DISABLE_TOP_DENSE
     // Needs to be determined if it is useful to engage the dense cutout
     // sooner when not all filtering is done. This would be useful when the
@@ -4027,6 +4044,12 @@ bool mc_leaf(
 #endif // ABLATION_DISABLE_LEAF
 }
 
+// Suffix heuristic mentioned in Chang KDD'19. Does not bring much joy here.
+// Prefix heuristic mentioned in Tomita & Kameda, J Glob Optim 2007:
+// If R_min is the set of vertices with lowest degree (and thus first vertices
+// in degeneracy order), and for all p in R_min: deg(p)=|R_min|-1, then these
+// vertices much form a clique. This is only useful really in the absence of
+// low-degree vertices, i.e., after significant filtering...
 template<typename GraphType>
 void heuristic_suffix(
     const GraphType & H,
