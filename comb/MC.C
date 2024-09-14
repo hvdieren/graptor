@@ -5,11 +5,6 @@
 // * Add TERM signal handler to flush all output after a timeout during
 //   measurements.
 
-// Consider:
-// + StackLikeAllocator PAGE_SIZE => mmap => high overhead, USAroad not needed
-//   look at retaining chunks in persistent allocator, i.e., insert layer
-//   that hands out pages to the SLAs?
-
 #ifndef ABLATION_HADJPA_DISABLE_XP_HASH
 #define ABLATION_HADJPA_DISABLE_XP_HASH 0
 #endif
@@ -4409,6 +4404,61 @@ int main( int argc, char *argv[] ) {
     incumbent_profiling_vertex = P.get_long_option( "--incumbent-vertex", ~(VID)0 );
 #endif
 
+    std::cout << "Options:"
+	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
+	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
+	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
+	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
+	      << ABLATION_HADJPA_DISABLE_XP_HASH
+	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
+	      << ABLATION_DENSE_DISABLE_XP_HASH
+	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL_BITS="
+	      << DENSE_THRESHOLD_SEQUENTIAL_BITS
+	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
+	      << DENSE_THRESHOLD_SEQUENTIAL
+	      << "\n\tDENSE_THRESHOLD_DENSITY="
+	      << DENSE_THRESHOLD_DENSITY
+	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
+	      << ABLATION_DENSE_NO_PIVOT_TOP
+	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
+	      <<  ABLATION_DENSE_PIVOT_FILTER
+	      << "\n\tABLATION_DISABLE_VC=" << ABLATION_DISABLE_VC
+	      << "\n\tABLATION_DISABLE_BK=" << ABLATION_DISABLE_BK
+	      << "\n\tABLATION_FILTER_STEPS=" << ABLATION_FILTER_STEPS
+	      << "\n\tABLATION_DISABLE_CONNECTED_FILTERING="
+	      << ABLATION_DISABLE_CONNECTED_FILTERING
+	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
+	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
+	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
+	      << "\n\tMC_INTERSECTION_ALGORITHM=" << MC_INTERSECTION_ALGORITHM
+	      << "\n\tABLATION_DISABLE_ADV_INTERSECT=" << ABLATION_DISABLE_ADV_INTERSECT
+	      << "\n\tINTERSECT_ONE_SIDED=" << INTERSECT_ONE_SIDED
+	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
+	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
+	      // << "\n\tFILTER_NEIGHBOUR_CLIQUE=" << FILTER_NEIGHBOUR_CLIQUE
+	      << "\n\tPIVOT_COLOUR=" << PIVOT_COLOUR
+	      << "\n\tPIVOT_COLOUR_DENSE=" << PIVOT_COLOUR_DENSE
+	      << "\n\tVERTEX_COVER_COMPONENTS=" << VERTEX_COVER_COMPONENTS
+	      << "\n\tSORT_ORDER=" << SORT_ORDER
+	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
+	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
+	      << "\n\tPROFILE_DENSITY=" << PROFILE_DENSITY
+	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
+	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
+	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
+	      << "\n\tABLATION_DISABLE_LAZY_HASHING="
+	      << ABLATION_DISABLE_LAZY_HASHING
+#ifdef LOAD_FACTOR
+	      << "\n\tLOAD_FACTOR=" << LOAD_FACTOR
+#else
+	      << "\n\tLOAD_FACTOR=undef"
+#endif
+	      << "\n\tdensity_threshold=" << density_threshold
+	      << '\n';
+    
+    system( "hostname" );
+    system( "date" );
+
     timer tm;
     tm.start();
 
@@ -4420,10 +4470,10 @@ int main( int argc, char *argv[] ) {
     G0.del();
     std::cout << "Removed self-edges: " << tm.next() << "\n";
 
-    // Reset timer as graph I/O has high variability, and comparator frameworks
-    // don't measure I/O or tend to perform poorly on I/O.
+    // Reset timer as graph ingress has high variability, and comparator
+    // frameworks don't measure ingress or tend to perform poorly on ingress.
     // Also exclude time removing self-edges. This is part of data set
-    // preparation.
+    // preparation. Others may do this during graph ingress.
     tm = timer();
     tm.start();
 
@@ -4507,61 +4557,6 @@ int main( int argc, char *argv[] ) {
 		  << " degree[histo[degeneracy]]="
 		  << H.getDegree(histo[degeneracy])
 		  << "\n";
-
-    std::cout << "Options:"
-	      << "\n\tABLATION_PDEG=" << ABLATION_PDEG
-	      << "\n\tABLATION_DISABLE_LEAF=" << ABLATION_DISABLE_LEAF
-	      << "\n\tABLATION_DISABLE_TOP_DENSE=" << ABLATION_DISABLE_TOP_DENSE
-	      << "\n\tABLATION_HADJPA_DISABLE_XP_HASH="
-	      << ABLATION_HADJPA_DISABLE_XP_HASH
-	      << "\n\tABLATION_DENSE_DISABLE_XP_HASH="
-	      << ABLATION_DENSE_DISABLE_XP_HASH
-	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL_BITS="
-	      << DENSE_THRESHOLD_SEQUENTIAL_BITS
-	      << "\n\tDENSE_THRESHOLD_SEQUENTIAL="
-	      << DENSE_THRESHOLD_SEQUENTIAL
-	      << "\n\tDENSE_THRESHOLD_DENSITY="
-	      << DENSE_THRESHOLD_DENSITY
-	      << "\n\tABLATION_DENSE_NO_PIVOT_TOP="
-	      << ABLATION_DENSE_NO_PIVOT_TOP
-	      << "\n\tABLATION_DENSE_PIVOT_FILTER="
-	      <<  ABLATION_DENSE_PIVOT_FILTER
-	      << "\n\tABLATION_DISABLE_VC=" << ABLATION_DISABLE_VC
-	      << "\n\tABLATION_DISABLE_BK=" << ABLATION_DISABLE_BK
-	      << "\n\tABLATION_FILTER_STEPS=" << ABLATION_FILTER_STEPS
-	      << "\n\tABLATION_DISABLE_CONNECTED_FILTERING="
-	      << ABLATION_DISABLE_CONNECTED_FILTERING
-	      << "\n\tUSE_512_VECTOR=" <<  USE_512_VECTOR
-	      << "\n\tINTERSECTION_TRIM=" << INTERSECTION_TRIM
-	      << "\n\tINTERSECTION_ALGORITHM=" << INTERSECTION_ALGORITHM
-	      << "\n\tMC_INTERSECTION_ALGORITHM=" << MC_INTERSECTION_ALGORITHM
-	      << "\n\tABLATION_DISABLE_ADV_INTERSECT=" << ABLATION_DISABLE_ADV_INTERSECT
-	      << "\n\tINTERSECT_ONE_SIDED=" << INTERSECT_ONE_SIDED
-	      << "\n\tBK_MIN_LEAF=" << BK_MIN_LEAF
-	      << "\n\tCLIQUER_PRUNE=" << CLIQUER_PRUNE
-	      // << "\n\tFILTER_NEIGHBOUR_CLIQUE=" << FILTER_NEIGHBOUR_CLIQUE
-	      << "\n\tPIVOT_COLOUR=" << PIVOT_COLOUR
-	      << "\n\tPIVOT_COLOUR_DENSE=" << PIVOT_COLOUR_DENSE
-	      << "\n\tVERTEX_COVER_COMPONENTS=" << VERTEX_COVER_COMPONENTS
-	      << "\n\tSORT_ORDER=" << SORT_ORDER
-	      << "\n\tTRAVERSAL_ORDER=" << TRAVERSAL_ORDER
-	      << "\n\tPROFILE_INCUMBENT_SIZE=" << PROFILE_INCUMBENT_SIZE
-	      << "\n\tPROFILE_DENSITY=" << PROFILE_DENSITY
-	      << "\n\tVERTEX_COVER_ABSOLUTE=" << VERTEX_COVER_ABSOLUTE
-	      << "\n\tTOP_DENSE_SELECT=" << TOP_DENSE_SELECT
-	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
-	      << "\n\tABLATION_DISABLE_LAZY_HASHING="
-	      << ABLATION_DISABLE_LAZY_HASHING
-#ifdef LOAD_FACTOR
-	      << "\n\tLOAD_FACTOR=" << LOAD_FACTOR
-#else
-	      << "\n\tLOAD_FACTOR=undef"
-#endif
-	      << "\n\tdensity_threshold=" << density_threshold
-	      << '\n';
-    
-    system( "hostname" );
-    system( "date" );
 
 #if TOP_DENSE_SELECT > 0
     graptor::hoeffding_tree_config cfg( 100, 200, 100, 0.99, 20 );
