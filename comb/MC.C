@@ -4529,7 +4529,8 @@ int main( int argc, char *argv[] ) {
 				     P, prune_th, dmax_v );
     std::cout << "Building pruned and remapped graph: " << tm.next() << "\n";
 
-    HFGraphTy H( R, numa_allocation_interleaved(), degeneracy );
+    VID lazy_threshold = std::max( VID(64), degeneracy );
+    HFGraphTy H( R, numa_allocation_interleaved(), lazy_threshold );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 
     // Cleanup remapped graph now; we won't need it any more.
