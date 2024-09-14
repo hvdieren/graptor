@@ -1085,7 +1085,7 @@ struct set_operations {
 		       "Sets must contain elements of the same type" );
 
 #if ABLATION_DISABLE_ADV_INTERSECT
-	return intersect_size_ds( lset, rset, out );
+	return intersect_size_ds( lset, rset );
 #else
 	intersection_task<so_intersect_size_gt_val,void> task( threshold );
 	return apply( lset, rset, task );
