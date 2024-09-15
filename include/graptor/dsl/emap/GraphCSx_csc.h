@@ -389,12 +389,18 @@ void DBG_NOINLINE csc_loop(
 
     // Override pointer for aid_eweight with the relevant permuation of the
     // weights for the G graph.
-    auto ew_pset = expr::create_map2<expr::aid_eweight>(
-	G.getWeights() ? G.getWeights()->get() : nullptr );
+    // auto ew_pset = expr::create_map2<expr::aid_eweight>(
+    // G.getWeights() ? G.getWeights()->get() : nullptr );
 					 
-    auto env = expr::eval::create_execution_environment_with(
-	op.get_ptrset( ew_pset ),
-	vcaches, vop_caches, accum, vexpr, aexpr, rexpr, uexpr, pvop, pvopf );
+    // auto env = expr::eval::create_execution_environment_with(
+    // op.get_ptrset( ew_pset ),
+    // vcaches, vop_caches, accum, vexpr, aexpr, rexpr, uexpr, pvop, pvopf );
+
+    auto all_caches = expr::cache_cat(
+	expr::cache_cat( vcaches, vop_caches ), accum );
+    auto env = expr::eval::create_execution_environment_op(
+	op, all_caches,
+	G.getWeights() ? G.getWeights()->get() : nullptr );
 
     using Cfg = std::decay_t<decltype(op.get_config())>;
 
@@ -518,6 +524,19 @@ static inline void emap_pull(
     assert( G.isSymmetric() && "This interpretes graph in inverse direction" );
 
     GraphCSx_csc::csc_loop<EMapConfig,false>( G, G.get_eid_retriever(), op, part );
+}
+
+// Assumes symmetric graph
+template<typename EMapConfig, typename Operator>
+GG_INLINE
+static inline void emap_pull(
+    const GraphCSRAdaptor & G, Operator & op, const partitioner & part ) {
+    constexpr unsigned short VL = EMapConfig::VL;
+    static_assert( VL == 1, "GraphCSx designed for scalar execution only" );
+    assert( G.isSymmetric() && "This interpretes graph in inverse direction" );
+
+    GraphCSx_csc::csc_loop<EMapConfig,false>(
+	G.getCSR(), G.get_eid_retriever(), op, part );
 }
 
 #endif // GRAPTOR_DSL_EMAP_GRAPHCSX_CSC_H
