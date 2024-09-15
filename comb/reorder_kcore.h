@@ -12,8 +12,11 @@
 #undef MD_ORDERING
 #undef NOBENCH
 
-template<int sorting_order, typename CommandLineType>
-std::tuple<GraphCSx,VID,std::vector<VID>>
+template<int sorting_order,
+	 bool remap_graph = true,
+	 typename CommandLineType = commandLine>
+// std::tuple<GraphCSx,VID,std::vector<VID>> // GraphCSx is optional
+auto
 reorder_kcore( const GraphCSx & G,
 	       mm::buffer<VID> & order,
 	       mm::buffer<VID> & rev_order,
@@ -166,14 +169,17 @@ reorder_kcore( const GraphCSx & G,
     } );
     std::cout << "Remapping coreness data: " << tm.next() << "\n";
 
-    // Remap graph.
-    // TODO: remap+hash in one step
-    RemapVertex<VID> remapper( order.get(), rev_order.get() );
-    GraphCSx R( pn, pm, -1, true, false );
-    R.import_select( G, remapper );
-    std::cout << "Remapping graph: " << tm.next() << "\n";
+    if constexpr ( remap_graph ) {
+	// Remap graph.
+	// TODO: remap+hash in one step
+	RemapVertex<VID> remapper( order.get(), rev_order.get() );
+	GraphCSx R( pn, pm, -1, true, false );
+	R.import_select( G, remapper );
+	std::cout << "Remapping graph: " << tm.next() << "\n";
 
-    return { R, kcore.getLargestCore(), histo };
+	return std::make_tuple( R, kcore.getLargestCore(), histo );
+    } else
+	return std::make_tuple( kcore.getLargestCore(), histo );
 }
 
 #endif // GRAPTOR_COMB_REORDER_KCORE_H
