@@ -109,9 +109,13 @@ public:
 	expr::array_ro<VID, VID, var_degrees_ro> a_degrees_ro(
 	    const_cast<VID *>( GA.getCSR().getDegree() ) );
 
+	timer tm_iter;
+	tm_iter.start();
+
 	// Initialise arrays
 	frontier ftrue = frontier::all_true( n, m );
 	frontier nonzero;
+	iter = 0;
 
 	if( min_degree == ~(VID)0 ) { // no pruning
 	    make_lazy_executor( part )
@@ -122,9 +126,54 @@ public:
 		    [&]( auto v ) {
 			return expr::make_seq(
 			    coreness[v] = a_degrees_ro[v],
-			    a_degrees_ro[v] > _0 );
+			    a_degrees_ro[v] > _1 );
 		    } )
 		.materialize();
+
+	    // Every degree-1 vertex has coreness 1. Pre-process them.
+	    VID ngt1 = nonzero.nActiveVertices();
+	    if( ngt1 < n / 2 ) { // >50% of vertices are degree 0 or 1
+		// This version should work well when the number of
+		// degree 1 vertices is very high.
+		// Estimate if such is the case by looking at
+		// nonzero.nActiveVertices() vs n. This includes degree 0
+		// vertices, but those are normally low and should allow us
+		// to approximate number of degree 1 vertices.
+		// Threshold open to refinement.
+		// This code may result in coreness[d] = 0 (e.g., when two
+		// degree-1 vertices are neighbours, and thus isolated).
+		api::edgemap(
+		    GA,
+		    api::relax( [&]( auto s, auto d, auto e ) {
+			return coreness[d] +=
+			    iif( a_degrees_ro[s] == _1, _0, _1s );
+		    } )
+		    ).vertex_map( [&]( auto v ) {
+			return coreness[v] = expr::max( coreness[v], _1 );
+		    } ).materialize();
+	    } else {
+		// This version is "sparse" and works well if the number
+		// of degree 1 vertices is low
+		map_partition( part, [&]( unsigned p ) {
+		    VID s = part.start_of_vbal( p );
+		    VID e = part.end_of_vbal( p );
+		    for( VID v=s; v < e; ++v ) {
+			if( GA.getOutDegree( v ) == 1 ) {
+			    // just the one neighbour
+			    VID ngh = GA.getOutNeighbor( v, 0 );
+			    // race condition...
+			    VID * p = &coreness.get_ptr()[ngh];
+			    if( *p > 1 ) {
+				VID old;
+				do {
+				    old = *p;
+				} while( !__sync_bool_compare_and_swap(
+					     p, old, old-1 ) && *p > 1 );
+			    }
+			}
+		    }
+		} );
+	    }
 	} else { // prune away all vertices with degree < min_degree
 	    // Count number of neighbours with degree >= min_degree
 	    // This will be our initial coreness value. Nonzero captures
@@ -195,7 +244,21 @@ public:
 	VID prev_iter_K = K;
 
 	largestCore = 0;
-	iter = 0;
+
+	// Statistics on setup time
+	if( itimes ) {
+	    info_buf.resize( iter+1 );
+	    info_buf[iter].density = ftrue.density( GA.numEdges() );
+	    info_buf[iter].delay = tm_iter.total();
+	    info_buf[iter].F_act = n;
+	    info_buf[iter].rm_act = 0;
+	    info_buf[iter].wakeup_act = nonzero.nActiveVertices();
+	    info_buf[iter].K = K;
+	    info_buf[iter].ftype = nonzero.getType();
+	    if( debug )
+		info_buf[iter].dump( iter );
+	    ++iter;
+	}
 
 	while(
 #if FUSION
@@ -269,8 +332,9 @@ public:
 		GA,
 		api::config(
 		    // api::always_sparse ),
-		    api::fusion_select(
-			F.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 ) ),
+		    // api::fusion_select(
+			// F.nActiveEdges() >= EMAP_BLOCK_SIZE * 8 )
+		    ),
 		api::filter( api::src, api::strong, F ),
 		api::record( output, api::reduction, api::strong ),
 		api::fusion( [&]( auto s, auto d, auto e ) {
