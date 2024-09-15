@@ -226,11 +226,11 @@ using hash_fn = graptor::java_hash<uint32_t>;
 #endif
 
 #ifndef ABLATION_DISABLE_LAZY_HASHING
-#define ABLATION_DISABLE_LAZY_HASHING 0
+#define ABLATION_DISABLE_LAZY_HASHING 1
 #endif
 
 #ifndef ABLATION_DISABLE_LAZY_REMAPPING
-#define ABLATION_DISABLE_LAZY_REMAPPING 0
+#define ABLATION_DISABLE_LAZY_REMAPPING 1
 #endif
 
 //! Hopscotch hashing is a more efficient hash function than the general
@@ -4957,6 +4957,7 @@ int main( int argc, char *argv[] ) {
     // Validate clique
     validate_clique( G, mc );
 
+#if !ABLATION_DISABLE_LAZY_REMAPPING
     if constexpr ( lazy_hashing ) {
 	VID num_init_h = 0;
 	VID num_init_s = 0;
@@ -4971,6 +4972,7 @@ int main( int argc, char *argv[] ) {
 	std::cerr << "Lazy initialisation: " << num_init_s << " / "
 		  << n << " sequential sets initialised\n";
     }
+#endif
 
 #if ABLATION_DISABLE_LAZY_REMAPPING
     R.del();
