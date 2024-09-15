@@ -226,14 +226,14 @@ using hash_fn = graptor::java_hash<uint32_t>;
 #endif
 
 #ifndef ABLATION_DISABLE_LAZY_HASHING
-#define ABLATION_DISABLE_LAZY_HASHING 1
+#define ABLATION_DISABLE_LAZY_HASHING 0
 #endif
 
 #ifndef ABLATION_DISABLE_LAZY_REMAPPING
-#define ABLATION_DISABLE_LAZY_REMAPPING 1
+#define ABLATION_DISABLE_LAZY_REMAPPING 0
 #endif
 
-//! Hopscotch hashing is a more efficient hash function than the general
+//! Hopscotch hashing is a more efficient hash set than the general
 // open-addressed hashing in graptor::hash_set. However, it is hard to
 // predict the required size of hash table in advance for hopscotch hashing
 // as it depends on how conflicts play out for the particular values used.
@@ -242,7 +242,8 @@ using hash_fn = graptor::java_hash<uint32_t>;
 // One option to mitigate this would be to construct the hash sets on the
 // fly, only for those vertices that need them. Post heuristic search, only
 // the high-degeneracy vertices would need a hash set representation of their
-// neighbourhood.
+// neighbourhood. We can postpone the construction of the remapped graph
+// in the same way.
 #if HOPSCOTCH_HASHING == 1
 using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
 static constexpr bool hash_set_prealloc = false;
