@@ -204,6 +204,12 @@ public:
 	    return *this;
 	}
 
+	//! Is the sequential representation valid?
+	constexpr bool has_sequential() const { return true; }
+
+	//! Is the hash set representation valid?
+	constexpr bool has_hash_set() const { return true; }
+
     private:
 	const XPSetBase & m_xp;
 	lVID m_ne;
@@ -687,6 +693,12 @@ public:
 	    // TODO: trim range
 	    return *this;
 	}
+
+	//! Is the sequential representation valid?
+	constexpr bool has_sequential() const { return true; }
+
+	//! Is the hash set representation valid?
+	constexpr bool has_hash_set() const { return true; }
 
     private:
 	const PSet & m_xp;

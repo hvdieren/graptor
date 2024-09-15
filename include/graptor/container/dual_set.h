@@ -245,6 +245,12 @@ struct dual_set {
 	return dual_set<seq_type,hash_type>( m_seq.trim_back( hi ), m_hash );
     }
 
+    //! Is the sequential representation valid?
+    constexpr bool has_sequential() const { return true; }
+
+    //! Is the hash set representation valid?
+    constexpr bool has_hash_set() const { return true; }
+
 private:
     seq_type m_seq; 	 	//!< Sequential representation
     const hash_type & m_hash;	//!< Hashed representation

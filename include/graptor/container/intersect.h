@@ -1123,7 +1123,8 @@ struct set_operations {
 	// Trim front of range.
 	// There is no benefit in trimming the end of the range for merge
 	// intersections, although there is for hash intersection.
-	auto tlset = lset.trim_front( rset.front() );
+	auto tlset = rset.has_sequential()
+	    ? lset.trim_front( rset.front() ) : lset;
 #endif
 	return so_traits::apply( tlset, rset, task );
     }
@@ -1709,7 +1710,8 @@ struct hash_scalar {
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 #else
-	auto tlset = lset.trim_back( rset.back() );
+	auto tlset = rset.has_sequential()
+	    ? lset.trim_back( rset.back() ) : lset;
 	out.swap( tlset, rset );
 #endif
 	auto lb = tlset.begin();
@@ -1746,7 +1748,8 @@ struct hash_scalar {
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
-	    auto trset = rset.trim_front( lset.front() );
+	    auto trset = lset.has_sequential()
+		? rset.trim_front( lset.front() ) : rset;
 #endif
 	    auto out = task.template create_collector<hash_scalar>(
 		trset, lset );
@@ -2336,7 +2339,8 @@ public:
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 #else
-	auto tlset = lset.trim_back( rset.back() );
+	auto tlset = rset.has_sequential()
+	    ? lset.trim_back( rset.back() ) : lset;
 	out.swap( tlset, rset );
 #endif
 
@@ -2380,7 +2384,8 @@ public:
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
-	    auto trset = rset.trim_front( lset.front() );
+	    auto trset = lset.has_sequential()
+		? rset.trim_front( lset.front() ) : rset;
 #endif
 
 	    auto out = task.template create_collector<hash_vector>(
@@ -2988,9 +2993,12 @@ struct MC_intersect {
 	    return merge_vector_jump::apply( lset, rset, task );
 #else
     if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		   || is_hash_set_v<std::decay_t<RSet>> )
-	return hash_vector::apply( lset, rset, task );
-    else
+		   || is_hash_set_v<std::decay_t<RSet>> ) {
+	if( lset.has_hash_set() || rset.has_hash_set() )
+	    return hash_vector::apply( lset, rset, task );
+	else
+	    return merge_vector_jump::apply( lset, rset, task );
+    } else
 	return merge_vector_jump::apply( lset, rset, task );
 #endif
     }

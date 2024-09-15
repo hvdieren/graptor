@@ -11,6 +11,7 @@ struct array_slice {
     using type = T;
     using index_type = I;
     
+    array_slice() : m_begin( nullptr ), m_end( nullptr ) { }
     array_slice( const type * begin_, const type * end_ )
 	: m_begin( begin_ ), m_end( end_ ) { }
     array_slice( const type * begin_, index_type len_ )
@@ -22,15 +23,15 @@ struct array_slice {
      * and smallest. Assumes sequence is sorted.
      */
     type range() const {
-	return m_begin != m_end ? *std::prev( m_end ) - *m_begin: 0;
+	return m_begin != m_end ? *std::prev( m_end ) - *m_begin : 0;
     }
     
     const type * begin() const { return m_begin; }
     const type * end() const { return m_end; }
 
     // Assumes non-empty list
-    type front() const { return *begin(); }
-    type back() const { return *std::prev( end() ); }
+    const type & front() const { return *begin(); }
+    const type & back() const { return *std::prev( end() ); }
 
     type at( size_t idx ) const { return *std::next( m_begin, idx ); }
 
@@ -68,6 +69,12 @@ struct array_slice {
 	    return array_slice<type,index_type>(
 		m_begin, std::upper_bound( begin(), end(), hi ) );
     }
+
+    //! Is the sequential representation valid?
+    constexpr bool has_sequential() const { return true; }
+
+    //! Is the hash set representation valid?
+    constexpr bool has_hash_set() const { return false; }
 
 private:
     const type * m_begin, * m_end;
