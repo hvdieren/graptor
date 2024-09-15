@@ -470,7 +470,7 @@ public:
 	    }
 
 	    // If failing to steal, sleep increasing amounts
-	    // sched_yield();
+	    sched_yield();
 /*
             usleep( history >> 2 );
             history += history >> 2;
