@@ -75,6 +75,9 @@ public:
 	if( is_sparse )
 	    return graph_traversal_kind::gt_sparse;
 
+	if( m_csr.isSymmetric() && !fsrc_strong )
+	    return graph_traversal_kind::gt_pull;
+
 	return graph_traversal_kind::gt_push;
     }
 
