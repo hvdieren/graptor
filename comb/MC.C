@@ -229,6 +229,10 @@ using hash_fn = graptor::java_hash<uint32_t>;
 #define ABLATION_DISABLE_LAZY_HASHING 0
 #endif
 
+#ifndef ABLATION_DISABLE_LAZY_REMAPPING
+#define ABLATION_DISABLE_LAZY_REMAPPING 0
+#endif
+
 //! Hopscotch hashing is a more efficient hash function than the general
 // open-addressed hashing in graptor::hash_set. However, it is hard to
 // predict the required size of hash table in advance for hopscotch hashing
@@ -266,7 +270,12 @@ using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_set_prealloc,fal
 #else
 using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_set_prealloc,false,hash_set_type>;
 #endif
+
+#if !ABLATION_DISABLE_LAZY_REMAPPING
+using HFGraphTy = graptor::graph::GraphLazyRemappedHashedAdj<VID,EID,hash_set_type>;
+#else
 using HFGraphTy = graptor::graph::GraphLazyHashedAdj<VID,EID,lazy_hashing,hash_set_type>;
+#endif
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::PSet;
@@ -3010,13 +3019,15 @@ count_colours_greedy( const HGraphTy & G, const PSet<VID> & xp,
 	auto nb = adj.begin();
 	auto ne = adj.end();
 
-	// Intersect and check colours
-	const VID * pb = xp.get_set(); //  + i + 1;
-	const VID * pe = xp.get_set() + i; //  + s;
+	// Intersect and check colours.
+	// Filter left neighbours of v from [pb,pe)
+	const VID * pb = xp.get_set();
+	const VID * pe = xp.get_set() + i;
 	if( ne != nb ) {
 	    // Trimming
 	    pb = std::lower_bound( pb, pe, *nb );
 	    pe = std::upper_bound( pb, pe, *(ne-1) );
+	    // Iterate
 	    for( ; pb != pe; ++pb ) {
 		if( adj.contains( *pb ) )
 		    histo[colour[*pb]] = (uint8_t)1;
@@ -3598,6 +3609,9 @@ std::pair<VID,EID> mc_top_level_select(
     // for non-dense cases. Moreover, as the overall result of filtering is
     // that the threshold is not sufficiently met, the benefits may be
     // restricted to a small subset of the performed intersections.
+    //
+    // This filtering step is covered by Chang KDD'19, although it is performed
+    // after creating a cutout in that paper.
     cut.filter( [&,best]( VID u ) {
 	// Note: intersection size >= best-1 as the current vertex may be part
 	// of the clique but is not a neighbour of itself.
@@ -4152,18 +4166,21 @@ VID heuristic_search(
 
     all_variant_statistics & stats = mc_stats.get_statistics();
 
-    const auto & adj = H.get_neighbours_set( v );
-    if( adj.size() == 0 )
+    VID deg = H.get_degree( v );
+    if( deg == 0 )
 	return 1;
 
+    const VID * b = H.get_neighbours( v ); // force creation of sequential set
+    const VID * e = b + deg;
+
     std::vector<VID> pset;
-    pset.reserve( adj.size() );
+    pset.reserve( deg );
 
     // Only interested in vertices that can make a clique larger than th
     VID th = E.get_max_clique_size();
-    for( auto u : adj )
-	if( coreness[u] >= th ) 
-	    pset.push_back( u );
+    for( ; b != e; ++b )
+	if( coreness[*b] >= th ) 
+	    pset.push_back( *b );
 
     // Heuristically expand a clique.
     VID mc =
@@ -4174,6 +4191,7 @@ VID heuristic_search(
     return mc;
 }
 
+#if 0
 class DAGScheduler {
 public:
     DAGScheduler( const HFGraphTy & graph_H, const GraphCSx & graph_G,
@@ -4369,6 +4387,7 @@ private:
     VID m_queue_pos;
     std::atomic<VID> m_num_outstanding;
 };
+#endif
 
 /*! Main method for maximum clique search
  */
@@ -4521,17 +4540,34 @@ int main( int argc, char *argv[] ) {
     mm::buffer<VID> order( n, numa_allocation_interleaved() );
     mm::buffer<VID> rev_order( n, numa_allocation_interleaved() );
     mm::buffer<VID> remap_coreness( pn, numa_allocation_interleaved() );
-    GraphCSx R;
+
     VID degeneracy;
     std::vector<VID> histo;
+
+#if ABLATION_DISABLE_LAZY_REMAPPING
+    GraphCSx R;
     std::tie( R, degeneracy, histo )
-	= reorder_kcore<SORT_ORDER>( G, order, rev_order, remap_coreness,
-				     P, prune_th, dmax_v );
-    std::cout << "Building pruned and remapped graph: " << tm.next() << "\n";
+	= reorder_kcore<SORT_ORDER,true>(
+	    G, order, rev_order, remap_coreness, P, prune_th, dmax_v );
+    std::cout << "Constructing remap info and remap graph: "
+	      << tm.next() << "\n";
 
     VID lazy_threshold = std::max( VID(64), degeneracy );
     HFGraphTy H( R, numa_allocation_interleaved(), lazy_threshold );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
+#else
+    std::tie( degeneracy, histo )
+	= reorder_kcore<SORT_ORDER,false>(
+	    G, order, rev_order, remap_coreness, P, prune_th, dmax_v );
+    std::cout << "Constructing remap info: " << tm.next() << "\n";
+
+    VID lazy_threshold = std::max( VID(64), degeneracy );
+    VID hash_threshold = 16;
+    HFGraphTy H( G, order.get(), rev_order.get(),
+		 numa_allocation_interleaved(),
+		 hash_threshold, lazy_threshold );
+    std::cout << "Building hashed graph: " << tm.next() << "\n";
+#endif
 
     // Cleanup remapped graph now; we won't need it any more.
     // Note: keep graph G around for validation
@@ -4922,15 +4958,23 @@ int main( int argc, char *argv[] ) {
     validate_clique( G, mc );
 
     if constexpr ( lazy_hashing ) {
-	VID num_init = 0;
-	for( VID v=0; v < n; ++v )
-	    if( H.is_adjacency_initialised( v ) )
-		++num_init;
-	std::cerr << "Lazy initialisation: " << num_init << " / "
+	VID num_init_h = 0;
+	VID num_init_s = 0;
+	for( VID v=0; v < n; ++v ) {
+	    if( H.is_hash_set_initialised( v ) )
+		++num_init_h;
+	    if( H.is_seq_initialised( v ) )
+		++num_init_s;
+	}
+	std::cerr << "Lazy initialisation: " << num_init_h << " / "
 		  << n << " hash sets initialised\n";
+	std::cerr << "Lazy initialisation: " << num_init_s << " / "
+		  << n << " sequential sets initialised\n";
     }
 
+#if ABLATION_DISABLE_LAZY_REMAPPING
     R.del();
+#endif
     G.del();
     remap_coreness.del();
     rev_order.del();
