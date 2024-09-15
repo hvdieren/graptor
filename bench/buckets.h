@@ -548,6 +548,8 @@ private:
 	} );
 
 	// 4. Insert elements into buckets
+	// Uses per-partition and per-bucket insertion counters to minimize
+	// contention.
 	map_partition( part, [&]( unsigned p ) {
 	    VID s = part.start_of_vbal( p );
 	    VID e = part.end_of_vbal( p );
