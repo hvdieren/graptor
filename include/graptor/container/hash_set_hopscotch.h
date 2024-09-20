@@ -333,9 +333,7 @@ public:
 	return m_mux;
     }
 
-private:
-    bool is_initialised() const { return m_log_size != 0; }
-    void create_if_uninitialised() {
+    void create_if_uninitialised( size_t elements = H ) {
 	if( !is_initialised() ) {
 	    m_elements = H;
 	    m_log_size = required_log_size( m_elements );
@@ -345,6 +343,9 @@ private:
 	    clear();
 	}
     }
+
+private:
+    bool is_initialised() const { return m_log_size != 0; }
     
     size_type
     hopscotch_move( type v, size_type home_index, size_type free_index ) {
