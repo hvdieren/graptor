@@ -4551,6 +4551,47 @@ int main( int argc, char *argv[] ) {
 			  rev_order.get()  );
     } );
 
+#elif ( SORT_ORDER == 2 || SORT_ORDER == 4 ) && TRAVERSAL_ORDER == 3
+    // cleaned up version with a small improvement
+    // degeneracy+1 iterations to deal with 1 vertex/degeneracy,
+    // additional iteration allows execution of all vertices in parallel
+    parallel_loop( (VID)0, (VID)degeneracy+2, (VID)1, [&]( VID cc ) {
+	if( cc <= degeneracy ) {
+	    VID c = cc;
+	    VID c_up = histo[c+1];
+	    VID c_lo = histo[c];
+	    if( c_up != c_lo ) {
+		VID v = c_lo;
+		if( E.is_feasible( c+1, fr_outer ) )
+		    mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+				  rev_order.get()  );
+	    }
+	} else {
+	    // Downwards traversal over all coreness levels
+	    for( VID cc_i=0; cc_i < degeneracy+1; ++cc_i ) {
+		VID c = degeneracy - cc_i;
+
+		VID c_up = histo[c+1];
+		VID c_lo = histo[c];
+
+		if( c_up <= c_lo+1 )
+		    continue; // 0 or 1 vertices; go to next c value
+		++c_lo; // already did c_lo in preamble
+		if( !E.is_feasible( c+1, fr_outer ) )
+		    break; // decreasing degeneracy, no hope for better
+
+		parallel_loop( c_lo, c_up, (VID)1, [&,c,degeneracy](
+				   VID w ) {
+		    VID v = c_up - ( w - c_lo ) - 1;
+
+		    if( E.is_feasible( c+1, fr_outer ) )
+			mc_top_level( H, G, E, v, degeneracy,
+				      remap_coreness.get(), rev_order.get() );
+		} );
+	    }
+	}
+    } );
+
 #elif SORT_ORDER == 2 || ( SORT_ORDER >= 4 && SORT_ORDER <= 7 )
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
@@ -4633,7 +4674,6 @@ int main( int argc, char *argv[] ) {
 	    } );
 	}
     } );
-
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
