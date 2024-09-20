@@ -4562,11 +4562,14 @@ int main( int argc, char *argv[] ) {
 	    G, order, rev_order, remap_coreness, P, prune_th, dmax_v );
     std::cout << "Constructing remap info: " << tm.next() << "\n";
 
-    VID lazy_threshold = std::max( VID(64), degeneracy );
-    VID hash_threshold = 16;
+    const VID lazy_threshold = std::max( VID(64), degeneracy );
+    const VID hash_threshold = 16;
     HFGraphTy H( G, order.get(), rev_order.get(),
 		 numa_allocation_interleaved(),
-		 hash_threshold, lazy_threshold );
+		 hash_threshold,
+		 [&,lazy_threshold]( VID v ) {
+		     return remap_coreness[v] >= lazy_threshold;
+		 } );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 #endif
 
@@ -4705,7 +4708,7 @@ int main( int argc, char *argv[] ) {
 	} );
 	std::cout << "heuristic 1: " << tm.next() << "\n";
     } else if( heuristic == 2 ) {
-#if SORT_ORDER >= 4
+#if SORT_ORDER == 2 || SORT_ORDER >= 4
 	// Heuristic 2: explore selected vertices, one per core number.
 	// for( VID cc=0; cc <= degeneracy; ++cc ) {
 	parallel_loop( (VID)0, degeneracy+1, (VID)1, [&]( VID cc ) {
@@ -4760,7 +4763,7 @@ int main( int argc, char *argv[] ) {
 			  rev_order.get()  );
     } );
 
-#elif SORT_ORDER >= 4 && SORT_ORDER <= 7
+#elif SORT_ORDER == 2 || ( SORT_ORDER >= 4 && SORT_ORDER <= 7 )
 #if TRAVERSAL_ORDER & 16
     parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
