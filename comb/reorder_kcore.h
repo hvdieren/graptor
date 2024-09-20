@@ -93,12 +93,14 @@ reorder_kcore( const GraphCSx & G,
 	    sort_order( n, dmax, G.getDegree(), order.get(), rev_order.get(),
 			true );
     } else if constexpr ( sorting_order == 2 ) {
+	histo.resize( K+2 );
 	// Increasing degeneracy
 	if( early_pruning )
 	    sort_order_pruned( n, K, coreness.get_ptr(), prune_th,
 			       order.get(), rev_order.get(), false );
 	else
-	    sort_order( n, K, coreness, order.get(), rev_order.get(), false );
+	    sort_order2( n, K+1, coreness.get_ptr(),
+			 order.get(), rev_order.get(), &histo[0] );
     } else if constexpr ( sorting_order == 3 ) {
 	// Decreasing degeneracy
 	if( early_pruning )
