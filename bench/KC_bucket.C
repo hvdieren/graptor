@@ -341,6 +341,12 @@ public:
 		    // Requires that RHS of && is evaluated after LHS.
 		    auto cK = expr::constant_val( coreness[d], K );
 		    auto cO = expr::constant_val( coreness[d], overflow_bkt );
+// make_seq( peel_order[s] = special variable processing-order, let... );
+// which is determined by the threads, take batch of sequence numbers
+// from shared atomic counter once per chunk of vertices to minimize atomics
+// need to set peel_order[d] only in case of _1(d)
+// or set peel_order[s] but only do it once (fusion loops over edges, only
+// do this for first edge?)
 		    return expr::let<var_let>(
 			coreness[d].count_down_value( cK ),
 			[&]( auto old ) {
@@ -713,6 +719,50 @@ sort_order( VID n,
     return sort_order( n, K, coreness.get_ptr(), order, rev_order, reverse );
 }
 
+//! Auxiliary method for downstream tasks
+void
+sort_order2( VID n,
+	     VID max_criterion, // criterion[v] < max_criterion if 0 <= v < n
+	     const VID * const criterion,
+	     VID * order, VID * rev_order,
+	     VID * histogram // must be zero-initialised
+    ) {
+    // 1. Create histogram
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	VID c = criterion[v];
+	__sync_fetch_and_add( &histogram[c], 1 );
+    } );
+
+    // 2. Prefix sum
+    // Note: require int variables as the code checks >= 0 which is futile
+    //       with unsigned int
+    VID sum = sum_scan( histogram, VID(0), max_criterion,
+			[&]( VID c ) { return histogram[c]; } );
+
+    // 3. Placement of elements in order
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	VID c = criterion[v];
+	VID loc = __sync_fetch_and_add( &histogram[c], 1 );
+	order[loc] = v;
+	rev_order[v] = loc;
+    } );
+}
+ 
+//! Auxiliary method for downstream tasks
+template<typename T, typename U, short AID, typename Encoding, bool NT>
+void
+sort_order( VID n,
+	    VID K,
+	    const api::vertexprop<T,U,AID,Encoding,NT> & coreness,
+	    VID * order, VID * rev_order,
+	    VID * histo,
+	    bool reverse = false ) {
+    assert( reverse == false && "only increasing order supported" );
+    std::fill( &histo[0], &histo[K+1], 0 );
+    return sort_order2( n, K+1, coreness.get_ptr(),
+			order, rev_order, histo );
+}
+
 void
 sort_order_pruned( VID n,
 		   VID K,
@@ -775,13 +825,42 @@ sort_order_ties( VID n,
 		 bool reverse_core = false,
 		 bool reverse_deg = false ) {
     std::fill( &histo[0], &histo[K+1], 0 );
+    const VID L = std::bit_ceil( K+1 );
+    const VID T = graptor_num_threads();
+    std::vector<VID> pt( L * T );
+    const VID C = ( n + T - 1 ) / T;
 
     // Histogram
+    parallel_loop( VID(0), T, [&]( VID t ) {
+	VID lo = t * C;
+	VID hi = std::min( n, (t+1) * C );
+	for( VID v=lo; v < hi; ++v ) {
+	    assert( v < n );
+	    VID c = coreness[v];
+	    pt[t*L+c]++;
+	}
+    } );
+    // 16 counters in a cache line, so 16-entry chunks to avoid false sharing
+    // assumes the whole array is 16-entry aligned
+    parallel_loop( VID(0), K+1, VID(16), [&]( VID c ) {
+	VID s = 0;
+	for( VID t=0; t < T; ++t ) {
+	    VID val = pt[t*L+c];
+	    pt[t*L+c] = s;
+	    s += val;
+	}
+	histo[c] = s;
+    } );
+/*
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	VID c = coreness[v];
+	__sync_fetch_and_add( &histo[c], 1 );
+    } );
     for( VID v=0; v < n; ++v ) {
 	VID c = coreness[v];
-	assert( c <= K );
 	histo[c]++;
     }
+*/
 
     // Prefix sum
     // Note: require int variables as the code checks >= 0 which is futile
@@ -791,13 +870,40 @@ sort_order_ties( VID n,
 			      (VID)0, false, reverse_core );
     
     // Place in order
+/*
+    parallel_loop( VID(0), n, [&]( VID v ) {
+	VID c = coreness[v];
+	VID pos = __sync_fetch_and_add( &histo[c], 1 );
+	order[pos] = v;
+    } );
+*/
+    parallel_loop( VID(0), T, [&]( VID t ) {
+	VID lo = t * C;
+	VID hi = std::min( n, (t+1) * C );
+	for( VID v=lo; v < hi; ++v ) {
+	    VID c = coreness[v];
+	    VID pos = histo[c] + pt[t*L+c]++; // per-thread insertion points
+	    order[pos] = v;
+	}
+    } );
+/*
     for( VID v=0; v < n; ++v ) {
 	VID c = coreness[v];
 	VID pos = histo[c]++;
 	order[pos] = v;
+	rev_order[v] = pos;
     }
+*/
 
     // Restore histo
+    if( reverse_core ) {
+	histo[0] = n;
+	histo[K+1] = 0;
+    } else {
+	histo[0] = 0;
+	histo[K+1] = n;
+    }
+#if 0
     if( reverse_core ) {
 	for( VID c=1; c <= K; ++c )
 	    histo[c] = histo[c+1];
@@ -808,6 +914,7 @@ sort_order_ties( VID n,
 	    histo[K-c+1] = histo[K-c];
 	histo[0] = 0;
     }
+#endif
 
     // Degree sorting (crude), decreasing order
     // Check reverse inside loop to reduce code size.
