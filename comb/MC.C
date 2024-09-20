@@ -4192,204 +4192,6 @@ VID heuristic_search(
     return mc;
 }
 
-#if 0
-class DAGScheduler {
-public:
-    DAGScheduler( const HFGraphTy & graph_H, const GraphCSx & graph_G,
-		  MC_Enumerator & E,
-		  VID degeneracy, const VID * const coreness,
-		  const VID * const rev_order )
-	: m_graph_H( graph_H ), m_graph_G( graph_G ), m_E( E ),
-	  m_degeneracy( degeneracy ), m_coreness( coreness ),
-	  m_rev_order( rev_order ),
-	  m_deps( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
-	  m_rhs_mc( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
-	  m_queue( graph_H.get_num_vertices(), numa_allocation_interleaved() ),
-	  m_queue_pos( 0 ),
-	  m_num_outstanding( 0 ) {
-	// Set known RHS clique size for each vertex to zero. This is clearly
-	// absence of information as every vertex is a member of a 1-clique.
-	std::fill( &m_rhs_mc[0], &m_rhs_mc[graph_H.get_num_vertices()], (VID)0 );
-    }
-    
-    //! Record MC on execution of a phase 1 search.
-    // This preceeds construction of the DAG and initialisation of the queues.
-    void record_phase1( VID v, VID mc ) {
-	std::lock_guard<std::mutex> guard( m_mutex );
-	m_phase1.push_back( std::make_pair( v, mc ) );
-    }
-
-    //! Construct DAG dependencies
-    // Account for those vertices already executed in phase 1
-    void setup() {
-	const VID n = m_graph_H.get_num_vertices();
-
-	// Initialise RHS dependency counters
-	parallel_loop( VID(0), n, [&]( VID v ) {
-	    VID rhs_count = m_graph_H.get_num_right_neighbours( v );
-	    new ( &m_deps[v] ) std::atomic<VID>( rhs_count );
-	} );
-
-	// Now check for ready and infeasible vertices
-	parallel_loop( VID(0), n, [&]( VID v ) {
-	    // Query again right neighbourhood size for correctness
-	    VID rhs_count = m_graph_H.get_num_right_neighbours( v );
-	    if( rhs_count == 0 )
-		wakeup( v );
-	} );
-
-	// Initialise RHS dependency counters
-	// Might use parallel loop if we have high counts of LHS neighbours.
-	for( auto p : m_phase1 ) {
-	    VID v = p.first, mc = p.second;
-
-	    // Record RHS clique size for this vertex
-	    m_rhs_mc[v] = mc;
-
-	    // Deduct dependency of LHS neighbours
-	    deduct_lhs_dep( v );
-
-	    // Increase our own dependency by one such that we are
-	    // never woken up
-	    ++m_deps[v];
-	}
-
-	std::cout << "DAG setup: " << m_queue_pos << " elements in queue\n";
-    }
-    
-    //! Pop a vertex from the queue.
-    // This method blocks until a vertex is available, or there is no hope that
-    // any new vertex will become available, in which case an error code is
-    // returned.
-    VID pop() {
-	while( m_num_outstanding.load() != 0 ) {
-	    VID v;
-	    while( (v = try_pop()) != ~(VID)0 ) {
-		if( is_feasible( v ) )
-		    return v;
-		else {
-		    if( m_coreness[v] >= m_E.get_max_clique_size() )
-			// Needs some thought when waking up an infeasible
-			// vertex is necessary.
-			// It seems that it is definitely not necessary if its
-			// coreness is too low, as all LHS neighbours do not
-			// have higher coreness. Any other reasons may still
-			// require wakeup.
-			deduct_lhs_dep( v );
-		    --m_num_outstanding;
-		}
-	    }
-
-	    // Failing to find a feasible vertex ...
-
-	    // Snooze
-	    sched_yield();
-	}
-
-	return ~VID(0);
-    }
-
-    //! Run parallel loop processing all vertices in graph in DAG order.
-    void process() {
-	map_workers( [&]( uint32_t thr ) {
-	    while( m_num_outstanding.load() != 0 ) {
-		VID v = pop();
-
-		// Error code
-		if( v == ~(VID)0 )
-		    break;
-
-		// Process and have MC for this vertex recorded.
-		mc_top_level( m_graph_H, m_graph_G, m_E, v, m_degeneracy,
-			      m_coreness, m_rev_order );
-
-		// This may be a very loose upper bound
-		// Needs some restructing of enumerators to record the MC
-		// for a specific top-level vertex.
-		VID mc = m_E.get_max_clique_size();
-
-		// m_rhs_mc[v] is owned by a single thread
-		if( m_rhs_mc[v] == 0 || mc < m_rhs_mc[v] )
-		    m_rhs_mc[v] = mc;
-
-		// Deduct dependencies for left neighbours and wake them up
-		deduct_lhs_dep( v );
-
-		// Vertex processed
-		--m_num_outstanding;
-	    }
-	} );
-    }
-
-private:
-    bool is_feasible( VID v ) const {
-	if( m_coreness[v] < m_E.get_max_clique_size() )
-	    return false;
-
-	// Calculate largest RHS neighbour's clique size, add 1, and
-	// compare to incumbent clique.
-
-	return true;
-    }
-
-    void deduct_lhs_dep( VID v ) {
-	// Make sure we don't trigger creation of a hash set in case of
-	// lazy hashing. We don't need a hash set for this operation anyway.
-	const VID * ngh = m_graph_H.get_neighbours( v );
-	const VID deg = m_graph_H.get_degree( v );
-
-	for( VID i=0; i < deg; ++i ) {
-	    VID u = ngh[i];
-
-	    if( u > v ) // only LHS neighbours
-		break;
-
-	    if( --m_deps[u] == 0 )
-		wakeup( u );
-	}
-    }
-
-    //! Try to pop an element
-    VID try_pop() {
-	std::lock_guard<std::mutex> guard( m_mutex );
-	if( m_queue_pos > 0 )
-	    return m_queue[--m_queue_pos];
-	else
-	    return ~(VID)0;
-    }
-
-    //! Push a ready vertex onto the queue
-    void push_queue( VID v ) {
-	std::lock_guard<std::mutex> guard( m_mutex );
-	m_queue[m_queue_pos++] = v;
-    }
-
-    //! Wakeup: push in queue if feasible, else decide to deduct LHS dep ctrs
-    void wakeup( VID v ) {
-	if( is_feasible( v ) ) {
-	    push_queue( v );
-	    ++m_num_outstanding;
-	} else if( m_coreness[v] >= m_E.get_max_clique_size() )
-	    deduct_lhs_dep( v );
-    }
-
-private:
-    std::mutex m_mutex;
-    const HFGraphTy & m_graph_H;
-    const GraphCSx & m_graph_G;
-    MC_Enumerator & m_E;
-    VID m_degeneracy;
-    const VID * const m_coreness;
-    const VID * const m_rev_order;
-    mm::buffer<std::atomic<VID>> m_deps;
-    mm::buffer<VID> m_rhs_mc;
-    std::vector<std::pair<VID,VID>> m_phase1;
-    mm::buffer<VID> m_queue;
-    VID m_queue_pos;
-    std::atomic<VID> m_num_outstanding;
-};
-#endif
-
 /*! Main method for maximum clique search
  */
 int main( int argc, char *argv[] ) {
@@ -4631,11 +4433,6 @@ int main( int argc, char *argv[] ) {
 
     E.rebase( degeneracy, order.get(), remap_coreness.get() );
 
-#if TRAVERSAL_ORDER & 16
-    DAGScheduler dag_scheduler(
-	H, G, E, degeneracy, remap_coreness.get(), rev_order.get() );
-#endif
-
     std::cout << "setup: " << tm.next() << std::endl;
     std::cout << "Start enumeration at " << tm.total() << std::endl;
 
@@ -4720,17 +4517,8 @@ int main( int argc, char *argv[] ) {
 #endif
 	    if( c_up != c_lo ) {
 		VID v = c_lo;
-		if( E.is_feasible( c+1, fr_outer ) ) {
-		    VID mc = heuristic_search( H, E, v, remap_coreness.get() );
-#if TRAVERSAL_ORDER & 16
-		    // Note: heurstic_search does not give a strict upper
-		    // bound as it cuts the search short depending on E
-		    dag_scheduler.record_phase1( v, mc );
-#endif
-		}
-
-		// if( !E.is_feasible( c+1, fr_outer ) )
-		// break;
+		if( E.is_feasible( c+1, fr_outer ) )
+		    heuristic_search( H, E, v, remap_coreness.get() );
 	    }
 	} );
 	std::cout << "heuristic 2: " << tm.next() << "\n";
@@ -4764,32 +4552,6 @@ int main( int argc, char *argv[] ) {
     } );
 
 #elif SORT_ORDER == 2 || ( SORT_ORDER >= 4 && SORT_ORDER <= 7 )
-#if TRAVERSAL_ORDER & 16
-    parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
-#if ( TRAVERSAL_ORDER & 1 ) == 0
-	VID c = cc;
-#else
-	VID c = degeneracy - cc;
-#endif
-	VID c_up = histo[c+1];
-	VID c_lo = histo[c];
-#if SORT_ORDER >= 6
-	std::swap( c_up, c_lo );
-#endif
-	if( c_up != c_lo ) {
-	    VID v = c_lo;
-	    if( E.is_feasible( c+1, fr_outer ) ) {
-		mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
-			      rev_order.get()  );
-		dag_scheduler.record_phase1( v, E.get_max_clique_size() );
-	    }
-	}
-    } );
-    std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
-    dag_scheduler.setup();
-    std::cout << "DAG setup: " << tm.next() << "\n";
-    dag_scheduler.process();
-#else // not TRAVERSAL_ORDER & 16
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
@@ -4872,7 +4634,6 @@ int main( int argc, char *argv[] ) {
 	}
     } );
 
-#endif // TRAVERSAL_ORDER & 16
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
