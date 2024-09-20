@@ -826,13 +826,14 @@ public:
     static constexpr uint8_t fl_seq = 1;
 
 public:
+    template<typename Fn>
     explicit GraphLazyRemappedHashedAdj(
 	const ::GraphCSx & G,
 	const VID * const remap_to_orig,
 	const VID * const orig_to_remap,
 	numa_allocation && alloc,
-	size_t hash_threshold = 16,
-	size_t lazy_threshold = 16 ) :
+	size_t hash_threshold,
+	Fn && lazy_fn ) :
 	m_orig_graph( G ),
 	m_remap_to_orig( remap_to_orig ),
 	m_orig_to_remap( orig_to_remap ),
@@ -856,10 +857,11 @@ public:
 	    } );
 
 	parallel_loop( VID(0), n, [&]( VID rv ) {
+	    m_flags[rv] = fl_zero;
 	    VID ov = m_remap_to_orig[rv];
 	    EID deg = gindex[ov+1] - gindex[ov];
 	    hash_set_type & a = m_adjacency[rv];
-	    if( deg < lazy_threshold ) {
+	    if( !lazy_fn( rv ) ) {
 		new ( &a ) hash_set_type(); // size hint empty
 	    } else if( deg >= m_hash_threshold ) {
 		new ( &a ) hash_set_type( deg ); // size hint
@@ -952,7 +954,8 @@ private:
 		return maybe_dual_set_type( get_hash_set( v ) );
 	    else
 		return maybe_dual_set_type(
-		ngh_set_type( m_remap_graph.get_neighbours( v ), get_degree( v ) ) );
+		    ngh_set_type( m_remap_graph.get_neighbours( v ),
+				  get_degree( v ) ) );
 	}
     }
 public:
@@ -1035,6 +1038,9 @@ private:
 	const EID * const gindex = m_orig_graph.getIndex();
 	const VID * const gedges = m_orig_graph.getEdges();
 
+	// Try to get allocation size right from the start
+	a.create_if_uninitialised( gindex[ov+1] - gindex[ov] );
+
 	for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
 	    VID ou = gedges[oe];
 	    VID ru = m_orig_to_remap[ou];
@@ -1092,6 +1098,7 @@ public:
     bool is_seq_initialised( VID v ) const {
 	return m_flags[v].load( std::memory_order_relaxed ) == fl_seq;
     }
+private:
     void set_sequential( VID v ) const {
 	m_flags[v].store( fl_seq );
     }
