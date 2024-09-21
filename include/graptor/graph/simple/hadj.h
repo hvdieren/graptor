@@ -943,7 +943,7 @@ private:
 			      get_degree( v ) ),
 		m_adjacency[v] );
 	else if( has_h )
-	    return maybe_dual_set_type( m_adjaceny[v] );
+	    return maybe_dual_set_type( m_adjacency[v] );
 	else if( has_s )
 	    return maybe_dual_set_type(
 		ngh_set_type( m_remap_graph.get_neighbours( v ), get_degree( v ) ) );
