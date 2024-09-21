@@ -83,6 +83,12 @@ struct avx512_bitwise {
 	return ternary<0xa8>( a, b, c );
     }
     static type bitwise_or( type a, type b ) { return _mm512_or_si512( a, b ); }
+    static type bitwise_or( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0xfe>( a, b, c );
+	else
+	    return bitwise_or( bitwise_or( a, b ), c );
+    }
     static type bitwise_xor( type a, type b ) { return _mm512_xor_si512( a, b ); }
     static type bitwise_xnor( type a, type b ) {
 	// 0 0: 1 0: 1

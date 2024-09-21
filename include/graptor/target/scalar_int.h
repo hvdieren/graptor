@@ -146,6 +146,7 @@ public:
 	return ~a & ( b & c );
     }
     static type bitwise_or( type a, type b ) { return a | b; }
+    static type bitwise_or( type a, type b, type c ) { return a | b | c; }
     static type bitwise_or_and( type a, type b, type c ) {
 	return ( a | b ) & c;
     }
