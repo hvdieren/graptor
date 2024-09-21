@@ -4206,19 +4206,21 @@ int main( int argc, char *argv[] ) {
 	"\t-what-if {size}\tassuming clique of given size exists\n"
 	"\t--incumbent-limit {lim}\treport only timings larger than lim\n"
 	"\t--incumbent-degree {deg}\tonly analyse vertices with degree deg or above\n"
+	"\t--hash-threshold {threshold}\tthreshold for pre-constructing hashed neighbour sets\n"
 	"\t-d {threshold}\tdensity threshold for applying vertex cover\n"
 	"\t-i {file}\tinput file containing graph\n"
 	"\t-h, --help\tprint help message and exit\n"
 	);
-    bool symmetric = P.get_bool_option( "-s" );
-    bool early_pruning = P.get_bool_option( "-p" );
-    bool suffix_clique = P.get_bool_option( "--suffix" );
-    int heuristic = P.get_long_option( "-H", 2 );
-    VID pre = P.get_long_option( "-pre", -1 );
-    VID what_if = P.get_long_option( "-what-if", -1 );
+    const bool symmetric = P.get_bool_option( "-s" );
+    const bool early_pruning = P.get_bool_option( "-p" );
+    const bool suffix_clique = P.get_bool_option( "--suffix" );
+    const int heuristic = P.get_long_option( "-H", 2 );
+    const VID pre = P.get_long_option( "-pre", -1 );
+    const VID what_if = P.get_long_option( "-what-if", -1 );
     verbose = P.get_long_option( "-v", 0 );
     density_threshold = P.get_double_option( "-d", 0.5 );
     const char * ifile = P.get_string_option( "-i" );
+    const VID hash_threshold = P.get_long_option( "--hash-threshold", 16 );
 
 #if PROFILE_INCUMBENT_SIZE != 0
     incumbent_profiling_limit = P.get_double_option( "--incumbent-limit", 0.0 );
@@ -4365,7 +4367,6 @@ int main( int argc, char *argv[] ) {
     std::cout << "Constructing remap info: " << tm.next() << "\n";
 
     const VID lazy_threshold = std::max( VID(64), degeneracy );
-    const VID hash_threshold = 16;
     HFGraphTy H( G, order.get(), rev_order.get(),
 		 numa_allocation_interleaved(),
 		 hash_threshold,
