@@ -2189,17 +2189,16 @@ private:
 
 	// Find a cover for the remaining vertices
 	// All vertices with degree > k must be included in the cover
-	VID gp_best_size = best_size + u_size;
-	row_type gp_best_cover = tr::bitwise_or( best_cover, u_set );
-	// row_type gp_eligible = tr::bitwise_andnot( u_set, eligible );
+	VID gp_best_size = 0;
+	row_type gp_best_cover = tr::setzero();
 	bool rec = vck_iterate<exists,co>( k - u_size, c, gp_eligible,
 					   gp_best_size, gp_best_cover );
 
 	if( rec ) {
 	    assert( gp_best_size - best_size <= k );
 
-	    best_size = gp_best_size;
-	    best_cover = gp_best_cover;
+	    best_size += gp_best_size + u_size;
+	    best_cover = tr::bitwise_or( best_cover, u_set, gp_best_cover );
 	}
 	// std::cout << "buss k=" << k << " u_size=" << u_size
 		  // << " return rec=" << rec << " best=" << best_size
@@ -2393,6 +2392,12 @@ private:
 		best_size += max_deg + x_best_size;
 		best_cover = tr::bitwise_or(
 		    best_cover, tr::bitwise_or( x_best_cover, rm ) );
+		if( best_size > k )
+		    std::cerr << "FAIL: k=" << k << " max_deg=" << max_deg
+			      << " x_best_size=" << x_best_size
+			      << " x_ok=" << x_ok
+			      << " best_size=" << best_size
+			      << std::endl;
 		assert( best_size <= k );
 		return true;
 	    }
