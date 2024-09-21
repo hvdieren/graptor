@@ -381,7 +381,8 @@ public:
 	: m_graph( G ),
 	  m_degeneracy( std::numeric_limits<VID>::max()-1 ),
 	  m_best( 0 ),
-	  m_order( nullptr ) {
+	  m_order( nullptr ),
+	  m_coreness( nullptr ) {
 	m_timer.start();
     }
     MC_Enumerator(  const GraphCSx & G, size_t degen, const VID * const order,
@@ -4380,10 +4381,14 @@ int main( int argc, char *argv[] ) {
 	// Explore all vertices in a greedy manner, finding one
 	// clique per vertex. Traverse in natural order; we haven't
 	// obtained any sort order yet.
-	for( VID v=0; v < n; ++v ) {
-	    if( v != dmax_v )
-		heuristic_search( G, E, v, G.getDegree() );
-	}
+	parallel_loop( (VID)0, n, (VID)1, [&]( VID v ) {
+	    if( E.is_feasible( G.getDegree( v )+1, fr_outer ) )
+		if( v != dmax_v )
+		    heuristic_search( G, E, v, G.getDegree() );
+	} );
+
+	prune_th = E.get_max_clique_size();
+	
 	std::cout << "early pruning: " << tm.next() << "\n";
     }
 

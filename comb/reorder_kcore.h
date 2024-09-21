@@ -47,7 +47,8 @@ reorder_kcore( const GraphCSx & G,
     VID pn = n;
     EID pm = G.numEdges();
 
-    bool early_pruning = prune_th != ~(VID)0;
+    // Treat uninteresting vertices as if their coreness is 0
+    bool early_pruning = false; // prune_th != ~(VID)0;
     if( early_pruning ) {
 	// Look for a clique larger than this size, requires this many
 	// neighbours.
