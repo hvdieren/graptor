@@ -736,8 +736,9 @@ sort_order2( VID n,
     // 2. Prefix sum
     // Note: require int variables as the code checks >= 0 which is futile
     //       with unsigned int
-    VID sum = sum_scan( histogram, VID(0), max_criterion,
-			[&]( VID c ) { return histogram[c]; } );
+    histogram[max_criterion] =
+	sum_scan( histogram, VID(0), max_criterion,
+		  [&]( VID c ) { return histogram[c]; } );
 
     // 3. Placement of elements in order
     parallel_loop( VID(0), n, [&]( VID v ) {
