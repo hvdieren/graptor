@@ -824,6 +824,7 @@ public:
 
     static constexpr uint8_t fl_zero = 0;
     static constexpr uint8_t fl_seq = 1;
+    static constexpr uint8_t fl_hash = 2;
 
 public:
     template<typename Fn>
@@ -857,7 +858,7 @@ public:
 	    } );
 
 	parallel_loop( VID(0), n, [&]( VID rv ) {
-	    m_flags[rv] = fl_zero;
+	    m_flags[rv].store( fl_zero );
 	    VID ov = m_remap_to_orig[rv];
 	    EID deg = gindex[ov+1] - gindex[ov];
 	    hash_set_type & a = m_adjacency[rv];
@@ -940,9 +941,9 @@ private:
 	    return maybe_dual_set_type(
 		ngh_set_type( m_remap_graph.get_neighbours( v ),
 			      get_degree( v ) ),
-		get_hash_set( v ) );
+		m_adjacency[v] );
 	else if( has_h )
-	    return maybe_dual_set_type( get_hash_set( v ) );
+	    return maybe_dual_set_type( m_adjaceny[v] );
 	else if( has_s )
 	    return maybe_dual_set_type(
 		ngh_set_type( m_remap_graph.get_neighbours( v ), get_degree( v ) ) );
@@ -954,8 +955,7 @@ private:
 		return maybe_dual_set_type( get_hash_set( v ) );
 	    else
 		return maybe_dual_set_type(
-		    ngh_set_type( m_remap_graph.get_neighbours( v ),
-				  get_degree( v ) ) );
+		    ngh_set_type( get_seq( v ), get_degree( v ) ) );
 	}
     }
 public:
@@ -986,7 +986,7 @@ public:
 	auto e = ngh + deg;
 	auto r = std::upper_bound( b, e, v );
 	return is_hash_set_initialised( v )
-	    ? maybe_dual_set_type( ngh_set_type( r, e ), get_hash_set( v ) )
+	    ? maybe_dual_set_type( ngh_set_type( r, e ), m_adjacency[v] )
 	    : maybe_dual_set_type( ngh_set_type( r, e ) );
     }
 
@@ -1034,6 +1034,8 @@ private:
 	hash_set_type & a = m_adjacency[rv];
 
 	std::lock_guard<std::mutex> guard( a.get_lock() );
+	if( is_hash_set_initialised( rv ) )
+	    return a;
 
 	const EID * const gindex = m_orig_graph.getIndex();
 	const VID * const gedges = m_orig_graph.getEdges();
@@ -1048,6 +1050,8 @@ private:
 	}
 
 	assert( a.size() == gindex[ov+1] - gindex[ov] );
+
+	set_hash_set( rv );
 
 	return a;
     }
@@ -1093,14 +1097,18 @@ private:
 
 public:
     bool is_hash_set_initialised( VID v ) const {
-	return m_adjacency[v].size() == m_remap_graph.get_degree( v );
+	// return m_adjacency[v].size() == m_remap_graph.get_degree( v );
+	return ( m_flags[v].load( std::memory_order_acquire ) & fl_hash ) != 0;
     }
     bool is_seq_initialised( VID v ) const {
-	return m_flags[v].load( std::memory_order_relaxed ) == fl_seq;
+    return ( m_flags[v].load( std::memory_order_acquire ) & fl_seq ) != 0;
     }
 private:
+    void set_hash_set( VID v ) const {
+	m_flags[v].fetch_or( fl_hash );
+    }
     void set_sequential( VID v ) const {
-	m_flags[v].store( fl_seq );
+	m_flags[v].fetch_or( fl_seq );
     }
 
 private:
