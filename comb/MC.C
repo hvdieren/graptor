@@ -393,6 +393,15 @@ public:
 	  m_coreness( coreness ) {
 	m_timer.start();
     }
+    //! Creates an enumerator off the back of an existing one, typically
+    // for temporary use / local search, with a raised clique size.
+    MC_Enumerator( const MC_Enumerator & E, VID raised_size )
+	: m_graph( E.m_graph ),
+	  m_degeneracy( E.m_degeneracy ),
+	  m_best( raised_size ),
+	  m_timer( E.m_timer ),
+	  m_order( E.m_order ),
+	  m_coreness( E.m_coreness ) { }
 
     void rebase( size_t degen, const VID * const order,
 		 const VID * const coreness = nullptr ) {
@@ -470,6 +479,17 @@ public:
 	if( !m_max_clique.empty() )
 	    std::sort( m_max_clique.begin(), m_max_clique.end() );
 	return graptor::make_array_slice( m_max_clique );
+    }
+
+    void move_solution( MC_Enumerator & E ) {
+	// Acquire mutex to update m_max_clique and m_best atomically.
+	std::lock_guard<std::mutex> guard( m_mutex );
+
+	if( E.m_best > m_best ) {
+	    using std::swap;
+	    m_best = E.m_best;
+	    swap( m_max_clique, E.m_max_clique );
+	}
     }
 
 private:
@@ -3927,6 +3947,36 @@ void mc_top_level(
 #endif // PROFILE_INCUMBENT_SIZE
 }
 
+//! Searches for a clique with given gap-width in the right-neighbourhood of v
+//
+// It seems that heuristic search is more efficient to find a maximum clique
+// when the clique gap-width is zero.
+void mc_top_level_domega(
+    const HFGraphTy & H,
+    MC_Enumerator & E,
+    VID v,
+    VID degeneracy,
+    VID gap,
+    const VID * const remap_coreness ) {
+    
+    const VID coreness = degeneracy - gap;
+    
+    // Check opportunity for success
+    if( gap >= degeneracy+1 || !E.is_feasible( degeneracy+1-gap, fr_outer ) )
+	return;
+
+    // Set up an enumerator with the target gap width, minus one
+    // assuming we know a clique of size coreness, aiming to find one higher
+    MC_Enumerator EE( E, coreness );
+
+    // Run a search (leave open whether we use vertex cover or clique search)
+    mc_top_level_select<0>( H, EE, v, degeneracy, remap_coreness );
+
+    // Check for success
+    if( EE.get_max_clique_size() == coreness+1 )
+	E.move_solution( EE );
+}
+
 template<unsigned Bits, typename VID, typename EID>
 void leaf_dense_fn(
     const HGraphTy & H,
@@ -4221,6 +4271,7 @@ int main( int argc, char *argv[] ) {
     density_threshold = P.get_double_option( "-d", 0.5 );
     const char * ifile = P.get_string_option( "-i" );
     const VID hash_threshold = P.get_long_option( "--hash-threshold", 16 );
+    const VID domega_gap = P.get_long_option( "--domega", -1 );
 
 #if PROFILE_INCUMBENT_SIZE != 0
     incumbent_profiling_limit = P.get_double_option( "--incumbent-limit", 0.0 );
@@ -4494,6 +4545,25 @@ int main( int argc, char *argv[] ) {
 	heuristic_suffix( H, E, remap_coreness.get() );
 	std::cout << "heuristic suffix: " << tm.next() << "\n";
     }
+
+    if( domega_gap != (VID)-1 ) {
+	// A search for a clique with given gap width
+	VID c_up = histo[degeneracy-domega_gap+1];
+	VID c_lo = histo[degeneracy-domega_gap];
+
+	// The right-most vertices have very small neighbourhoods
+	if( domega_gap == 0 )
+	    c_up = std::max( c_lo, c_up-degeneracy );
+
+	parallel_loop( c_lo, c_up, (VID)1, [&,c_lo,c_up,degeneracy]( VID w ) {
+	    VID v = c_up - ( w - c_lo ) - 1;
+
+	    mc_top_level_domega( H, E, v, degeneracy, domega_gap,
+				 remap_coreness.get() );
+	} );
+
+	std::cout << "domega search: " << tm.next() << "\n";
+    }
     
     if( heuristic == 1 ) {
 	// Heuristic 1: explore all vertices in a greedy manner, finding one
@@ -4581,7 +4651,7 @@ int main( int argc, char *argv[] ) {
 		if( !E.is_feasible( c+1, fr_outer ) )
 		    break; // decreasing degeneracy, no hope for better
 
-		parallel_loop( c_lo, c_up, (VID)1, [&,c,degeneracy](
+		parallel_loop( c_lo, c_up, (VID)1, [&,c,c_lo,c_up,degeneracy](
 				   VID w ) {
 		    VID v = c_up - ( w - c_lo ) - 1;
 
