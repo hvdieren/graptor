@@ -21,6 +21,9 @@
 #include "graptor/container/dual_set.h"
 #include "graptor/container/maybe_dual_set.h"
 
+#ifndef LAZY_HASH_FILTER
+#define LAZY_HASH_FILTER 0
+#endif
 
 namespace graptor {
 
@@ -832,21 +835,33 @@ public:
 	const ::GraphCSx & G,
 	const VID * const remap_to_orig,
 	const VID * const orig_to_remap,
+	const VID * const coreness,
 	numa_allocation && alloc,
 	size_t hash_threshold,
 	Fn && lazy_fn ) :
 	m_orig_graph( G ),
 	m_remap_to_orig( remap_to_orig ),
 	m_orig_to_remap( orig_to_remap ),
+	m_coreness( coreness ),
 	m_remap_graph( G.get_num_vertices(), G.get_num_edges(), -1,
 		       true, false ),
 	m_hash_threshold( hash_threshold ),
 	m_adjacency( G.numVertices(), alloc ),
-	m_flags( G.numVertices(), alloc ) {
+	m_flags( G.numVertices(), alloc )
+#if LAZY_HASH_FILTER
+	,
+	m_degree( G.numVertices(), alloc )
+#endif
+	{
 
 	VID n = m_orig_graph.get_num_vertices();
 	const EID * const gindex = m_orig_graph.getIndex();
 	const VID * const gedges = m_orig_graph.getEdges();
+
+#if LAZY_HASH_FILTER
+	// At least a 2-clique can be/has been found
+	m_highest_threshold = 2;
+#endif
 
 	EID * const index = m_remap_graph.getIndex();
 	VID * const edges = m_remap_graph.getEdges();
@@ -861,15 +876,18 @@ public:
 	    m_flags[rv].store( fl_zero );
 	    VID ov = m_remap_to_orig[rv];
 	    EID deg = gindex[ov+1] - gindex[ov];
+#if LAZY_HASH_FILTER
+	    m_degree[rv] = deg;
+#endif
 	    hash_set_type & a = m_adjacency[rv];
 	    if( !lazy_fn( rv ) ) {
 		new ( &a ) hash_set_type(); // size hint empty
 	    } else if( deg >= m_hash_threshold ) {
 		new ( &a ) hash_set_type( deg ); // size hint
-		build_hash_set( rv, ov );
+		build_hash_set( rv, ov, 0 );
 	    } else {
 		new ( &a ) hash_set_type(); // empty size hint
-		build_seq( rv, ov );
+		build_seq( rv, ov, 0 );
 	    }
 	} );
     }
@@ -885,11 +903,18 @@ public:
 	    m_adjacency[v].~hash_set_type();
 	m_adjacency.del();
 	m_remap_graph.del();
+#if LAZY_HASH_FILTER
+	m_degree.del();
+#endif
     }
 
     VID numVertices() const { return m_remap_graph.get_num_vertices(); }
     VID get_num_vertices() const { return m_remap_graph.get_num_vertices(); }
+#if LAZY_HASH_FILTER
+    VID get_degree( VID v ) const { return m_degree[v]; }
+#else
     VID get_degree( VID v ) const { return m_remap_graph.get_degree( v ); }
+#endif
     VID getDegree( VID v ) const { return get_degree( v ); }
 
     vertex_iterator vbegin() { return vertex_iterator( 0 ); }
@@ -897,44 +922,30 @@ public:
     vertex_iterator vend() { return vertex_iterator( get_num_vertices() ); }
     vertex_iterator vend() const { return vertex_iterator( get_num_vertices() ); }
 
-    hash_set_type & get_adjacency( VID v ) const {
-	return const_cast<self_type *>( this )->get_adjacency( v );
+    hash_set_type & get_adjacency( VID v, VID cth = -1 ) const {
+	return const_cast<self_type *>( this )->get_adjacency( v, cth );
     }
-    hash_set_type & get_adjacency( VID v ) {
-#if 0
-	hash_set_type & a = m_adjacency[v];
-	// Relies on a linearisation order where an element is added
-	// before the size counter is incremented.
-	// This does not work correctly for delta hashing which requires
-	// an additional finalisation stage.
-	VID deg = get_degree( v );
-	if( a.size() != deg && deg >= m_hash_threshold ) {
-	    std::lock_guard<std::mutex> guard( a.get_lock() );
-	    if( a.size() == 0 )
-		build_hash_set( v, m_remap_to_orig[v] );
-	    return a;
-	} else
-	    return m_empty_hash_set; ... // TODO
-#else
-	return get_hash_set( v );
-#endif
+    hash_set_type & get_adjacency( VID v, VID cth = -1 ) {
+	return get_hash_set( v, cth );
     }
 
 public:
-    const VID * get_neighbours( VID v ) const {
-	return get_seq( v );
+    const VID * get_neighbours( VID v, VID cth = -1 ) const {
+	return get_seq( v, cth );
     }
 
-    maybe_dual_set_type get_lazy_neighbours_set( VID v ) const {
-	return get_neighbours_set( v, false );
+    maybe_dual_set_type get_lazy_neighbours_set( VID v, VID cth = -1 ) const {
+	return get_neighbours_set( v, cth, false );
     }
 
-    maybe_dual_set_type get_neighbours_set( VID v ) const {
-	return get_neighbours_set( v, get_degree( v ) >= m_hash_threshold );
+    maybe_dual_set_type get_neighbours_set( VID v, VID cth = -1 ) const {
+	return get_neighbours_set(
+	    v, cth, get_degree( v ) >= m_hash_threshold );
     }
     
 private:
-    maybe_dual_set_type get_neighbours_set( VID v, bool create_hash ) const {
+    maybe_dual_set_type
+    get_neighbours_set( VID v, VID cth, bool create_hash ) const {
 	bool has_h = is_hash_set_initialised( v );
 	bool has_s = is_seq_initialised( v );
 	if( has_h && has_s )
@@ -946,16 +957,17 @@ private:
 	    return maybe_dual_set_type( m_adjacency[v] );
 	else if( has_s )
 	    return maybe_dual_set_type(
-		ngh_set_type( m_remap_graph.get_neighbours( v ), get_degree( v ) ) );
+		ngh_set_type( m_remap_graph.get_neighbours( v ),
+			      get_degree( v ) ) );
 	else {
 	    // Create something. A hash set does not require sorting,
 	    // but a small set is compact sequentially and quick to sort,
 	    // and benefits from sequential access.
 	    if( create_hash )
-		return maybe_dual_set_type( get_hash_set( v ) );
+		return maybe_dual_set_type( get_hash_set( v, cth ) );
 	    else
 		return maybe_dual_set_type(
-		    ngh_set_type( get_seq( v ), get_degree( v ) ) );
+		    ngh_set_type( get_seq( v, cth ), get_degree( v ) ) );
 	}
     }
 public:
@@ -978,9 +990,9 @@ public:
     //! Get sequence of right neighbours
     // This method must materialise a sequential list. Return the hash set
     // also if available.
-    maybe_dual_set_type get_right_neighbours_set( VID v ) const {
-	VID * ngh = get_seq( v );
-	VID deg = m_remap_graph.get_degree( v );
+    maybe_dual_set_type get_right_neighbours_set( VID v, VID cth = -1 ) const {
+	VID * ngh = get_seq( v, cth );
+	VID deg = get_degree( v );
 	
 	auto b = ngh;
 	auto e = ngh + deg;
@@ -1021,16 +1033,13 @@ public:
 */
 
 private:
-    hash_set_type & get_hash_set( VID rv ) const {
+    hash_set_type & get_hash_set( VID rv, VID cth ) const {
 	if( is_hash_set_initialised( rv ) )
 	    return m_adjacency[rv];
 	else
-	    return build_hash_set( rv );
+	    return build_hash_set( rv, m_remap_to_orig[rv], cth );
     }
-    hash_set_type & build_hash_set( VID rv ) const {
-	return build_hash_set( rv, m_remap_to_orig[rv] );
-    }
-    hash_set_type & build_hash_set( VID rv, VID ov ) const {
+    hash_set_type & build_hash_set( VID rv, VID ov, VID cth ) const {
 	hash_set_type & a = m_adjacency[rv];
 
 	std::lock_guard<std::mutex> guard( a.get_lock() );
@@ -1043,29 +1052,47 @@ private:
 	// Try to get allocation size right from the start
 	a.create_if_uninitialised( gindex[ov+1] - gindex[ov] );
 
+#if LAZY_HASH_FILTER
+	if( cth == -1 )
+	    cth = m_highest_threshold.load();
+	else {
+	    VID cur = m_highest_threshold.load();
+	    if( cth > cur )
+		while( !m_highest_threshold.compare_exchange_weak(
+			   cur, cth,
+			   std::memory_order_release,
+			   std::memory_order_relaxed ) ) { }
+	}
+#endif
+
 	for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
 	    VID ou = gedges[oe];
 	    VID ru = m_orig_to_remap[ou];
+#if LAZY_HASH_FILTER
+	    if( m_coreness[ru] >= cth )
+		a.insert( ru );
+#else
 	    a.insert( ru );
+#endif
 	}
 
-	assert( a.size() == gindex[ov+1] - gindex[ov] );
+	assert( a.size() <= gindex[ov+1] - gindex[ov] );
 
+#if LAZY_HASH_FILTER
+	m_degree[rv] = a.size();
+#endif
 	set_hash_set( rv );
 
 	return a;
     }
 
-    VID * get_seq( VID rv ) const {
+    VID * get_seq( VID rv, VID cth ) const {
 	if( is_seq_initialised( rv ) )
 	    return const_cast<VID *>( m_remap_graph.get_neighbours( rv ) );
 	else
-	    return build_seq( rv );
+	    return build_seq( rv, m_remap_to_orig[rv], cth );
     }
-    VID * build_seq( VID rv ) const {
-	return build_seq( rv, m_remap_to_orig[rv] );
-    }
-    VID * build_seq( VID rv, VID ov ) const {
+    VID * build_seq( VID rv, VID ov, VID cth ) const {
 	hash_set_type & a = m_adjacency[rv];
 
 	const EID * const index = m_remap_graph.getIndex();
@@ -1078,18 +1105,39 @@ private:
 	const EID * const gindex = m_orig_graph.getIndex();
 	const VID * const gedges = m_orig_graph.getEdges();
 
+#if LAZY_HASH_FILTER
+	if( cth == -1 )
+	    cth = m_highest_threshold.load();
+	else {
+	    VID cur = m_highest_threshold.load();
+	    if( cth > cur )
+		while( !m_highest_threshold.compare_exchange_weak(
+			   cur, cth,
+			   std::memory_order_release,
+			   std::memory_order_relaxed ) ) { }
+	}
+#endif
+
 	EID re = index[rv];
 	for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
 	    VID ou = gedges[oe];
 	    VID ru = m_orig_to_remap[ou];
+#if LAZY_HASH_FILTER
+	    if( m_coreness[ru] >= cth )
+		edges[re++] = ru;
+#else
 	    edges[re++] = ru;
+#endif
 	}
 
-	assert( re == index[rv+1] );
+	assert( re <= index[rv+1] );
 
 	// TODO: ips4o
 	std::sort( &edges[index[rv]], &edges[re] );
 
+#if LAZY_HASH_FILTER
+	m_degree[rv] = re - index[rv];
+#endif
 	set_sequential( rv );
 
 	return &edges[index[rv]];
@@ -1116,9 +1164,14 @@ private:
     mutable ::GraphCSx m_remap_graph;
     const VID * const m_remap_to_orig;
     const VID * const m_orig_to_remap;
+    const VID * const m_coreness;
     VID m_hash_threshold;
     mutable mm::buffer<hash_set_type> m_adjacency;
     mutable mm::buffer<std::atomic<uint8_t>> m_flags;
+#if LAZY_HASH_FILTER
+    mutable mm::buffer<VID> m_degree;
+    mutable std::atomic<VID> m_highest_threshold;
+#endif
 };
 
 

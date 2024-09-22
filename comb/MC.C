@@ -3652,7 +3652,7 @@ std::pair<VID,EID> mc_top_level_select(
     // Profiling: check largest right-hand neighbour list encountered.
     // Good performance is expected when this does not exceed the degeneracy
     // by much.
-    auto v_radj = H.get_right_neighbours_set( v );
+    auto v_radj = H.get_right_neighbours_set( v, best );
     g_sum_rhs.fetch_add( v_radj.size() );
     g_count_rhs.fetch_add( 1 );
     // g_largest_rhs.fetch_max( v_radj.size() ); -- c++26
@@ -3726,7 +3726,7 @@ std::pair<VID,EID> mc_top_level_select(
 	bool ge = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_ge_ds(
 		cut.get_slice(),
-		H.get_lazy_neighbours_set( u ),
+		H.get_lazy_neighbours_set( u, best ),
 		best-1 ); // keep if intersection size >= best-1
 	return ge;
     }, best );
@@ -3769,7 +3769,7 @@ std::pair<VID,EID> mc_top_level_select(
 	    VID d = graptor::set_operations<graptor::MC_intersect>
 		::intersect_size_gt_val_ds(
 		    cut.get_slice(),
-		    H.get_neighbours_set( u ),
+		    H.get_neighbours_set( u, best ),
 		    threshold <= 2 ? VID(0)
 		    : threshold-2 ); // exceed checks >, we need >= best-1
 
@@ -3840,7 +3840,7 @@ std::pair<VID,EID> mc_top_level_select(
 	VID d = graptor::set_operations<graptor::MC_intersect>
 	    ::intersect_size_gt_val_ds(
 		cut.get_slice(),
-		H.get_neighbours_set( u ),
+		H.get_neighbours_set( u, best ),
 		best <= 2 ? VID(0)
 		: best-2 ); // exceed checks >, we need >= best-1
 	if( d+1 >= best )
@@ -4526,7 +4526,7 @@ int main( int argc, char *argv[] ) {
     std::cout << "Constructing remap info: " << tm.next() << "\n";
 
     const VID lazy_threshold = std::max( VID(64), degeneracy );
-    HFGraphTy H( G, order.get(), rev_order.get(),
+    HFGraphTy H( G, order.get(), rev_order.get(), remap_coreness.get(),
 		 numa_allocation_interleaved(),
 		 hash_threshold,
 		 [&,lazy_threshold]( VID v ) {
