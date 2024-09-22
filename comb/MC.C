@@ -2061,6 +2061,11 @@ vertex_cover_vc3( GraphType & G,
     //       actually, look at vertices with degree > 1 (paths/cycles)?
     // if( get_num_remaining_vertices() <= k ) -> success, but how?
 
+    lVID max_v, max_deg;
+    std::tie( max_v, max_deg ) = G.max_degree();
+    if( max_deg <= 2 )
+	return vertex_cover_poly( G, k, best_size, best_cover );
+
     // Apply reduction rules for degree-1 vertices.
     lVID min_v, min_deg;
     std::tie( min_v, min_deg ) = G.min_degree();
@@ -2082,10 +2087,37 @@ vertex_cover_vc3( GraphType & G,
 	return ok;
     }
 
-    lVID max_v, max_deg;
-    std::tie( max_v, max_deg ) = G.max_degree();
-    if( max_deg <= 2 )
-	return vertex_cover_poly( G, k, best_size, best_cover );
+    if( min_deg == 2 ) {
+	// Remove any vertex with degree 2 and assume its neighbours are
+	// both included in the vertex cover. Drops k by 2.
+	auto ngh = G.nbegin( min_v );
+	lVID ngh0 = *ngh;
+	++ngh;
+	lVID ngh1 = *ngh;
+	// The set of all neighbours, not filtered.
+	const lVID * ngh0b = G.get_neighbours( ngh0 );
+	const lVID * ngh0e = ngh0b + G.get_degree( ngh0 );
+	// ngh0 and ngh1 must be neighbours for this to be correct
+	if( std::binary_search( ngh0b, ngh0e, ngh1 ) ) {
+	    if( k < 2 )
+		return false;
+	    
+	    auto chkptv = G.disable_incident_edges_for( min_v, ngh0, ngh1 );
+	    lVID m_best_size = 0;
+	    bool ok = vertex_cover_vc3<exists>(
+		G, (lVID)(k-(lVID)2), c, m_best_size, &best_cover[best_size+2] );
+	    if( ok ) {
+		best_cover[best_size] = ngh0;
+		best_cover[best_size+1] = ngh1;
+		best_size += m_best_size + 2;
+
+		assert( m_best_size+2 <= k );
+	    }
+	    G.restore_checkpoint( chkptv );
+	    return ok;
+	}
+	/* else - the other case requires merging ngh0 and ngh1 */
+    }
 
 /* in-effective
     int ret
@@ -2679,7 +2711,7 @@ validate_vertex_cover( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 template<typename lVID, typename lEID, bool use_exist, typename Enumerator>
 lVID
 clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
-		     lVID v,
+		     VID top_v,
 		     lVID degeneracy,
 		     Enumerator & E,
 		     int depth ) {
@@ -2731,7 +2763,7 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
     // looking for a better clique/cover than what we know
     timer tm;
     tm.start();
-    const lVID k_prior = cn + depth - bc;
+    lVID k_prior = cn + depth - bc;
     lVID k_best_size = k_prior;
 
     if constexpr ( use_exist ) {
@@ -2749,13 +2781,14 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	    best_size = 0;
 	    bool any = vertex_cover_vc3<true>( CG, k, c, best_size, &cover[0] );
 	    if( verbose > 1 ) {
-		std::cout << " vc3: cn=" << cn << " k=[" << k_lo << ','
-			  << k << ',' << k_up << "] bs=" << best_size
-			  << " ok=" << any
+		std::cout << " vc3: topv=" << top_v << " cn=" << cn
+			  << " k=[" << k_lo << ',' << k << ',' << k_up
+			  << "] bs=" << best_size << " ok=" << any
 			  << ' ' << tm.next()
 			  << "\n";
 	    }
 	    if( any ) {
+		assert( best_size <= k );
 		k_best_size = best_size;
 		// in case we find a better cover than requested
 		if( k > k_best_size )
@@ -2764,10 +2797,42 @@ clique_via_vc3_mono( graptor::graph::GraphCSxDepth<lVID,lEID> & CG,
 	    }
 
 	    // Reduce range
-	    if( any ) // k too high
+	    if( any ) { // k too high
 		k_up = k;
-	    else
+
+		// Record clique
+		if( k_best_size < k_prior ) {
+		    if( E.is_feasible( depth + cn - k_best_size, fr_cover ) ) {
+			if( verbose > 3 )
+			    std::cout << "clique_via_vc3: max_clique: "
+				      << ( depth + cn - k_best_size )
+				      << " E.best: " << bc << "\n";
+			// Create complement set. Store at full width (VID)
+			std::vector<VID> clique( cn - k_best_size );
+			std::sort( &best_cover[0], &best_cover[k_best_size] );
+			for( lVID i=0, j=0, k=0; i < cn; ++i ) {
+			    if( best_cover[j] == i ) {
+				if( j < k_best_size-1 )
+				    ++j;
+			    } else
+				clique[k++] = i;
+			}
+			E.record( depth + cn - k_best_size,
+				  clique.begin(), clique.end() ); // size of complement
+		    }
+		}
+	    } else
 		k_lo = k;
+
+	    // Probe best known clique and adjust cover size target
+	    lVID nbc = E.get_max_clique_size();
+	    if( nbc != bc ) {
+		bc = nbc;
+		k_prior = cn + depth - bc;
+		k_up = std::min( lVID( k_prior - 1 ), k_up );
+		k = std::min( lVID( k_prior - 1 ), k );
+	    }
+
 	    if( k_up <= k_lo+1 )
 		break;
 
@@ -3720,7 +3785,9 @@ std::pair<VID,EID> mc_top_level_select(
 		if( threshold > 0 )
 		    --threshold;
 		return false;
-	    } else if( d == cut.get_num_vertices()-2 ) {
+	    }
+#if 0
+	    else if( d == cut.get_num_vertices()-2 ) {
 		// Either u or the vertex it is not connected to make up the
 		// maximum clique for this subgraph. We actually don't know
 		// if the other vertex is also sufficiently connected, so
@@ -3742,6 +3809,7 @@ std::pair<VID,EID> mc_top_level_select(
 		// And remove u from the candidate set
 		return false;
 	    }
+#endif
 
 	    if( d+1 >= threshold )
 		m_est += d;
@@ -4479,7 +4547,7 @@ int main( int argc, char *argv[] ) {
 
     if( histo.size() != 0 )
 	std::cout << "Sort order check:\n\thisto[0]=" << histo[0]
-		  << " histo[1]=" << histo[1]
+		  << " histo[degeneracy-1]=" << histo[degeneracy-1]
 		  << " histo[degeneracy]=" << histo[degeneracy]
 		  << "\n\tcoreness[0]=" << remap_coreness[0]
 		  << " coreness[pn-1]=" << remap_coreness[pn-1]

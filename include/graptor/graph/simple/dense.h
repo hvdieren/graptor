@@ -2309,9 +2309,12 @@ private:
 		      VID & best_size, row_type & best_cover ) {
 	VID n = m_n;
 	row_type deg1v, deg1ngh;
-	VID deg1cnt, max_v, max_deg;
+	row_type deg2v, deg2ngh;
+	VID deg1cnt, deg2cnt, max_v, max_deg;
 	EID m;
-	std::tie( deg1v, deg1ngh, deg1cnt, max_v, max_deg, m )
+	std::tie( deg1v, deg1ngh, deg1cnt,
+		  deg2v, deg2ngh, deg2cnt,
+		  max_v, max_deg, m )
 	    = co_analyse_vc<co>( eligible );
 	if( k == 0 )
 	    return m == 0;
@@ -2331,6 +2334,25 @@ private:
 	    if( ok ) {
 		best_size += deg1cnt;
 		best_cover = tr::bitwise_or( best_cover, deg1ngh );
+	    }
+	    return ok;
+	}
+
+	// Apply reduction rules to degree-2 vertices
+	if( deg2cnt != 0 ) {
+	    // If we need to include more folded vertices in the vertex cover
+	    // then we are allowed, we fail
+	    if( deg2cnt > k )
+		return false;
+	    // Remove degree-2 vertices and their neighbours; add the
+	    // neighbours to the cover
+	    row_type eligible1 = tr::bitwise_andnot( deg2v, eligible );
+	    eligible1 = tr::bitwise_andnot( deg2ngh, eligible1 );
+	    bool ok = vck_iterate<exists,co>(
+		k - deg2cnt, c, eligible1, best_size, best_cover );
+	    if( ok ) {
+		best_size += deg2cnt;
+		best_cover = tr::bitwise_or( best_cover, deg2ngh );
 	    }
 	    return ok;
 	}
@@ -2637,11 +2659,14 @@ private:
     // unique neighbours, the max-degree-vertex, its degree,
     // and number of edges in graph
     template<bool co>
-    std::tuple<row_type,row_type,VID,VID,VID,EID>
+    std::tuple<row_type,row_type,VID,row_type,row_type,VID,VID,VID,EID>
     co_analyse_vc( row_type eligible ) const {
 	row_type deg1v = tr::setzero();
 	row_type deg1ngh = tr::setzero();
 	VID deg1cnt = 0;
+	row_type deg2v = tr::setzero();
+	row_type deg2ngh = tr::setzero();
+	VID deg2cnt = 0;
 	EID m = 0;
 	VID max_v = 0;
 	VID max_deg = 0;
@@ -2677,11 +2702,41 @@ private:
 			deg1v = tr::bitwise_or( deg1v, vr );
 		    }
 		}
+
+		// Find degree-2 vertices and their neighbours. Ensure only
+		// unique neighbours are counted
+		if( deg == 2 ) {
+		    // Check that neighbours are connected (triangle). At least
+		    // two vertices in a triangle must be in a vertex cover.
+		    row_type ngh_row;
+		    VID ngh;
+		    std::tie( ngh_row, ngh ) = pick_one( adj );
+		    row_type ngh_adj = co_get_row<co>( ngh, ngh_row, eligible );
+		    if( !tr::is_bitwise_and_zero( ngh_adj, adj ) ) {
+			// Check if neighbours are included in list of degree-2
+			// vertices. Only add them if not seen yet.
+			// For simplicity, remove both vertices or none.
+			// Avoid overlaps of triangles.
+			if( tr::is_bitwise_and_zero( deg2v, adj ) ) {
+			    // Check if neighbours have multiple degree-2
+			    // neighbours. Avoid overlap of triangles.
+			    if( tr::is_bitwise_and_zero( deg2ngh, adj ) ) {
+				deg2ngh = tr::bitwise_or( deg2ngh, adj );
+				deg2cnt += 2;
+				deg2v = tr::bitwise_or( deg2v, vr );
+			    }
+			}
+		    }
+		}
 	    }
 	}
-	return { deg1v, deg1ngh, deg1cnt, max_v, max_deg, m };
+	return { deg1v, deg1ngh, deg1cnt, deg2v, deg2ngh, deg2cnt, max_v, max_deg, m };
     }
 
+    std::pair<row_type,sVID> pick_one( row_type r ) const {
+	sVID v = target::alltzcnt<sVID,type,VL>::compute( r );
+	return std::make_pair( create_row( v ), v );
+    }
     
     EID calculate_num_edges( row_type eligible ) const {
 	EID m = 0;

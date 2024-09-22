@@ -393,6 +393,12 @@ public:
 	return single_vertex_checkpoint_type( v );
     }
 
+    checkpoint_type
+    disable_incident_edges_for( lVID v0, lVID v1, lVID v2 ) {
+	std::array<lVID,3> a = { v0, v1, v2 };
+	return disable_incident_edges( a.begin(), a.end() );
+    }
+
 private:
     void disable_incident_edges_per_vertex( lVID v ) {
 	assert( ( m_depth[v] != initial_depth ) == ( m_degree[v] == 0 ) );
@@ -467,7 +473,7 @@ private:
 	    }
 	}
 
-	m_degree[v] = re; // total number of active neihbours
+	m_degree[v] = re; // total number of active neighbours
 	m_m_remain += 2 * (lEID)re;
 	m_n_remain += rv + 1; // +1 for vertex v
 
