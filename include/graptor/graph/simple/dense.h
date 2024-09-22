@@ -962,7 +962,7 @@ public:
 	// exists and we are only interested in finding a better one.
 	VID best_size = k_max + 1;
 	row_type best_cover = tr::setzero();
-	VID k_up = k_max; // - 1; no pre-supposition that solution with k==k_max exists!
+	VID k_up = k_max - 1; // a solution with k==k_max exists
 	VID k_lo = 1;
 	VID k_best_size = k_max;
 	VID k = k_up;
@@ -1005,7 +1005,7 @@ public:
 
 	// If we can't meet the constraint, return something quick and
 	// recognisable as unuseful.
-	if( best_size > k_max )
+	if( best_size >= k_max )
 	    return std::make_pair( bitset<Bits>( tr::setzero() ), ~(VID)0 );
 
 	// Validate that best_cover is indeed a vertex cover
@@ -1517,7 +1517,7 @@ private:
 		//  MCE where the pivot can be in X?)
 		return;
 
-#if 0 // marginal added value
+#if 1 // marginal added value
 	    if( nset == 4 ) {
 		// A vertex is connected to all other vertices except three.
 		// We can remove all three if no edges exist between them.

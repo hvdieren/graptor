@@ -185,9 +185,7 @@ public:
 		// interested.
 		if( m_num_iset < min_size )
 		    break;
-	    }
-	    // --j;
-	    else
+	    } else
 		++j;
 	}
     }

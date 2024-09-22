@@ -196,7 +196,7 @@
 #include "graptor/cmdline.h"
 #include "reorder_kcore.h"
 
-float density_threshold = 0.9f;
+float density_threshold = 0.5f;
 
 #if TOP_DENSE_SELECT > 0
 #include "graptor/stat/vfdt.h"
@@ -3111,8 +3111,25 @@ mc_bron_kerbosch_recpar_xps(
 #if PIVOT_COLOUR
     VID skip_colours = target - depth;
 #else
-    VID pivot = mc_get_pivot( G, xp ).first;
+    VID pivot, pivot_deg;
+    std::tie( pivot, pivot_deg ) = mc_get_pivot( G, xp );
     const auto & p_adj = G.get_neighbours_set( pivot );
+
+    // pivot_deg is 0 when short-cutting the computation
+    if( pivot_deg >= xp.size() - 2 && pivot_deg != 0 ) {
+	// Chang KDD'19: if we only have the pivot to consider, or
+	// there is one vertex that the pivot is not a neighbour to,
+	// then only just visit the pivot.
+
+	// Add pivot vertex to running clique
+	clique_set<VID> R_new( pivot, R );
+
+	PSet<VID> xp_new = xp.intersect( pivot, p_adj );
+	bk_recursive_call<allow_dense>(
+	    G, degeneracy, E, &R_new, xp_new, depth+1 );
+
+	return;
+    }
 #endif
 
 #if PIVOT_COLOUR
@@ -3256,8 +3273,9 @@ std::pair<VID,EID> mc_dense_fn(
     bool do_vc = false, do_bk = false;
     double t_vc = 0, t_bk = 0;
 
+    // Need a vertex cover stricly smaller than k_max
     VID bc = E.get_max_clique_size();
-    VID k_max = n < bc ? 0 : n - bc + 1;
+    VID k_max = n + depth < bc ? 0 : n + depth - bc;
 
 #if TOP_DENSE_SELECT == 0
 #if !ABLATION_DISABLE_VC && !ABLATION_DISABLE_BK
@@ -3674,8 +3692,7 @@ std::pair<VID,EID> mc_top_level_select(
     VID hn3;
     VID num = hn2;
     VID threshold = best;
-    //  do
-    {
+    do {
 	hn3 = cut.get_num_vertices();
 	cut.filter( [&]( VID u ) {
 	    // d > best-2 is impossible to meet when best == 0 or best == 1
@@ -3689,6 +3706,9 @@ std::pair<VID,EID> mc_top_level_select(
 		    : threshold-2 ); // exceed checks >, we need >= best-1
 
 	    // Reduction rules based on degree
+	    // These seem futile as both the recursive BK search and the
+	    // vertex cover would quickly identify these vertices and deal
+	    // with them.
 	    // Chang KDD'19
 	    if( d == cut.get_num_vertices()-1 ) {
 		// Is this vertex connected to all other vertices?
@@ -3697,24 +3717,36 @@ std::pair<VID,EID> mc_top_level_select(
 		if( threshold > 0 )
 		    --threshold;
 		return false;
-	    } /* else if( d == cut.get_num_vertices()-2 ) {
+	    } else if( d == cut.get_num_vertices()-2 ) {
 		// Either u or the vertex it is not connected to make up the
-		// maximum clique for this subgraph. Can include either this
-		// one or the other one (but the other one is unknown).
-		// The other one *must* be removed too, otherwise we could
-		// decide to include it too in case of a truss.
-How to know the odd one out?
+		// maximum clique for this subgraph. We actually don't know
+		// if the other vertex is also sufficiently connected, so
+		// we cannot rely on only including that one.
+		// Removing it is awkward in the current loop setup.
+
+		// Find the other vertex. Need to redo intersection...
+		VID other = ...;
+
+		// We need to remove it. Doesn't look like this is safe.
+		// Need to test for membership in this on every call to this
+		// lambda, then mop up in the end to remove those previously
+		// visited.
+		remove_also.push_back( other );
+
+		// We include u for sure in the current clique
 		selected.push_back( u );
+
+		// And remove u from the candidate set
 		return false;
-		} */
+	    }
 
 	    if( d+1 >= threshold )
 		m_est += d;
 	    return d+1 >= threshold;
-	}, threshold );
+	}, 0 ); // can't test if the set as a whole becomes too small now...
 
 	num = cut.get_num_vertices() + selected.size();
-    } //  while( cut.get_num_vertices() < hn3 && num != 0 && num >= best );
+    } while( cut.get_num_vertices() < hn3 && num != 0 && num >= best );
 
     // if( !selected.empty() )
     // std::cout << "selected size: " << selected.size() << "\n";
