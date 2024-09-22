@@ -1989,7 +1989,7 @@ bool leaf_vertex_cover(
     lVID * best_cover ) {
 
     variant_statistics & stats
-	= mc_stats.get_statistics().get_leaf( av_bk, ilog2( Bits ) );
+	= mc_stats.get_statistics().get_leaf( av_vc, ilog2( Bits ) );
     timer tm;
     tm.start();
 
@@ -2022,7 +2022,10 @@ bool leaf_vertex_cover(
 	std::cout << "VC cutout: nrem=" << n_remain << " n=" << n
 		  << " m=" << m << " d=" << d << "\n";
 
-    auto [ bs, sz ] = D.template vertex_cover_kernelised<false>( k );
+    // This subroutine assumes a cover with provided size is known. In this
+    // case, we are looking for a cover of size k or less, we don't know if
+    // one of size k actually exists. Hence, increment k by one.
+    auto [ bs, sz ] = D.template vertex_cover_kernelised<false>( k+1 );
     bool ret;
     if( ~sz == (lVID)0 || sz > k )
 	ret = false;
