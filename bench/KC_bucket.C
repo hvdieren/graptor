@@ -4,6 +4,8 @@
 
 #include "graptor/graptor.h"
 #include "graptor/api.h"
+#include "graptor/container/range_iterator.h"
+#include "graptor/container/sort.h"
 #include "buckets.h"
 #include "check.h"
 
@@ -774,6 +776,42 @@ sort_order_pruned( VID n,
     assert( 0 && "NYI" );
 }
 
+std::pair<VID,VID>
+find_min_max( const VID * from,
+	      const VID * to,
+	      const VID * key,
+	      VID * scratch,
+	      VID nparts ) {
+    // Clear information
+    // Requires space for 2 * nparts elements
+    std::fill( scratch, scratch+2*nparts, VID(0) );
+    
+    parallel_loop( VID(0), nparts, VID(1), [=]( VID p ) {
+	VID pmin = std::numeric_limits<VID>::max();
+	VID pmax = std::numeric_limits<VID>::min();
+	
+	const VID chunk = ( to - from + nparts - 1 ) / nparts;
+	const VID * b = std::min( from + p * chunk, to );
+	const VID * e = std::min( b + chunk, to );
+	for( const VID * s = b; s != e; ++s ) {
+	    VID v = *s;
+	    VID k = key[v];
+	    if( k < pmin )
+		pmin = k;
+	    else if( k > pmax )
+		pmax = k;
+	}
+
+	scratch[p] = pmin;
+	scratch[nparts+p] = pmax;
+    } );
+
+    VID kmin = *std::min_element( scratch, scratch+nparts );
+    VID kmax = *std::max_element( scratch+nparts, scratch+2*nparts );
+
+    return std::make_pair( kmin, kmax );
+}
+
 //! \brief Sort vertices by coreness and by degree for equal coreness
 //
 // Auxiliary method for downstream tasks.
@@ -825,6 +863,37 @@ sort_order_ties( VID n,
 		 VID * histo, // array of length K+2
 		 bool reverse_core = false,
 		 bool reverse_deg = false ) {
+#if  1
+    // Degree sorting using SAPCo sort. Sort the whole range of values in
+    // a first pass. Then sort into coreness buckets using stable counting
+    // sort.
+
+    // Setup
+    VID nparts = graptor_num_threads();
+    const VID L = std::bit_ceil( K+1 );
+    VID npriv = std::min( VID(1024), K+1 ); // normally max_degree / 2
+    VID ns = std::max( nparts * L, npriv * nparts + n );
+    VID * scratch = new VID[ns];
+
+    // Degree sort
+    graptor::sapco_sort( graptor::range_iterator<VID>( 0 ),
+			 graptor::range_iterator<VID>( n ),
+			 degree, rev_order, scratch, n-1, npriv,
+			 nparts, reverse_deg );
+
+    // Coreness sort
+    graptor::stable_counting_sort(
+	&rev_order[0], &rev_order[n], coreness, scratch, histo, order,
+	K, nparts, reverse_core );
+
+    // Cleanup
+    delete[] scratch;
+
+    // Construct reverse order
+    parallel_loop( (VID)0, n, [&]( VID pos ) {
+	rev_order[order[pos]] = pos;
+    } );
+#else
     std::fill( &histo[0], &histo[K+1], 0 );
     const VID L = std::bit_ceil( K+1 );
     const VID T = graptor_num_threads();
@@ -841,8 +910,8 @@ sort_order_ties( VID n,
 	    pt[t*L+c]++;
 	}
     } );
-    // 16 counters in a cache line, so 16-entry chunks to avoid false sharing
-    // assumes the whole array is 16-entry aligned
+    // 16 counters in a cache line, so 16-entry chunks to avoid false sharing.
+    // This assumes that the whole array is 16-entry aligned.
     parallel_loop( VID(0), K+1, VID(16), [&]( VID c ) {
 	VID s = 0;
 	for( VID t=0; t < T; ++t ) {
@@ -852,16 +921,6 @@ sort_order_ties( VID n,
 	}
 	histo[c] = s;
     } );
-/*
-    parallel_loop( VID(0), n, [&]( VID v ) {
-	VID c = coreness[v];
-	__sync_fetch_and_add( &histo[c], 1 );
-    } );
-    for( VID v=0; v < n; ++v ) {
-	VID c = coreness[v];
-	histo[c]++;
-    }
-*/
 
     // Prefix sum
     // Note: require int variables as the code checks >= 0 which is futile
@@ -869,15 +928,8 @@ sort_order_ties( VID n,
     VID sum = sequence::scan( histo, (int)0, (int)K+1, addF<VID>(),
 			      sequence::getA<VID,int>( histo ),
 			      (VID)0, false, reverse_core );
-    
+
     // Place in order
-/*
-    parallel_loop( VID(0), n, [&]( VID v ) {
-	VID c = coreness[v];
-	VID pos = __sync_fetch_and_add( &histo[c], 1 );
-	order[pos] = v;
-    } );
-*/
     parallel_loop( VID(0), T, [&]( VID t ) {
 	VID lo = t * C;
 	VID hi = std::min( n, (t+1) * C );
@@ -887,14 +939,6 @@ sort_order_ties( VID n,
 	    order[pos] = v;
 	}
     } );
-/*
-    for( VID v=0; v < n; ++v ) {
-	VID c = coreness[v];
-	VID pos = histo[c]++;
-	order[pos] = v;
-	rev_order[v] = pos;
-    }
-*/
 
     // Restore histo
     if( reverse_core ) {
@@ -904,32 +948,28 @@ sort_order_ties( VID n,
 	histo[0] = 0;
 	histo[K+1] = n;
     }
-#if 0
-    if( reverse_core ) {
-	for( VID c=1; c <= K; ++c )
-	    histo[c] = histo[c+1];
-	histo[0] = n;
-	histo[K+1] = 0;
-    } else {
-	for( VID c=0; c <= K; ++c )
-	    histo[K-c+1] = histo[K-c];
-	histo[0] = 0;
-    }
-#endif
 
-    // Degree sorting (crude), decreasing order
+    // Degree sorting (crude).
     // Check reverse inside loop to reduce code size.
+    // The coreness 0 category only has isolated vertices. We do not need to
+    // sort them.
+    // Degeneracy levels are typically fairly short, so std::sort is a
+    // plausible algorithm.
     parallel_loop( (VID)0, K+1, [&]( VID c ) {
 	VID c_lo = histo[c];
 	VID c_up = histo[c+1];
-	if( reverse_core )
-	    std::swap( c_lo, c_up );
-	if( reverse_deg ) {
-	    std::sort( &order[c_lo], &order[c_up],
-		       [&]( VID a, VID b ) { return degree[a] > degree[b]; } );
-	} else {
-	    std::sort( &order[c_lo], &order[c_up],
-		       [&]( VID a, VID b ) { return degree[a] < degree[b]; } );
+	if( c_lo != c_up ) { 
+	    if( reverse_core )
+		std::swap( c_lo, c_up );
+	    if( reverse_deg ) {
+		std::sort( &order[c_lo], &order[c_up],
+			   [&]( VID a, VID b ) {
+			       return degree[a] > degree[b]; } );
+	    } else {
+		std::sort( &order[c_lo], &order[c_up],
+			   [&]( VID a, VID b ) {
+			       return degree[a] < degree[b]; } );
+	    }
 	}
     } );
 
@@ -937,6 +977,7 @@ sort_order_ties( VID n,
     parallel_loop( (VID)0, n, [&]( VID pos ) {
 	rev_order[order[pos]] = pos;
     } );
+#endif
 }
 
 //! \brief Sort vertices by coreness and by degree for equal coreness
