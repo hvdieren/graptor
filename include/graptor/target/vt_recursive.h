@@ -354,6 +354,10 @@ struct vt_recursive {
 	return type { lo_half_traits::bitwise_or( l.a, r.a ),
 		      hi_half_traits::bitwise_or( l.b, r.b ) };
     }
+    static type bitwise_or( type l, type m, type r ) {
+	return type { lo_half_traits::bitwise_or( l.a, m.a, r.a ),
+		      hi_half_traits::bitwise_or( l.b, m.b, r.b ) };
+    }
     static type bitwise_xor( type l, type r ) {
 	return type { lo_half_traits::bitwise_xor( l.a, r.a ),
 		      hi_half_traits::bitwise_xor( l.b, r.b ) };
