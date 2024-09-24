@@ -551,7 +551,7 @@ public:
 	    return nullptr;
     }
 
-    auto get_lazy_neighbours_set( VID v ) const {
+    auto get_lazy_neighbours_set( VID v, VID cth = -1 ) const {
 	if constexpr ( lazy_hashing )
 	    return ngh_set_type( get_neighbours( v ), get_degree( v ) );
 	else
@@ -568,7 +568,7 @@ public:
 	auto r = std::lower_bound( b, e, v );
 	return dual_set_type( ngh_set_type( b, r ), get_adjacency( v ) );
     }
-    dual_set_type get_right_neighbours_set( VID v ) const {
+    dual_set_type get_right_neighbours_set( VID v, VID cth = -1 ) const {
 	auto b = nbegin( v );
 	auto e = nend( v );
 	auto r = std::upper_bound( b, e, v );
@@ -743,13 +743,13 @@ public:
 	return m_graph.get_neighbours( v );
     }
 
-    auto get_lazy_neighbours_set( VID v ) const {
+    auto get_lazy_neighbours_set( VID v, VID cth = -1 ) const {
 	if constexpr ( lazy_hashing )
 	    return ngh_set_type( get_neighbours( v ), get_degree( v ) );
 	else
 	    return get_neighbours_set( v );
     }
-    dual_set_type get_neighbours_set( VID v ) const {
+    dual_set_type get_neighbours_set( VID v, VID cth = -1 ) const {
 	return dual_set_type(
 	    ngh_set_type( get_neighbours( v ), get_degree( v ) ),
 	    get_adjacency( v ) );
@@ -760,7 +760,7 @@ public:
 	auto r = std::lower_bound( b, e, v );
 	return dual_set_type( ngh_set_type( b, r ), get_adjacency( v ) );
     }
-    dual_set_type get_right_neighbours_set( VID v ) const {
+    dual_set_type get_right_neighbours_set( VID v, VID cth = -1 ) const {
 	auto b = nbegin( v );
 	auto e = nend( v );
 	auto r = std::upper_bound( b, e, v );
