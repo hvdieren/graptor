@@ -4957,17 +4957,25 @@ int main( int argc, char *argv[] ) {
 #if !ABLATION_DISABLE_LAZY_REMAPPING
     if constexpr ( lazy_hashing ) {
 	VID num_init_h = 0;
+	EID num_edge_h = 0;
 	VID num_init_s = 0;
+	EID num_edge_s = 0;
 	for( VID v=0; v < n; ++v ) {
-	    if( H.is_hash_set_initialised( v ) )
+	    if( H.is_hash_set_initialised( v ) ) {
 		++num_init_h;
-	    if( H.is_seq_initialised( v ) )
+		num_edge_h += H.get_degree( v );
+	    }
+	    if( H.is_seq_initialised( v ) ) {
 		++num_init_s;
+		num_edge_s += H.get_adjacency( v ).size();
+	    }
 	}
 	std::cerr << "Lazy initialisation: " << num_init_h << " / "
-		  << n << " hash sets initialised\n";
+		  << n << " hash sets initialised with " << num_edge_h
+		  << " / " << m << " edges\n";
 	std::cerr << "Lazy initialisation: " << num_init_s << " / "
-		  << n << " sequential sets initialised\n";
+		  << n << " sequential sets initialised with " << num_edge_s
+		  << " / " << m << " edges\n";
     }
 #endif
 
