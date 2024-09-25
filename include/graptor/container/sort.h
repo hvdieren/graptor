@@ -8,7 +8,17 @@ namespace graptor {
 
 //! \brief SAPCo sort
 //
+// An optimised counting sort that uses a mixture of per-thread counters for
+// highly contented elements (e.g., low vertex degrees in a skewed-degree graph
+// when sorting vertices by degree) and shared counters for elements with
+// low contention.
 // This sorting algorithm does not provide a stable sort.
+//
+// M. Koohi Esfahani, P. Kilpatrick and H. Vandierendonck, "SAPCo Sort:
+// Optimizing Degree-Ordering for Power-Law Graphs,"
+// 2022 IEEE International Symposium on Performance Analysis of Systems
+// and Software (ISPASS), Singapore, 2022, pp. 138-140,
+// doi: 10.1109/ISPASS55109.2022.00015.
 // 
 // \param[in] from start of range to sort
 // \param[in] to end of range to sort

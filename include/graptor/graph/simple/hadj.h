@@ -22,7 +22,7 @@
 #include "graptor/container/maybe_dual_set.h"
 
 #ifndef LAZY_HASH_FILTER
-#define LAZY_HASH_FILTER 0
+#define LAZY_HASH_FILTER 1
 #endif
 
 namespace graptor {
