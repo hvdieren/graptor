@@ -37,8 +37,10 @@ it-2004
 keller4
 keller5
 keller6
+mawi
 orkut
 pokec
+ppminer
 sinaweibo
 sx-stackoverflow
 twitter_xl
@@ -53,7 +55,9 @@ EOG
 request=`echo $graphs | tr ' ' "\n" | grep -E "^$graph"`
 cnt=`echo $request | wc -w`
 if [ $cnt -ne 1 ] ; then
-    echo \'$graph\' is not unique
+    echo \'$graph\' is not unique. options:
+    echo $request
+    exit 1
 fi
 
 echo request=$request

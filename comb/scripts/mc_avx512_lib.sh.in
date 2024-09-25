@@ -73,19 +73,20 @@ function ins()
     local threads=$4
     local commit=$5
     local repetitions=$6
+    local frac=$7
 
     bindir=bin_avx512_$commit
     arg=""
 
     local outdir=./graptor_avx512/$commit
     [ -d $outdir ] || mkdir -p $outdir
-    local file=$outdir/output.${commit}.t${threads}.r${repetitions}.${prog}.${graph_name} 
+    local file=$outdir/output.${commit}.t${threads}.f${frac}.r${repetitions}.${prog}.${graph_name} 
 
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -r $repetitions -s -i ${graph_path} > $file"
-	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -r $repetitions -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -f $frac -r $repetitions -s -i ${graph_path} --min-size 16 --enable merge_vector_jump,hash_scalar,hash_vector > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" ./${bindir}/${prog} -f $frac -r $repetitions -s -i ${graph_path} --min-size 16 --enable merge_vector_jump,hash_scalar,hash_vector > $file 2>&1"
     fi
 }
 
@@ -102,14 +103,22 @@ function for_gg()
     local is_avx512f=0
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
-#    for r in 50 ; do
-#	ins intersect_ds__op3_vl16 $graph_path $g 128 $commit $r
-#	ins intersect_ds__op2_vl16 $graph_path $g 128 $commit $r
-#	ins intersect_ds__op0_vl16 $graph_path $g 128 $commit $r
-#	ins intersect_ds__op1_vl16 $graph_path $g 128 $commit $r
-#	ins intersect_ds__op3_onesided_vl16 $graph_path $g 128 $commit $r
-#	ins intersect_ds__op2_onesided_vl16 $graph_path $g 128 $commit $r
-#    done
+    if false ; then
+    for r in 20 ; do
+	for op in 3 ; do # 2 1 0 4 ; do
+	    for trim in itrim ; do # noitrim ; do # noitrim ; do
+		for side in onesided ; do # twosided ; do # ; do
+		    for above in nogeabove ; do # geabove ; do # ; do
+			ins intersect_ds__op${op}_${trim}_${side}_${above}_vl16 $graph_path $g 128 $commit $r 0.75
+			ins intersect_ds__op${op}_${trim}_${side}_${above}_hopscotch1_vl16 $graph_path $g 128 $commit $r 0.75
+			ins intersect_ds__op${op}_${trim}_${side}_${above}_hopscotch2_vl16 $graph_path $g 128 $commit $r 0.75
+			ins intersect_ds__op${op}_${trim}_${side}_${above}_pset_vl16 $graph_path $g 128 $commit $r 0.75
+		    done
+		done
+	    done
+	done
+    done
+fi
 
 #    #for r in `seq 0 2` ; do
 #    for r in 0 ; do
@@ -132,9 +141,22 @@ function for_gg()
     for r in `seq 0 2` ; do
 	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 1 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_vl16 $graph_path $g 1 $commit $r 1024 2
+
+	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.5
+	run MC__itrim_sort4_trav3_nolazy_nolhf_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+
+	run MC__itrim_sort4_trav3_noadvins_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	run MC__itrim_sort4_trav3_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	run MC__itrim_sort4_trav3_nolazy_nohopscotch_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	run MC__itrim_sort2_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+
+	#run MC__itrim_sort4_trav3_hopscotch1_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_hopscotch1_mcins1_vl16 $graph_path $g 128 $commit $r 1024 2
+	#run MC__itrim_sort4_trav3_mcins1_vl16 $graph_path $g 128 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2
-	run MC__itrim_sort4_trav3_vl16_papi $graph_path $g 128 $commit $r 1024 2
+#	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2
+#	run MC__itrim_sort4_trav3_vl16_papi $graph_path $g 128 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_novc_vl16 $graph_path $g 128 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_vcabs_vl16 $graph_path $g 128 $commit $r 1024 2

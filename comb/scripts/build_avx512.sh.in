@@ -87,16 +87,21 @@ for i in `seq 0 8` ; do
     one MC _ins${i}_vl8_noavx512f &
     one MC _itrim_ins${i}_vl8_noavx512f 
 done
-fi
 
-for op in 0 1 2 3 ; do
-    for side in onesided twosided ; do
-	for above geabove nogeabove ; do
-	    one intersect_ds _op${op}_${side}_${above}_vl16 &
+for op in 3 ; do # 0 1 2 3 4 ; do
+    for trim in itrim ; do # noitrim ; do
+	for side in onesided ; do # twosided ; do
+	    for above in nogeabove ; do # geabove ; do
+		one intersect_ds _op${op}_${trim}_${side}_${above}_vl16 &
+		one intersect_ds _op${op}_${trim}_${side}_${above}_hopscotch1_vl16 &
+		one intersect_ds _op${op}_${trim}_${side}_${above}_hopscotch2_vl16 &
+		one intersect_ds _op${op}_${trim}_${side}_${above}_pset_vl16 &
+		wait
+	    done
 	done
-	wait
     done
 done
+fi
 
 if false ; then
 for s in `seq 0 3` ; do
@@ -118,9 +123,58 @@ for s in `seq 4 7` ; do
 done
 fi
 
-one MC _itrim_sort4_trav3_vl16 &
-one MC _itrim_sort4_trav3_onesided_vl16 &
 
+one MC _itrim_sort4_trav3_vl16 &
+one MC _itrim_sort4_trav3_noadvins_vl16 &
+one MC _itrim_sort4_trav3_nolazy_vl16 
+one MC _itrim_sort4_trav3_nolazy_nohopscotch_vl16 &
+one MC _itrim_sort4_trav3_nolazy_nolhf_vl16 &
+one MC _itrim_sort2_trav3_vl16 
+
+if false ; then
+one MC _itrim_sort4_trav3_ld1_vl16 &
+one MC _itrim_sort4_trav3_ld1_hopscotch1_vl16 
+one MC _itrim_sort4_trav3_ld2_vl16 &
+one MC _itrim_sort4_trav3_ld2_hopscotch1_vl16 
+
+one MC _itrim_sort4_trav3_ld3_vl16 &
+one MC _itrim_sort4_trav3_ld3_hopscotch1_vl16 
+
+
+one MC _itrim_sort4_trav3_hopscotch1_mcins1_vl16 &
+one MC _itrim_sort4_trav3_mcins1_vl16  
+#one MC _itrim_sort4_trav3_onesided_vl16 &
+
+one MC _itrim_sort4_trav3_incumbent1_noadvins_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_noadvins_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vcabs_noadvins_vl16  
+
+one MC _itrim_sort4_trav3_incumbent1_conn_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_conn_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vcabs_conn_vl16  
+
+one MC _itrim_sort4_trav3_incumbent1_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vcabs_vl16  
+
+one MC _itrim_sort4_trav3_incumbent1_fs1_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_fs1_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vcabs_fs1_vl16  
+
+one MC _itrim_sort4_trav3_incumbent1_fs0_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_fs0_vl16  &
+one MC _itrim_sort4_trav3_incumbent2_vcabs_fs0_vl16  
+fi
+
+#one MC _itrim_sort4_trav3_incumbent1_fs1_density_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_fs1_density_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_vcabs_fs1_density_vl16  
+
+#one MC _itrim_sort4_trav3_incumbent1_fs2_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_fs2_vl16  &
+#one MC _itrim_sort4_trav3_incumbent2_vcabs_fs2_vl16  
+
+if false ; then
 one MC _itrim_sort4_trav3_vccc_vl16 &
 one MC _itrim_sort4_trav3_novc_vl16 &
 one MC _itrim_sort4_trav3_vcabs_vl16 &
@@ -128,12 +182,10 @@ one MC _itrim_sort4_trav3_pivc_pivd_vl16
 
 one MC _itrim_sort4_trav3_density_vl16  &
 
-one MC _itrim_sort4_trav3_incumbent1_vl16  &
-one MC _itrim_sort4_trav3_incumbent2_vl16  &
-one MC _itrim_sort4_trav3_incumbent2_vcabs_vl16  
-
 one MC _itrim_sort4_trav3_vl16_noavx512 
 
 one MC _itrim_sort4_trav3_vl16_papi
+
+fi
 
 wait

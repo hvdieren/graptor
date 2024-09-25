@@ -16,13 +16,13 @@ function get_avg() {
     local count=0
     local fail=0
 
-    for file in `ls -1 graptor_avx512/$dir/output.${commit}.t${threads}.c1024.r*.h2.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
+    for file in `ls -1 graptor_avx512/$dir/output.${commit}.t${threads}.c1024.r*.h2.d0_1.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 
 	       -o ! grep "Enumeration:" $file > /dev/null 2>&1 ; then
 		fail=1
 	    else
-		local val=`grep "^$subprob" $file 2> /dev/null | cut -d: -f2- | cut -d' ' -f2,5,13 | sed -e s/nan/0/`
+		local val=`grep "^$subprob:" $file 2> /dev/null | cut -d: -f2- | cut -d' ' -f2,5,13 | sed -e s/nan/0/`
 		avg_proc=`echo $val | cut -d' ' -f1 | perl -ne 'chomp; my $a='$avg_proc'+$_; print "$a\n";'`
 		avg_build=`echo $val | cut -d' ' -f3 | perl -ne 'chomp; my $a='$avg_build'+$_; print "$a\n";'`
 		avg_call=`echo $val | cut -d' ' -f2 | perl -ne 'chomp; my $a='$avg_call'+$_; print "$a\n";'`
@@ -67,7 +67,6 @@ function mce() {
     
     local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
 
-    #local graphs="USAroad CAroad pokec Yahoo_mem cit-patents bio-HS-CX wiki-topcats keller4 dblp2012 higgs-twitter wiki-talk mawi bio-WormNet-v3 sinaweibo sx-stackoverflow orkut hudong friendster_full LiveJournal it-2004 uk-2005 flickr warwiki ppminer bio-human-gene2 hollywood2009 dimacs webcc"
 
     local variants="itrim_sort4_trav3_vl$vl"
     echo VL=$vl
@@ -86,7 +85,8 @@ function mce() {
     echo
 }
 
-commit=174e5cf6
+#commit=174e5cf6
+commit=9319a5a3
 
 for algo in BK VC
 do

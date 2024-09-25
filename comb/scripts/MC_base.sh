@@ -1,15 +1,5 @@
 #!/bin/bash
 
-#what="filter"
-#what="Enumeration"
-#what="Calculting coreness"
-#what="Completed MC in"
-what="Completed search in"
-#what="filter0"
-#what="filter1"
-#what="filter2"
-whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
-
 function parse_file() {
     local file=$1
     local preamble=$2
@@ -22,7 +12,7 @@ function parse_file() {
 	if grep FAIL $file > /dev/null 2>&1 ; then
 	    echo FAIL
 	else
-	    ( grep "$preamble" $file 2> /dev/null || echo $preamble NOMETRIC ) | cut -d' ' -f$field
+	    ( grep -E "$preamble" $file 2> /dev/null || echo "$preamble NOMETRIC" ) | sed -e 's/^[[:space:]]*//' | cut -d' ' -f$field | tr -d ,
 	fi
     else
 	echo ABSENT
@@ -37,6 +27,8 @@ function get_avg() {
     local dir=$5
     local arch=$6
     local preamble="$7"
+    local preamble2="$8"
+    local scale=$9
 
     local sum=0
     local count=0
@@ -44,6 +36,9 @@ function get_avg() {
     
     for file in `ls -1 base_$arch/$dir/output.${commit}.t${threads}.r*.${bench}.${graph}_undir 2> /dev/null` ; do
 	local result=`parse_file $file "$preamble"`
+	if [ "$result" == NOMETRIC ] ; then
+	    result=`parse_file $file "$preamble2"`
+	fi
 	case "$result" in
 	    FAIL) fail=1 ;;
 	    NOMETRIC) fail=3 ;;
@@ -55,7 +50,7 @@ function get_avg() {
     done
 
     if [ $fail -eq 0 -a $count -ne 0 ] ; then
-    	echo | perl -ne "END { printf \"%g\n\", ($sum/$count); }"
+    	echo | perl -ne "END { printf \"%g\n\", ($sum/$count/$scale); }"
     elif [ $fail -eq 1 ] ; then
 	echo FAIL
     elif [ $fail -eq 3 ] ; then
@@ -74,15 +69,28 @@ function one() {
     local arch=$6
 
     local preamble="nowt"
+    local preamble2="nowt"
+    local scale=1
 
     case "$bench" in
 	pmc) preamble="^Time taken:" ;;
 	cliquer) preamble="^Maximum clique search:" ;;
 	dOmega_BS) ;& # fall-through
 	dOmega_LS) preamble="^Total running time:" ;;
+	MC-DD) preamble="Heuristic Clique Size: [0-9]*, UB: [0-9]*, Total Time:"
+	       preamble2="Max Clique Size: [0-9]*, Total Time:"
+	       scale=1000000
+	       threads=1 ;;
+	MC-EGO) preamble="Heuristic Clique Size: [0-9]*, UB: [0-9]*, Total Time:"
+		preamble2="Maximum Clique Size: [0-9]*, Max Depth: [0-9]*, Total Time:"
+	       scale=1000000
+	       threads=1 ;;
+	MC-BRB) preamble="Maximum Clique Size: [0-9]*, Max Depth: [0-9]*, Total Time:"
+	       scale=1000000
+	       threads=1 ;;
     esac
 
-    get_avg "$commit" "$threads" "$bench" "$graph" "$dir" "$arch" "$preamble"
+    get_avg "$commit" "$threads" "$bench" "$graph" "$dir" "$arch" "$preamble" "$preamble2" "$scale"
 }
 
 function base() {
@@ -96,7 +104,7 @@ function base() {
 	dir=$commit
     fi
 
-    local algo="cliquer pmc dOmega_LS dOmega_BS"
+    local algo="cliquer pmc dOmega_LS dOmega_BS MC-DD MC-EGO MC-BRB"
 
     echo "base threads=$threads commit=$commit"
     (
@@ -108,7 +116,7 @@ function base() {
 		one $commit $threads $a ${graph} ${dir} ${arch}
 	    done
 	done
-    ) | paste - $(echo $algo | sed -e 's/\b[a-zA-Z0-9_]*\b/-/g')
+    ) | paste - $(echo $algo | sed -e 's/\b[a-zA-Z0-9_-]*\b/-/g')
 
     echo
 }

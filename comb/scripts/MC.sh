@@ -1,10 +1,15 @@
 #!/bin/bash
 
+#what="heuristic 2:"
+#what="phase 1 (one vertex per degeneracy):"
 #what="filter"
 #what="Enumeration"
 #what="Calculting coreness"
-#what="Completed MC in"
-what="Completed search in"
+#what="Calculating degeneracy time:"
+#what="Constructing remap info:"
+#what="Building hashed graph:"
+what="Completed MC in"
+#what="Completed search in"
 #what="filter0"
 #what="filter1"
 #what="filter2"
@@ -12,7 +17,7 @@ whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
 #graphs="CAroad LiveJournal USAroad Yahoo_mem bio-HS-CX bio-WormNet-v3 cit-patents dblp2012 flickr friendster_full higgs-twitter hollywood2009 hudong it-2004 keller4 orkut pokec sinaweibo sx-stackoverflow warwiki webcc wiki-talk wiki-topcats uk-2005 dimacs bio-human-gene2 mawi ppminer"
 
-graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
+graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4 bio-human-gene1 twitter_xl clueweb09"
 
 function get_avg() {
     local commit=$1
@@ -140,7 +145,10 @@ function mce() {
 
     #local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
     #local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vccc_$vl itrim_sort5_trav1_nopivc_$vl itrim_sort5_trav1_nopivd_$vl itrim_sort5_trav1_nopivc_nopivd_$vl"
-    local variants="itrim_sort4_trav0_$vl itrim_sort4_trav1_$vl itrim_sort4_trav3_$vl itrim_sort5_trav1_$vl itrim_sort4_trav3_onesided_$vl itrim_sort4_trav3_vccc_$vl itrim_sort4_trav3_nopivc_nopivd_$vl itrim_sort4_trav3_${vl}_noavx512"
+    #local variants="itrim_sort4_trav0_$vl itrim_sort4_trav1_$vl itrim_sort4_trav3_$vl itrim_sort5_trav1_$vl itrim_sort4_trav3_onesided_$vl itrim_sort4_trav3_vccc_$vl itrim_sort4_trav3_nopivc_nopivd_$vl itrim_sort4_trav3_${vl}_noavx512"
+    #local variants="itrim_sort4_trav3_$vl itrim_sort4_trav3_mcins1_$vl itrim_sort4_trav3_hopscotch1_$vl itrim_sort4_trav3_hopscotch1_mcins1_$vl itrim_sort4_trav3_ld1_$vl itrim_sort4_trav3_ld2_$vl itrim_sort4_trav3_ld3_$vl itrim_sort4_trav3_ld1_hopscotch1_$vl itrim_sort4_trav3_ld2_hopscotch1_$vl itrim_sort4_trav3_ld3_hopscotch1_$vl"
+    local variants="itrim_sort4_trav3_$vl itrim_sort4_trav3_noadvins_$vl itrim_sort4_trav3_nolazy_$vl itrim_sort4_trav3_nolazy_nohopscotch_$vl itrim_sort2_trav3_$vl itrim_sort4_trav3_lhf_$vl"
+    #local variants="itrim_sort4_trav3_$vl"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
     (
@@ -150,6 +158,7 @@ function mce() {
 	    echo $graph
 	    for variant in $variants ; do
 		one $commit $threads MC "" ${variant} ${graph} ${part} ${dir} ${arch} 2
+		# 2.d0_1
 	    done
 	done
     ) | paste - $(echo $variants | sed -e 's/\b[a-zA-Z0-9_]*\b/-/g')
@@ -189,7 +198,8 @@ function vc() {
     local arch=$5
     local dir=$commit
 
-    local density="0.5 0.7 0.9 0.95 1"
+    #local density="0.5 0.7 0.9 0.95 1"
+    local density="0.1 0.5"
     local variant="itrim_sort4_trav3_vl${vl}"
     echo "VL=$vl commit=$commit part=$part"
     (
@@ -199,7 +209,7 @@ function vc() {
             echo $graph
             for d in $density ; do
 		local heur=2
-		if [ $d != 0.9 ] ; then heur=2.d`echo $d | tr . _` ; fi
+		if [ $d != 0.5 ] ; then heur=2.d`echo $d | tr . _` ; fi
                 one $commit $threads MC "" ${variant} ${graph} ${part} ${dir} ${arch} $heur
             done
         done
@@ -237,13 +247,15 @@ function stats() {
     echo
 }
 
-commit=7cb42a05
+#commit=b3d0aed7
+#commit=9319a5a3
+commit=d0d47f7d
 
 mce 16 128 $commit 1024 avx512 $commit
-mce 16 1 $commit 1024 avx512 $commit
+#mce 16 1 $commit 1024 avx512 $commit
 
 #scalability 16 1024 $commit avx512
 
-#vc 16 128 1024 $commit avx512
+vc 16 128 1024 $commit avx512
 
 #stats 16 128 $commit 1024 avx512 $commit

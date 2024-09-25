@@ -43,6 +43,14 @@ function run()
 	opts="-m ${graph_path} -m ${threads}"
     elif [ x$prog == xdOmega_BS ] ; then
 	opts="-m ${graph_path} -m ${threads}"
+    elif [ x$prog == xMC-BRB ] ; then
+	opts="MC-BRB $(dirname ${graph_path})"
+    elif [ x$prog == xMC-EGO ] ; then
+	prog=MC-BRB
+	opts="MC-EGO $(dirname ${graph_path})"
+    elif [ x$prog == xMC-DD ] ; then
+	prog=MC-BRB
+	opts="MC-DD $(dirname ${graph_path})"
     else # pmc
 	opts="-f ${graph_path} -t ${threads}"
     fi
@@ -79,6 +87,13 @@ function for_gg()
 	run cliquer $graph_path $g 128 $commit $r
 	run dOmega_LS $graph_path $g 128 $commit $r
 	run dOmega_BS $graph_path $g 128 $commit $r
+    done
+
+    graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise graptor $1 $2 $WEIGHTS`
+    for r in `seq 0 2` ; do
+	run MC-DD $graph_path $g 1 $commit $r
+	run MC-EGO $graph_path $g 1 $commit $r
+	run MC-BRB $graph_path $g 1 $commit $r
     done
 }
 

@@ -66,6 +66,7 @@ function get_flags() {
     flags["UNDERLYING"]="";
     flags["PAPI_REGION"]=0;
     flags["INTERSECTION_ALGORITHM"]=0
+    flags["MC_INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
     flags["INTERSECTION_ONE_SIDED"]=1
     flags["INTERSECTION_GE_ABOVE"]=1
@@ -76,6 +77,15 @@ function get_flags() {
     flags["PROFILE_DENSITY"]=0
     flags["VERTEX_COVER_ABSOLUTE"]=0
     flags["ABLATION_DISABLE_VC"]=0
+    flags["HOPSCOTCH_HASHING"]=1
+    flags["HASH_PSET"]=0
+    # flags["LOAD_FACTOR"]=1  -- default undefined
+    flags["ABLATION_FILTER_STEPS"]=3
+    flags["ABLATION_DISABLE_CONNECTED_FILTERING"]=1
+    flags["ABLATION_DISABLE_ADV_INTERSECT"]=0
+    flags["ABLATION_DISABLE_LAZY_HASHING"]=0
+    flags["ABLATION_DISABLE_LAZY_REMAPPING"]=0
+    flags["LAZY_HASH_FILTER"]=1
 
     if [[ "$v" == *_papi* ]] ; then
  	flags["PAPI_REGION"]=1;
@@ -94,6 +104,21 @@ function get_flags() {
     fi
     if [[ "$v" == *_op3* ]] ; then
 	flags["OPERATION"]=3;
+    fi
+    if [[ "$v" == *_op4* ]] ; then
+	flags["OPERATION"]=4;
+    fi
+    if [[ "$v" == *_fs0* ]] ; then
+	flags["ABLATION_FILTER_STEPS"]=0;
+    fi
+    if [[ "$v" == *_fs1* ]] ; then
+	flags["ABLATION_FILTER_STEPS"]=1;
+    fi
+    if [[ "$v" == *_fs2* ]] ; then
+	flags["ABLATION_FILTER_STEPS"]=2;
+    fi
+    if [[ "$v" == *_fs3* ]] ; then
+	flags["ABLATION_FILTER_STEPS"]=3;
     fi
     if [[ "$v" == *_nofusion* ]] ; then
 	flags["FUSION"]=0;
@@ -238,8 +263,17 @@ function get_flags() {
     if [[ "$v" == *_ins* ]] ; then
 	flags["INTERSECTION_ALGORITHM"]=`echo "${v}_" | sed -e 's/^.*_ins\([0-9][0-9]*\)_.*$/\1/'`;
     fi
+    if [[ "$v" == *_mcins* ]] ; then
+	flags["MC_INTERSECTION_ALGORITHM"]=`echo "${v}_" | sed -e 's/^.*_mcins\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
+    if [[ "$v" == *_ld* ]] ; then
+	flags["LOAD_FACTOR"]=`echo "${v}_" | sed -e 's/^.*_ld\([0-9][0-9]*\)_.*$/\1/'`;
+    fi
     if [[ "$v" == *_itrim* ]] ; then
 	flags["INTERSECTION_TRIM"]=1
+    fi
+    if [[ "$v" == *_noitrim* ]] ; then
+	flags["INTERSECTION_TRIM"]=0
     fi
     if [[ "$v" == *_sort* ]] ; then
 	flags["SORT_ORDER"]=`echo "${v}_" | sed -e 's/^.*_sort\([0-9][0-9]*\)_.*$/\1/'`;
@@ -277,11 +311,39 @@ function get_flags() {
     if [[ "$v" == *_twosided* ]] ; then
 	flags["INTERSECT_ONE_SIDED"]=0
     fi
+    if [[ "$v" == *_nohopscotch* ]] ; then
+	flags["HOPSCOTCH_HASHING"]=0
+    fi
+    if [[ "$v" == *_hopscotch1* ]] ; then
+	flags["HOPSCOTCH_HASHING"]=1
+    fi
+    if [[ "$v" == *_hopscotch2* ]] ; then
+	flags["HOPSCOTCH_HASHING"]=2
+    fi
+    if [[ "$v" == *_pset* ]] ; then
+	flags["HASH_PSET"]=1
+    fi
     if [[ "$v" == *_vcabs* ]] ; then
 	flags["VERTEX_COVER_ABSOLUTE"]=1
     fi
+    if [[ "$v" == *_conn* ]] ; then
+	flags["ABLATION_DISABLE_CONNECTED_FILTERING"]=0
+    fi
+    if [[ "$v" == *_noadvins* ]] ; then
+	flags["ABLATION_DISABLE_ADV_INTERSECT"]=1
+    fi
+    if [[ "$v" == *_nolazy* ]] ; then
+	flags["ABLATION_DISABLE_LAZY_HASHING"]=1
+	flags["ABLATION_DISABLE_LAZY_REMAPPING"]=1
+    fi
     if [[ "$v" == *_novc* ]] ; then
 	flags["ABLATION_DISABLE_VC"]=1
+    fi
+    if [[ "$v" == *_lhf* ]] ; then
+	flags["LAZY_HASH_FILTER"]=1
+    fi
+    if [[ "$v" == *_nolhf* ]] ; then
+	flags["LAZY_HASH_FILTER"]=0
     fi
 
     for key in ${!flags[@]}; do echo -D$key=${flags[$key]} ; done
