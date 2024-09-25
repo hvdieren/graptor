@@ -1046,12 +1046,6 @@ private:
 	if( is_hash_set_initialised( rv ) )
 	    return a;
 
-	const EID * const gindex = m_orig_graph.getIndex();
-	const VID * const gedges = m_orig_graph.getEdges();
-
-	// Try to get allocation size right from the start
-	a.create_if_uninitialised( gindex[ov+1] - gindex[ov] );
-
 #if LAZY_HASH_FILTER
 	if( cth == -1 )
 	    cth = m_highest_threshold.load();
@@ -1065,20 +1059,57 @@ private:
 	}
 #endif
 
+#if LAZY_HASH_FILTER
+	if( is_seq_initialised( rv ) ) {
+	    const EID * const index = m_remap_graph.getIndex();
+	    VID * const edges = m_remap_graph.getEdges();
+	    EID re = index[rv];
+	    EID ree = index[rv] + m_degree[rv];
+	    EID rn = re;
+
+	    // Try to get allocation size right from the start
+	    a.create_if_uninitialised( m_degree[rv] );
+
+	    for( ; re != ree; ++re ) {
+		VID ru = edges[re];
+		if( m_coreness[ru] >= cth ) {
+		    a.insert( ru );
+		    edges[rn++] = ru;
+		}
+	    }
+
+	    assert( a.size() <= m_degree[rv] );
+	} else {
+	    const EID * const gindex = m_orig_graph.getIndex();
+	    const VID * const gedges = m_orig_graph.getEdges();
+
+	    // Try to get allocation size right from the start
+	    a.create_if_uninitialised( gindex[ov+1] - gindex[ov] );
+
+	    for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
+		VID ou = gedges[oe];
+		VID ru = m_orig_to_remap[ou];
+		if( m_coreness[ru] >= cth )
+		    a.insert( ru );
+	    }
+
+	    assert( a.size() <= gindex[ov+1] - gindex[ov] );
+	}
+#else
 	for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
 	    VID ou = gedges[oe];
 	    VID ru = m_orig_to_remap[ou];
-#if LAZY_HASH_FILTER
-	    if( m_coreness[ru] >= cth )
-		a.insert( ru );
-#else
 	    a.insert( ru );
-#endif
 	}
 
-	assert( a.size() <= gindex[ov+1] - gindex[ov] );
+	assert( a.size() == gindex[ov+1] - gindex[ov] );
+#endif
 
 #if LAZY_HASH_FILTER
+	// The degree needs to match the number of elements in the
+	// sequential representation. We have rewritten the sequential
+	// representation while traversing it, and the number of remaining
+	// vertices is recorded here.
 	m_degree[rv] = a.size();
 #endif
 	set_hash_set( rv );
