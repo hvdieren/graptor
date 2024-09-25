@@ -97,6 +97,10 @@
 #define VERTEX_COVER_ABSOLUTE 0
 #endif
 
+#ifndef LAZY_HASH_FILTER
+#define LAZY_HASH_FILTER 1
+#endif
+
 /*!
  * Profile impact of various incumbent sizes on enumeration time.
  *
@@ -4427,6 +4431,7 @@ int main( int argc, char *argv[] ) {
 	      << "\n\tHOPSCOTCH_HASHING=" << HOPSCOTCH_HASHING
 	      << "\n\tABLATION_DISABLE_LAZY_HASHING="
 	      << ABLATION_DISABLE_LAZY_HASHING
+	      << "\n\tLAZY_HASH_FILTER=" << LAZY_HASH_FILTER
 #ifdef LOAD_FACTOR
 	      << "\n\tLOAD_FACTOR=" << LOAD_FACTOR
 #else
@@ -4719,140 +4724,148 @@ int main( int argc, char *argv[] ) {
     /* 2. low to high degeneracy order */
     /* 3. high to low degeneracy order */
     // for( VID w=0; w < n; ++w ) {
-    parallel_loop( (VID)0, (VID)n, (VID)1, [&]( VID w ) {
+    if( E.get_max_clique_size() < degeneracy+1 ) {
+	parallel_loop( (VID)0, (VID)n, (VID)1, [&]( VID w ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
-	VID v = w;
+	    VID v = w;
 #else
-	VID v = n-1-w;
+	    VID v = n-1-w;
 #endif
-	if( E.is_feasible( remap_coreness[v]+1, fr_outer ) )
-	    mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
-			  rev_order.get()  );
-    } );
+	    if( E.is_feasible( remap_coreness[v]+1, fr_outer ) )
+		mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+			      rev_order.get()  );
+	} );
+    }
 
 #elif ( SORT_ORDER == 2 || SORT_ORDER == 4 ) && TRAVERSAL_ORDER == 3
     // cleaned up version with a small improvement
     // degeneracy+1 iterations to deal with 1 vertex/degeneracy,
     // additional iteration allows execution of all vertices in parallel
-    parallel_loop( (VID)0, (VID)degeneracy+2, (VID)1, [&]( VID cc ) {
-	if( cc <= degeneracy ) {
-	    VID c = cc;
-	    VID c_up = histo[c+1];
-	    VID c_lo = histo[c];
-	    if( c_up != c_lo ) {
-		VID v = c_lo;
-		if( E.is_feasible( c+1, fr_outer ) )
-		    mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
-				  rev_order.get()  );
-	    }
-	} else {
-	    // Downwards traversal over all coreness levels
-	    for( VID cc_i=0; cc_i < degeneracy+1; ++cc_i ) {
-		VID c = degeneracy - cc_i;
-
+    if( E.get_max_clique_size() < degeneracy+1 ) {
+	parallel_loop( (VID)0, (VID)degeneracy+2, (VID)1, [&]( VID cc ) {
+	    if( cc <= degeneracy ) {
+		VID c = cc;
 		VID c_up = histo[c+1];
 		VID c_lo = histo[c];
-
-		if( c_up <= c_lo+1 )
-		    continue; // 0 or 1 vertices; go to next c value
-		++c_lo; // already did c_lo in preamble
-		if( !E.is_feasible( c+1, fr_outer ) )
-		    break; // decreasing degeneracy, no hope for better
-
-		parallel_loop( c_lo, c_up, (VID)1, [&,c,c_lo,c_up,degeneracy](
-				   VID w ) {
-		    VID v = c_up - ( w - c_lo ) - 1;
-
+		if( c_up != c_lo ) {
+		    VID v = c_lo;
 		    if( E.is_feasible( c+1, fr_outer ) )
-			mc_top_level( H, G, E, v, degeneracy,
-				      remap_coreness.get(), rev_order.get() );
-		} );
+			mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+				      rev_order.get()  );
+		}
+	    } else {
+		// Downwards traversal over all coreness levels
+		for( VID cc_i=0; cc_i < degeneracy+1; ++cc_i ) {
+		    VID c = degeneracy - cc_i;
+
+		    VID c_up = histo[c+1];
+		    VID c_lo = histo[c];
+
+		    if( c_up <= c_lo+1 )
+			continue; // 0 or 1 vertices; go to next c value
+		    ++c_lo; // already did c_lo in preamble
+		    if( !E.is_feasible( c+1, fr_outer ) )
+			break; // decreasing degeneracy, no hope for better
+
+		    parallel_loop( c_lo, c_up, (VID)1, [&,c,c_lo,c_up,degeneracy](
+				       VID w ) {
+			VID v = c_up - ( w - c_lo ) - 1;
+
+			if( E.is_feasible( c+1, fr_outer ) )
+			    mc_top_level( H, G, E, v, degeneracy,
+					  remap_coreness.get(), rev_order.get() );
+		    } );
+		}
 	    }
-	}
-    } );
+	} );
+    }
 
 #elif SORT_ORDER == 2 || ( SORT_ORDER >= 4 && SORT_ORDER <= 7 )
     /* 4. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, increasing degree. */
     /* 5. first evaluate highest-degree vertex per degeneracy level, then
      *    iterate by decreasing coreness, decreasing degree. */
-    // for( VID cc=0; cc <= degeneracy; ++cc ) {
-    parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
+    if( E.get_max_clique_size() < degeneracy+1 ) {
+	// for( VID cc=0; cc <= degeneracy; ++cc ) {
+	parallel_loop( (VID)0, (VID)degeneracy+1, (VID)1, [&]( VID cc ) {
 #if ( TRAVERSAL_ORDER & 1 ) == 0
-	VID c = cc;
+	    VID c = cc;
 #else
-	VID c = degeneracy - cc;
+	    VID c = degeneracy - cc;
 #endif
-	VID c_up = histo[c+1];
-	VID c_lo = histo[c];
-#if SORT_ORDER >= 6
-	std::swap( c_up, c_lo );
-#endif
-	if( c_up != c_lo ) {
-	    VID v = c_lo;
-	    if( E.is_feasible( c+1, fr_outer ) )
-		mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
-			      rev_order.get()  );
-	}
-    } );
-    std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
-	    
-    // Use a parallel loop to reduce code duplication.
-    // If TRAVERSAL_ORDER & 8 == 0 then only one iteration of the loop
-    // performs actual work.
-    parallel_loop( (VID)0, (VID)2, (VID)1, [&,degeneracy]( VID cc_half ) {
-#if ( TRAVERSAL_ORDER & 8 ) == 8
-	VID cc_mid = ( degeneracy + 1 ) / 2; // both up and downwards
-#elif ( TRAVERSAL_ORDER & 1 ) == 1
-	VID cc_mid = 0; // only downwards direction
-#else
-	VID cc_mid = degeneracy + 1; // only upwards direction
-#endif
-	VID cc_b = cc_half == 0 ? 0 : cc_mid;
-	VID cc_e = cc_half == 0 ? cc_mid : degeneracy+1;
-	
-	for( VID cc_i=cc_b; cc_i < cc_e; ++cc_i ) {
-	    VID c = cc_half == 0 ? cc_i : degeneracy - ( cc_i - cc_mid );
-
 	    VID c_up = histo[c+1];
 	    VID c_lo = histo[c];
 #if SORT_ORDER >= 6
 	    std::swap( c_up, c_lo );
 #endif
-
-	    if( c_up == c_lo || c_up == c_lo+1 )
-		continue; // go to next c value
-	    ++c_lo; // already did c_lo in preamble
-	    if( !E.is_feasible( c+1, fr_outer ) ) {
-		if( cc_half == 0 )
-		    continue; // increasing degeneracy, more to come
-		else
-		    break; // decreasing degeneracy, no hope for better
+	    if( c_up != c_lo ) {
+		VID v = c_lo;
+		if( E.is_feasible( c+1, fr_outer ) )
+		    mc_top_level( H, G, E, v, degeneracy, remap_coreness.get(),
+				  rev_order.get()  );
 	    }
-
-	    parallel_loop( (VID)0, (VID)2, (VID)1, [&,c_lo,c_up,c,degeneracy](
-			       VID c_half ) {
-#if ( TRAVERSAL_ORDER & 4 ) == 4
-		VID c_mid = ( c_lo + c_up ) / 2; // both up and downwards
-#elif ( TRAVERSAL_ORDER & 2 ) == 2
-		VID c_mid = c_lo; // only downwards direction
+	} );
+    }
+    std::cout << "phase 1 (one vertex per degeneracy): " << tm.next() << "\n";
+	    
+    // Use a parallel loop to reduce code duplication.
+    // If TRAVERSAL_ORDER & 8 == 0 then only one iteration of the loop
+    // performs actual work.
+    if( E.get_max_clique_size() < degeneracy+1 ) {
+	parallel_loop( (VID)0, (VID)2, (VID)1, [&,degeneracy]( VID cc_half ) {
+#if ( TRAVERSAL_ORDER & 8 ) == 8
+	    VID cc_mid = ( degeneracy + 1 ) / 2; // both up and downwards
+#elif ( TRAVERSAL_ORDER & 1 ) == 1
+	    VID cc_mid = 0; // only downwards direction
 #else
-		VID c_mid = c_up; // only upwards direction
+	    VID cc_mid = degeneracy + 1; // only upwards direction
 #endif
-		VID c_b = c_half == 0 ? c_lo : c_mid;
-		VID c_e = c_half == 0 ? c_mid : c_up;
+	    VID cc_b = cc_half == 0 ? 0 : cc_mid;
+	    VID cc_e = cc_half == 0 ? cc_mid : degeneracy+1;
 
-		parallel_loop( c_b, c_e, (VID)1, [&,c,degeneracy,c_mid](
-				   VID w ) {
-		    VID v = c_half == 0 ? w : ( c_up - ( w - c_mid ) - 1 );
+	    for( VID cc_i=cc_b; cc_i < cc_e; ++cc_i ) {
+		VID c = cc_half == 0 ? cc_i : degeneracy - ( cc_i - cc_mid );
 
-		    if( E.is_feasible( c+1, fr_outer ) )
-			mc_top_level( H, G, E, v, degeneracy,
-				      remap_coreness.get(), rev_order.get() );
+		VID c_up = histo[c+1];
+		VID c_lo = histo[c];
+#if SORT_ORDER >= 6
+		std::swap( c_up, c_lo );
+#endif
+
+		if( c_up == c_lo || c_up == c_lo+1 )
+		    continue; // go to next c value
+		++c_lo; // already did c_lo in preamble
+		if( !E.is_feasible( c+1, fr_outer ) ) {
+		    if( cc_half == 0 )
+			continue; // increasing degeneracy, more to come
+		    else
+			break; // decreasing degeneracy, no hope for better
+		}
+
+		parallel_loop( (VID)0, (VID)2, (VID)1, [&,c_lo,c_up,c,degeneracy](
+				   VID c_half ) {
+#if ( TRAVERSAL_ORDER & 4 ) == 4
+		    VID c_mid = ( c_lo + c_up ) / 2; // both up and downwards
+#elif ( TRAVERSAL_ORDER & 2 ) == 2
+		    VID c_mid = c_lo; // only downwards direction
+#else
+		    VID c_mid = c_up; // only upwards direction
+#endif
+		    VID c_b = c_half == 0 ? c_lo : c_mid;
+		    VID c_e = c_half == 0 ? c_mid : c_up;
+
+		    parallel_loop( c_b, c_e, (VID)1, [&,c,degeneracy,c_mid](
+				       VID w ) {
+			VID v = c_half == 0 ? w : ( c_up - ( w - c_mid ) - 1 );
+
+			if( E.is_feasible( c+1, fr_outer ) )
+			    mc_top_level( H, G, E, v, degeneracy,
+					  remap_coreness.get(), rev_order.get() );
+		    } );
 		} );
-	    } );
-	}
-    } );
+	    }
+	} );
+    }
 #else
 #error "SORT_ORDER must be in range [0,7]"
 #endif
