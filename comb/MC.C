@@ -4482,6 +4482,9 @@ void heuristic_search_dmax(
 	const VID e = std::min( n, (p+1) * chunk );
 	for( VID v=b; v < e; ++v ) {
 	    // Highest-degree vertices are in the back
+	    // This could be refined by recalculating degree based on known
+	    // max clique (typically only know a 2-clique at this stage),
+	    // considering only the eligible neighbours
 	    VID deg = edges[v+1] - edges[v];
 	    if( top_k[p] < K || deg >= top_d[p*nparts] ) {
 		// insertion sort
@@ -4547,6 +4550,23 @@ std::pair<VID,EID> count_induced( const GraphType & G, Fn && sel ) {
 		if( sel( u ) )
 		    ++ei;
 	    }
+	}
+    }
+
+    return std::make_pair( ni, ei );
+}
+
+template<typename GraphType, typename Fn>
+std::pair<VID,EID> count_attached( const GraphType & G, Fn && sel ) {
+    const VID n = G.get_num_vertices();
+    const EID * const index = G.get_index();
+    const VID * const edges = G.get_edges();
+    VID ni = 0;
+    EID ei = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( sel( v ) ) {
+	    ++ni;
+	    ei += index[v+1] - index[v];
 	}
     }
 
@@ -5206,6 +5226,8 @@ int main( int argc, char *argv[] ) {
 	    return remap_coreness[rev_order[v]] >= min_coreness; } );
 	auto must = count_induced( G, [=]( VID v ) {
 	    return remap_coreness[rev_order[v]] > min_coreness; } );
+	auto maya = count_attached( G, [=]( VID v ) {
+	    return remap_coreness[rev_order[v]] >= min_coreness; } );
 
 	std::cerr << "May analyse: vertices: " << may.first
 		  << " edges: " << may.second << " density: "
@@ -5216,6 +5238,11 @@ int main( int argc, char *argv[] ) {
 		  << " edges: " << must.second << " density: "
 		  << ( double(must.second)
 		       / ( double(must.first) * double(must.first-1) ) )
+		  << "\n";
+	std::cerr << "May attached: vertices: " << maya.first
+		  << " edges: " << maya.second
+		  << " useful-fraction: "
+		  << ( double(may.second) / double(maya.second) )
 		  << "\n";
     }
 
