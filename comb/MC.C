@@ -569,9 +569,27 @@ private:
 	    std::swap( ins, reconstruct );
 	}
 
+	// We have a number of vertices that are candidates for inclusion,
+	// but we don't know if all of them can be included.
 	if( ins.size() > 0 ) {
 	    clique.reserve( csz + ins.size() );
-	    clique.insert( clique.end(), ins.begin(), ins.end() );
+	    while( ins.size() > 0 ) {
+		VID v = ins.back();
+		ins.pop_back();
+		clique.push_back( v );
+
+		// Filter down remaining candidates by neighbours of
+		// selected vertex
+		auto ins_slice = graptor::make_array_slice( ins );
+		VID * start = &*reconstruct.begin();
+		VID * end = graptor::set_operations<graptor::MC_intersect>::
+		    intersect_ds( ins_slice, m_graph.get_neighbours_set( v ),
+				  start );
+		size_t sz = end - start;
+		reconstruct.resize( sz );
+		ins.resize( sz );
+		std::swap( ins, reconstruct );
+	    }
 	}
 
 	return clique.size();
@@ -4350,6 +4368,191 @@ VID heuristic_search(
     return mc;
 }
 
+/*! Heuristically search the neighbourhood of a vertex, calculating degrees
+ */
+template<typename GraphType>
+void heuristic_expand_dmax(
+    const GraphType & H,
+    MC_Enumerator & E,
+    VID v ) {
+    const EID * const index = H.get_index();
+    const VID * const edges = H.get_edges();
+    const VID n = H.get_num_vertices();
+    const VID best = E.get_max_clique_size();
+
+    // Data structures
+    const VID k = index[v+1] - index[v];
+    VID * vs = new VID[k];
+    VID ns = 0;
+
+    // Select all neighbours of v that have sufficient degree given incumbent
+    // clique in E.
+    for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+	VID u = edges[e];
+	if( index[u+1] - index[u] > best )
+	    vs[ns++] = u;
+    }
+
+    // Nothing to do if all neighbours filtered out. This is a 1-clique or
+    // not improving over the incumbent clique.
+    if( ns == 0 ) {
+	delete[] vs;
+	return;
+    }
+
+    VID * vc = new VID[ns];
+    VID nc = 0;
+
+    // Keep selecting the vertex with highest internal degree until
+    // no further vertices available
+    do {
+	// Update information on best clique
+	const VID best = E.get_max_clique_size();
+
+	// Calculate internal degree and select vertex with highest degree
+	VID d_max = 0;
+	VID i_max = 0;
+	for( VID i=0; i < ns; ++i ) {
+	    VID v = vs[i];
+	    const VID * const v_from = &edges[index[v]];
+	    const VID * const v_to = &edges[index[v+1]];
+	    // find intersections >= 1 + best - nc minimum clique size
+	    VID d = graptor::set_operations<graptor::MC_intersect>
+		::intersect_size_gt_val_ds(
+		    graptor::make_array_slice( &vs[0], &vs[ns] ),
+		    graptor::make_array_slice( v_from, v_to ),
+		    best > nc ? best - nc : 0 );
+
+	    if( d_max < d || d_max == 0 ) {
+		d_max = d;
+		i_max = i;
+	    }
+	}
+
+	VID v = vs[i_max];
+
+	// Add to clique
+	vc[nc++] = v;
+
+	// Intersect candidate list
+	VID i=0;
+	const VID * const v_from = &edges[index[v]];
+	const VID * const v_to = &edges[index[v+1]];
+	for( VID j=0; j < ns; ++j ) {
+	    // We won't find vs[i_max] in it's own neighbour list
+	    if( i_max != j && std::binary_search( v_from, v_to, vs[j] ) )
+		vs[i++] = vs[j];
+	}
+	ns = i;
+	
+    } while( ns > 0 );
+
+    E.record( nc+1, v, &vc[0], &vc[nc] );
+
+    delete[] vc;
+    delete[] vs;
+}
+
+/*! A heuristic search algorithm tuned towards non-relabeled graphs.
+ *
+ * Assumes we do not know coreness of vertices.
+ * Assumes neighbour lists are not sorted by coreness and/or degree.
+ */
+template<typename GraphType>
+void heuristic_search_dmax(
+    const GraphType & H,
+    MC_Enumerator & E,
+    VID K ) {
+    // Config
+    const VID nparts = graptor_num_threads();
+    
+    // Data structures
+    VID * top_v = new VID[K*nparts+K];
+    VID * top_d = new VID[K*nparts+K];
+    VID * top_k = new VID[nparts]();
+
+    // Identify top K vertices by degree. Do this in parallel for each
+    // partition individually, later merge results into one ranking.
+    const EID * const index = H.get_index();
+    const VID * const edges = H.get_edges();
+    const VID n = H.get_num_vertices();
+    parallel_loop( VID(0), nparts, VID(1), [=]( VID p ) {
+	const VID chunk = ( n + nparts - 1 ) / nparts;
+	const VID b = std::min( n, p * chunk );
+	const VID e = std::min( n, (p+1) * chunk );
+	for( VID v=b; v < e; ++v ) {
+	    // Highest-degree vertices are in the back
+	    VID deg = edges[v+1] - edges[v];
+	    if( top_k[p] < K || deg >= top_d[p*nparts] ) {
+		// insertion sort
+		VID tmp_v = v;
+		VID tmp_d = deg;
+		for( VID i=0; i < top_k[p]; ++i ) {
+		    if( top_d[p*nparts+i] < tmp_d ) {
+			using std::swap;
+			swap( top_d[+p*nparts+i], tmp_d );
+			swap( top_v[+p*nparts+i], tmp_v );
+		    }
+		}
+		if( top_k[p] < K ) {
+		    top_d[top_k[p]+p*nparts] = tmp_d;
+		    top_v[top_k[p]+p*nparts] = tmp_v;
+		    ++top_k[p];
+		}
+	    }
+	}
+    } );
+
+    // Down-select vertices
+    VID * sel_v = &top_v[nparts*K];
+    VID * sel_d = &top_d[nparts*K];
+    VID sel_k = 0;
+    for( VID i=0; i < K; ++i ) {
+	VID maxp = 0;
+	VID maxd = top_d[maxp*nparts+top_k[maxp]-1];
+	for( VID p=1; p < nparts; ++p ) {
+	    if( top_d[p*nparts+top_k[p]-1] > maxd ) {
+		maxp = p;
+		maxd = top_d[p*nparts+top_k[p]-1];
+	    }
+	}
+	sel_v[sel_k] = top_v[maxp*nparts+top_k[maxp]-1];
+	++sel_k;
+	--top_k[maxp]; // remove for future selection
+    }
+
+    // Loop over selected vertices
+    parallel_loop( VID(0), sel_k, VID(1), [&,sel_v]( VID i ) {
+	VID v = sel_v[i];
+	heuristic_expand_dmax( H, E, v );
+    } );
+
+    // Cleanup
+    delete[] top_d;
+    delete[] top_v;
+}
+
+template<typename GraphType, typename Fn>
+std::pair<VID,EID> count_induced( const GraphType & G, Fn && sel ) {
+    const VID n = G.get_num_vertices();
+    const EID * const index = G.get_index();
+    const VID * const edges = G.get_edges();
+    VID ni = 0;
+    EID ei = 0;
+    for( VID v=0; v < n; ++v ) {
+	if( sel( v ) ) {
+	    ++ni;
+	    for( EID e=index[v], ee=index[v+1]; e != ee; ++e ) {
+		VID u = edges[e];
+		if( sel( u ) )
+		    ++ei;
+	    }
+	}
+    }
+
+    return std::make_pair( ni, ei );
+}
+
 /*! Main method for maximum clique search
  */
 int main( int argc, char *argv[] ) {
@@ -4367,10 +4570,11 @@ int main( int argc, char *argv[] ) {
 	"\t--hash-threshold {threshold}\tthreshold for pre-constructing hashed neighbour sets\n"
 	"\t-d {threshold}\tdensity threshold for applying vertex cover\n"
 	"\t-i {file}\tinput file containing graph\n"
+	"\t--induced-stats\tprint statistics on subgraph induced by MC size\n"
 	"\t-h, --help\tprint help message and exit\n"
 	);
     const bool symmetric = P.get_bool_option( "-s" );
-    const bool early_pruning = P.get_bool_option( "-p" );
+    const VID early_pruning = P.get_long_option( "-p", 0 );
     const bool suffix_clique = P.get_bool_option( "--suffix" );
     const int heuristic = P.get_long_option( "-H", 2 );
     const VID pre = P.get_long_option( "-pre", -1 );
@@ -4380,6 +4584,7 @@ int main( int argc, char *argv[] ) {
     const char * ifile = P.get_string_option( "-i" );
     const VID hash_threshold = P.get_long_option( "--hash-threshold", 16 );
     const VID domega_gap = P.get_long_option( "--domega", -1 );
+    const bool induced_stats = P.get_bool_option( "--induced-stats" );
 
 #if PROFILE_INCUMBENT_SIZE != 0
     incumbent_profiling_limit = P.get_double_option( "--incumbent-limit", 0.0 );
@@ -4467,7 +4672,7 @@ int main( int argc, char *argv[] ) {
     EID m = G.numEdges();
 
     assert( G.isSymmetric() );
-    double density = double(m) / ( double(n) * double(n) );
+    double density = double(m) / ( double(n) * double(n-1) );
     VID dmax_v = G.findHighestDegreeVertex();
     VID dmax = G.getDegree( dmax_v );
     double davg = (double)m / (double)n;
@@ -4477,11 +4682,25 @@ int main( int argc, char *argv[] ) {
 	      << " davg=" << davg
 	      << std::endl;
 
+    // Log a 2-clique because it is easy. Rules out all vertices with degree
+    // 1 or less from future consideration, as well as all higher-degree
+    // vertices with coreness 1.
+    // The clique will be grown once accepted. We don't know what neighbour
+    // to add to maximise clique growth. We will be doing a heuristic search
+    // later so it does not matter that much to get it right now.
+    if( dmax > 0 ) {
+	const VID * const ngh = G.get_neighbours( dmax_v );
+	E.record( 2, dmax_v, &ngh[0], &ngh[1] );
+    }
+
     VID pn = n;
     EID pm = m;
     VID prune_th = ~(VID)0;
 
-    if( early_pruning ) {
+    if( early_pruning != 0 ) {
+	heuristic_search_dmax( G, E, early_pruning );
+
+#if 0
 	// First explore highest-degree vertex, then visit all others.
 	// This aims to increase the amount of pruning done.
 	heuristic_search( G, E, dmax_v, G.getDegree() );
@@ -4494,6 +4713,7 @@ int main( int argc, char *argv[] ) {
 		if( v != dmax_v )
 		    heuristic_search( G, E, v, G.getDegree() );
 	} );
+#endif
 
 	prune_th = E.get_max_clique_size();
 	
@@ -4978,6 +5198,26 @@ int main( int argc, char *argv[] ) {
 		  << " / " << m << " edges\n";
     }
 #endif
+
+    if( induced_stats ) {
+	VID min_coreness = E.get_max_clique_size() - 1;
+
+	auto may = count_induced( G, [=]( VID v ) {
+	    return remap_coreness[rev_order[v]] >= min_coreness; } );
+	auto must = count_induced( G, [=]( VID v ) {
+	    return remap_coreness[rev_order[v]] > min_coreness; } );
+
+	std::cerr << "May analyse: vertices: " << may.first
+		  << " edges: " << may.second << " density: "
+		  << ( double(may.second)
+		       / ( double(may.first) * double(may.first-1) ) )
+		  << "\n";
+	std::cerr << "Must analyse: vertices: " << must.first
+		  << " edges: " << must.second << " density: "
+		  << ( double(must.second)
+		       / ( double(must.first) * double(must.first-1) ) )
+		  << "\n";
+    }
 
 #if ABLATION_DISABLE_LAZY_REMAPPING
     R.del();
