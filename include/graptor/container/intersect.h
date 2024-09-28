@@ -604,6 +604,7 @@ struct intersection_size_ge {
 	    }
 	}
 #if INTERSECT_GE_ABOVE
+	// > because current element not included
 	else if( m_left_options > std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
@@ -655,10 +656,12 @@ struct intersection_size_ge {
 	    m_terminated = true;
 	    m_ge = false;
 	    return false;
-	} else if( m_left_options >= std::distance( p, m_left_end ) ) {
+#if INTERSECT_GE_ABOVE
+	} else if( m_left_options >= std::distance( p+VL, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
+#endif
 	}
 
 	return true;
@@ -730,11 +733,11 @@ struct intersection_size_ge_two_sided {
 	    }
 	}
 #if INTERSECT_GE_ABOVE
-	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	else if( m_left_options > std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
-	} else if( m_right_options >= std::distance( r, m_right_end ) ) {
+	} else if( m_right_options > std::distance( r, m_right_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -754,7 +757,7 @@ struct intersection_size_ge_two_sided {
 	    }
 	}
 #if INTERSECT_GE_ABOVE
-	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	else if( m_left_options > std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -787,7 +790,7 @@ struct intersection_size_ge_two_sided {
 	    m_terminated = true;
 	    m_ge = false;
 	    return false;
-	} else if( m_left_options >= std::distance( p + vl, m_left_end ) ) {
+	} else if( m_left_options >= std::distance( p + VL, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
