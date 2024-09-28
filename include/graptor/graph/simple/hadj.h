@@ -1062,19 +1062,27 @@ private:
 #if LAZY_HASH_FILTER
 	if( is_seq_initialised( rv ) ) {
 	    const EID * const index = m_remap_graph.getIndex();
-	    VID * const edges = m_remap_graph.getEdges();
+	    const VID * const edges = m_remap_graph.getEdges();
 	    EID re = index[rv];
 	    EID ree = index[rv] + m_degree[rv];
-	    EID rn = re;
+	    // EID rn = re;
 
 	    // Try to get allocation size right from the start
 	    a.create_if_uninitialised( m_degree[rv] );
 
+	    // There is a risk that we concurrently expose a sequential
+	    // representation in the progress of being modified. The assumption
+	    // is that because the list is compressed, (i) no important elements
+	    // are being lost and (ii) all intersection algorithms remain
+	    // correct even if the list is not sorted (due to removing an
+	    // element, e.g., 10, 11, 12, 15 -> 10, 15, 12, 15 when 11 and 12
+	    // are removed).
+	    // This is not obviously correct, hence we disable the update.
 	    for( ; re != ree; ++re ) {
 		VID ru = edges[re];
 		if( m_coreness[ru] >= cth ) {
 		    a.insert( ru );
-		    edges[rn++] = ru;
+		    // edges[rn++] = ru;
 		}
 	    }
 
@@ -1096,6 +1104,12 @@ private:
 	    assert( a.size() <= gindex[ov+1] - gindex[ov] );
 	}
 #else
+	const EID * const gindex = m_orig_graph.getIndex();
+	const VID * const gedges = m_orig_graph.getEdges();
+
+	// Try to get allocation size right from the start
+	a.create_if_uninitialised( gindex[ov+1] - gindex[ov] );
+
 	for( EID oe=gindex[ov], oee=gindex[ov+1]; oe != oee; ++oe ) {
 	    VID ou = gedges[oe];
 	    VID ru = m_orig_to_remap[ou];
@@ -1110,7 +1124,7 @@ private:
 	// sequential representation. We have rewritten the sequential
 	// representation while traversing it, and the number of remaining
 	// vertices is recorded here.
-	m_degree[rv] = a.size();
+	// m_degree[rv] = a.size(); -- disabled as we don't update
 #endif
 	set_hash_set( rv );
 
