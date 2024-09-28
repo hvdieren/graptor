@@ -2697,8 +2697,12 @@ public:
     }
 
 public:
+    EID *get_index() { return index.get(); }
+    const EID *get_index() const { return index.get(); }
     EID *getIndex() { return index.get(); }
     const EID *getIndex() const { return index.get(); }
+    VID *get_edges() { return edges.get(); }
+    const VID *get_edges() const { return edges.get(); }
     VID *getEdges() { return edges.get(); }
     const VID *getEdges() const { return edges.get(); }
     VID *getDegree() { return degree.get(); }
