@@ -604,7 +604,7 @@ struct intersection_size_ge {
 	    }
 	}
 #if INTERSECT_GE_ABOVE
-	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	else if( m_left_options > std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -624,7 +624,7 @@ struct intersection_size_ge {
 	    }
 	}
 #if INTERSECT_GE_ABOVE
-	else if( m_left_options >= std::distance( l, m_left_end ) ) {
+	else if( m_left_options > std::distance( l, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
