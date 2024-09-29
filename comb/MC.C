@@ -4348,6 +4348,7 @@ VID heuristic_search(
 	return 1;
 
     const VID * b = H.get_neighbours( v ); // force creation of sequential set
+    deg = H.get_degree( v ); // It may have changed in the lazy case...
     const VID * e = b + deg;
 
     std::vector<VID> pset;
@@ -4370,9 +4371,8 @@ VID heuristic_search(
 
 /*! Heuristically search the neighbourhood of a vertex, calculating degrees
  */
-template<typename GraphType>
 void heuristic_expand_dmax(
-    const GraphType & H,
+    const GraphCSx & H,
     MC_Enumerator & E,
     VID v ) {
     const EID * const index = H.get_index();
@@ -4408,6 +4408,8 @@ void heuristic_expand_dmax(
     do {
 	// Update information on best clique
 	const VID best = E.get_max_clique_size();
+	if( nc+1+ns <= best )
+	    break;
 
 	// Calculate internal degree and select vertex with highest degree
 	VID d_max = 0;
@@ -4421,7 +4423,7 @@ void heuristic_expand_dmax(
 		::intersect_size_gt_val_ds(
 		    graptor::make_array_slice( &vs[0], &vs[ns] ),
 		    graptor::make_array_slice( v_from, v_to ),
-		    best > nc ? best - nc : 0 );
+		    d_max );
 
 	    if( d_max < d || d_max == 0 ) {
 		d_max = d;
@@ -4458,9 +4460,8 @@ void heuristic_expand_dmax(
  * Assumes we do not know coreness of vertices.
  * Assumes neighbour lists are not sorted by coreness and/or degree.
  */
-template<typename GraphType>
 void heuristic_search_dmax(
-    const GraphType & H,
+    const GraphCSx & H,
     MC_Enumerator & E,
     VID K ) {
     // Config
