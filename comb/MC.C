@@ -4469,7 +4469,7 @@ void heuristic_search_dmax(
     
     // Data structures
     VID * top_v = new VID[K*nparts+K];
-    VID * top_d = new VID[K*nparts+K];
+    VID * top_d = new VID[K*nparts];
     VID * top_k = new VID[nparts]();
 
     // Identify top K vertices by degree. Do this in parallel for each
@@ -4492,7 +4492,7 @@ void heuristic_search_dmax(
 		VID tmp_v = v;
 		VID tmp_d = deg;
 		for( VID i=0; i < top_k[p]; ++i ) {
-		    if( top_d[p*nparts+i] < tmp_d ) {
+		    if( top_d[p*nparts+i] > tmp_d ) {
 			using std::swap;
 			swap( top_d[+p*nparts+i], tmp_d );
 			swap( top_v[+p*nparts+i], tmp_v );
@@ -4513,13 +4513,18 @@ void heuristic_search_dmax(
     VID sel_k = 0;
     for( VID i=0; i < K; ++i ) {
 	VID maxp = 0;
-	VID maxd = top_d[maxp*nparts+top_k[maxp]-1];
+	VID maxd = top_k[0] > 0 ? top_d[top_k[0]-1] : 0;
 	for( VID p=1; p < nparts; ++p ) {
-	    if( top_d[p*nparts+top_k[p]-1] > maxd ) {
-		maxp = p;
-		maxd = top_d[p*nparts+top_k[p]-1];
+	    if( top_k[p] > 0 ) {
+		VID off = p*nparts+top_k[p]-1;
+		if( top_d[off] > maxd ) {
+		    maxp = p;
+		    maxd = top_d[off];
+		}
 	    }
 	}
+	if( top_k[maxp] == 0 ) // we don't have nparts * K vertices in the graph
+	    break;
 	sel_v[sel_k] = top_v[maxp*nparts+top_k[maxp]-1];
 	++sel_k;
 	--top_k[maxp]; // remove for future selection
