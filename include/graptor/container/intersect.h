@@ -657,7 +657,7 @@ struct intersection_size_ge {
 	    m_ge = false;
 	    return false;
 #if INTERSECT_GE_ABOVE
-	} else if( m_left_options >= std::distance( p+VL, m_left_end ) ) {
+	} else if( m_left_options >= std::distance( p+vl, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
@@ -790,7 +790,7 @@ struct intersection_size_ge_two_sided {
 	    m_terminated = true;
 	    m_ge = false;
 	    return false;
-	} else if( m_left_options >= std::distance( p + VL, m_left_end ) ) {
+	} else if( m_left_options >= std::distance( p + vl, m_left_end ) ) {
 	    m_terminated = true;
 	    m_ge = true;
 	    return false;
