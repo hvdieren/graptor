@@ -948,26 +948,27 @@ private:
     get_neighbours_set( VID v, VID cth, bool create_hash ) const {
 	bool has_h = is_hash_set_initialised( v );
 	bool has_s = is_seq_initialised( v );
-	if( has_h && has_s )
-	    return maybe_dual_set_type(
-		ngh_set_type( m_remap_graph.get_neighbours( v ),
-			      get_degree( v ) ),
-		m_adjacency[v] );
-	else if( has_h )
+	if( has_s ) {
+	    const VID * ngh = get_seq( v, cth );
+	    VID deg = get_degree( v );
+	    if( has_h )
+		return maybe_dual_set_type(
+		    ngh_set_type( ngh, deg ), m_adjacency[v] );
+	    else
+		return maybe_dual_set_type( ngh_set_type( ngh, deg ) );
+	} else if( has_h ) {
 	    return maybe_dual_set_type( m_adjacency[v] );
-	else if( has_s )
-	    return maybe_dual_set_type(
-		ngh_set_type( m_remap_graph.get_neighbours( v ),
-			      get_degree( v ) ) );
-	else {
+	} else {
 	    // Create something. A hash set does not require sorting,
 	    // but a small set is compact sequentially and quick to sort,
 	    // and benefits from sequential access.
 	    if( create_hash )
 		return maybe_dual_set_type( get_hash_set( v, cth ) );
-	    else
-		return maybe_dual_set_type(
-		    ngh_set_type( get_seq( v, cth ), get_degree( v ) ) );
+	    else {
+		const VID * ngh = get_seq( v, cth );
+		VID deg = get_degree( v );
+		return maybe_dual_set_type( ngh_set_type( ngh, deg ) );
+	    }
 	}
     }
 public:
@@ -1190,7 +1191,6 @@ private:
 
 public:
     bool is_hash_set_initialised( VID v ) const {
-	// return m_adjacency[v].size() == m_remap_graph.get_degree( v );
 	return ( m_flags[v].load( std::memory_order_acquire ) & fl_hash ) != 0;
     }
     bool is_seq_initialised( VID v ) const {
