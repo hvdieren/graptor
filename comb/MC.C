@@ -3880,6 +3880,10 @@ std::pair<VID,EID> mc_top_level_select(
     VID num = cut.get_num_vertices();
 #endif
 
+    // TODO: given that we know the number of edges, estimate the maximum
+    // clique size possible in the subgraph using Turan's theorem and use
+    // for filtering purposes. Note that this bound is not very tight.
+
 // #if FILTER_NEIGHBOUR_CLIQUE
     // Check for each vertex in the cutout if an MC is known for them.
     // If an MC is known for all neighbours, it provides us with an upper bound
@@ -4442,6 +4446,7 @@ void heuristic_expand_dmax(
 	const VID * const v_to = &edges[index[v+1]];
 	for( VID j=0; j < ns; ++j ) {
 	    // We won't find vs[i_max] in it's own neighbour list
+	    // TODO: use lower_bound and update v_from on each lookup
 	    if( i_max != j && std::binary_search( v_from, v_to, vs[j] ) )
 		vs[i++] = vs[j];
 	}
@@ -4609,6 +4614,7 @@ int main( int argc, char *argv[] ) {
     density_threshold = P.get_double_option( "-d", 0.5 );
     const char * ifile = P.get_string_option( "-i" );
     const VID hash_threshold = P.get_long_option( "--hash-threshold", 16 );
+    VID lazy_threshold = P.get_long_option( "--lazy-threshold", -1 );
     const VID domega_gap = P.get_long_option( "--domega", -1 );
     const bool induced_stats = P.get_bool_option( "--induced-stats" );
 
@@ -4767,7 +4773,8 @@ int main( int argc, char *argv[] ) {
     std::cout << "Constructing remap info and remap graph: "
 	      << tm.next() << "\n";
 
-    VID lazy_threshold = std::max( VID(64), degeneracy );
+    if( lazy_threshold == (VID)-1 )
+	lazy_threshold = std::max( VID(64), degeneracy );
     HFGraphTy H( R, numa_allocation_interleaved(), lazy_threshold );
     std::cout << "Building hashed graph: " << tm.next() << "\n";
 #else
@@ -4776,7 +4783,8 @@ int main( int argc, char *argv[] ) {
 	    G, order, rev_order, remap_coreness, P, prune_th, dmax_v );
     std::cout << "Constructing remap info: " << tm.next() << "\n";
 
-    const VID lazy_threshold = std::max( VID(64), degeneracy );
+    if( lazy_threshold == (VID)-1 )
+	lazy_threshold = std::max( VID(64), degeneracy );
     HFGraphTy H( G, order.get(), rev_order.get(), remap_coreness.get(),
 		 numa_allocation_interleaved(),
 		 hash_threshold,
