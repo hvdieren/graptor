@@ -31,6 +31,7 @@ function get_avg() {
     local scale=$9
 
     local sum=0
+    local sumsq=0
     local count=0
     local fail=0
     
@@ -44,13 +45,20 @@ function get_avg() {
 	    NOMETRIC) fail=3 ;;
 	    ABSENT) fail=2 ;;
 	    *) 
+		result=`echo | perl -ne "END { printf \"%g\n\", ($result/$scale); }"`
 		sum=`echo | perl -ne "END { printf \"%g\n\", ($sum+$result); }"`
+		sumsq=`echo | perl -ne "END { printf \"%g\n\", ($sumsq+$result*$result); }"`
 		count=$(( $count + 1 ))
 	esac
     done
 
     if [ $fail -eq 0 -a $count -ne 0 ] ; then
-    	echo | perl -ne "END { printf \"%g\n\", ($sum/$count/$scale); }"
+    	echo | perl -ne "END { printf \"%g\n\", ($sum/$count); }"
+	#if [ $count -ne 1 ] ; then
+    	    #echo | perl -ne "END { printf \"%g\n\", ($sumsq-($sum*$sum)/$count)/($count-1); }"
+	#else
+	    #echo 0
+	#fi
     elif [ $fail -eq 1 ] ; then
 	echo FAIL
     elif [ $fail -eq 3 ] ; then
@@ -98,7 +106,8 @@ function base() {
     local commit=$2
     local arch=$3
 
-    local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
+    local graphs="USAroad sinaweibo friendster_full webcc uk_union_06 dimacs CAroad sx-stackoverflow wiki-talk cit-patents LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-mouse-gene bio-human-gene1 bio-human-gene2"
+    #local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
 
     if [ x$dir = x ] ; then
 	dir=$commit

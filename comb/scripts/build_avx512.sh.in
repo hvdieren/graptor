@@ -125,11 +125,12 @@ fi
 
 
 one MC _itrim_sort4_trav3_vl16 &
-one MC _itrim_sort4_trav3_noadvins_vl16 &
-one MC _itrim_sort4_trav3_nolazy_vl16 
-one MC _itrim_sort4_trav3_nolazy_nohopscotch_vl16 &
-one MC _itrim_sort4_trav3_nolazy_nolhf_vl16 &
-one MC _itrim_sort2_trav3_vl16 
+one MC _itrim_sort4_trav3_geabove_noadvins_vl16 &
+one MC _itrim_sort4_trav3_geabove_nolazy_vl16 
+#one MC _itrim_sort4_trav3_nolazy_nohopscotch_vl16 &
+one MC _itrim_sort4_trav3_geabove_nolhf_vl16 &
+#one MC _itrim_sort2_trav3_vl16  &
+one MC _itrim_sort4_trav3_geabove_vl16 
 
 if false ; then
 one MC _itrim_sort4_trav3_ld1_vl16 &

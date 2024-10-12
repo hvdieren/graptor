@@ -82,17 +82,17 @@ function for_gg()
 #	run intersect_ds__op1_vl16 $graph_path $g 1 $commit $r 1024 0
 #    done
 
-    for r in `seq 0 2` ; do
+    for r in `seq 0 9` ; do
 	run pmc $graph_path $g 128 $commit $r
-	run cliquer $graph_path $g 128 $commit $r
+	#run cliquer $graph_path $g 128 $commit $r
 	run dOmega_LS $graph_path $g 128 $commit $r
 	run dOmega_BS $graph_path $g 128 $commit $r
     done
 
     graph_path=`@CMAKE_SOURCE_DIR@/tools/graptor_tree.sh -l $TREE_ROOT materialise graptor $1 $2 $WEIGHTS`
-    for r in `seq 0 2` ; do
-	run MC-DD $graph_path $g 1 $commit $r
-	run MC-EGO $graph_path $g 1 $commit $r
+    for r in `seq 0 9` ; do
+	#run MC-DD $graph_path $g 1 $commit $r
+	#run MC-EGO $graph_path $g 1 $commit $r
 	run MC-BRB $graph_path $g 1 $commit $r
     done
 }

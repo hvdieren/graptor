@@ -31,12 +31,29 @@ function run()
     local part=$7
     local heur=$8
     local density=$9
+    local early=${10}
+    local lazy=${11}
 
     local dens=''
     if [ x$density = x ] ; then
 	density=0.5
     else
 	dens=.d`echo $density | tr . _`
+    fi
+
+    if [ x$early = x ] ; then
+	early=0
+    else
+	dens="${dens}.ep${early}"
+    fi
+
+    if [ x$lazy = x ] ; then
+	lazy=-1
+    else
+	dens="${dens}.lz${lazy}"
+	if [ x$lazy = xall ] ; then
+	    lazy=-2
+	fi
     fi
 
     # persia node numbering due to SMT
@@ -59,8 +76,8 @@ function run()
     if [ ! -f $file ] ; then
 	local papi_out=$file.papi
 	echo $1 $2
-	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file"
-	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} -c ${part} -s -i ${graph_path} > $file 2>&1"
+	echo "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=${papi_out} LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} --lazy-threshold ${lazy} --induced-stats -p ${early} -c ${part} -s -i ${graph_path} > $file"
+	bash -c "PARLAY_NUM_THREADS=${threads} PAPI_EVENTS=PAPI_TOT_INS,PAPI_L2_DCM,PAPI_L3_TCM,PAPI_TLB_DM PAPI_OUTPUT_DIRECTORY=\"${papi_out}\" LD_LIBRARY_PATH=\"$EXTERNALPATH/libconfig_project/lib:$LD_LIBRARY_PATH\" LD_PRELOAD=\"$TOOLSPATH/interposer.so\" timeout 1800s $numa ./${bindir}/${prog} -d ${density} -v ${verbose} -H ${heur} --lazy-threshold ${lazy} --induced-stats -p ${early} -c ${part} -s -i ${graph_path} > $file 2>&1"
     fi
 }
 
@@ -138,18 +155,35 @@ fi
 #	done
 #    done
 
-    for r in `seq 0 2` ; do
-	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 1 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_vl16 $graph_path $g 1 $commit $r 1024 2
+    for r in `seq 0 9` ; do
+    #for r in `seq 10 11` ; do
+    #for r in 0 ; do
+	#run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
 
-	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
-	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.5
-	run MC__itrim_sort4_trav3_nolazy_nolhf_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128 0
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128 -2
 
-	run MC__itrim_sort4_trav3_noadvins_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
-	run MC__itrim_sort4_trav3_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
-	run MC__itrim_sort4_trav3_nolazy_nohopscotch_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
-	run MC__itrim_sort2_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1
+	# ablation early pruning
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 0
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 32 $commit $r 1024 2 0.1 128
+	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 16 $commit $r 1024 2 0.1 128
+	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 8 $commit $r 1024 2 0.1 128
+	#run MC__itrim_sort4_trav3_geabove_nolhf_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+
+	#run MC__itrim_sort4_trav3_geabove_noadvins_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	#run MC__itrim_sort4_trav3_geabove_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	##run MC__itrim_sort4_trav3_nolazy_nohopscotch_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	##run MC__itrim_sort2_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.5 128
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.9 128
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.7 128
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.3 128
+	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 1.0 128
+
+
+	
 
 	#run MC__itrim_sort4_trav3_hopscotch1_vl16 $graph_path $g 128 $commit $r 1024 2
 	#run MC__itrim_sort4_trav3_hopscotch1_mcins1_vl16 $graph_path $g 128 $commit $r 1024 2

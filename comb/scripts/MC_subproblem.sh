@@ -16,7 +16,7 @@ function get_avg() {
     local count=0
     local fail=0
 
-    for file in `ls -1 graptor_avx512/$dir/output.${commit}.t${threads}.c1024.r*.h2.d0_1.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
+    for file in `ls -1 graptor_avx512/$dir/output.${commit}.t${threads}.c1024.r[0-9].h2.d0_1.ep128.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 
 	       -o ! grep "Enumeration:" $file > /dev/null 2>&1 ; then
@@ -65,10 +65,12 @@ function mce() {
     local commit=$3
     local dir=$4
     
-    local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
+    #local graphs="mawi USAroad sinaweibo friendster_full webcc dimacs cit-patents CAroad sx-stackoverflow wiki-talk LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut ppminer it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-human-gene2 keller4"
+
+    local graphs="USAroad sinaweibo friendster_full webcc uk_union_06 dimacs CAroad sx-stackoverflow wiki-talk cit-patents LiveJournal hudong flickr Yahoo_mem warwiki wiki-topcats pokec dblp2012 orkut it-2004 hollywood2009 higgs-twitter uk-2005 bio-WormNet-v3 bio-HS-CX bio-mouse-gene bio-human-gene1 bio-human-gene2"
 
 
-    local variants="itrim_sort4_trav3_vl$vl"
+    local variants="itrim_sort4_trav3_geabove_vl$vl"
     echo VL=$vl
     echo $subprob
     (
@@ -77,7 +79,7 @@ function mce() {
 	for graph in $graphs ; do
 	    echo $graph
 	    for variant in $variants ; do
-		one $commit 128 MC "" ${variant} ${graph} "${subprob}" $dir
+		one $commit 64 MC "" ${variant} ${graph} "${subprob}" $dir
 	    done
 	done
     ) | paste - $(echo $variants | sed -e 's/\b[a-zA-Z0-9_]*\b/- - -/g')
@@ -86,7 +88,8 @@ function mce() {
 }
 
 #commit=174e5cf6
-commit=9319a5a3
+#commit=9319a5a3
+commit=28c5ddae
 
 for algo in BK VC
 do

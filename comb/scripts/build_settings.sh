@@ -69,7 +69,7 @@ function get_flags() {
     flags["MC_INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
     flags["INTERSECTION_ONE_SIDED"]=1
-    flags["INTERSECTION_GE_ABOVE"]=1
+    flags["INTERSECTION_GE_ABOVE"]=0
     flags["VERTEX_COVER_COMPONENTS"]=0
     flags["PIVOT_COLOUR"]=0
     flags["PIVOT_COLOUR_DENSE"]=0
@@ -307,6 +307,12 @@ function get_flags() {
     fi
     if [[ "$v" == *_onesided* ]] ; then
 	flags["INTERSECT_ONE_SIDED"]=1
+    fi
+    if [[ "$v" == *_nogeabove* ]] ; then
+	flags["INTERSECT_GE_ABOVE"]=0
+    fi
+    if [[ "$v" == *_geabove* ]] ; then
+	flags["INTERSECT_GE_ABOVE"]=1
     fi
     if [[ "$v" == *_twosided* ]] ; then
 	flags["INTERSECT_ONE_SIDED"]=0
