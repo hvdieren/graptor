@@ -94,7 +94,7 @@ public:
     static auto asvector( type a ) { return U(a); }
 
     static type abs( type a ) { return std::abs( a ); }
-    static type sqrt( type a ) { return a * a; }
+    static type sqrt( type a ) { return std::sqrt( a ); }
     
     static type add( type s, mask_type m, type a, type b ) {
 	return m ? a + b : s;
