@@ -127,6 +127,22 @@ public:
 	return _mm256_set_ps( a7, a6, a5, a4, a3, a2, a1, a0 );
     }
 
+    // Set all lanes to the maximum lane
+    static type set_max( type a ) {
+	// Swap neighbouring values: ABCDEFGH -> BADCFEHG
+	type a0 = _mm256_permute_ps( a, 0b10110001 );
+	// Get the largest; all pairs of 2 lanes are now equal, e.g.: AADDFFHH
+	type b0 = _mm256_max_ps( a0, a ); // AVX
+	// Swap values across 4s: DDAAHHFF
+	type a1 = _mm256_permute_ps( b0, 0b00011110 );
+	// Get the largest; every 4 lanes are now equal, e.g.: AAAAFFFF
+	type b1 = _mm256_max_ps( a1, b0 ); // AVX
+	// Swap across SIMD halves: FFFFAAAA
+	type a2 = _mm256_permute2f128_ps( b1, b1, 0b00000001 );
+	// One more time max:
+	return _mm256_max_ps( a2, b1 ); // AVX
+    }
+
     static itype castint( type a ) { return _mm256_castps_si256( a ); }
     static type castfp( type a ) { return a; }
 
@@ -216,6 +232,10 @@ public:
 #else
 	return mul( src, asvector( m ), a, b );
 #endif
+    }
+
+    static type rsqrt( type a ) {
+	return _mm256_rsqrt_ps( a );
     }
 
     static type abs( type a ) {
