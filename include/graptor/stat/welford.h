@@ -23,6 +23,41 @@ void print_attributes( std::ostream & os ) {
 }
 
 /***********************************************************************
+ * Mean estimator (no variance)
+ ***********************************************************************/
+template<typename T, typename S>
+class mean_estimator {
+public:
+    using type = T;
+    using stat_type = S;
+
+    mean_estimator()
+	: m_mean( 0 ), m_samples( 0 ) { }
+
+    void update( type x ) {
+	++m_samples;
+	if( m_samples <= 1 ) [[unlikely]] {
+	    m_mean = x;
+	} else {
+	    m_mean += ( x - m_mean ) / type( m_samples );
+	}
+    }
+
+    type get_mean() const {
+	return m_mean; // / type( m_samples );
+    }
+
+    stat_type get_samples() const {
+	return m_samples;
+    }
+
+private:
+    type m_mean;
+    stat_type m_samples;
+};
+
+
+/***********************************************************************
  * Robust variance estimator
  ***********************************************************************/
 template<typename T, typename S>
@@ -796,4 +831,4 @@ private:
 
 } // namespace graptor
 
-#endif // GRAPTOR_STAT_BOOTSTRAP_H
+#endif // GRAPTOR_STAT_WELFORD_H
