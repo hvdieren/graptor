@@ -42,6 +42,7 @@
 #include "graptor/target/vector.h"
 #include "graptor/container/dual_set.h"
 #include "graptor/container/array_slice.h"
+#include "graptor/stat/ucb.h"
 
 namespace graptor {
 
@@ -2976,7 +2977,174 @@ struct something {
 
 };
 
-struct MC_intersect {
+struct baeza_yates {
+
+    static constexpr bool uses_hash = false;
+
+    template<set_operation so, bool rhs,
+	     typename LIt, typename RIt, typename Collector>
+    static
+    void
+    intersect_task( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in Baeza-Yates"
+		       " intersection" );
+
+	if( out.terminated() )
+	    return;
+
+	if( lb == le || rb == re ) {
+	    out.template remainder<rhs>( le - lb, re - rb );
+	    return;
+	}
+
+	auto lm = std::next( lb, ( le - lb ) / 2 );
+	auto p = *lm;
+	auto rm = std::lower_bound( rb, re, p );
+	bool found = rm != re && *rm == p;
+
+	// If there is only one element in LHS, then lb == lm and the
+	// next iteration will account for the absence of [rb,rm)
+	intersect_task<so,rhs>( lb, lm, rb, rm, out );
+
+	if( !out.template record<rhs>( lm, rm, found ) )
+	    return;
+
+	// We have established presence of lm in RHS and recorded (above).
+	// So skip this element. Only skip it in RHS if found.
+	++lm;
+	if( found )
+	    ++rm;
+
+	intersect_task<so,rhs>( lm, le, rm, re, out );
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	auto lb = lset.begin();
+	auto le = lset.end();
+	auto rb = rset.begin();
+	auto re = rset.end();
+	intersect_task<so,rhs>( lb, le, rb, re, out );
+    }
+    
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out = task.template create_collector<merge_scalar>( lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
+    }
+};
+
+
+struct bandit_intersect {
+    static constexpr size_t NUM_PRED = 6;
+
+    template<size_t NUM_PRED>
+    class predictor {
+	static constexpr size_t MAX_CLASS = 10;
+
+    public:
+	size_t predict( size_t cl, size_t cr, size_t max_choice ) const {
+	    return m_bandit[cl][cr].next( max_choice );
+	}
+
+	void update( size_t cl, size_t cr, size_t best_i, uint64_t cycles ) {
+	    float reward = 1.0f / ( float( cycles ) * 1e-4f );
+	    m_bandit[cl][cr].update( best_i, reward );
+	}
+	
+	static size_t get_size_class( size_t sz ) {
+	    size_t cl = sz == 0 ? 0 : rt_ilog2( sz ) / 2;
+	    if( cl >= MAX_CLASS )
+		cl = MAX_CLASS-1;
+	    return cl;
+	}
+
+    private:
+	std::array<std::array<graptor::bandit_ucb<float,NUM_PRED>,
+			      MAX_CLASS>,MAX_CLASS> m_bandit;
+    };
+
+    template<size_t NUM_PRED>
+    struct predictor_holder {
+	thread_local static predictor<NUM_PRED> per_thread_predictor;
+    };
+    
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return task.return_value_empty_set();
+
+	predictor<NUM_PRED> & bandit = predictor_holder<NUM_PRED>::per_thread_predictor;
+
+	size_t lsz = lset.size();
+	size_t rsz = rset.size();
+
+	size_t cl = predictor<NUM_PRED>::get_size_class( lsz );
+	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
+
+	// Check if hashing is eligible
+	size_t max_choice = NUM_PRED;
+	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
+		       && !is_hash_set_v<std::decay_t<RSet>> )
+	    max_choice = NUM_PRED - 2;
+
+	size_t best_i = bandit.predict( cl, cr, max_choice );
+
+	unsigned int pc0;
+	uint64_t tm0 = _rdtscp( &pc0 );
+	auto ret = effect( best_i, lset, rset, task );
+	unsigned int pc1;
+	uint64_t tm1 = _rdtscp( &pc1 );
+
+	// Check absence of thread movement to another core
+	if( pc0 == pc1 )
+	    bandit.update( cl, cr, best_i, tm1 - tm0 );
+
+	return ret;
+    }
+
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> ) {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    case 3: return merge_vector_jump::apply( lset, rset, task );
+	    case 4: return hash_scalar::apply( lset, rset, task );
+	    default: return hash_vector::apply( lset, rset, task );
+	    }
+	} else {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    default: return merge_vector_jump::apply( lset, rset, task );
+	    }
+	}
+    }
+};
+
+template<size_t NUM_PRED>
+thread_local bandit_intersect::predictor<NUM_PRED>
+bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
+
+using MC_intersect = bandit_intersect;
+    
+struct MC_intersect_old {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
@@ -3006,6 +3174,7 @@ struct MC_intersect {
 #endif
     }
 };
+
 
 #if 0
 struct adaptive_intersect {
