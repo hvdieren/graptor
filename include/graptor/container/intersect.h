@@ -16,7 +16,7 @@
 #endif
 
 #ifndef MC_INTERSECTION_ALGORITHM
-#define MC_INTERSECTION_ALGORITHM 0
+#define MC_INTERSECTION_ALGORITHM 2
 #endif
 
 #ifndef INTERSECTION_TRIM
@@ -3142,8 +3142,6 @@ template<size_t NUM_PRED>
 thread_local bandit_intersect::predictor<NUM_PRED>
 bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 
-using MC_intersect = bandit_intersect;
-    
 struct MC_intersect_old {
     template<typename LSet, typename RSet, typename Task>
     static
@@ -3175,6 +3173,12 @@ struct MC_intersect_old {
     }
 };
 
+#if MC_INTERSECTION_ALGORITHM == 2
+using MC_intersect = bandit_intersect;
+#else
+using MC_intersect = MC_intersect_old;
+#endif
+    
 
 #if 0
 struct adaptive_intersect {
