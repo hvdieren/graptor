@@ -35,6 +35,10 @@
 #define ABLATION_DISABLE_ADV_INTERSECT 0
 #endif
 
+#ifndef DEBUG_INTERSECTIONS
+#define DEBUG_INTERSECTIONS 0
+#endif
+
 #include <iterator>
 #include <type_traits>
 #include <immintrin.h>
@@ -846,6 +850,8 @@ struct merge_scalar;
 struct merge_vector;
 struct merge_scalar_jump;
 struct merge_vector_jump;
+struct MC_intersect;
+struct MC_intersect_old;
 
 /*! Describes a set_operation and its arguments and allows to create
  *  a suitable collector
@@ -1005,7 +1011,14 @@ struct set_operations {
 	    intersection_collector<false,typename std::decay_t<LSet>::type>
 		cout( out );
 	    auto task = create_intersection_task<so_intersect>( cout );
-	    return apply( lset, rset, task );
+	    auto ret = apply( lset, rset, task );
+#if DEBUG_INTERSECTIONS
+	    intersection_task<so_intersect_size,void> task2;
+	    auto size =
+		set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	    assert( std::distance( out, ret ) == size && "debug failure" );
+#endif
+	    return ret;
 	} else {
 	    auto task = create_intersection_task<so_intersect>( out );
 	    return apply( lset, rset, task );
@@ -1032,7 +1045,14 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    using type = typename std::decay_t<LSet>::type;
 	    intersection_task<so_intersect_gt,type> task( out, threshold );
-	    return apply( lset, rset, task );
+	    auto ret = apply( lset, rset, task );
+#if DEBUG_INTERSECTIONS
+	    intersection_task<so_intersect_size,void> task2;
+	    size_t size =
+		set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	    assert( std::distance( out, ret ) == size && "debug failure" );
+#endif
+	    return ret;
 	} else {
 	    // In the case of a custom collector, we cannot guarantee the
 	    // ability to apply the threshold.
@@ -1059,10 +1079,12 @@ struct set_operations {
 	    intersection_collector<true,typename std::decay_t<LSet>::type>
 		cout( out );
 	    auto task = create_intersection_task<so_intersect_xlat>( cout );
-	    return apply( lset, rset, task );
+	    // return apply( lset, rset, task );
+	    return set_operations<MC_intersect_old>::apply( lset, rset, task );
 	} else {
 	    auto task = create_intersection_task<so_intersect_xlat>( out );
-	    return apply( lset, rset, task );
+	    // return apply( lset, rset, task );
+	    return set_operations<MC_intersect_old>::apply( lset, rset, task );
 	}
     }
 
@@ -1076,7 +1098,13 @@ struct set_operations {
 		       "Sets must contain elements of the same type" );
 	
 	intersection_task<so_intersect_size,void> task;
-	return apply( lset, rset, task );
+	size_t ret = apply( lset, rset, task );
+#if DEBUG_INTERSECTIONS
+	intersection_task<so_intersect_size,void> task2;
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	assert( ret == size && "debug failure" );
+#endif
+	return ret;
     }
 
     template<typename LSet, typename RSet>
@@ -1092,7 +1120,15 @@ struct set_operations {
 	return intersect_size_ds( lset, rset );
 #else
 	intersection_task<so_intersect_size_gt_val,void> task( threshold );
-	return apply( lset, rset, task );
+	size_t ret = apply( lset, rset, task );
+#if DEBUG_INTERSECTIONS
+	intersection_task<so_intersect_size,void> task2;
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	assert( ret == size
+		|| ( size <= threshold && ret <= threshold )
+		&& "debug failure" );
+#endif
+	return ret;
 #endif
     }
 
@@ -1109,7 +1145,13 @@ struct set_operations {
 	return intersect_size_ds( lset, rset ) >= threshold;
 #else
 	intersection_task<so_intersect_size_ge,void> task( threshold );
-	return apply( lset, rset, task );
+	bool ret = apply( lset, rset, task );
+#if DEBUG_INTERSECTIONS
+	intersection_task<so_intersect_size,void> task2;
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	assert( ( size >= threshold ) == ret && "debug failure" );
+#endif
+	return ret;
 #endif
     }
 
@@ -3093,12 +3135,19 @@ struct bandit_intersect {
 	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
 
 	// Check if hashing is eligible
-	size_t max_choice = NUM_PRED;
+	size_t eligibility = 0x3full;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    max_choice = NUM_PRED - 2;
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_hash_set() && !rset.has_hash_set() )
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_sequential() || !rset.has_sequential() )
+	    eligibility &= 0x30ull; // disable merge intersections
 
-	size_t best_i = bandit.predict( cl, cr, max_choice );
+	assert( eligibility != 0ull
+		&& "needs some options for intersection algorithm" );
+
+	size_t best_i = bandit.predict( cl, cr, eligibility );
 
 	unsigned int pc0;
 	uint64_t tm0 = _rdtscp( &pc0 );
@@ -3174,9 +3223,11 @@ struct MC_intersect_old {
 };
 
 #if MC_INTERSECTION_ALGORITHM == 2
-using MC_intersect = bandit_intersect;
+struct MC_intersect : public bandit_intersect { };
+#elif MC_INTERSECTION_ALGORITHM == 3
+struct MC_intersect : public merge_scalar { };
 #else
-using MC_intersect = MC_intersect_old;
+struct MC_intersect : public MC_intersect_old { };
 #endif
     
 
