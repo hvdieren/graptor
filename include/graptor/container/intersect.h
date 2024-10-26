@@ -874,6 +874,10 @@ struct intersection_task {
 
     auto return_value_empty_set() { return m_collector.return_value(); }
 
+    void print( std::ostream & os ) const {
+	os << "task { op=" << (int)op << " }";
+    }
+
 private:
     Collector & m_collector;
 };
@@ -895,6 +899,10 @@ struct intersection_task<so_intersect_gt,type> {
 
     type * return_value_empty_set() { return m_pointer; }
 
+    void print( std::ostream & os ) const {
+	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
+    }
+
 private:
     type * m_pointer;
     size_t m_threshold;
@@ -912,6 +920,10 @@ struct intersection_task<so_intersect_size,void> {
     }
 
     size_t return_value_empty_set() { return 0; }
+
+    void print( std::ostream & os ) const {
+	os << "task { op=" << (int)operation << " }";
+    }
 };
 
 /*! Specialisation for so_intersect_size_gt_val
@@ -945,6 +957,10 @@ struct intersection_task<so_intersect_size_gt_val,void> {
     }
 
     size_t return_value_empty_set() { return 0; }
+
+    void print( std::ostream & os ) const {
+	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
+    }
 
 private:
     size_t m_threshold;
@@ -981,6 +997,10 @@ struct intersection_task<so_intersect_size_ge,void> {
     }
 
     bool return_value_empty_set() { return m_threshold == 0; }
+
+    void print( std::ostream & os ) const {
+	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
+    }
 
 private:
     size_t m_threshold;
@@ -3156,8 +3176,19 @@ struct bandit_intersect {
 	uint64_t tm1 = _rdtscp( &pc1 );
 
 	// Check absence of thread movement to another core
-	if( pc0 == pc1 )
+	if( pc0 == pc1 ) {
 	    bandit.update( cl, cr, best_i, tm1 - tm0 );
+
+#if 0
+	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
+		      << " cl=" << cl << " cr=" << cr
+		      << " cy=" << (tm1-tm0)
+		      << " eligible=" << std::hex << eligibility << std::dec
+		      << " predict=" << best_i << ' ';
+	    task.print( std::cout );
+	    std::cout << "\n";
+#endif
+	} 
 
 	return ret;
     }
