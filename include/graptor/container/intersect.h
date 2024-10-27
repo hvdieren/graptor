@@ -16,7 +16,7 @@
 #endif
 
 #ifndef MC_INTERSECTION_ALGORITHM
-#define MC_INTERSECTION_ALGORITHM 2
+#define MC_INTERSECTION_ALGORITHM 5
 #endif
 
 #ifndef INTERSECTION_TRIM
@@ -874,6 +874,8 @@ struct intersection_task {
 
     auto return_value_empty_set() { return m_collector.return_value(); }
 
+    size_t get_threshold() const { return 0; }
+
     void print( std::ostream & os ) const {
 	os << "task { op=" << (int)op << " }";
     }
@@ -899,6 +901,8 @@ struct intersection_task<so_intersect_gt,type> {
 
     type * return_value_empty_set() { return m_pointer; }
 
+    size_t get_threshold() const { return m_threshold; }
+
     void print( std::ostream & os ) const {
 	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
     }
@@ -920,6 +924,8 @@ struct intersection_task<so_intersect_size,void> {
     }
 
     size_t return_value_empty_set() { return 0; }
+
+    size_t get_threshold() const { return 0; }
 
     void print( std::ostream & os ) const {
 	os << "task { op=" << (int)operation << " }";
@@ -957,6 +963,8 @@ struct intersection_task<so_intersect_size_gt_val,void> {
     }
 
     size_t return_value_empty_set() { return 0; }
+
+    size_t get_threshold() const { return m_threshold; }
 
     void print( std::ostream & os ) const {
 	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
@@ -997,6 +1005,8 @@ struct intersection_task<so_intersect_size_ge,void> {
     }
 
     bool return_value_empty_set() { return m_threshold == 0; }
+
+    size_t get_threshold() const { return m_threshold; }
 
     void print( std::ostream & os ) const {
 	os << "task { op=" << (int)operation << " th=" << m_threshold << " }";
@@ -3112,8 +3122,8 @@ struct bandit_intersect {
 	static constexpr size_t MAX_CLASS = 10;
 
     public:
-	size_t predict( size_t cl, size_t cr, size_t max_choice ) const {
-	    return m_bandit[cl][cr].next( max_choice );
+	size_t predict( size_t cl, size_t cr, size_t eligible ) const {
+	    return m_bandit[cl][cr].next( eligible );
 	}
 
 	void update( size_t cl, size_t cr, size_t best_i, uint64_t cycles ) {
@@ -3222,6 +3232,245 @@ template<size_t NUM_PRED>
 thread_local bandit_intersect::predictor<NUM_PRED>
 bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 
+struct bandit2_intersect {
+    static constexpr size_t NUM_PRED = 6;
+
+    template<size_t NUM_PRED>
+    class predictor {
+	static constexpr size_t MAX_CLASS = 10;
+
+    public:
+	size_t predict( size_t cl, size_t cr, size_t ct,
+			size_t eligible ) const {
+	    return m_bandit[cl][cr][ct].next( eligible );
+	}
+
+	void update( size_t cl, size_t cr, size_t ct,
+		     size_t best_i, uint64_t cycles ) {
+	    float reward = 1.0f / ( float( cycles ) * 1e-4f );
+	    m_bandit[cl][cr][ct].update( best_i, reward );
+	}
+	
+	static size_t get_size_class( size_t sz ) {
+	    size_t cl = sz == 0 ? 0 : rt_ilog2( sz ) / 2;
+	    if( cl >= MAX_CLASS )
+		cl = MAX_CLASS-1;
+	    return cl;
+	}
+	static size_t get_threshold_class( size_t sz, size_t th ) {
+	    size_t cl = float(MAX_CLASS) * float(th) / float(sz);
+	    if( cl >= MAX_CLASS )
+		cl = MAX_CLASS-1;
+	    return cl;
+	}
+
+    private:
+	std::array<std::array<
+		       std::array<graptor::bandit_ucb<float,NUM_PRED>,
+				  MAX_CLASS>,MAX_CLASS>,MAX_CLASS> m_bandit;
+    };
+
+    template<size_t NUM_PRED>
+    struct predictor_holder {
+	thread_local static predictor<NUM_PRED> per_thread_predictor;
+    };
+    
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return task.return_value_empty_set();
+
+	predictor<NUM_PRED> & bandit = predictor_holder<NUM_PRED>::per_thread_predictor;
+
+	// A threshold of class 0 is unlikely, so in practice we expect
+	// that ins_gt, ge_bool and gt_val are separate from ins and size
+	// Perhaps differentiation by task would be meaningful
+	size_t lsz = lset.size();
+	size_t rsz = rset.size();
+	size_t th = task.get_threshold();
+
+	size_t cl = predictor<NUM_PRED>::get_size_class( lsz );
+	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
+	size_t ct = predictor<NUM_PRED>::get_threshold_class( lsz, th );
+
+	// Check if hashing is eligible
+	size_t eligibility = 0x3full;
+	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
+		       && !is_hash_set_v<std::decay_t<RSet>> )
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_hash_set() && !rset.has_hash_set() )
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_sequential() || !rset.has_sequential() )
+	    eligibility &= 0x30ull; // disable merge intersections
+
+	assert( eligibility != 0ull
+		&& "needs some options for intersection algorithm" );
+
+	size_t best_i = bandit.predict( cl, cr, ct, eligibility );
+
+	unsigned int pc0;
+	uint64_t tm0 = _rdtscp( &pc0 );
+	auto ret = effect( best_i, lset, rset, task );
+	unsigned int pc1;
+	uint64_t tm1 = _rdtscp( &pc1 );
+
+	// Check absence of thread movement to another core
+	if( pc0 == pc1 ) {
+	    bandit.update( cl, cr, ct, best_i, tm1 - tm0 );
+
+#if 0
+	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
+		      << " cl=" << cl << " cr=" << cr
+		      << " cy=" << (tm1-tm0)
+		      << " eligible=" << std::hex << eligibility << std::dec
+		      << " predict=" << best_i << ' ';
+	    task.print( std::cout );
+	    std::cout << "\n";
+#endif
+	} 
+
+	return ret;
+    }
+
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> ) {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    case 3: return merge_vector_jump::apply( lset, rset, task );
+	    case 4: return hash_scalar::apply( lset, rset, task );
+	    default: return hash_vector::apply( lset, rset, task );
+	    }
+	} else {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    default: return merge_vector_jump::apply( lset, rset, task );
+	    }
+	}
+    }
+};
+
+template<size_t NUM_PRED>
+thread_local bandit2_intersect::predictor<NUM_PRED>
+bandit2_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
+
+
+struct compare_intersections {
+    static constexpr size_t NUM_PRED = 6;
+    static constexpr size_t MAX_CLASS = 10;
+
+    static size_t get_size_class( size_t sz ) {
+	size_t cl = sz == 0 ? 0 : rt_ilog2( sz ) / 2;
+	if( cl >= MAX_CLASS )
+	    cl = MAX_CLASS-1;
+	return cl;
+    }
+    
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return task.return_value_empty_set();
+
+	size_t lsz = lset.size();
+	size_t rsz = rset.size();
+
+	size_t cl = get_size_class( lsz );
+	size_t cr = get_size_class( rsz );
+
+	// Check if hashing is eligible
+	size_t eligibility = 0x3full;
+	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
+		       && !is_hash_set_v<std::decay_t<RSet>> )
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_hash_set() && !rset.has_hash_set() )
+	    eligibility &= 0xfull; // disable hash sets
+	else if( !lset.has_sequential() || !rset.has_sequential() )
+	    eligibility &= 0x30ull; // disable merge intersections
+
+	assert( eligibility != 0ull
+		&& "needs some options for intersection algorithm" );
+
+	// Calculate the size of the intersection
+	intersection_task<so_intersect_size,void> task_sz;
+	size_t size = effect( _tzcnt_u64( eligibility ), lset, rset, task_sz );
+
+	bandit_intersect::predictor<NUM_PRED> & bandit =
+	    bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
+	size_t best_i = bandit.predict( cl, cr, eligibility );
+
+	size_t last_i = 0;
+	size_t e = eligibility;
+	std::cout << "analysis: lsz=" << lsz << " rsz=" << rsz
+		  << " cl=" << cl << " cr=" << cr
+		  << " eligible=" << std::hex << eligibility << std::dec
+		  << " size=" << size
+		  << " pred=" << best_i
+		  << ' ';
+	task.print( std::cout );
+	for( size_t i=0; i < NUM_PRED; ++i, e >>=1 ) {
+	    if( e & 1 ) {
+		unsigned int pc0;
+		uint64_t tm0 = _rdtscp( &pc0 );
+		auto ret = effect( i, lset, rset, task );
+		unsigned int pc1;
+		uint64_t tm1 = _rdtscp( &pc1 );
+
+		// Check absence of thread movement to another core
+		if( pc0 == pc1 )
+		    std::cout << " cy" << i << '=' << (tm1-tm0);
+		else
+		    std::cout << " cy" << i << "=move";
+
+		last_i = i;
+
+		if( best_i == i )
+		    bandit.update( cl, cr, best_i, tm1 - tm0 );
+	    } else
+		std::cout << " cy" << i << "=na";
+	} 
+	std::cout << "\n";
+
+	return effect( last_i, lset, rset, task );
+    }
+
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		       || is_hash_set_v<std::decay_t<RSet>> ) {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    case 3: return merge_vector_jump::apply( lset, rset, task );
+	    case 4: return hash_scalar::apply( lset, rset, task );
+	    default: return hash_vector::apply( lset, rset, task );
+	    }
+	} else {
+	    switch( ins ) {
+	    case 0: return merge_scalar::apply( lset, rset, task );
+	    case 1: return merge_vector::apply( lset, rset, task );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task );
+	    default: return merge_vector_jump::apply( lset, rset, task );
+	    }
+	}
+    }
+};
+
 struct MC_intersect_old {
     template<typename LSet, typename RSet, typename Task>
     static
@@ -3257,6 +3506,10 @@ struct MC_intersect_old {
 struct MC_intersect : public bandit_intersect { };
 #elif MC_INTERSECTION_ALGORITHM == 3
 struct MC_intersect : public merge_scalar { };
+#elif MC_INTERSECTION_ALGORITHM == 4
+struct MC_intersect : public compare_intersections { };
+#elif MC_INTERSECTION_ALGORITHM == 5
+struct MC_intersect : public bandit2_intersect { };
 #else
 struct MC_intersect : public MC_intersect_old { };
 #endif
