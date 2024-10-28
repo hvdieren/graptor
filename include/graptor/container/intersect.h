@@ -3238,17 +3238,18 @@ struct bandit2_intersect {
     template<size_t NUM_PRED>
     class predictor {
 	static constexpr size_t MAX_CLASS = 10;
+	static constexpr size_t MAX_THRESHOLD = 4;
 
     public:
-	size_t predict( size_t cl, size_t cr, size_t ct,
+	size_t predict( size_t cl, size_t cr, size_t ct, set_operation op,
 			size_t eligible ) const {
-	    return m_bandit[cl][cr][ct].next( eligible );
+	    return m_bandit[cl][cr][ct][(int)op].next( eligible );
 	}
 
-	void update( size_t cl, size_t cr, size_t ct,
+	void update( size_t cl, size_t cr, size_t ct, set_operation op,
 		     size_t best_i, uint64_t cycles ) {
 	    float reward = 1.0f / ( float( cycles ) * 1e-4f );
-	    m_bandit[cl][cr][ct].update( best_i, reward );
+	    m_bandit[cl][cr][ct][(int)op].update( best_i, reward );
 	}
 	
 	static size_t get_size_class( size_t sz ) {
@@ -3258,16 +3259,19 @@ struct bandit2_intersect {
 	    return cl;
 	}
 	static size_t get_threshold_class( size_t sz, size_t th ) {
-	    size_t cl = float(MAX_CLASS) * float(th) / float(sz);
-	    if( cl >= MAX_CLASS )
-		cl = MAX_CLASS-1;
+	    size_t cl = float(MAX_THRESHOLD) * float(th) / float(sz);
+	    if( cl >= MAX_THRESHOLD )
+		cl = MAX_THRESHOLD-1;
 	    return cl;
 	}
 
     private:
-	std::array<std::array<
-		       std::array<graptor::bandit_ucb<float,NUM_PRED>,
-				  MAX_CLASS>,MAX_CLASS>,MAX_CLASS> m_bandit;
+	std::array<
+	std::array<
+	    std::array<
+		std::array<
+		    graptor::bandit_ucb<float,NUM_PRED>,
+		    so_N>,MAX_THRESHOLD>,MAX_CLASS>,MAX_CLASS> m_bandit;
     };
 
     template<size_t NUM_PRED>
@@ -3309,7 +3313,8 @@ struct bandit2_intersect {
 	assert( eligibility != 0ull
 		&& "needs some options for intersection algorithm" );
 
-	size_t best_i = bandit.predict( cl, cr, ct, eligibility );
+	size_t best_i =
+	    bandit.predict( cl, cr, ct, Task::operation, eligibility );
 
 	unsigned int pc0;
 	uint64_t tm0 = _rdtscp( &pc0 );
@@ -3319,7 +3324,7 @@ struct bandit2_intersect {
 
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
-	    bandit.update( cl, cr, ct, best_i, tm1 - tm0 );
+	    bandit.update( cl, cr, ct, Task::operation, best_i, tm1 - tm0 );
 
 #if 0
 	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
