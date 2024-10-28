@@ -3238,7 +3238,7 @@ struct bandit2_intersect {
     template<size_t NUM_PRED>
     class predictor {
 	static constexpr size_t MAX_CLASS = 10;
-	static constexpr size_t MAX_THRESHOLD = 32;
+	static constexpr size_t MAX_THRESHOLD = MAX_CLASS * 2; // 32;
 
     public:
 	size_t predict( size_t cl, size_t cr, size_t ct, set_operation op,
@@ -3259,9 +3259,12 @@ struct bandit2_intersect {
 	    return cl;
 	}
 	static size_t get_threshold_class( size_t sz, size_t th, bool is_xp ) {
+/*
 	    size_t cl = float(MAX_THRESHOLD/2) * float(th) / float(sz);
 	    if( cl >= MAX_THRESHOLD/2 )
 		cl = MAX_THRESHOLD/2-1;
+*/
+	    size_t cl = get_size_class( th );
 	    cl <<= 1;
 	    if( is_xp )
 		cl |= 1;
