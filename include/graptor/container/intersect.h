@@ -3238,7 +3238,7 @@ struct bandit2_intersect {
     template<size_t NUM_PRED>
     class predictor {
 	static constexpr size_t MAX_CLASS = 10;
-	static constexpr size_t MAX_THRESHOLD = 4;
+	static constexpr size_t MAX_THRESHOLD = 32;
 
     public:
 	size_t predict( size_t cl, size_t cr, size_t ct, set_operation op,
@@ -3258,10 +3258,13 @@ struct bandit2_intersect {
 		cl = MAX_CLASS-1;
 	    return cl;
 	}
-	static size_t get_threshold_class( size_t sz, size_t th ) {
-	    size_t cl = float(MAX_THRESHOLD) * float(th) / float(sz);
-	    if( cl >= MAX_THRESHOLD )
-		cl = MAX_THRESHOLD-1;
+	static size_t get_threshold_class( size_t sz, size_t th, bool is_xp ) {
+	    size_t cl = float(MAX_THRESHOLD/2) * float(th) / float(sz);
+	    if( cl >= MAX_THRESHOLD/2 )
+		cl = MAX_THRESHOLD/2-1;
+	    cl <<= 1;
+	    if( is_xp )
+		cl |= 1;
 	    return cl;
 	}
 
@@ -3296,9 +3299,12 @@ struct bandit2_intersect {
 	size_t rsz = rset.size();
 	size_t th = task.get_threshold();
 
+	constexpr bool is_xp =
+		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
+		      graptor::is_fast_array_v<std::decay_t<RSet>>;
 	size_t cl = predictor<NUM_PRED>::get_size_class( lsz );
 	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
-	size_t ct = predictor<NUM_PRED>::get_threshold_class( lsz, th );
+	size_t ct = predictor<NUM_PRED>::get_threshold_class( lsz, th, is_xp );
 
 	// Check if hashing is eligible
 	size_t eligibility = 0x3full;
