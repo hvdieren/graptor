@@ -3248,7 +3248,8 @@ struct bandit2_intersect {
 
 	void update( size_t cl, size_t cr, size_t ct, set_operation op,
 		     size_t best_i, uint64_t cycles ) {
-	    float reward = 1.0f / ( float( cycles ) * 1e-4f );
+	    // float reward = 1.0f / ( float( cycles ) * 1e-4f );
+	    float reward = 1.e4 - float( cycles );
 	    m_bandit[cl][cr][ct][(int)op].update( best_i, reward );
 	}
 	
