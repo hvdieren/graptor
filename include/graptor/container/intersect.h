@@ -3246,10 +3246,12 @@ struct bandit2_intersect {
 	    return m_bandit[cl][cr][ct][(int)op].next( eligible );
 	}
 
-	void update( size_t cl, size_t cr, size_t ct, set_operation op,
+	void update( size_t lsz, size_t rsz,
+		     size_t cl, size_t cr, size_t ct, set_operation op,
 		     size_t best_i, uint64_t cycles ) {
 	    // float reward = 1.0f / ( float( cycles ) * 1e-4f );
-	    float reward = 1.e4 - float( cycles );
+	    // float reward = 1.e4 - float( cycles );
+	    float reward = float( lsz + rsz ) / float( cycles );
 	    m_bandit[cl][cr][ct][(int)op].update( best_i, reward );
 	}
 	
@@ -3334,7 +3336,8 @@ struct bandit2_intersect {
 
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
-	    bandit.update( cl, cr, ct, Task::operation, best_i, tm1 - tm0 );
+	    bandit.update( lsz, rsz,
+			   cl, cr, ct, Task::operation, best_i, tm1 - tm0 );
 
 #if 0
 	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
