@@ -3330,7 +3330,8 @@ struct bandit2_intersect {
 
 	unsigned int pc0;
 	uint64_t tm0 = _rdtscp( &pc0 );
-	auto ret = effect( best_i, lset, rset, task );
+	// auto ret = effect( best_i, lset, rset, task );
+	auto ret = MC_intersect_old::apply( lset, rset, task );
 	unsigned int pc1;
 	uint64_t tm1 = _rdtscp( &pc1 );
 
