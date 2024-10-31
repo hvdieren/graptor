@@ -3232,6 +3232,37 @@ template<size_t NUM_PRED>
 thread_local bandit_intersect::predictor<NUM_PRED>
 bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 
+struct MC_intersect_old {
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	// Corner case
+	if( lset.size() == 0 || rset.size() == 0 )
+	    return task.return_value_empty_set();
+
+#if MC_INTERSECTION_ALGORITHM == 1
+	if constexpr ( graptor::is_fast_array_v<std::decay_t<LSet>>
+		       || graptor::is_fast_array_v<std::decay_t<RSet>> )
+	    return hash_vector::apply( lset, rset, task );
+	else if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+			      || is_hash_set_v<std::decay_t<RSet>> )
+	    return hash_scalar::apply( lset, rset, task );
+	else
+	    return merge_vector_jump::apply( lset, rset, task );
+#else
+    if constexpr ( is_hash_set_v<std::decay_t<LSet>>
+		   || is_hash_set_v<std::decay_t<RSet>> ) {
+	if( lset.has_hash_set() || rset.has_hash_set() )
+	    return hash_vector::apply( lset, rset, task );
+	else
+	    return merge_vector_jump::apply( lset, rset, task );
+    } else
+	return merge_vector_jump::apply( lset, rset, task );
+#endif
+    }
+};
+
 struct bandit2_intersect {
     static constexpr size_t NUM_PRED = 6;
 
@@ -3487,37 +3518,6 @@ struct compare_intersections {
 	    default: return merge_vector_jump::apply( lset, rset, task );
 	    }
 	}
-    }
-};
-
-struct MC_intersect_old {
-    template<typename LSet, typename RSet, typename Task>
-    static
-    auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
-	// Corner case
-	if( lset.size() == 0 || rset.size() == 0 )
-	    return task.return_value_empty_set();
-
-#if MC_INTERSECTION_ALGORITHM == 1
-	if constexpr ( graptor::is_fast_array_v<std::decay_t<LSet>>
-		       || graptor::is_fast_array_v<std::decay_t<RSet>> )
-	    return hash_vector::apply( lset, rset, task );
-	else if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-			      || is_hash_set_v<std::decay_t<RSet>> )
-	    return hash_scalar::apply( lset, rset, task );
-	else
-	    return merge_vector_jump::apply( lset, rset, task );
-#else
-    if constexpr ( is_hash_set_v<std::decay_t<LSet>>
-		   || is_hash_set_v<std::decay_t<RSet>> ) {
-	if( lset.has_hash_set() || rset.has_hash_set() )
-	    return hash_vector::apply( lset, rset, task );
-	else
-	    return merge_vector_jump::apply( lset, rset, task );
-    } else
-	return merge_vector_jump::apply( lset, rset, task );
-#endif
     }
 };
 
