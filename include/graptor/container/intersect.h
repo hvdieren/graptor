@@ -3338,10 +3338,16 @@ struct bandit2_intersect {
 	    // Or could interpret as 64 bits, then use pext on bottom
 	    // two values to concatenate, and shift in third value
 
-	    alignas(typename tr::type) uint32_t raw[4] = {
-		(uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
-	    auto a = tr::load( &raw[0] );
+	    // alignas(typename tr::type) uint32_t raw[4] = {
+	    // (uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
+	    // auto a = tr::load( &raw[0] );
+	    auto a = tr::set( (uint32_t)lsz, (uint32_t)rsz,
+			      (uint32_t)th, (uint32_t)0 );
 	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
+	    // Subtract from 2**k-1 == XOR
+	    // ( 32 - a ) >> 1 = ( 31 - a + 1 ) >> 1 ~ ( 31 - a ) >> 1
+	    // Except for case of a == 0, but lsz, rsz != 0 and th == 0
+	    // just needs to be mapped to a particular bandit
 	    auto c = tr::set1( 32 );
 	    auto d = tr::sub( c, b ); // a == 0 -> d == 0
 	    auto e = tr::srli( d, 1 );
@@ -3438,8 +3444,8 @@ struct bandit2_intersect {
 
 	unsigned int pc0;
 	uint64_t tm0 = _rdtscp( &pc0 );
-	// auto ret = effect( best_i, lset, rset, task );
-	auto ret = MC_intersect_old::apply( lset, rset, task );
+	auto ret = effect( best_i, lset, rset, task );
+	// auto ret = MC_intersect_old::apply( lset, rset, task );
 	unsigned int pc1;
 	uint64_t tm1 = _rdtscp( &pc1 );
 
