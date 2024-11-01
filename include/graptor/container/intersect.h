@@ -3268,13 +3268,13 @@ struct bandit2_intersect {
 
     template<size_t NUM_PRED>
     class predictor {
-	static constexpr size_t MAX_CLASS = 8; // avoids imul
+	static constexpr size_t MAX_CLASS = 10; // 8; // avoids imul
 	static constexpr size_t MAX_THRESHOLD = MAX_CLASS * 2; // 32;
 	static constexpr size_t NUM_CASES =
 	    MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
 
     public:
-#if 1
+#if 0
 	size_t predict( size_t idx, set_operation op, size_t eligible ) const {
 	    return m_bandit[idx][(int)op].next( eligible );
 	}
@@ -3345,9 +3345,17 @@ struct bandit2_intersect {
 			      (uint32_t)th, (uint32_t)0 );
 	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
 	    // Subtract from 2**k-1 == XOR
-	    // ( 32 - a ) >> 1 = ( 31 - a + 1 ) >> 1 ~ ( 31 - a ) >> 1
-	    // Except for case of a == 0, but lsz, rsz != 0 and th == 0
-	    // just needs to be mapped to a particular bandit
+	    // ( 32 - b ) >> 1 = ( 31 - b + 1 ) >> 1 ~ ( 31 - b ) >> 1
+	    // Except for case of b == 0, but lsz, rsz != 0 and th == 0
+	    // which will now be mapped onto the same index as the largest of
+	    // thresholds.
+	    // min( ( 32 - b ) / 2, M ) = min( 32 - b, 2M ) / 2
+	    // = ( 32 - max( b, 32 - 2M ) ) / 2
+	    // = 16 - max( b, 32 - 2M ) / 2
+	    // As we are interested to map values onto bandits, and
+	    // max( b, 32 - 2M ) / 2 is in the range [8,16), we can
+	    // also kill the top bit instead of subtracting from 16:
+	    // ( max( b, 32 - 2M ) / 2 ) & 0x7
 	    auto c = tr::set1( 32 );
 	    auto d = tr::sub( c, b ); // a == 0 -> d == 0
 	    auto e = tr::srli( d, 1 );
@@ -3372,7 +3380,7 @@ struct bandit2_intersect {
 	}
 
     private:
-#if 1
+#if 0
 	std::array<std::array<
 		       graptor::bandit_ucb<float,NUM_PRED>,
 		       so_N>,NUM_CASES> m_bandit;
@@ -3411,7 +3419,7 @@ struct bandit2_intersect {
 	constexpr bool is_xp =
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
-#if 1
+#if 0
 	size_t idx =
 	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
 #else
@@ -3435,7 +3443,7 @@ struct bandit2_intersect {
 
 	size_t best_i =
 	    bandit.predict(
-#if 1
+#if 0
 		idx,
 #else
 		cl, cr, ct,
