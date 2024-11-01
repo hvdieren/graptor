@@ -609,6 +609,30 @@ public:
     static auto castfp( type a ) { return _mm_castsi128_ps( a ); }
     static type castint( type a ) { return a; }
 
+    template<typename ReturnTy = member_type>
+    static auto lzcnt( type a ) {
+#if __AVX512VL__
+	type v = _mm_lzcnt_epi32( a );
+#else
+	// https://stackoverflow.com/questions/58823140/count-leading-zero-bits-for-each-element-in-avx2-vector-emulate-mm256-lzcnt-ep/58827596#58827596
+	// prevent value from being rounded up to the next power of two
+	type v = a;
+	v = _mm_andnot_si128(_mm_srli_epi32(v, 8), v); // keep 8 MSB
+
+	v = _mm_castps_si128(_mm_cvtepi32_ps(v)); // convert an integer to float
+	v = _mm_srli_epi32(v, 23); // shift down the exponent
+	v = _mm_subs_epu16(_mm_set1_epi32(158), v); // undo bias
+	const type c32 = slli( setoneval(), 5 );
+	v = _mm_min_epi16(v, c32); // clamp at 32
+#endif
+	if constexpr ( sizeof(ReturnTy) == W )
+	    return v;
+	else {
+	    assert( 0 && "NYI" );
+	    return setzero();
+	}
+    }
+
     static type permute_evenodd( type a ) {
 	// Even/odd interleaving of the elements of a
 	const type * shuf
