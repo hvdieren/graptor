@@ -3274,7 +3274,7 @@ struct bandit2_intersect {
 	    MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
 
     public:
-#if 0
+#if 1
 	size_t predict( size_t idx, set_operation op, size_t eligible ) const {
 	    return m_bandit[idx][(int)op].next( eligible );
 	}
@@ -3366,7 +3366,7 @@ struct bandit2_intersect {
 	}
 
     private:
-#if 0
+#if 1
 	std::array<std::array<
 		       graptor::bandit_ucb<float,NUM_PRED>,
 		       so_N>,NUM_CASES> m_bandit;
@@ -3405,7 +3405,7 @@ struct bandit2_intersect {
 	constexpr bool is_xp =
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
-#if 0
+#if 1
 	size_t idx =
 	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
 #else
@@ -3429,7 +3429,7 @@ struct bandit2_intersect {
 
 	size_t best_i =
 	    bandit.predict(
-#if 0
+#if 1
 		idx,
 #else
 		cl, cr, ct,
@@ -3446,7 +3446,7 @@ struct bandit2_intersect {
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
 	    bandit.update(
-#if 0
+#if 1
 		idx,
 #else
 		cl, cr, ct,
