@@ -3268,23 +3268,37 @@ struct bandit2_intersect {
 
     template<size_t NUM_PRED>
     class predictor {
-	static constexpr size_t MAX_CLASS = 10;
+	static constexpr size_t MAX_CLASS = 8; // avoids imul
 	static constexpr size_t MAX_THRESHOLD = MAX_CLASS * 2; // 32;
+	static constexpr size_t NUM_CASES =
+	    MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
 
     public:
+#if 0
+	size_t predict( size_t idx, set_operation op, size_t eligible ) const {
+	    return m_bandit[idx][(int)op].next( eligible );
+	}
+
+	void update( size_t idx, set_operation op, size_t lsz, size_t rsz,
+		     size_t best_i, uint64_t cycles ) {
+	    float reward = float( lsz + rsz ) / float( cycles );
+	    m_bandit[idx][(int)op].update( best_i, reward );
+	}
+#else
 	size_t predict( size_t cl, size_t cr, size_t ct, set_operation op,
 			size_t eligible ) const {
 	    return m_bandit[cl][cr][ct][(int)op].next( eligible );
 	}
 
-	void update( size_t lsz, size_t rsz,
-		     size_t cl, size_t cr, size_t ct, set_operation op,
+	void update( size_t cl, size_t cr, size_t ct, set_operation op,
+		     size_t lsz, size_t rsz,
 		     size_t best_i, uint64_t cycles ) {
 	    // float reward = 1.0f / ( float( cycles ) * 1e-4f );
 	    // float reward = 1.e4 - float( cycles );
 	    float reward = float( lsz + rsz ) / float( cycles );
 	    m_bandit[cl][cr][ct][(int)op].update( best_i, reward );
 	}
+#endif
 	
 	static size_t get_size_class( size_t sz ) {
 	    size_t cl = sz == 0 ? 0 : rt_ilog2( sz ) / 2;
@@ -3305,13 +3319,65 @@ struct bandit2_intersect {
 	    return cl;
 	}
 
+	static size_t
+	get_index( size_t lsz, size_t rsz, size_t th, bool is_xp ) {
+	    using tr = vector_type_traits_vl<uint32_t,4>;
+	    using trw = vector_type_traits_vl<uint64_t,2>;
+
+	    // The values of sizes are in the range of 32 bits
+	    // Their lzcnt is in the range of (0,32], maximum 0x20
+	    // 0 is unlikely as this would mean 2**31 elements in a set
+	    // Subtract from 32 brings us to [0,32) --> 5 bits
+	    // Clamp at 2*MAX_CLASS-1 == 15: [0,15) --> nibble
+	    // Shift right by 1 puts the value in [0,7) --> 3 bits
+	    // Could collect 3 lowest bytes of each lane into one word
+	    // by bsrli 2x and bitwise or 2x
+	    // Then use bit gather instruction to construct scalar
+	    // index into bandit array
+	    // That allows also to put is_xp bit in there easily
+	    // Or could interpret as 64 bits, then use pext on bottom
+	    // two values to concatenate, and shift in third value
+
+	    alignas(typename tr::type) uint32_t raw[4] = {
+		(uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
+	    auto a = tr::load( &raw[0] );
+	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
+	    auto c = tr::set1( 32 );
+	    auto d = tr::sub( c, b ); // a == 0 -> d == 0
+	    auto e = tr::srli( d, 1 );
+	    auto f = tr::set1( MAX_CLASS-1 );
+	    auto h = tr::min( e, f );
+
+	    uint64_t i = trw::lane0( h );
+	    uint64_t j = trw::lane1( h );
+	    uint64_t k = j << 3;
+	    uint64_t l = i | k;
+	    uint64_t m = _pext_u64( l, 0x7000003f );
+	    uint64_t n = m << 1;
+/*
+	    uint64_t ll = i << 4;
+	    uint64_t lk = i >> ( 32 - 7 );
+	    uint64_t ul = j << 1;
+	    uint64_t n = ( ul | lk ) & 0x3ff; // 10 bits
+*/
+	    n |= ( is_xp & 1 ); 
+
+	    return n;
+	}
+
     private:
+#if 0
+	std::array<std::array<
+		       graptor::bandit_ucb<float,NUM_PRED>,
+		       so_N>,NUM_CASES> m_bandit;
+#else
 	std::array<
 	std::array<
 	    std::array<
 		std::array<
 		    graptor::bandit_ucb<float,NUM_PRED>,
 		    so_N>,MAX_THRESHOLD>,MAX_CLASS>,MAX_CLASS> m_bandit;
+#endif
     };
 
     template<size_t NUM_PRED>
@@ -3339,9 +3405,14 @@ struct bandit2_intersect {
 	constexpr bool is_xp =
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
+#if 0
+	size_t idx =
+	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
+#else
 	size_t cl = predictor<NUM_PRED>::get_size_class( lsz );
 	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
 	size_t ct = predictor<NUM_PRED>::get_threshold_class( lsz, th, is_xp );
+#endif
 
 	// Check if hashing is eligible
 	size_t eligibility = 0x3full;
@@ -3357,7 +3428,13 @@ struct bandit2_intersect {
 		&& "needs some options for intersection algorithm" );
 
 	size_t best_i =
-	    bandit.predict( cl, cr, ct, Task::operation, eligibility );
+	    bandit.predict(
+#if 0
+		idx,
+#else
+		cl, cr, ct,
+#endif
+		Task::operation, eligibility );
 
 	unsigned int pc0;
 	uint64_t tm0 = _rdtscp( &pc0 );
@@ -3368,8 +3445,13 @@ struct bandit2_intersect {
 
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
-	    bandit.update( lsz, rsz,
-			   cl, cr, ct, Task::operation, best_i, tm1 - tm0 );
+	    bandit.update(
+#if 0
+		idx,
+#else
+		cl, cr, ct,
+#endif
+		Task::operation, lsz, rsz, best_i, tm1 - tm0 );
 
 #if 0
 	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
