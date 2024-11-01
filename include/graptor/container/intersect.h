@@ -32,7 +32,7 @@
 #endif
 
 #ifndef ABLATION_DISABLE_ADV_INTERSECT
-#define ABLATION_DISABLE_ADV_INTERSECT 0
+#define ABLATION_DISABLE_ADV_INTERSECT 1
 #endif
 
 #ifndef DEBUG_INTERSECTIONS
@@ -3268,13 +3268,13 @@ struct bandit2_intersect {
 
     template<size_t NUM_PRED>
     class predictor {
-	static constexpr size_t MAX_CLASS = 10; // 8; // avoids imul
+	static constexpr size_t MAX_CLASS = 8; // 10; // 8; // avoids imul
 	static constexpr size_t MAX_THRESHOLD = MAX_CLASS * 2; // 32;
 	static constexpr size_t NUM_CASES =
 	    MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
 
     public:
-#if 0
+#if 1
 	size_t predict( size_t idx, set_operation op, size_t eligible ) const {
 	    return m_bandit[idx][(int)op].next( eligible );
 	}
@@ -3341,7 +3341,7 @@ struct bandit2_intersect {
 	    // alignas(typename tr::type) uint32_t raw[4] = {
 	    // (uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
 	    // auto a = tr::load( &raw[0] );
-	    auto a = tr::set( (uint32_t)lsz, (uint32_t)rsz,
+	    auto a = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
 			      (uint32_t)th, (uint32_t)0 );
 	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
 	    // Subtract from 2**k-1 == XOR
@@ -3366,7 +3366,7 @@ struct bandit2_intersect {
 	    uint64_t j = trw::lane1( h );
 	    uint64_t k = j << 3;
 	    uint64_t l = i | k;
-	    uint64_t m = _pext_u64( l, 0x7000003f );
+	    uint64_t m = _pext_u64( l, 0x70000003f );
 	    uint64_t n = m << 1;
 /*
 	    uint64_t ll = i << 4;
@@ -3380,7 +3380,7 @@ struct bandit2_intersect {
 	}
 
     private:
-#if 0
+#if 1
 	std::array<std::array<
 		       graptor::bandit_ucb<float,NUM_PRED>,
 		       so_N>,NUM_CASES> m_bandit;
@@ -3419,7 +3419,7 @@ struct bandit2_intersect {
 	constexpr bool is_xp =
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
-#if 0
+#if 1
 	size_t idx =
 	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
 #else
@@ -3443,7 +3443,7 @@ struct bandit2_intersect {
 
 	size_t best_i =
 	    bandit.predict(
-#if 0
+#if 1
 		idx,
 #else
 		cl, cr, ct,
@@ -3469,7 +3469,8 @@ struct bandit2_intersect {
 
 #if 0
 	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
-		      << " cl=" << cl << " cr=" << cr
+		// << " cl=" << cl << " cr=" << cr
+		      << " idx=" << idx
 		      << " cy=" << (tm1-tm0)
 		      << " eligible=" << std::hex << eligibility << std::dec
 		      << " predict=" << best_i << ' ';
