@@ -3322,7 +3322,8 @@ struct bandit2_intersect {
 	static size_t
 	get_index( size_t lsz, size_t rsz, size_t th, bool is_xp ) {
 	    using tr = vector_type_traits_vl<uint32_t,4>;
-	    using trw = vector_type_traits_vl<uint64_t,2>;
+	    using trq = vector_type_traits_vl<uint64_t,2>;
+	    using trb = vector_type_traits_vl<uint8_t,16>;
 
 	    // The values of sizes are in the range of 32 bits
 	    // Their lzcnt is in the range of (0,32], maximum 0x20
@@ -3330,19 +3331,45 @@ struct bandit2_intersect {
 	    // Subtract from 32 brings us to [0,32) --> 5 bits
 	    // Clamp at 2*MAX_CLASS-1 == 15: [0,15) --> nibble
 	    // Shift right by 1 puts the value in [0,7) --> 3 bits
-	    // Could collect 3 lowest bytes of each lane into one word
-	    // by bsrli 2x and bitwise or 2x
-	    // Then use bit gather instruction to construct scalar
-	    // index into bandit array
-	    // That allows also to put is_xp bit in there easily
-	    // Or could interpret as 64 bits, then use pext on bottom
-	    // two values to concatenate, and shift in third value
+
+	    // Precise bucket boundaries are not essential. We can also
+	    // have slightly different boundaries. General idea is to map
+	    // set sizes (values in the range [0,2**31-1]) in groups such that
+	    // those with similar order of magnitude fall in the same bucket.
+	    // Aiming to have 2 binary orders of magnitude grouped.
+	    // Note that very small sets never appear, must be at least above
+	    // some threshold, e.g., 16 or 64 (determined elsewhere).
+	    // e.g.:
+	    // 0-3=2**0-2**2: 0
+	    // 4-15=2**2-2**4: 0
+	    // 16-63=4-6: 1
+	    // 64-255=6-8: 2
+	    // 256-2047=8-10: 3
+	    // etc.
+	    // bkt | range         | lzcnt |   mag | /2 | clamp |
+	    // 0   | [2**0,2**2)   | 30-31 |   0-1 |  0 |    id |
+	    // 1   | [2**2,2**4)   | 28-29 |   2-3 |  1 |    id |
+	    // 2   | [2**4,2**6)   | 26-27 |   4-5 |  2 |    id |
+	    // ...
+	    // 5   | [2**10,2**12) | 20-21 | 10-11 |  5 |    id |
+	    // 6   | [2**12,2**14) | 18-19 | 12-13 |  6 |    id |
+	    // 7   | [2**14,2**16) | 16-17 | 14-15 |  7 |    id |
+	    // 7   | [2**16,2**18) | 14-15 | 16-17 |  8 |     7 |
+	    // lzcnt must be at least 16, so can also apply min to value itself:
+	    // min( 2**16-1, value ).
+	    // Creating a mask can be done with setone() + srli(16).
+	    // which takes two cycles,
+	    // whereas set1 (mov cst to reg + broadcastsd) takes several
+	    // cycles in the broadcast.
+	    // Question is why the compiler prefers to store the mask in
+	    // memory.
 
 	    // alignas(typename tr::type) uint32_t raw[4] = {
 	    // (uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
 	    // auto a = tr::load( &raw[0] );
 	    auto a = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
 			      (uint32_t)th, (uint32_t)0 );
+#if 0
 	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
 	    // Subtract from 2**k-1 == XOR
 	    // ( 32 - b ) >> 1 = ( 31 - b + 1 ) >> 1 ~ ( 31 - b ) >> 1
@@ -3361,21 +3388,65 @@ struct bandit2_intersect {
 	    auto e = tr::srli( d, 1 );
 	    auto f = tr::set1( MAX_CLASS-1 );
 	    auto h = tr::min( e, f );
+#else
+	    // Trying to keep masks in register, no memory transfers
+	    // auto one = tr::setone();
+	    // auto one4 = tr::srli( one, 28 );
+	    // auto oneK = tr::srli( one4, 1 ); // MAX_CLASS == 8
+	    auto b = tr::lzcnt( a );
+	    auto c = tr::srli( b, 1 );
+	    // auto d = tr::bitwise_xor( one4, c ); // 32-lzcnt(a) if a != 0
+	    // auto h = tr::min( d, oneK );
+	    // subtract from 16 (value 16 does not appear) and cap at 7
+	    // 0 bytes remain 0
+	    // gcc stores the lut in memory, but the load occurs before the
+	    // lzcnt, so latency should be overlapped.
+	    auto lut = trb::set(
+		0, 1, 2, 3, 4, 5, 6, 7,
+		7, 7, 7, 7, 7, 7, 7, 0
+	    );
+	    auto h = trb::shuffle( lut, c );
+#endif
 
-	    uint64_t i = trw::lane0( h );
-	    uint64_t j = trw::lane1( h );
-	    uint64_t k = j << 3;
-	    uint64_t l = i | k;
-	    uint64_t m = _pext_u64( l, 0x70000003f );
-	    uint64_t n = m << 1;
-/*
-	    uint64_t ll = i << 4;
-	    uint64_t lk = i >> ( 32 - 7 );
-	    uint64_t ul = j << 1;
-	    uint64_t n = ( ul | lk ) & 0x3ff; // 10 bits
-*/
+	    // mm_shuffle_epi8
+	    // control mask 0x .. .. .. .. .. .. .. .. .. .. .. .. 08 04 00 80
+	    // maps         0x .. .. .. .. .. .. .. AA .. .. .. BB .. .. .. CC
+	    // into         0x                                     AA BB CC 00
+	    // Then take lowest 32 bits, set is_xp, and apply pext
+	    //
+	    // Alternative
+	    // mm_shufflelo_epi16
+	    // control mask 0x 11 10 01 11 // but no ability to create zero
+	    // apart from assuming that the highest 16 bits will be zero
+	    // (only need zeroes because of need to set is_xp)
+	    // maps         0x .. .. .. .. .. .. .. AA .. .. .. BB .. .. .. CC
+	    // into         0x .. .. .. .. .. .. .. AA .. .. .. .. .. BB CC ..
+	    // Then take lowest 32 bits, 2nd 32bits, set is_xp, and apply pext
+
+#if 0
+	    // Downside of this variant is that the compiler stores the
+	    // shuffle mask in memory, which increases instruction latency.
+	    auto msk = trq::setl0( 0x08040080 );
+	    auto sh = trb::shuffle( h, msk );
+	    uint64_t w = trq::lane0( sh );
+	    // pext32 will be followed by mov eax,eax to clear the top
+	    // 32 bits in rax, such that it can be used in subsequent address
+	    // calculations. pext32 and pext64 have same latency, so avoid
+	    // that extra instruction.
+	    uint64_t n = _pext_u64( w, 0x07070701 );
 	    n |= ( is_xp & 1 ); 
-
+#else
+	    // maps 0x .. .. .. .. .. .. .. AA .. .. .. BB .. .. .. CC
+	    // into 0x .. 00 .. 00 .. 00 .. 00 .. 00 .. 00 .. 00 AA 00
+	    // Assuming that the high part of h has only one non-zero byte,
+	    // then sh will have only one (possibly) non-zero byte
+	    auto sh = trb::unpackhi( trb::setzero(), h );
+	    auto x = trb::bitwise_or( sh, h );
+	    uint64_t w = trq::lane0( x );
+	    uint64_t n = _pext_u64( w, 0x700000707 );
+	    if( is_xp )
+		n |= uint64_t(1) << 9;
+#endif
 	    return n;
 	}
 
@@ -3403,9 +3474,11 @@ struct bandit2_intersect {
     static
     auto
     apply( LSet && lset, RSet && rset, Task & task ) {
-	// Corner case
-	if( lset.size() == 0 || rset.size() == 0 )
-	    return task.return_value_empty_set();
+	// Corner case: zero-sized sets
+	// Omit effort on very small sets
+	if( lset.size() <= 16 || rset.size() <= 16 )
+	    return MC_intersect_old::apply( lset, rset, task );
+	    // return task.return_value_empty_set();
 
 	predictor<NUM_PRED> & bandit = predictor_holder<NUM_PRED>::per_thread_predictor;
 
