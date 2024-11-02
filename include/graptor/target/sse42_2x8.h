@@ -469,6 +469,10 @@ public:
 	return _mm_srai_epi16( a, s );
     }
 
+    static type shufflelo( type a, int m ) {
+	return _mm_shufflelo_epi16( a, m );
+    }
+
     // Don't know what 2-byte floats would look like, so keep binary pattern.
     static auto castfp( type a ) { return a; }
     static type castint( type a ) { return a; }
