@@ -171,6 +171,12 @@ public:
 	    assert( 0 && "NYI - should not occur" );
     }
 
+    static type unpackhi( type a, type b ) {
+	// Bytes in upper half of a go into even lanes, bytes in upper half
+	// of b are interleaved in odd lanes
+	return _mm_unpackhi_epi8( a, b );
+    }
+
     static type set_pair( int hi, int lo ) {
 	if constexpr ( VL == 16 ) {
 	    static_assert( W == 1, "intended only for VL == 8, W==1" );
@@ -588,6 +594,10 @@ public:
     }
     static type srlv( type a, type sh ) {
 	assert( 0 && "NYI" );
+    }
+
+    static type shuffle( type a, type m ) {
+	return _mm_shuffle_epi8( a, m );
     }
 
     static type load( const member_type *a ) {
