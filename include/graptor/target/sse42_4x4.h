@@ -134,6 +134,10 @@ public:
 		     member_type a1, member_type a0 ) {
 	return _mm_set_epi32( a3, a2, a1, a0 );
     }
+    static type setr( member_type a0, member_type a1,
+		     member_type a2, member_type a3 ) {
+	return _mm_set_epi32( a3, a2, a1, a0 );
+    }
     static type setl0( member_type a ) {
 	return _mm_cvtsi32_si128( a );
     }
