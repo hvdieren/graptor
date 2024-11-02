@@ -116,6 +116,7 @@ public:
 
     static type setzero() { return _mm256_setzero_ps(); }
     static type set1( member_type a ) { return _mm256_set1_ps( a ); }
+    static type set1( __m128 a ) { return _mm256_broadcastss_ps( a ); }
     static type set_pair( __m128 hi, __m128 lo ) {
 	return _mm256_insertf128_ps( _mm256_castps128_ps256( lo ), hi, 1 );
     }
@@ -141,6 +142,14 @@ public:
 	type a2 = _mm256_permute2f128_ps( b1, b1, 0b00000001 );
 	// One more time max:
 	return _mm256_max_ps( a2, b1 ); // AVX
+    }
+
+    static type getexp( type a ) {
+#if __AVX512VL__
+	return _mm256_getexp_ps( a );
+#else
+	assert( 0 && "NYI" );
+#endif
     }
 
     static itype castint( type a ) { return _mm256_castps_si256( a ); }
