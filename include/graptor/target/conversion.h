@@ -864,6 +864,10 @@ struct bf_conversion_traits {
 #include "graptor/target/convert/cvt_8f_4i.h"
 #include "graptor/target/convert/cvt_8f_4f.h"
 
+#include "graptor/target/convert/cvt_2f_2i.h"
+#include "graptor/target/convert/cvt_2i_2f.h"
+#include "graptor/target/convert/cvt_4i_2f.h"
+
 namespace conversion {
 
 
