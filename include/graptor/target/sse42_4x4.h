@@ -111,6 +111,12 @@ public:
 	return g;
 	*/
     }
+    static type setlane1( type a, member_type b ) {
+	return _mm_insert_epi32( a, b, 1 );
+    }
+    static type setlane2( type a, member_type b ) {
+	return _mm_insert_epi32( a, b, 2 );
+    }
 
     static type setone_shr1() {
 	auto one = setone();
@@ -606,7 +612,8 @@ public:
 	    return _mm_srai_epi32( a, s );
     }
 
-    static type shuffle( type a, unsigned int p ) {
+    template<unsigned int p>
+    static type shuffle( type a ) {
 	return _mm_shuffle_epi32( a, p );
     }
 

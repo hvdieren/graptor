@@ -321,7 +321,7 @@ public:
 
     static type gather( const member_type *a, itype b ) {
 #if __AVX2__
-	return _mm_i64gather_epi64( (const long long int *)a, b, size );
+	return _mm_i64gather_epi64( (const long long int *)a, b, W );
 #else
 	return set( a[int_traits::lane1(b)], a[int_traits::lane0(b)] );
 #endif
@@ -355,7 +355,7 @@ public:
 */
     static type gather( const member_type *a, itype b, vmask_type vmask ) {
 #if __AVX2__
-	return _mm_mask_i64gather_epi64( setzero(), (const long long int *)a, b, vmask, size );
+	return _mm_mask_i64gather_epi64( setzero(), (const long long int *)a, b, vmask, W );
 #else
 	return set(
 	    int_traits::lane1(vmask) ? a[int_traits::lane1(b)] : member_type(0),
@@ -373,7 +373,7 @@ public:
 #if __AVX2__
 	return _mm_mask_i32gather_epi64(
 	    setzero(), (const long long int *)a,
-	    _mm_cvtsi64_si128( _mm_cvtm64_si64( b ) ), vmask, size );
+	    _mm_cvtsi64_si128( _mm_cvtm64_si64( b ) ), vmask, W );
 #else
 	using half_itraits = mmx_4x2<uint32_t>;
 	return set(
@@ -388,7 +388,7 @@ public:
 	__m128i v = _mm_unpacklo_epi32( m, m );
 	return _mm_mask_i32gather_epi64(
 	    setzero(), (const long long int *)a,
-	    _mm_cvtsi64_si128( _mm_cvtm64_si64( b ) ), v, size );
+	    _mm_cvtsi64_si128( _mm_cvtm64_si64( b ) ), v, W );
 #else
 	using half_itraits = mmx_4x2<uint32_t>;
 	return set(

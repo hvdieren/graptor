@@ -50,7 +50,8 @@ struct sse42_bitwise {
 	return _mm_insert_epi64( _mm_cvtsi64_si128( lo ), hi, 1 );
     }
 
-    static type bsrli( type a, unsigned int bs ) {
+    template<unsigned int bs>
+    static type bsrli( type a ) {
 	return _mm_bsrli_si128( a, bs );
     }
 

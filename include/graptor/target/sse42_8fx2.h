@@ -133,7 +133,7 @@ struct sse42_8fx2 {
     static type
     gather( const member_type *a, itype b ) {
 #if __AVX2__
-	return _mm_i32gather_pd( a, b, size );
+	return _mm_i32gather_pd( a, b, W );
 #else
 	using idx_traits = int_traits;
 	// vector_type_traits_vl<typename int_type_of_size<sizeof(itype)/vlen>::type, vlen>;
@@ -157,7 +157,7 @@ struct sse42_8fx2 {
     gather( const member_type *a, itype b, vmask_type vmask ) {
 #if __AVX2__
 	return _mm_mask_i32gather_pd( setzero(), a, b,
-				      _mm_castsi128_pd( vmask ), size );
+				      _mm_castsi128_pd( vmask ), W );
 #else
 	return set(
 	    int_traits::lane1(vmask) ? a[int_traits::lane1(b)] : member_type(0),

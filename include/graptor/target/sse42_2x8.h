@@ -17,6 +17,10 @@
 #include "graptor/target/sse42_bitwise.h"
 #endif // __SSE4_2__
 
+#if __AVX512F__
+#include "graptor/target/avx512_8x8.h"
+#endif
+
 alignas(64) extern const uint8_t conversion_4fx8_cfp16x8_shuffle[32];
 alignas(64) extern const uint8_t conversion_2x8_1x8_shuffle[32];
 alignas(64) extern const uint16_t increasing_sequence_epi16[16];
@@ -469,7 +473,8 @@ public:
 	return _mm_srai_epi16( a, s );
     }
 
-    static type shufflelo( type a, int m ) {
+    template<unsigned int m>
+    static type shufflelo( type a ) {
 	return _mm_shufflelo_epi16( a, m );
     }
 
@@ -596,7 +601,7 @@ public:
 #endif // __AVX2__
 #if __AVX512F__
     static type
-    gather( member_type *a, typename vector_type_traits_vl<uint64_t,vlen>::type b ) {
+    gather( member_type *a, typename avx512_8x8<uint64_t>::type b ) {
 	using itraits = vector_type_traits<uint64_t,vlen>;
 	return set( a[itraits::lane7(b)], a[itraits::lane6(b)],
 		    a[itraits::lane5(b)], a[itraits::lane4(b)],
@@ -685,7 +690,7 @@ public:
 #endif // __AVX2__
 #if __AVX512F__
     static void
-    scatter( member_type *a, typename vector_type_traits_vl<uint64_t,vlen>::type b, type c ) {
+    scatter( member_type *a, typename avx512_8x8<uint64_t>::type b, type c ) {
 	using itraits = vector_type_traits_vl<uint64_t,vlen>;
 	a[itraits::lane0(b)] = lane0(c);
 	a[itraits::lane1(b)] = lane1(c);
