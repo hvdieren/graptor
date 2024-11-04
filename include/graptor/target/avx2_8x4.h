@@ -636,7 +636,7 @@ public:
 
     static void scatter( member_type *a, itype b, type c ) {
 #if __AVX512VL__
-	_mm_i64scatter_epi64( a, b, c, W );
+	_mm256_i64scatter_epi64( a, b, c, W );
 #else
 	a[int_traits::lane0(b)] = lane0(c);
 	a[int_traits::lane1(b)] = lane1(c);
@@ -689,7 +689,7 @@ public:
 	using itraits = sse42_4x4<uint32_t>;
 	using mtraits = mask_type_traits<4>;
 	__mmask8 m = _mm_movemask_ps( _mm_castsi128_ps( mask ) );
-	_mm_mask_i32scatter_epi64( a, m, b, c, W );
+	_mm256_mask_i32scatter_epi64( a, m, b, c, W );
 #else
 	using itraits = sse42_4x4<uint32_t>;
 	if( itraits::lane0(mask) ) a[itraits::lane0(b)] = lane0(c);
