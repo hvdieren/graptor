@@ -211,11 +211,13 @@ public:
     }
     [[deprecated("avoid this method in order to make m_layout constexpr")]]
     void set( type data ) { m_data = data; }
+#if 0
     [[deprecated("avoid this method in order to make m_layout constexpr")]]
     void setl0( element_type data ) {
 	m_data = traits::setl0( data );
 	m_layout = lo_unknown;
     }
+#endif
 
     // Unsafe method to update contents. Assumes caller guarantees that
     // semantics remain correct.

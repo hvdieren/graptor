@@ -400,7 +400,7 @@ struct wrap_filter {
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type1 = typename Operator::template ptrset<map_type0>::map_type;
 	using map_type2 =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_new_f,StoreTy,map_type1>::map_type;
@@ -504,7 +504,7 @@ struct wrap_frontier_read_m {
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type1 = typename Operator::template ptrset<map_type0>::map_type;
 	using map_type =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_old_f,StoreTy,map_type1>::map_type;
@@ -584,7 +584,7 @@ struct wrap_frontier_read_m<Operator,frontier_type::ft_bit2,VL> {
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type1 = typename Operator::template ptrset<map_type0>::map_type;
 	using map_type =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_old_f,StoreTy,map_type1>::map_type;

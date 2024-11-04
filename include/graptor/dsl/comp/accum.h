@@ -46,9 +46,11 @@ struct accumulator_info {
     using value_type = typename orig_redop_type::val_type::type;
     using orig_ref_type = typename orig_redop_type::ref_type;
 
+    static constexpr short aid = cid_to_aid( cid );
     using array_type = 
 	array_ro<value_type, VID,
-		 cid_to_aid(cid), array_encoding<value_type>,
+		 aid, // cid_to_aid(cid),
+		 array_encoding<value_type>,
 		 false>;
 
     accumulator_info( R red )

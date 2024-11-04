@@ -923,7 +923,7 @@ struct evaluator {
 	    = expr::detail::recommended_vectorization<type_list,1,1,true>;
 #endif
 	static constexpr short VL = recommendation::vlen;
-	using ATrVL = typename ATr::rebindVL<VL>::type;
+	using ATrVL = typename ATr::template rebindVL<VL>::type;
 	using ATy = typename ATr::member_type;
 
 	// Loop index

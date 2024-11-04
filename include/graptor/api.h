@@ -413,7 +413,7 @@ struct arg_filter_op {
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type1 = typename Operator::template ptrset<map_type0>::map_type;
 	using map_type =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_old_f,
@@ -582,7 +582,7 @@ struct arg_filter_a_op {
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename Operator::ptrset<map_type0>::map_type;
+	using map_type1 = typename Operator::template ptrset<map_type0>::map_type;
 	// using map_type =
 	// typename expr::ast_ptrset::merge_maps<map_type1, ptrset_ty>::type;
 	using mexpr_type = decltype( ((std::decay_t<Fn>*)nullptr)->operator()( expr::value<simd::ty<VID,1>,expr::vk_vid>() ) );
@@ -909,7 +909,7 @@ struct arg_record_reduction_op {
     template<typename map_type0>
     struct ptrset {
 	using map_type1 =
-	    typename Operator::ptrset<map_type0>::map_type;
+	    typename Operator::template ptrset<map_type0>::map_type;
 	using map_type2 =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_new,
@@ -1059,7 +1059,7 @@ struct arg_record_reduction_op<
     template<typename map_type0>
     struct ptrset {
 	using map_type1 =
-	    typename Operator::ptrset<map_type0>::map_type;
+	    typename Operator::template ptrset<map_type0>::map_type;
 	using map_type2 =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_nacte, EID, map_type1>::map_type;
@@ -1127,6 +1127,10 @@ struct arg_record_method_op {
 	typename expr::array_select<ftype,StoreTy,VID,expr::aid_frontier_new_f,
 				    encoding>::type;
     using ptrset_ty = PtrSet;
+
+    using method_expr = decltype(
+	static_cast<self_type*>( nullptr )->
+	m_method( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
     
     static constexpr bool is_scan = true;
     static constexpr bool defines_frontier = true;
@@ -1259,11 +1263,11 @@ struct arg_record_method_op {
 
     template<typename map_type0>
     struct ptrset {
-	using method_expr = decltype(
-	    static_cast<self_type*>( nullptr )->
-	    m_method( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
+	// using method_expr = decltype(
+	// static_cast<self_type*>( nullptr )->
+	// m_method( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
 	using map_type1 =
-	    typename Operator::ptrset<map_type0>::map_type;
+	    typename Operator::template ptrset<map_type0>::map_type;
 	using map_type2 =
 	    typename expr::ast_ptrset::ptrset_pointer<
 	    expr::aid_frontier_nacte, EID, map_type1>::map_type;

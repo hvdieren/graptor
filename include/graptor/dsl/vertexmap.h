@@ -140,8 +140,8 @@ struct AppendVOpToVOp
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename VOperator0::ptrset<map_type0>::map_type;
-	using map_type = typename VOperator1::ptrset<map_type1>::map_type;
+	using map_type1 = typename VOperator0::template ptrset<map_type0>::map_type;
+	using map_type = typename VOperator1::template ptrset<map_type1>::map_type;
 
 
 	template<typename MapTy>
@@ -226,9 +226,9 @@ struct AppendVOpToEOp
 
     template<typename map_type0>
     struct ptrset {
-	using map_type1 = typename EOperator::ptrset<map_type0>::map_type;
+	using map_type1 = typename EOperator::template ptrset<map_type0>::map_type;
 	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type1>, "check 0" );
-	using map_type = typename VOperator::ptrset<map_type1>::map_type;
+	using map_type = typename VOperator::template ptrset<map_type1>::map_type;
 	static_assert( expr::map_contains_v<(unsigned)expr::aid_key(expr::array_aid(expr::aid_eweight)),map_type>, "check 1" );
 
 
