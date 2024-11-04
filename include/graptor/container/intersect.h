@@ -3180,10 +3180,10 @@ struct bandit_intersect {
 	size_t best_i = bandit.predict( cl, cr, eligibility );
 
 	unsigned int pc0;
-	uint64_t tm0 = _rdtscp( &pc0 );
+	uint64_t tm0 = __rdtscp( &pc0 );
 	auto ret = effect( best_i, lset, rset, task );
 	unsigned int pc1;
-	uint64_t tm1 = _rdtscp( &pc1 );
+	uint64_t tm1 = __rdtscp( &pc1 );
 
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
@@ -3319,6 +3319,8 @@ struct bandit2_intersect {
 	    return cl;
 	}
 
+	// According to llvm-mca, this would be faster with two scalar
+	// lzcnt if th == 0.
 	static size_t
 	get_index( size_t lsz, size_t rsz, size_t th, bool is_xp ) {
 	    using tr = vector_type_traits_vl<uint32_t,4>;
@@ -3367,8 +3369,15 @@ struct bandit2_intersect {
 	    // alignas(typename tr::type) uint32_t raw[4] = {
 	    // (uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
 	    // auto a = tr::load( &raw[0] );
-	    auto a = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
-			      (uint32_t)th, (uint32_t)0 );
+	    auto a0 = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
+				(uint32_t)0, (uint32_t)0 );
+	    auto a1 = tr::srli( a0, 4 ); // Reduce in size (note: sz>16)
+	    auto a = a1;
+	    if( th ) // help compiler when it inlines with a constant th
+		a = tr::setlane2( a1, (uint32_t)th );
+
+	    // auto a = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
+	    // (uint32_t)th, (uint32_t)0 );
 #if 0
 	    auto b = tr::lzcnt( a ); // a == 0 -> b == 32
 	    // Subtract from 2**k-1 == XOR
@@ -3440,8 +3449,11 @@ struct bandit2_intersect {
 	    // into 0x .. 00 .. 00 .. 00 .. 00 .. 00 .. 00 .. 00 AA 00
 	    // Assuming that the high part of h has only one non-zero byte,
 	    // then sh will have only one (possibly) non-zero byte
-	    auto sh = trb::unpackhi( trb::setzero(), h );
-	    auto x = trb::bitwise_or( sh, h );
+	    auto x = h;
+	    if( th ) { // help compiler when it inlines with a constant th
+		auto sh = trb::unpackhi( trb::setzero(), h );
+		x = trb::bitwise_or( sh, h );
+	    }
 	    uint64_t w = trq::lane0( x );
 	    uint64_t n = _pext_u64( w, 0x700000707 );
 	    if( is_xp )
@@ -3453,7 +3465,8 @@ struct bandit2_intersect {
     private:
 #if 1
 	std::array<std::array<
-		       graptor::bandit_ucb<float,NUM_PRED>,
+		       // graptor::bandit_ucb<float,NUM_PRED>,
+		       graptor::bandit_ucb_fp16<NUM_PRED>,
 		       so_N>,NUM_CASES> m_bandit;
 #else
 	std::array<
@@ -3479,6 +3492,13 @@ struct bandit2_intersect {
 	if( lset.size() <= 16 || rset.size() <= 16 )
 	    return MC_intersect_old::apply( lset, rset, task );
 	    // return task.return_value_empty_set();
+
+	// Extracting set sizes and constructing feature index typically
+	// takes 25-50 cycles on SR.
+	// This includes recovery (+ initialization?) of the per-thread
+	// predictor data structure
+	// unsigned int fpc0;
+	// uint64_t ftm0 = __rdtscp( &fpc0 );
 
 	predictor<NUM_PRED> & bandit = predictor_holder<NUM_PRED>::per_thread_predictor;
 
@@ -3514,6 +3534,13 @@ struct bandit2_intersect {
 	assert( eligibility != 0ull
 		&& "needs some options for intersection algorithm" );
 
+	// Predicting the best arm typically takes 130-300 cycles on SR
+	// with worst cases scenarios of 700 cycles. The latter are possibly
+	// those instances involving cache misses.
+	// The first predictions, where any of the arms has no samples,
+	// are completed in about 50 cycles.
+	// unsigned int ppc0;
+	// uint64_t ptm0 = __rdtscp( &ppc0 );
 	size_t best_i =
 	    bandit.predict(
 #if 1
@@ -3524,11 +3551,11 @@ struct bandit2_intersect {
 		Task::operation, eligibility );
 
 	unsigned int pc0;
-	uint64_t tm0 = _rdtscp( &pc0 );
+	uint64_t tm0 = __rdtscp( &pc0 );
 	auto ret = effect( best_i, lset, rset, task );
 	// auto ret = MC_intersect_old::apply( lset, rset, task );
 	unsigned int pc1;
-	uint64_t tm1 = _rdtscp( &pc1 );
+	uint64_t tm1 = __rdtscp( &pc1 );
 
 	// Check absence of thread movement to another core
 	if( pc0 == pc1 ) {
@@ -3541,12 +3568,20 @@ struct bandit2_intersect {
 		Task::operation, lsz, rsz, best_i, tm1 - tm0 );
 
 #if 0
+	    unsigned int upc0;
+	    uint64_t utm0 = __rdtscp( &fpc0 );
+
 	    std::cout << "bandit: lsz=" << lsz << " rsz=" << rsz
 		// << " cl=" << cl << " cr=" << cr
 		      << " idx=" << idx
+		      << " fcy=" << (ptm0-ftm0)
+		      << " pcy=" << (tm0-ptm0)
 		      << " cy=" << (tm1-tm0)
+		      << " ucy=" << (utm0-tm1)
 		      << " eligible=" << std::hex << eligibility << std::dec
-		      << " predict=" << best_i << ' ';
+		      << " predict=" << best_i
+		      << " reward=" << ( float( lsz + rsz ) / float( tm1  - tm0 ) )
+		      << ' ';
 	    task.print( std::cout );
 	    std::cout << "\n";
 #endif
@@ -3643,10 +3678,10 @@ struct compare_intersections {
 	for( size_t i=0; i < NUM_PRED; ++i, e >>=1 ) {
 	    if( e & 1 ) {
 		unsigned int pc0;
-		uint64_t tm0 = _rdtscp( &pc0 );
+		uint64_t tm0 = __rdtscp( &pc0 );
 		auto ret = effect( i, lset, rset, task );
 		unsigned int pc1;
-		uint64_t tm1 = _rdtscp( &pc1 );
+		uint64_t tm1 = __rdtscp( &pc1 );
 
 		// Check absence of thread movement to another core
 		if( pc0 == pc1 )
