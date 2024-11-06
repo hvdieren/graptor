@@ -3369,9 +3369,20 @@ struct bandit2_intersect {
 	    // alignas(typename tr::type) uint32_t raw[4] = {
 	    // (uint32_t)lsz, (uint32_t)rsz, (uint32_t)th, 0 };
 	    // auto a = tr::load( &raw[0] );
+	    // Split lowest range 32-128 into two buckets.
+	    // Bucket ranges are thus (with shift of 4):
+	    // [32,64+16=82)
+	    // [82,256+16=272)
+	    // etc. Note that for larger sizes, the 16 difference is
+	    // not important
+	    // lsz -= 16;
+	    // rsz -= 16;
+	    // Move to vector
 	    auto a0 = tr::setr( (uint32_t)lsz, (uint32_t)rsz,
 				(uint32_t)0, (uint32_t)0 );
-	    auto a1 = tr::srli( a0, 4 ); // Reduce in size (note: sz>16)
+	    // auto a1 = tr::srli( a0, 5 ); // Reduce in size (note: sz>=32)
+	    // auto a1 = tr::srli( a0, 4 ); // Reduce in size (note: sz>=32, split)
+	    auto a1 = tr::srli( a0, 6 ); // Reduce in size (note: sz>=64)
 	    auto a = a1;
 	    if( th ) // help compiler when it inlines with a constant th
 		a = tr::setlane2( a1, (uint32_t)th );
@@ -3462,6 +3473,14 @@ struct bandit2_intersect {
 	    return n;
 	}
 
+	float get_mean( size_t idx, set_operation op, size_t arm ) const {
+	    return m_bandit[idx][(int)op].get_mean( arm );
+	}
+
+	float get_mean_ub( size_t idx, set_operation op, size_t arm ) const {
+	    return m_bandit[idx][(int)op].get_mean_ub( arm );
+	}
+
     private:
 #if 1
 	std::array<std::array<
@@ -3489,7 +3508,7 @@ struct bandit2_intersect {
     apply( LSet && lset, RSet && rset, Task & task ) {
 	// Corner case: zero-sized sets
 	// Omit effort on very small sets
-	if( lset.size() <= 16 || rset.size() <= 16 )
+	if( lset.size() < 64 || rset.size() < 64 )
 	    return MC_intersect_old::apply( lset, rset, task );
 	    // return task.return_value_empty_set();
 
@@ -3497,8 +3516,8 @@ struct bandit2_intersect {
 	// takes 25-50 cycles on SR.
 	// This includes recovery (+ initialization?) of the per-thread
 	// predictor data structure
-	// unsigned int fpc0;
-	// uint64_t ftm0 = __rdtscp( &fpc0 );
+	unsigned int fpc0;
+	uint64_t ftm0 = __rdtscp( &fpc0 );
 
 	predictor<NUM_PRED> & bandit = predictor_holder<NUM_PRED>::per_thread_predictor;
 
@@ -3539,8 +3558,8 @@ struct bandit2_intersect {
 	// those instances involving cache misses.
 	// The first predictions, where any of the arms has no samples,
 	// are completed in about 50 cycles.
-	// unsigned int ppc0;
-	// uint64_t ptm0 = __rdtscp( &ppc0 );
+	unsigned int ppc0;
+	uint64_t ptm0 = __rdtscp( &ppc0 );
 	size_t best_i =
 	    bandit.predict(
 #if 1
@@ -3641,9 +3660,13 @@ struct compare_intersections {
 
 	size_t lsz = lset.size();
 	size_t rsz = rset.size();
+	size_t th = task.get_threshold();
 
-	size_t cl = get_size_class( lsz );
-	size_t cr = get_size_class( rsz );
+	constexpr bool is_xp =
+		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
+		      graptor::is_fast_array_v<std::decay_t<RSet>>;
+	size_t idx =
+	    bandit2_intersect::predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
 
 	// Check if hashing is eligible
 	size_t eligibility = 0x3full;
@@ -3662,14 +3685,16 @@ struct compare_intersections {
 	intersection_task<so_intersect_size,void> task_sz;
 	size_t size = effect( _tzcnt_u64( eligibility ), lset, rset, task_sz );
 
-	bandit_intersect::predictor<NUM_PRED> & bandit =
-	    bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
-	size_t best_i = bandit.predict( cl, cr, eligibility );
+	bandit2_intersect::predictor<NUM_PRED> & bandit =
+	    bandit2_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
+	size_t best_i = bandit.predict( idx, Task::operation, eligibility );
 
 	size_t last_i = 0;
 	size_t e = eligibility;
 	std::cout << "analysis: lsz=" << lsz << " rsz=" << rsz
-		  << " cl=" << cl << " cr=" << cr
+		  << " th=" << th << " xp=" << is_xp
+	    // << " cl=" << cl << " cr=" << cr
+		  << " idx=" << idx
 		  << " eligible=" << std::hex << eligibility << std::dec
 		  << " size=" << size
 		  << " pred=" << best_i
@@ -3680,21 +3705,34 @@ struct compare_intersections {
 		unsigned int pc0;
 		uint64_t tm0 = __rdtscp( &pc0 );
 		auto ret = effect( i, lset, rset, task );
+		static decltype(ret) perm; // avoid compile-time removal of code
+		perm = ret;
 		unsigned int pc1;
 		uint64_t tm1 = __rdtscp( &pc1 );
 
 		// Check absence of thread movement to another core
-		if( pc0 == pc1 )
-		    std::cout << " cy" << i << '=' << (tm1-tm0);
-		else
-		    std::cout << " cy" << i << "=move";
+		if( pc0 == pc1 ) {
+		    std::cout << " cy" << i << '=' << (tm1-tm0)
+			      << " m" << i << '='
+			      << bandit.get_mean( idx, Task::operation, i )
+			      << " ub" << i << '='
+			      << bandit.get_mean_ub( idx, Task::operation, i );
+		} else {
+		    std::cout << " cy" << i << "=move"
+			      << " m" << i << "=move"
+			      << " ub" << i << "=move";
+		}
 
 		last_i = i;
 
 		if( best_i == i )
-		    bandit.update( cl, cr, best_i, tm1 - tm0 );
-	    } else
-		std::cout << " cy" << i << "=na";
+		    bandit.update( idx, Task::operation, lsz, rsz,
+				   best_i, tm1 - tm0 );
+	    } else {
+		std::cout << " cy" << i << "=na"
+			  << " m" << i << "=move"
+			  << " ub" << i << "=move";
+	    }
 	} 
 	std::cout << "\n";
 
