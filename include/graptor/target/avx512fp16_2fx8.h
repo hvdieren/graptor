@@ -115,12 +115,12 @@ struct avx512fp16_2fx8 {
 	type a1 = _mm_castsi128_ph(
 	    _mm_shuffle_epi32( _mm_castph_si128( b0 ), 0b0001 ) );
 	// max: x x x x ACEG BDFH ACEG BDFH
-	type b1 = _mm_max_ph( a1, a0 );
+	type b1 = _mm_max_ph( a1, b0 );
 	// swap bottom two lanes
 	type a2 = _mm_castsi128_ph(
-	    _mm_shufflelo_epi16( _mm_castph_si128( b1 ), 0b0100 ) );
+	    _mm_shufflelo_epi16( _mm_castph_si128( b1 ), 0b0001 ) );
 	// final max
-	type b2 = _mm_max_ph( a2, a1 );
+	type b2 = _mm_max_ph( a2, b1 );
 	// broadcast
 	return set1( b2 );
 #endif
