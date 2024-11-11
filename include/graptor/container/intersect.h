@@ -16,7 +16,7 @@
 #endif
 
 #ifndef MC_INTERSECTION_ALGORITHM
-#define MC_INTERSECTION_ALGORITHM 5
+#define MC_INTERSECTION_ALGORITHM 4
 #endif
 
 #ifndef INTERSECTION_TRIM
@@ -43,10 +43,15 @@
 #include <type_traits>
 #include <immintrin.h>
 
+#include "graptor/itraits.h"
 #include "graptor/target/vector.h"
 #include "graptor/container/dual_set.h"
 #include "graptor/container/array_slice.h"
+
+#define UCB 1
+#if UCB
 #include "graptor/stat/ucb.h"
+#endif
 
 namespace graptor {
 
@@ -848,6 +853,7 @@ struct hash_scalar;
 struct hash_vector;
 struct merge_scalar;
 struct merge_vector;
+struct merge_vector_opt;
 struct merge_scalar_jump;
 struct merge_vector_jump;
 struct MC_intersect;
@@ -1663,37 +1669,43 @@ struct merge_vector_jump {
 	while( lb+VL <= le && rb+VL <= re ) {
 	    type vl = tr::loadu( lb );
 
-	    mask_type ma = tr::intersect( vl, rb );
-
 	    type lf = tr::set1( lb[VL-1] );
 	    type rf = tr::set1( rb[VL-1] );
 
 	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
 	    mask_type radv = tr::cmple( tr::loadu( rb ), lf, target::mt_mask() );
+	    // If ladv == 0 then la == VL
 	    size_t la = rt_ilog2( ((uint64_t)ladv) + 1 );
 	    size_t ra = rt_ilog2( ((uint64_t)radv) + 1 );
 
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
-		break;
+	    if( ( ladv & radv ) == 0 ) {
+		out.template remainder<rhs>( la, ra );
 
-	    // If not a single element in the LHS vector was present on the RHS
-	    // side, perhaps many more will follow. Try jumping.
-	    if( la == VL ) {
-		LIt ln = merge_scalar_jump::jump( lb, le, *rb );
-		// LIt ln = jump<VL>( lb, le, *rb );
-		out.template remainder<rhs>( std::distance( lb, ln ), 0 );
-		lb = ln;
+		// If not a single element in the LHS vector was present
+		// on the RHS side, perhaps many more will follow. Try jumping.
+		if( radv == 0 ) { // if( la == VL ) {
+		    LIt ln = merge_scalar_jump::jump( lb, le, *rb );
+		    // LIt ln = jump<VL>( lb, le, *rb );
+		    out.template remainder<rhs>( std::distance( lb, ln ), 0 );
+		    lb = ln;
+		}
+		// Similar jumping for RHS without matches.
+		else { // if( ra == VL ) {
+		    LIt rn = merge_scalar_jump::jump( rb, re, *lb );
+		    // LIt rn = jump<VL>( rb, re, *lb );
+		    out.template remainder<rhs>( 0, std::distance( rb, rn ) );
+		    rb = rn;
+		}
+	    } else {
+		mask_type ma = tr::intersect( vl, rb - ra );
+
+		if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
+		    break;
 	    }
-	    // Similar jumping for RHS without matches.
-	    if( ra == VL ) {
-		LIt rn = merge_scalar_jump::jump( rb, re, *lb );
-		// LIt rn = jump<VL>( rb, re, *lb );
-		out.template remainder<rhs>( 0, std::distance( rb, rn ) );
-		rb = rn;
-	    }
+
 	}
 
 	if( lb+VL == le && rb+VL == re ) // always false?
@@ -2602,8 +2614,6 @@ struct merge_vector {
 	while( lb+VL <= le && rb+VL <= re ) {
 	    type vl = tr::loadu( lb );
 
-	    mask_type ma = tr::intersect( vl, rb );
-
 	    type lf = tr::set1( lb[VL-1] );
 	    type rf = tr::set1( rb[VL-1] );
 
@@ -2615,13 +2625,24 @@ struct merge_vector {
 	    lb += la;
 	    rb += ra;
 
-	    if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
-		break;
+	    // It looks like this test and the avoidance of the intersect
+	    // makes vectorized always more efficient than scalar, at least
+	    // for a specific, frequent range of sizeable intersections.
+	    // It also takes the gist out of galloping, as this performs a
+	    // minimal kind of galloping.
+	    if( ( ladv & radv ) == 0 ) {
+		out.template remainder<rhs>( la, ra );
+	    } else {
+		mask_type ma = tr::intersect( vl, rb - ra );
+
+		if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
+		    break;
+	    }
 	}
 
 	if( lb+VL == le && rb+VL == re )
 	    out.template remainder<rhs>( le - lb, re - rb );
-	
+
 	return std::make_pair( lb, rb );
     }
 
@@ -2808,6 +2829,395 @@ public:
 	    return 0;
 
 	return sz0 + sz1 + sz2;
+    }
+};
+
+struct merge_vector_opt {
+    static constexpr bool uses_hash = false;
+
+    template<set_operation so, typename T, unsigned short VL, bool rhs,
+	     typename LIt, typename RIt, typename Collector>
+#if 0
+    static
+    std::pair<LIt,RIt>
+    intersect_task_vl( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+
+	if( out.terminated() )
+	    return std::make_pair( lb, rb );
+
+	// No full vector available in RHS
+	if( lb >= le || rb+VL >= re )
+	    return std::make_pair( lb, rb );
+
+	type vl = tr::set1( *lb );
+
+	while( lb < le && rb+VL < re ) {
+	    type vr = tr::loadu( rb );
+	    mask_type fnd = tr::cmpge( vl, vr, target::mt_mask() );
+	    if( fnd != 0 ) {
+		size_t adv = 32 - _lzcnt_u32( (uint32_t)fnd );
+
+		if( *lb == rb[adv-1] ) {
+		    if( !out.template record<rhs>( lb, *lb, true ) )
+			break;
+		    out.template remainder<rhs>( 0, adv-1 );
+
+		    lb++;
+		    vl = tr::set1( *lb ); // may read out of bounds
+		} else {
+		    out.template remainder<rhs>( 0, adv );
+		    if( adv < VL ) {
+			lb++;
+			vl = tr::set1( *lb ); // may read out of bounds
+		    }
+		}
+
+		// Ensure rb is advanced before breaking based on lb
+		rb += adv;
+	    } else {
+		// LHS first element is less than first element in RHS.
+		// Advance LHS.
+		lb++;
+		vl = tr::set1( *lb ); // may read out of bounds
+	    }
+	}
+
+	return std::make_pair( lb, rb );
+    }
+#endif
+#if 0
+    static
+    std::pair<LIt,RIt>
+    intersect_task_vl( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	static_assert( so == so_intersect || so == so_intersect_size,
+		       "currently no short-cutting supported" );
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+	using htr = vector_type_traits_vl<T,VL/2>;
+	using htype = typename htr::type;
+	using hmask_type = typename htr::mask_type;
+
+	if( out.terminated() )
+	    return std::make_pair( lb, rb );
+
+	while( lb+VL <= le && rb+VL <= re ) {
+	    htype vl = htr::loadu( lb );
+	    type vr = tr::loadu( rb );
+
+	    type lf = tr::set1( lb[VL/2-1] );
+	    htype rf = htr::set1( rb[VL-1] );
+
+	    hmask_type ladv = htr::cmple( vl, rf, target::mt_mask() );
+	    mask_type radv = tr::cmple( vr, lf, target::mt_mask() );
+	    size_t la = 32 - _lzcnt_u32( (uint32_t)ladv );
+	    size_t ra = 32 - _lzcnt_u32( (uint32_t)radv );
+
+	    if( ( ladv & radv ) == 0 ) {
+		out.template remainder<rhs>( la, ra );
+		lb += la;
+		rb += ra;
+	    } else {
+		// This (baseline) code is claimed to be faster than the
+		// vp2intersect instruction
+		// https://arxiv.org/pdf/2112.06342.pdf
+		target::mt_mask use_mask;
+		mask_type m2 = tr::cmpne( vr, tr::set1( lb[ 2] ), use_mask );
+		mask_type m1 = tr::cmpne( vr, tr::set1( lb[ 1] ), use_mask );
+		mask_type m0 = tr::cmpne( vr, tr::set1( lb[ 0] ), use_mask );
+		m1 = tr::cmpne( m1, vr, lf, use_mask );
+		m0 = tr::cmpne( m0, vr, tr::set1( lb[ 6] ), use_mask );
+		m2 = tr::cmpne( m2, vr, tr::set1( lb[ 5] ), use_mask );
+		m1 = tr::cmpne( m1, vr, tr::set1( lb[ 4] ), use_mask );
+		m0 = tr::cmpne( m0, vr, tr::set1( lb[ 3] ), use_mask );
+
+		mask_type ma = tr::mask_traits::logical_invert(
+		    tr::mask_traits::logical_and( m0, m1, m2 ) );
+
+		lb += la;
+		rb += ra;
+
+		// The short-cutting intersections expect ma to be left-oriented,
+		// whereas here it shows which elements of the register are
+		// found the in the intersection.
+		// if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
+		if( !out.template multi_record<rhs,T,VL>( lb-la, vr, ma, la, ra ) )
+		    break;
+	    }
+	}
+
+	if( lb+VL/2 == le && rb+VL == re )
+	    out.template remainder<rhs>( le - lb, re - rb );
+
+	return std::make_pair( lb, rb );
+    }
+#endif
+#if 0
+    static
+    std::pair<LIt,RIt>
+    intersect_task_vl( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	static_assert( so == so_intersect || so == so_intersect_size,
+		       "currently no short-cutting supported" );
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+
+	if( out.terminated() )
+	    return std::make_pair( lb, rb );
+
+	while( lb+VL <= le && rb+VL <= re ) {
+	    type vl = tr::loadu( lb );
+	    type vr = tr::loadu( rb );
+
+	    type lf = tr::set1( lb[VL-1] );
+	    type rf = tr::set1( rb[VL-1] );
+
+	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
+	    mask_type radv = tr::cmple( vr, lf, target::mt_mask() );
+	    size_t la = 32 - _lzcnt_u32( (uint32_t)ladv );
+	    size_t ra = 32 - _lzcnt_u32( (uint32_t)radv );
+
+	    if( ( ladv & radv ) == 0 ) [[unlikely]] {
+		lb += la;
+		rb += ra;
+		out.template remainder<rhs>( la, ra );
+		continue;
+	    }
+
+	    // assert( la == VL || ra == VL );
+
+	    // One side's vector is taken from a register, the other from
+	    // memory. The one in the register is processed in full.
+	    type reg;
+	    type freg;
+	    const T * mem;
+	    uint32_t adv;
+	    if( la == VL ) [[unlikely]] {
+		reg = vl;
+		freg = rf;
+		mem = &*rb;
+		adv = ra;
+	    } else {
+		reg = vr;
+		freg = lf;
+		mem = &*lb;
+		adv = la;
+	    }
+	    // type reg = vl;
+	    // const T * mem = &*rb;
+	    // size_t adv = ra;
+
+	    // This (baseline) code is claimed to be faster than the
+	    // vp2intersect instruction
+	    // https://arxiv.org/pdf/2112.06342.pdf
+	    // mask_type m0 = tr::mask_traits::setone();
+	    // mask_type m1 = tr::mask_traits::setone();
+	    // mask_type m2 = tr::mask_traits::setone();
+	    target::mt_mask use_mask;
+	    mask_type m2 = tr::cmpne( reg, tr::set1( mem[ 2] ), use_mask );
+	    mask_type m1 = tr::cmpne( reg, tr::set1( mem[ 1] ), use_mask );
+	    mask_type m0 = tr::cmpne( reg, tr::set1( mem[ 0] ), use_mask );
+	    static_assert( VL == 16 && "assumption" );
+	    switch( adv ) {
+	    case 16: m0 = tr::cmpne( m0, reg, freg, use_mask );
+	    case 15: m2 = tr::cmpne( m2, reg, tr::set1( mem[14] ), use_mask );
+	    case 14: m1 = tr::cmpne( m1, reg, tr::set1( mem[13] ), use_mask );
+	    case 13: m0 = tr::cmpne( m0, reg, tr::set1( mem[12] ), use_mask );
+	    case 12: m2 = tr::cmpne( m2, reg, tr::set1( mem[11] ), use_mask );
+	    case 11: m1 = tr::cmpne( m1, reg, tr::set1( mem[10] ), use_mask );
+	    case 10: m0 = tr::cmpne( m0, reg, tr::set1( mem[ 9] ), use_mask );
+	    case  9: m2 = tr::cmpne( m2, reg, tr::set1( mem[ 8] ), use_mask );
+	    case  8: m1 = tr::cmpne( m1, reg, tr::set1( mem[ 7] ), use_mask );
+	    case  7: m0 = tr::cmpne( m0, reg, tr::set1( mem[ 6] ), use_mask );
+	    case  6: m2 = tr::cmpne( m2, reg, tr::set1( mem[ 5] ), use_mask );
+	    case  5: m1 = tr::cmpne( m1, reg, tr::set1( mem[ 4] ), use_mask );
+	    case  4: m0 = tr::cmpne( m0, reg, tr::set1( mem[ 3] ), use_mask );
+	    case  3:
+	    case  2:
+	    case  1:
+	    case  0:
+		// There are no matches at all. Could consider galloping
+		// here depending on the difference between mem[0] and reg[15].
+		break;
+	    }
+
+	    mask_type ma = tr::mask_traits::logical_invert(
+		tr::mask_traits::logical_and( m0, m1, m2 ) );
+
+	    lb += la;
+	    rb += ra;
+
+	    // The short-cutting intersections expect ma to be left-oriented,
+	    // whereas here it shows which elements of the register are
+	    // found the in the intersection.
+	    // if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb-la, reg, ma, la, ra ) )
+		break;
+	}
+
+	if( lb+VL == le && rb+VL == re )
+	    out.template remainder<rhs>( le - lb, re - rb );
+
+	return std::make_pair( lb, rb );
+    }
+#endif
+#if 1
+    static
+    std::pair<LIt,RIt>
+    intersect_task_vl( LIt lb, LIt le, RIt rb, RIt re, Collector & out ) {
+	static_assert( so != so_intersect_xlat,
+		       "intersect-with-translate not supported in merge-based"
+		       " intersection" );
+
+	static_assert( so == so_intersect || so == so_intersect_size,
+		       "currently no short-cutting supported" );
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mask_type = typename tr::mask_type;
+
+	if( out.terminated() )
+	    return std::make_pair( lb, rb );
+
+	while( lb+VL <= le && rb+VL <= re ) {
+	    type vl = tr::loadu( lb );
+	    type vr = tr::loadu( rb );
+
+	    type lf = tr::set1( lb[VL-1] );
+	    type rf = tr::set1( rb[VL-1] );
+
+	    mask_type ladv = tr::cmple( vl, rf, target::mt_mask() );
+	    mask_type radv = tr::cmple( vr, lf, target::mt_mask() );
+	    size_t la = 32 - _lzcnt_u32( (uint32_t)ladv );
+	    size_t ra = 32 - _lzcnt_u32( (uint32_t)radv );
+
+	    if( ( ladv & radv ) == 0 ) [[unlikely]] {
+		lb += la;
+		rb += ra;
+		out.template remainder<rhs>( la, ra );
+		continue;
+	    }
+
+	    // assert( la == VL || ra == VL );
+
+	    // One side's vector is taken from a register, the other from
+	    // memory. The one in the register is processed in full.
+	    type reg;
+	    type freg;
+	    const T * mem;
+	    uint32_t adv;
+	    if( la == VL ) [[unlikely]] {
+		reg = vl;
+		freg = rf;
+		mem = &*rb;
+		adv = ra;
+	    } else {
+		reg = vr;
+		freg = lf;
+		mem = &*lb;
+		adv = la;
+	    }
+	    // type reg = vl;
+	    // const T * mem = &*rb;
+	    // size_t adv = ra;
+
+	    // This (baseline) code is claimed to be faster than the
+	    // vp2intersect instruction
+	    // https://arxiv.org/pdf/2112.06342.pdf
+	    // mask_type m0 = tr::mask_traits::setone();
+	    // mask_type m1 = tr::mask_traits::setone();
+	    // mask_type m2 = tr::mask_traits::setone();
+	    target::mt_mask use_mask;
+	    mask_type m0 = tr::cmpne( reg, tr::set1( mem[ 0] ), use_mask );
+	    mask_type m1 = tr::cmpne( reg, tr::set1( mem[ 1] ), use_mask );
+	    mask_type m2 = tr::cmpne( reg, tr::set1( mem[ 2] ), use_mask );
+	    static_assert( VL == 16 && "assumption" );
+	    m0 = tr::cmpne( m0, reg, tr::set1( mem[ 3] ), use_mask );
+	    m1 = tr::cmpne( m1, reg, tr::set1( mem[ 4] ), use_mask );
+	    m2 = tr::cmpne( m2, reg, tr::set1( mem[ 5] ), use_mask );
+	    m0 = tr::cmpne( m0, reg, tr::set1( mem[ 7] ), use_mask );
+	    m1 = tr::cmpne( m1, reg, tr::set1( mem[ 6] ), use_mask );
+
+	    if( adv > 8 ) {
+		m2 = tr::cmpne( m2, reg, tr::set1( mem[ 8] ), use_mask );
+		m1 = tr::cmpne( m1, reg, tr::set1( mem[ 9] ), use_mask );
+		m0 = tr::cmpne( m0, reg, tr::set1( mem[10] ), use_mask );
+		m2 = tr::cmpne( m2, reg, tr::set1( mem[11] ), use_mask );
+		m0 = tr::cmpne( m0, reg, tr::set1( mem[12] ), use_mask );
+		m1 = tr::cmpne( m1, reg, tr::set1( mem[13] ), use_mask );
+		m2 = tr::cmpne( m2, reg, tr::set1( mem[14] ), use_mask );
+		m0 = tr::cmpne( m0, reg, freg, use_mask );
+	    }
+
+	    mask_type ma = tr::mask_traits::logical_invert(
+		tr::mask_traits::logical_and( m0, m1, m2 ) );
+
+	    lb += la;
+	    rb += ra;
+
+	    // The short-cutting intersections expect ma to be left-oriented,
+	    // whereas here it shows which elements of the register are
+	    // found the in the intersection.
+	    // if( !out.template multi_record<rhs,T,VL>( lb-la, vl, ma, la, ra ) )
+	    if( !out.template multi_record<rhs,T,VL>( lb-la, reg, ma, la, ra ) )
+		break;
+	}
+
+	if( lb+VL == le && rb+VL == re )
+	    out.template remainder<rhs>( le - lb, re - rb );
+
+	return std::make_pair( lb, rb );
+    }
+#endif
+
+
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	using T = typename std::decay_t<LSet>::type;
+	
+	auto lb = lset.begin();
+	auto le = lset.end();
+	auto rb = rset.begin();
+	auto re = rset.end();
+#if defined( __AVX512F__ )
+	std::tie( lb, rb ) =
+	    intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rb, re, out );
+#elif defined( __AVX2__ )
+	std::tie( lb, rb ) =
+	    intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rb, re, out );
+#endif
+	merge_scalar::intersect_task<so,rhs>( lb, le, rb, re, out );
+    }
+    
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task ) {
+	auto out = task.template create_collector<merge_vector>(
+	    lset, rset );
+	intersect_task<Task::operation,true>( lset, rset, out );
+	return out.return_value();
     }
 };
 
@@ -3113,6 +3523,7 @@ struct baeza_yates {
     }
 };
 
+#if UCB
 
 struct bandit_intersect {
     static constexpr size_t NUM_PRED = 6;
@@ -3232,6 +3643,8 @@ template<size_t NUM_PRED>
 thread_local bandit_intersect::predictor<NUM_PRED>
 bandit_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 
+#endif
+
 struct MC_intersect_old {
     template<typename LSet, typename RSet, typename Task>
     static
@@ -3263,15 +3676,19 @@ struct MC_intersect_old {
     }
 };
 
+#if UCB
+    
 struct bandit2_intersect {
-    static constexpr size_t NUM_PRED = 6;
+    static constexpr size_t NUM_PRED = 7;
 
     template<size_t NUM_PRED>
     class predictor {
+    public:
 	static constexpr size_t MAX_CLASS = 8; // 10; // 8; // avoids imul
 	static constexpr size_t MAX_THRESHOLD = MAX_CLASS * 2; // 32;
-	static constexpr size_t NUM_CASES =
-	    MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
+	static constexpr size_t LOG_TABLE = 12;
+	static constexpr size_t NUM_CASES = 1 << LOG_TABLE;
+	// MAX_CLASS * MAX_CLASS * MAX_CLASS * 2;
 
     public:
 #if 1
@@ -3317,6 +3734,42 @@ struct bandit2_intersect {
 	    if( is_xp )
 		cl |= 1;
 	    return cl;
+	}
+
+	template<size_t nbits, typename Set>
+	static size_t
+	get_clustering( Set && slice ) {
+	    const auto b = slice.begin();
+	    if( b == nullptr )
+		return 0;
+	    const auto e = slice.end();
+	    size_t sz = e - b;
+	    if( sz < 256 )
+		return 0;
+	    static constexpr size_t ndist = 3;
+	    static constexpr size_t nsamples = (LOG_TABLE-6)/ndist;
+	    size_t step = ( sz - 256 ) / 8;
+	    size_t pattern = 0;
+	    auto it = b;
+	    for( size_t s=0; s < nsamples; ++s ) {
+		for( size_t d=0; d < ndist; ++d ) {
+		    auto s0 = *it;
+		    auto s1 = *std::next( it, (1<<(2+2*d))-1 );
+		    // Are a high number of lanes in an 8-long vector used?
+		    // Makes use of pigeonhole principle.
+		    size_t bit = ( s1 - s0 ) < ( 1 << (2+2*d+4) );
+		    pattern = ( pattern << 1 ) | bit;
+		}
+		std::advance( it, step );
+	    }
+	    return pattern & ( ( 1 << nbits ) - 1 );
+	}
+
+	static size_t
+	get_index( size_t lsz, size_t rsz, size_t th, bool is_xp,
+		   size_t rpattern ) {
+	    size_t i = get_index( lsz, rsz, rpattern, is_xp );
+	    return ( rpattern << 6 ) | i;
 	}
 
 	// According to llvm-mca, this would be faster with two scalar
@@ -3466,7 +3919,8 @@ struct bandit2_intersect {
 		x = trb::bitwise_or( sh, h );
 	    }
 	    uint64_t w = trq::lane0( x );
-	    uint64_t n = _pext_u64( w, 0x700000707 );
+	    // uint64_t n = _pext_u64( w, 0x700000707 );
+	    uint64_t n = _pext_u64( w, 0x700000007 );
 	    if( is_xp )
 		n |= uint64_t(1) << 9;
 #endif
@@ -3532,8 +3986,9 @@ struct bandit2_intersect {
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
 #if 1
+	size_t rp = predictor<NUM_PRED>::get_clustering<predictor<NUM_PRED>::LOG_TABLE-6>( rset );
 	size_t idx =
-	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
+	    predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp, rp );
 #else
 	size_t cl = predictor<NUM_PRED>::get_size_class( lsz );
 	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
@@ -3541,12 +3996,12 @@ struct bandit2_intersect {
 #endif
 
 	// Check if hashing is eligible
-	size_t eligibility = 0x3full;
+	size_t eligibility = 0x7full;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0x4full; // disable hash sets
 	else if( !lset.has_hash_set() && !rset.has_hash_set() )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0x4full; // disable hash sets
 	else if( !lset.has_sequential() || !rset.has_sequential() )
 	    eligibility &= 0x30ull; // disable merge intersections
 
@@ -3621,14 +4076,16 @@ struct bandit2_intersect {
 	    case 2: return merge_scalar_jump::apply( lset, rset, task );
 	    case 3: return merge_vector_jump::apply( lset, rset, task );
 	    case 4: return hash_scalar::apply( lset, rset, task );
-	    default: return hash_vector::apply( lset, rset, task );
+	    case 5: return hash_vector::apply( lset, rset, task );
+	    default: return merge_vector_opt::apply( lset, rset, task );
 	    }
 	} else {
 	    switch( ins ) {
 	    case 0: return merge_scalar::apply( lset, rset, task );
 	    case 1: return merge_vector::apply( lset, rset, task );
 	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    default: return merge_vector_jump::apply( lset, rset, task );
+	    case 3: return merge_vector_jump::apply( lset, rset, task );
+	    default: return merge_vector_opt::apply( lset, rset, task );
 	    }
 	}
     }
@@ -3640,7 +4097,7 @@ bandit2_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 
 
 struct compare_intersections {
-    static constexpr size_t NUM_PRED = 6;
+    static constexpr size_t NUM_PRED = 7;
     static constexpr size_t MAX_CLASS = 10;
 
     static size_t get_size_class( size_t sz ) {
@@ -3665,16 +4122,17 @@ struct compare_intersections {
 	constexpr bool is_xp =
 		      graptor::is_fast_array_v<std::decay_t<LSet>> ||
 		      graptor::is_fast_array_v<std::decay_t<RSet>>;
+	size_t rp = bandit2_intersect::predictor<NUM_PRED>::get_clustering<bandit2_intersect::predictor<NUM_PRED>::LOG_TABLE-6>( rset );
 	size_t idx =
-	    bandit2_intersect::predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp );
+	    bandit2_intersect::predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp, rp );
 
 	// Check if hashing is eligible
-	size_t eligibility = 0x3full;
+	size_t eligibility = 0x7full;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0x4full; // disable hash sets
 	else if( !lset.has_hash_set() && !rset.has_hash_set() )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0x4full; // disable hash sets
 	else if( !lset.has_sequential() || !rset.has_sequential() )
 	    eligibility &= 0x30ull; // disable merge intersections
 
@@ -3693,6 +4151,7 @@ struct compare_intersections {
 	size_t e = eligibility;
 	std::cout << "analysis: lsz=" << lsz << " rsz=" << rsz
 		  << " th=" << th << " xp=" << is_xp
+		  << " rp=" << rp
 	    // << " cl=" << cl << " cr=" << cr
 		  << " idx=" << idx
 		  << " eligible=" << std::hex << eligibility << std::dec
@@ -3751,18 +4210,21 @@ struct compare_intersections {
 	    case 2: return merge_scalar_jump::apply( lset, rset, task );
 	    case 3: return merge_vector_jump::apply( lset, rset, task );
 	    case 4: return hash_scalar::apply( lset, rset, task );
-	    default: return hash_vector::apply( lset, rset, task );
+	    case 5: return hash_vector::apply( lset, rset, task );
+	    default: return merge_vector_opt::apply( lset, rset, task );
 	    }
 	} else {
 	    switch( ins ) {
 	    case 0: return merge_scalar::apply( lset, rset, task );
 	    case 1: return merge_vector::apply( lset, rset, task );
 	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    default: return merge_vector_jump::apply( lset, rset, task );
+	    case 3: return merge_vector_jump::apply( lset, rset, task );
+	    default: return merge_vector_opt::apply( lset, rset, task );
 	    }
 	}
     }
 };
+#endif
 
 #if MC_INTERSECTION_ALGORITHM == 2
 struct MC_intersect : public bandit_intersect { };
