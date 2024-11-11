@@ -253,7 +253,9 @@ struct vint_traits_select<8,64> {
 #include "graptor/target/avx2_8fx4.h"
 #include "graptor/target/avx512_4fx16.h"
 #include "graptor/target/avx512_8fx8.h"
+#ifndef __clang__
 #include "graptor/target/avx512fp16_2fx8.h"
+#endif
 
 namespace target {
 
@@ -305,7 +307,7 @@ struct vfp_traits_select<
 #endif // __AVX2__
 
 #if __AVX512F__
-#if __AVX512FP16__
+#if defined( __AVX512FP16__ ) && !defined( __clang__ )
 template<typename T, unsigned short nbytes>
 struct vfp_traits_select<
     T,nbytes,std::enable_if_t<(sizeof(T) == 2 && nbytes == 16)
