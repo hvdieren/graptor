@@ -78,6 +78,9 @@ struct mask_type_traits<16> {
     static type logical_and( type l, type r ) {
 	return _kand_mask16( l, r );
     }
+    static type logical_and( type l, type m, type r ) {
+	return _kand_mask16( l, _kand_mask16( m, r ) );
+    }
     static type logical_andnot( type l, type r ) {
 	return _kandn_mask16( l, r );
     }
