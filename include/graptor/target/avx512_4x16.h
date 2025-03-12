@@ -41,8 +41,35 @@ public:
 
     using int_traits = avx512_4x16<int_type>;
     using mt_preferred = mt_mask;
+    using mask_traits_preferred = mask_traits;
 
-    static member_type lane( type a, int idx ) {
+    static member_type lane_memory( type a, int idx ) {
+	struct alignas(64) {
+	    member_type m[vlen];
+	} sv;
+	store( sv.m, a );
+	return sv.m[idx];
+    }
+    static member_type lane_permute( type a, int idx ) {
+	type sel = setl0( idx );
+	type mv = _mm512_permutexvar_epi32( sel, a );
+	return _mm_extract_epi32(
+	    _mm256_castsi256_si128( _mm512_castsi512_si256( mv ) ), 0 );
+    }
+    static member_type lane_cascade( type a, int idx ) {
+	__m256i l0 = _mm512_castsi512_si256( a );
+	__m256i u0 = _mm512_extracti64x4_epi64( a, 1 );
+	__m256i h0 = ( idx & 0x8 ) ? u0 : l0;
+	__m128i l1 = _mm256_castsi256_si128( h0 );
+	__m128i u1 = _mm256_extracti128_si256( h0, 1 );
+	__m128i h1 = ( idx & 0x4 ) ? u1 : l1;
+	uint64_t l2 = _mm_extract_epi64( h1, 0 );
+	uint64_t u2 = _mm_extract_epi64( h1, 1 );
+	uint64_t h2 = ( idx & 0x2 ) ? u2 : l2;
+	uint64_t h3 = ( idx & 0x1 ) ? h2 : ( h2 >> 32 );
+	return h3 & 0xfffffffful;
+    }
+    static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
 	case 0: return (member_type) _mm_extract_epi32( _mm256_extracti128_si256( _mm512_extracti64x4_epi64( a, 0 ), 0 ), 0 );
 	case 1: return (member_type) _mm_extract_epi32( _mm256_extracti128_si256( _mm512_extracti64x4_epi64( a, 0 ), 0 ), 1 );
@@ -63,6 +90,9 @@ public:
 	default:
 	    UNREACHABLE_CASE_STATEMENT;
 	}
+    }
+    static member_type lane( type a, int idx ) {
+	return lane_permute( a, idx );
     }
     static member_type lane0( type a ) { return lane( a, 0 ); }
     static member_type lane1( type a ) { return lane( a, 1 ); }
@@ -382,8 +412,16 @@ public:
     static mask_type msbset( type a, mt_mask ) { return asmask( a ); }
     static vmask_type msbset( type a, mt_vmask ) { return srai( a, 31 ); }
 
-    static bool cmpne( type a, type b, mt_bool ) { // any lane differs
+    //! checks if any lane differs
+    static bool cmpne( type a, type b, mt_bool ) {
 	mask_type ne = cmpne( a, b, mt_mask() );
+	bool all_zero = _kortestz_mask16_u8( ne, ne ); // ne == 0...0 ? 1 : 0
+	return ! all_zero;
+    }
+    //! checks if any lane differs
+    // Could put the mask m in cmpne, or do ktestz(ne,m)
+    static bool cmpne( mask_type m, type a, type b, mt_bool ) {
+	mask_type ne = cmpne( m, a, b, mt_mask() );
 	bool all_zero = _kortestz_mask16_u8( ne, ne ); // ne == 0...0 ? 1 : 0
 	return ! all_zero;
     }
