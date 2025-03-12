@@ -56,9 +56,11 @@ public:
 	return _mm256_extract_epi32( perm, 0 );
     }
     static member_type lane_memory( type a, int idx ) {
-	member_type m[vlen];
-	storeu( m, a );
-	return m[idx];
+	struct alignas(32) {
+	    member_type m[vlen];
+	} sv;
+	store( sv.m, a );
+	return sv.m[idx];
     }
     static member_type lane_switch( type a, int idx ) {
 	switch( idx ) {
@@ -363,7 +365,9 @@ public:
 	return mask_traits::logical_and( m, cmpeq( a, b, mt_mask() ) );
     }
     static mask_type cmpne( mask_type m, type a, type b, mt_mask ) {
-	return mask_traits::logical_and( m, cmpne( a, b, mt_mask() ) );
+	// return mask_traits::logical_and( m, cmpne( a, b, mt_mask() ) );
+	return mask_traits::logical_andnot(
+	    asmask( cmpeq( a, b, mt_vmask() ) ), m );
     }
     static mask_type cmpge( vmask_type m, type a, type b, mt_mask ) {
 	return asmask( cmpge( m, a, b, mt_vmask() ) );
@@ -542,6 +546,14 @@ public:
     static bool cmpne( type a, type b, mt_bool ) { // any lane differs
 	vmask_type ne = cmpne( a, b, mt_vmask() );
 	return ! is_zero( ne );
+    }
+    static bool cmpne( vmask_type m, type a, type b, mt_bool ) { // any lane differs
+	vmask_type ne = cmpne( a, b, mt_vmask() );
+	return ! _mm256_testz_si256( ne, m );
+    }
+    static bool cmpne( mask_type m, type a, type b, mt_bool ) { // any lane differs
+	mask_type ne = cmpne( m, a, b, mt_mask() );
+	return ! mask_traits::is_zero( ne );
     }
     static member_type reduce_setif( type val ) {
 	for( short l=0; l < vlen; ++l ) {
