@@ -55,6 +55,16 @@ struct mask_type_traits<8> {
 	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
     }
 
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
+    static uint32_t tzcnt( type m ) {
+	return _tzcnt_u32( m );
+    }
+    static uint32_t lzcnt( type m ) {
+	return _lzcnt_u32( m ) - 24;
+    }
+
     static auto blend( type c, type no, type yes ) {
 	return logical_or( logical_andnot( c, no ), logical_and( c, yes ) );
     }
@@ -147,10 +157,6 @@ struct mask_type_traits<8> {
     template<typename vindex_type>
     static void scatter( type * addr, vindex_type idx, type val, type mask ) {
 	assert( 0 && "NYI" );
-    }
-
-    static uint32_t popcnt( type m ) {
-	return _popcnt32( m );
     }
 };
 
