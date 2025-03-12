@@ -35,11 +35,14 @@ struct mask_type_traits<16> {
     static bool lane15( type m ) { return m&32768; }
 
     static type setzero() {
+	// A bit of extra effort to help the compiler generate good code.
 	type k;
-	return _kxor_mask16( k, k );
+	// return _kxor_mask16( k, k );
+	__asm__ ( "\n\t kxorw %%k0,%%k0,%0" : "=k"(k) : );
+	return k;
     }
     static type setone() {
-	// A bit of extra effort to help the compiler generate good code
+	// A bit of extra effort to help the compiler generate good code.
 	// type k;
 	// return _kxor_mask16( k, k );
 	type k;
@@ -94,8 +97,22 @@ struct mask_type_traits<16> {
 	return reduce_logicalor( k );
     }
 
-    static auto is_all_false( type k ) {
+    static bool is_all_false( type k ) {
 	return _kortestz_mask16_u8( k, k );
+    }
+
+    static bool is_all_true( type k ) {
+	return _kortestc_mask16_u8( k, k );
+    }
+
+    static bool is_all_same( type k ) {
+	unsigned char o;
+	unsigned char z = _kortest_mask16_u8( k, k, &o );
+	return z | o;
+    }
+
+    static bool is_logical_andnot_zero( type a, type b ) {
+	return _ktestc_mask16_u8( a, b );
     }
 
     static type blend( type sel, type l, type r ) {
