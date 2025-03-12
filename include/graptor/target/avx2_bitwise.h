@@ -85,6 +85,12 @@ struct avx2_bitwise {
 	else
 	    return bitwise_and( bitwise_or( a, b ), c );
     }
+    static type bitwise_and_or( type a, type b, type c ) {
+	if constexpr ( has_ternary )
+	    return ternary<0xea>( a, b, c );
+	else
+	    return bitwise_or( bitwise_and( a, b ), c );
+    }
     static type bitwise_or( type a, type b ) { return _mm256_or_si256( a, b ); }
     static type bitwise_or( type a, type b, type c ) {
 	if constexpr ( has_ternary )
