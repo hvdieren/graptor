@@ -48,6 +48,16 @@ struct mask_type_traits<4> {
 	return _tzcnt_u32( (uint32_t)logical_andnot( a, m ) );
     }
 
+    static uint32_t popcnt( type m ) {
+	return _popcnt32( m );
+    }
+    static uint32_t tzcnt( type m ) {
+	return _tzcnt_u32( m );
+    }
+    static uint32_t lzcnt( type m ) {
+	return _lzcnt_u32( m ) - 28;
+    }
+
     static type logical_and( type l, type r ) { return l & r; }
     static type logical_andnot( type l, type r ) { return ~l & r; }
     static type logical_or( type l, type r ) { return l | r; }
