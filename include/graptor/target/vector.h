@@ -98,48 +98,52 @@ namespace target {
 
 /*! Selection of vector traits implementation for integral types and logical
  */
-template<unsigned short type_size, unsigned short nbytes>
+template<typename T, unsigned short type_size, unsigned short nbytes>
 struct vint_traits_select {
     static_assert( nbytes > type_size, "recursive case" );
-    template<typename T> // assumes type_size == sizeof(T)
+    static_assert( sizeof(T) == type_size, "assumption" );
+    static constexpr unsigned short lo_size = next_ipow2( nbytes / 2 );
     using type = vt_recursive<
-	T,sizeof(T),nbytes,
-	typename vint_traits_select<sizeof(T),next_ipow2(nbytes/2)>::template type<T>,
-	typename vint_traits_select<sizeof(T),nbytes-next_ipow2(nbytes/2)>::template type<T>>;
+	T,type_size,nbytes,
+	typename vint_traits_select<T,type_size,lo_size>::type,
+	typename vint_traits_select<T,type_size,nbytes-lo_size>::type>;
 };
 
-template<unsigned short type_size>
-struct vint_traits_select<type_size,type_size> {
-    template<typename T> // assumes type_size == sizeof(T)
-    using type = std::conditional_t<std::is_same_v<T,bool>,
-				    target::scalar_bool,
-				    target::scalar_int<T>>;
+template<typename T, unsigned short type_size>
+struct vint_traits_select<T,type_size,type_size> {
+    static_assert( sizeof(T) == type_size, "assumption" );
+    using type = target::scalar_int<T>;
+};
+
+template<>
+struct vint_traits_select<bool,sizeof(bool),sizeof(bool)> {
+    using type = target::scalar_bool;
 };
 
 #if __MMX__ && __SSE4_2__
 
 #if GRAPTOR_USE_MMX
-template<>
-struct vint_traits_select<1,8> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,8> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::mmx_1x8<T>;
 };
 
-template<>
-struct vint_traits_select<2,8> {
-    template<typename T> // assumes 2 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,2,8> {
+    static_assert( sizeof(T) == 2, "assumption" );
     using type = target::mmx_2x4<T>;
 };
 #else
-template<>
-struct vint_traits_select<1,8> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,8> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::sse42_1x8<T>;
 };
 
-template<>
-struct vint_traits_select<2,8> {
-    template<typename T> // assumes 2 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,2,8> {
+    static_assert( sizeof(T) == 2, "assumption" );
     using type = target::sse42_2x4<T>;
 };
 #endif // GRAPTOR_USE_MMX
@@ -147,95 +151,95 @@ struct vint_traits_select<2,8> {
 #endif // __MMX__ && __SSE4_2__
 
 #if __SSE4_2__
-template<>
-struct vint_traits_select<1,4> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,4> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::sse42_1x4<T>;
 };
 #endif // __SSE4_2__
 
 #if __MMX__
-template<>
-struct vint_traits_select<4,8> {
-    template<typename T> // assumes 4 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,4,8> {
+    static_assert( sizeof(T) == 4, "assumption" );
     using type = target::mmx_4x2<T>;
 };
 #endif // __MMX__
 
 #if __SSE4_2__
-template<>
-struct vint_traits_select<1,16> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,16> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::sse42_1x16<T>;
 };
 
-template<>
-struct vint_traits_select<2,16> {
-    template<typename T> // assumes 2 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,2,16> {
+    static_assert( sizeof(T) == 2, "assumption" );
     using type = target::sse42_2x8<T>;
 };
 
-template<>
-struct vint_traits_select<4,16> {
-    template<typename T> // assumes 4 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,4,16> {
+    static_assert( sizeof(T) == 4, "assumption" );
     using type = target::sse42_4x4<T>;
 };
 
-template<>
-struct vint_traits_select<8,16> {
-    template<typename T> // assumes 8 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,8,16> {
+    static_assert( sizeof(T) == 8, "assumption" );
     using type = target::sse42_8x2<T>;
 };
 #endif // __SSE4_2__
 
 #if __AVX2__
-template<>
-struct vint_traits_select<1,32> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,32> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::avx2_1x32<T>;
 };
 
-template<>
-struct vint_traits_select<2,32> {
-    template<typename T> // assumes 2 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,2,32> {
+    static_assert( sizeof(T) == 2, "assumption" );
     using type = target::avx2_2x16<T>;
 };
 
-template<>
-struct vint_traits_select<4,32> {
-    template<typename T> // assumes 4 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,4,32> {
+    static_assert( sizeof(T) == 4, "assumption" );
     using type = target::avx2_4x8<T>;
 };
 
-template<>
-struct vint_traits_select<8,32> {
-    template<typename T> // assumes 8 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,8,32> {
+    static_assert( sizeof(T) == 8, "assumption" );
     using type = target::avx2_8x4<T>;
 };
 #endif // __AVX2__
 
 #if __AVX512F__
-template<>
-struct vint_traits_select<1,64> {
-    template<typename T> // assumes 1 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,1,64> {
+    static_assert( sizeof(T) == 1, "assumption" );
     using type = target::avx512_1x64<T>;
 };
 
-template<>
-struct vint_traits_select<2,64> {
-    template<typename T> // assumes 2 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,2,64> {
+    static_assert( sizeof(T) == 2, "assumption" );
     using type = target::avx512_2x32<T>;
 };
 
-template<>
-struct vint_traits_select<4,64> {
-    template<typename T> // assumes 4 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,4,64> {
+    static_assert( sizeof(T) == 4, "assumption" );
     using type = target::avx512_4x16<T>;
 };
 
-template<>
-struct vint_traits_select<8,64> {
-    template<typename T> // assumes 8 == sizeof(T)
+template<typename T>
+struct vint_traits_select<T,8,64> {
+    static_assert( sizeof(T) == 8, "assumption" );
     using type = target::avx512_8x8<T>;
 };
 #endif // __AVX512F__
@@ -339,7 +343,7 @@ struct vfp_traits_select<
 
 template<typename T, unsigned short nbytes>
 using vector_type_int_traits =
-    typename target::vint_traits_select<sizeof(T),nbytes>::template type<T>;
+    target::vint_traits_select<T,sizeof(T),nbytes>::type;
 
 template<typename T, unsigned short nbytes>
 struct vector_type_traits<
@@ -349,11 +353,11 @@ struct vector_type_traits<
 template<bool S, unsigned short E, unsigned short M, bool Z, int B,
 	 unsigned short nbytes>
 struct vector_type_traits<detail::customfp_em<S,E,M,Z,B>,nbytes>
-    : public target::vint_traits_select<(7+detail::customfp_em<S,E,M,Z,B>::bit_size)/8,nbytes>::template type<detail::customfp_em<S,E,M,Z,B>> { };
+    : public target::vint_traits_select<detail::customfp_em<S,E,M,Z,B>,(7+detail::customfp_em<S,E,M,Z,B>::bit_size)/8,nbytes>::template type<detail::customfp_em<S,E,M,Z,B>> { };
 
 template<typename Cfg, unsigned short nbytes>
 struct vector_type_traits<vcustomfp<Cfg>,nbytes>
-    : public target::vint_traits_select<(7+Cfg::bit_size)/8,nbytes>::template type<vcustomfp<Cfg>> { };
+    : public target::vint_traits_select<vcustomfp<Cfg>,(7+Cfg::bit_size)/8,nbytes>::template type<vcustomfp<Cfg>> { };
 
 template<typename T, unsigned short nbytes>
 struct vector_type_traits<T,
