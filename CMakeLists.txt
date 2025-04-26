@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.10)
 # set project name and version
 project(Graptor VERSION 0.1 LANGUAGES C CXX)
 
-# specify C++ standard 20
-set(CMAKE_CXX_STANDARD 20)
+# specify C++ standard 23
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -56,6 +56,7 @@ if(GRAPTOR_PARALLEL STREQUAL "cilk")
 	    CMAKE_ARGS -DCMAKE_C_COMPILER=${GRAPTOR_CILK_C_COMPILER}
 	    	       -DCMAKE_CXX_COMPILER=${GRAPTOR_CILK_CXX_COMPILER}
 		       -DCMAKE_INSTALL_PREFIX=.
+            UPDATE_COMMAND ""
     )
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
@@ -78,6 +79,7 @@ elseif(GRAPTOR_PARALLEL STREQUAL "cilk_numa")
 	    CMAKE_ARGS -DCMAKE_C_COMPILER=${GRAPTOR_CILK_C_COMPILER}
 	    	       -DCMAKE_CXX_COMPILER=${GRAPTOR_CILK_CXX_COMPILER}
 		       -DCMAKE_INSTALL_PREFIX=.
+            UPDATE_COMMAND ""
     )
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
@@ -104,6 +106,7 @@ elseif(GRAPTOR_PARALLEL STREQUAL "parlay")
 	    GIT_REPOSITORY "https://github.com/cmuparlay/parlaylib"
 	    GIT_TAG "master"
 	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=. -DPARLAY_ELASTIC_PARALLELISM=Off
+            UPDATE_COMMAND ""
     )
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
@@ -121,6 +124,7 @@ elseif(GRAPTOR_PARALLEL STREQUAL "parlay_numa")
 	    GIT_REPOSITORY "https://github.com/cmuparlay/parlaylib"
 	    GIT_TAG "master"
 	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+            UPDATE_COMMAND ""
     )
 
     add_library(GRAPTOR_BACKEND SHARED IMPORTED GLOBAL)
@@ -164,6 +168,7 @@ ExternalProject_Add(
 	GIT_REPOSITORY "https://github.com/hyperrealm/libconfig.git"
 	GIT_TAG "master"
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
+	UPDATE_COMMAND ""
 )
 
 option(GRAPTOR_DMALLOC "Use dmalloc" OFF)
@@ -172,6 +177,14 @@ if(GRAPTOR_DMALLOC)
     string(APPEND graptor_cxxflags " -DDMALLOC=1")
     list(APPEND EXTRA_LIBS "-ldmallocth")
 endif(GRAPTOR_DMALLOC)
+
+set(var URJA_INSTALL "native" CACHE STRING "URJA installation")
+option(GRAPTOR_URJA "Use urja" OFF)
+if(GRAPTOR_URJA)
+    string(APPEND graptor_cflags " -I${URJA_INSTALL}/include -DMONITOR_URJA=1")
+    string(APPEND graptor_cxxflags " -I${URJA_INSTALL}/include -DMONITOR_URJA=1")
+    list(APPEND EXTRA_LIBS "${URJA_INSTALL}/lib/liburja.a")
+endif(GRAPTOR_URJA)
 
 add_library(LIBCONFIG SHARED IMPORTED GLOBAL)
 ExternalProject_Get_Property(libconfig_project BINARY_DIR)
@@ -229,3 +242,6 @@ add_subdirectory(tools)
 
 # comb
 add_subdirectory(comb)
+
+# experiments
+add_subdirectory(experiments)
