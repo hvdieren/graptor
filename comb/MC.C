@@ -193,12 +193,18 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/hash_set_hopscotch.h"
 #include "graptor/container/hash_set_hopscotch_delta.h"
+#include "graptor/container/hash_set_cuckoo.h"
+#include "graptor/container/hash_set_cuckoo_bitmask.h"
 #include "graptor/container/intersect.h"
 #include "graptor/container/transform_iterator.h"
 #include "graptor/container/concatenate_iterator.h"
 #include "graptor/stat/welford.h"
 #include "graptor/cmdline.h"
 #include "reorder_kcore.h"
+
+#ifdef MONITOR_URJA
+#include "urja/phasecom.h"
+#endif
 
 float density_threshold = 0.5f;
 
@@ -225,6 +231,9 @@ static std::vector<graptor::binary_vfdt<
 // using hash_fn = graptor::rand_hash<uint32_t>;
 using hash_fn = graptor::java_hash<uint32_t>;
 
+// using chash_fn = graptor::hash_fn_pair<uint32_t,graptor::rand_hash<uint32_t>,graptor::rand_hash<uint32_t>>;
+using chash_fn = graptor::hash_fn_pair<uint32_t,graptor::java_hash<uint32_t>,graptor::java_hash_variation_A<uint32_t>>;
+
 #ifndef HOPSCOTCH_HASHING
 #define HOPSCOTCH_HASHING 1
 #endif
@@ -249,7 +258,9 @@ using hash_fn = graptor::java_hash<uint32_t>;
 // neighbourhood. We can postpone the construction of the remapped graph
 // in the same way.
 #if HOPSCOTCH_HASHING == 1
-using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
+// using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
+// using hash_set_type = graptor::hash_set_cuckoo<VID,chash_fn>;
+using hash_set_type = graptor::hash_set_cuckoo_bitmask<VID,chash_fn>;
 static constexpr bool hash_set_prealloc = false;
 #if ABLATION_DISABLE_LAZY_HASHING
 static constexpr bool lazy_hashing = false;
@@ -3749,7 +3760,8 @@ std::pair<VID,EID> mc_top_level_select(
 	    ::intersect_size_ge_ds(
 		cut.get_slice(),
 		H.get_lazy_neighbours_set( u, best ),
-		best-1 ); // keep if intersection size >= best-1
+		best-1, // keep if intersection size >= best-1
+		graptor::cs_filter1 );
 	return ge;
     }, best );
     stats.record_filter1( tm.next() );
@@ -3793,7 +3805,8 @@ std::pair<VID,EID> mc_top_level_select(
 		    cut.get_slice(),
 		    H.get_neighbours_set( u, best ),
 		    threshold <= 2 ? VID(0)
-		    : threshold-2 ); // exceed checks >, we need >= best-1
+		    : threshold-2, // exceed checks >, we need >= best-1
+		    graptor::cs_filter2 );
 
 	    // Reduction rules based on degree
 	    // These seem futile as both the recursive BK search and the
@@ -3864,7 +3877,8 @@ std::pair<VID,EID> mc_top_level_select(
 		cut.get_slice(),
 		H.get_neighbours_set( u, best ),
 		best <= 2 ? VID(0)
-		: best-2 ); // exceed checks >, we need >= best-1
+		: best-2, // exceed checks >, we need >= best-1
+		graptor::cs_filter2 );
 	if( d+1 >= best )
 	    m_est += d;
 	return d+1 >= best;
@@ -4325,10 +4339,10 @@ VID heuristic_expand(
     size_t sz;
     if( cur_size <= depth )
 	sz = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
-	    s, v_adj, out ) - out;
+	    s, v_adj, out, graptor::cs_cheur ) - out;
     else
 	sz = graptor::set_operations<graptor::MC_intersect>::intersect_gt_ds(
-	    s, v_adj, cur_size - depth, out ) - out;
+	    s, v_adj, cur_size - depth, out, graptor::cs_cheur ) - out;
 
     return heuristic_expand( H, &R_new, top_v, out, out+sz, E, depth+1 );
 }
@@ -4427,7 +4441,7 @@ void heuristic_expand_dmax(
 		::intersect_size_gt_val_ds(
 		    graptor::make_array_slice( &vs[0], &vs[ns] ),
 		    graptor::make_array_slice( v_from, v_to ),
-		    d_max );
+		    d_max, graptor::cs_dheur );
 
 	    if( d_max < d || d_max == 0 ) {
 		d_max = d;
@@ -4469,10 +4483,16 @@ void heuristic_search_dmax(
     const GraphCSx & H,
     MC_Enumerator & E,
     VID K ) {
+
     // Config
     const VID nparts = graptor_num_threads();
-    
-    // Data structures
+
+    // Data structures. For each partition, remember the top K vertices
+    // by their VID (top_v), degree (top_d). top_k is the count of vertices
+    // per partition.
+    // An additional K vertex IDs are retained in top_v for global selection.
+    // Note: there is cache block aliasing in top_k, and also in top_v and
+    //       top_d if K is not a multiple of cache block size / sizeof(VID).
     VID * top_v = new VID[K*nparts+K];
     VID * top_d = new VID[K*nparts];
     VID * top_k = new VID[nparts]();
@@ -4492,20 +4512,20 @@ void heuristic_search_dmax(
 	    // max clique (typically only know a 2-clique at this stage),
 	    // considering only the eligible neighbours
 	    VID deg = edges[v+1] - edges[v];
-	    if( top_k[p] < K || deg >= top_d[p*nparts] ) {
+	    if( top_k[p] < K || deg >= top_d[p*K] ) {
 		// insertion sort
 		VID tmp_v = v;
 		VID tmp_d = deg;
 		for( VID i=0; i < top_k[p]; ++i ) {
-		    if( top_d[p*nparts+i] > tmp_d ) {
+		    if( top_d[p*K+i] > tmp_d ) {
 			using std::swap;
-			swap( top_d[+p*nparts+i], tmp_d );
-			swap( top_v[+p*nparts+i], tmp_v );
+			swap( top_d[p*K+i], tmp_d );
+			swap( top_v[p*K+i], tmp_v );
 		    }
 		}
 		if( top_k[p] < K ) {
-		    top_d[top_k[p]+p*nparts] = tmp_d;
-		    top_v[top_k[p]+p*nparts] = tmp_v;
+		    top_d[top_k[p]+p*K] = tmp_d;
+		    top_v[top_k[p]+p*K] = tmp_v;
 		    ++top_k[p];
 		}
 	    }
@@ -4514,14 +4534,13 @@ void heuristic_search_dmax(
 
     // Down-select vertices
     VID * sel_v = &top_v[nparts*K];
-    VID * sel_d = &top_d[nparts*K];
     VID sel_k = 0;
     for( VID i=0; i < K; ++i ) {
 	VID maxp = 0;
 	VID maxd = top_k[0] > 0 ? top_d[top_k[0]-1] : 0;
 	for( VID p=1; p < nparts; ++p ) {
 	    if( top_k[p] > 0 ) {
-		VID off = p*nparts+top_k[p]-1;
+		VID off = p*K+top_k[p]-1;
 		if( top_d[off] > maxd ) {
 		    maxp = p;
 		    maxd = top_d[off];
@@ -4530,7 +4549,7 @@ void heuristic_search_dmax(
 	}
 	if( top_k[maxp] == 0 ) // we don't have nparts * K vertices in the graph
 	    break;
-	sel_v[sel_k] = top_v[maxp*nparts+top_k[maxp]-1];
+	sel_v[sel_k] = top_v[maxp*K+top_k[maxp]-1];
 	++sel_k;
 	--top_k[maxp]; // remove for future selection
     }
@@ -4680,17 +4699,34 @@ int main( int argc, char *argv[] ) {
     system( "hostname" );
     system( "date" );
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 0, "I/O" );
+#endif
+    
     timer tm;
     tm.start();
+
+    if( ifile == nullptr ) {
+	std::cerr << "Error: missing input file (option -i)\n";
+	return 1;
+    }
 
     GraphCSx G0( ifile, -1, symmetric );
 
     std::cout << "Reading graph: " << tm.next() << "\n";
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 1, "setup" );
+#endif
+    
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
     std::cout << "Removed self-edges: " << tm.next() << "\n";
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 2, "benchmark" );
+#endif
+    
     // Reset timer as graph ingress has high variability, and comparator
     // frameworks don't measure ingress or tend to perform poorly on ingress.
     // Also exclude time removing self-edges. This is part of data set
@@ -5137,6 +5173,10 @@ int main( int argc, char *argv[] ) {
     std::cout << "Completed search in " << tm_search.next() << " seconds\n";
     std::cout << "Completed MC in " << tm.total() << " seconds\n";
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 3, "cleanup" );
+#endif
+    
     // std::string what = "numastat -vmp ";
     // what += argv[0];
     // system( what.c_str() );

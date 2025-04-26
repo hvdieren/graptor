@@ -69,6 +69,29 @@ struct is_multi_hash_set {
 template<typename S>
 constexpr bool is_multi_hash_set_v = is_multi_hash_set<S>::value;
 
+/*! \brief Type traits that identifies if a data type is a hash set supporting
+ *         simultaneous lookup of multiple elements using vectorization and
+ *         it can also indicate the next higher value, i.e.,
+ *         it has a method \c multi_contains_next.
+ * \tparam S The type for which it is determined if it is a multi-hash-next set.
+ */
+template<typename S>
+struct is_multi_hash_next_set {
+    static constexpr bool value = requires( const S & s ) {
+	s.template multi_contains_next<typename S::type,8,target::mt_vmask>(
+	    vector_type_traits_vl<typename S::type,8>::setzero(),
+	    target::mt_vmask() );
+    };
+};
+
+/*! \brief Variable that identifies if a data type is a hash set supporting
+ *         simultaneous lookup of multiple elements using vectorization, i.e.,
+ *         it has a method \c multi_contains.
+ * \tparam S The type for which it is determined if it is a multi-hash set.
+ */
+template<typename S>
+constexpr bool is_multi_hash_next_set_v = is_multi_hash_next_set<S>::value;
+
 /*! \brief Type traits that identifies if a data type is a hash table supporting
  *         simultaneous lookup of multiple elements using vectorization, i.e.,
  *         it has a method \c multi_lookup.
@@ -202,6 +225,18 @@ struct dual_set {
 	return m_hash.template multi_contains<U,VL,MT>( index, mt );
     }
 
+    template<typename U, unsigned short VL, typename MT>
+    auto
+    multi_contains_next( typename vector_type_traits_vl<U,VL>::type index,
+			 MT mt ) const {
+	if constexpr ( is_multi_hash_next_set_v<hash_type> )
+	    return m_hash.template multi_contains_next<U,VL,MT>( index, mt );
+	else {
+	    auto r = m_hash.template multi_contains<U,VL,MT>( index, mt );
+	    return std::make_pair( r, type(0) );
+	}
+    }
+
     /*! Performs simultaneous lookup of a number of elements in the hash table.
      *
      * Requires is_multi_hash_table_v<hash_type>.
@@ -250,6 +285,9 @@ struct dual_set {
 
     //! Is the hash set representation valid?
     constexpr bool has_hash_set() const { return true; }
+
+    //! Capacity of the hash set
+    size_t capacity() const { return m_hash.capacity(); }
 
 private:
     seq_type m_seq; 	 	//!< Sequential representation

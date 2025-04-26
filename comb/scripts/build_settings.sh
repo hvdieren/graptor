@@ -21,7 +21,7 @@ function build() {
     #local LIB="${GRAPTOR}/build/libgraptorlib.a ${CILKLDPATH}/libcilkrts.so"
     local LIB=${LD_FLAGS}
     #local CXXFLAGS="-g -I${GRAPTOR}/build -I${GRAPTOR}/include -I${CILK_INC}/include -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -DLONG -ldl -std=c++17 -march=$arch ${LIB}"
-    local cxxflags="${CXXFLAGS} -O4 -std=c++2a"
+    local cxxflags="${CXXFLAGS} -O4 -std=c++23"
     local PAPIFLAGS=
     if echo $flags | grep PAPI_REGION=1 > /dev/null 2>&1 ; then
 	PAPI_FLAGS=${HOME}/lib/libpapi.so
@@ -69,7 +69,7 @@ function get_flags() {
     flags["MC_INTERSECTION_ALGORITHM"]=0
     flags["INTERSECTION_TRIM"]=0
     flags["INTERSECTION_ONE_SIDED"]=1
-    flags["INTERSECTION_GE_ABOVE"]=0
+    flags["INTERSECTION_GE_ABOVE"]=1
     flags["VERTEX_COVER_COMPONENTS"]=0
     flags["PIVOT_COLOUR"]=0
     flags["PIVOT_COLOUR_DENSE"]=0

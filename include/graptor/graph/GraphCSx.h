@@ -15,6 +15,7 @@
 #include <libconfig.h++>
 
 #include "graptor/itraits.h"
+#include "graptor/backend/backend.h"
 #include "graptor/mm.h"
 #include "graptor/mm/mm.h"
 #include "graptor/graph/gtraits.h"
@@ -637,7 +638,8 @@ public:
 
 
     void import_transpose( const GraphCSx & Gcsr ) {
-	const VID P = atoi( getenv( "GRAPTOR_P" ) ); // 128;
+	const char * graptor_P = getenv( "GRAPTOR_P" );
+	const VID P = graptor_P ? atoi( graptor_P ) : graptor_num_threads();
 
 	// import_transpose_partitioned( Gcsr, P );
 	// import_transpose_adjacency( Gcsr, P );
@@ -1154,7 +1156,8 @@ public:
 	
 	// Determine cut-off degree. Estimate in-degree by out-degree of vertex.
 	// Count number of 'high-degree' vertices
-	const VID D = atoi( getenv( "GRAPTOR_D" ) ); // 4096;
+	const char * graptor_D = getenv( "GRAPTOR_D" );
+	const VID D = graptor_D ? atoi( graptor_D ) : 4096;
 	VID n_high = sequence::reduce<VID>(
 	    (VID)0, n, addF<VID>(), selectVDeg<VID,EID>( idx, D ) );
 
@@ -1642,7 +1645,8 @@ public:
 	
 	// Determine cut-off degree. Estimate in-degree by out-degree of vertex.
 	// Count number of 'high-degree' vertices
-	const VID D = atoi( getenv( "GRAPTOR_D" ) ); // 4096;
+	const char * graptor_D = getenv( "GRAPTOR_D" );
+	const VID D = graptor_D ? atoi( graptor_D ) : 4096;
 	VID n_high = sequence::reduce<VID>(
 	    (VID)0, n, addF<VID>(), selectVDeg<VID,EID>( idx, D ) );
 

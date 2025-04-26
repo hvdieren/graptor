@@ -103,7 +103,7 @@ struct maybe_dual_set {
     seq_type get_seq() const { return m_seq; }
 
     //! Returns a reference to the hashed representation
-    const hash_type & get_hash() const { return m_hash; }
+    const hash_type & get_hash() const { return *m_hash; }
 
     /*! Checks if set contains an element.
      *
@@ -144,6 +144,18 @@ struct maybe_dual_set {
     multi_contains( typename vector_type_traits_vl<U,VL>::type index,
 		    MT mt ) const {
 	return m_hash->template multi_contains<U,VL,MT>( index, mt );
+    }
+
+    template<typename U, unsigned short VL, typename MT>
+    auto
+    multi_contains_next( typename vector_type_traits_vl<U,VL>::type index,
+			 MT mt ) const {
+	if constexpr ( is_multi_hash_next_set_v<hash_type> )
+	    return m_hash->template multi_contains_next<U,VL,MT>( index, mt );
+	else {
+	    auto r = m_hash->template multi_contains<U,VL,MT>( index, mt );
+	    return std::make_pair( r, type(0) );
+	}
     }
 
     /*! Performs simultaneous lookup of a number of elements in the hash table.
@@ -196,6 +208,11 @@ struct maybe_dual_set {
     //! Is the hash set representation valid
     bool has_hash_set() const {
 	return m_hash != nullptr;
+    }
+
+    //! Capacity of the hash set
+    size_t capacity() const {
+	return has_hash_set() ? m_hash->capacity() : 0;
     }
 
 private:

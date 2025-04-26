@@ -33,16 +33,22 @@ template<bool dual_rep, bool left_base, typename HashSet>
 struct hash_pa_insert_iterator {
     hash_pa_insert_iterator(
 	HashSet & table, VID * list, const VID * start )
-	: m_table( table ), m_list( list ), m_start( start ) { }
+	: m_table( table ), m_list( list ), m_start( start ),
+	  m_prev( table.invalid_element ) { }
 
     template<typename LSet, typename RSet>
     void swap( LSet && lset, RSet && rset ) { }
 
     size_t return_value() { return 0; } // whatever
 
+    // Not relevant here as we are not short-cutting the execution
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) { }
+
     void push_back( const VID * lt, const VID * rt = nullptr ) {
 	VID v = ( left_base ? lt : rt ) - m_start;
-	m_table.insert( v );
+	m_table.insert_prev( v, m_prev );
+	m_prev = v;
 	if constexpr ( dual_rep )
 	    *m_list++ = v;
     }
@@ -54,7 +60,8 @@ struct hash_pa_insert_iterator {
 	// rhs == false: l points into XP, r points into adjacency
 	if( ins ) {
 	    VID v = ( rhs ? r : l ) - m_start;
-	    m_table.insert( v );
+	    m_table.insert_prev( v, m_prev );
+	    m_prev = v;
 	    if constexpr ( dual_rep )
 		*m_list++ = v;
 	}
@@ -68,14 +75,16 @@ struct hash_pa_insert_iterator {
 	if( ins ) {
 	    if constexpr ( rhs ) {
 		// RHS is XP dual set. xlat contains translated ID
-		m_table.insert( xlat );
+		m_table.insert_prev( xlat, m_prev );
+		m_prev = xlat;
 		if constexpr ( dual_rep )
 		    *m_list++ = xlat;
 	    } else {
 		// RHS is adjacency info. xlat is 0/1 value indicating presence.
 		// Need to translate using pointer arithmetic
 		VID v = p - m_start;
-		m_table.insert( v );
+		m_table.insert_prev( v, m_prev );
+		m_prev = v;
 		if constexpr ( dual_rep )
 		    *m_list++ = v;
 	    }
@@ -89,6 +98,7 @@ private:
     HashSet & m_table;
     VID * m_list;
     const VID * m_start;
+    VID m_prev;
 };
 
 template<typename lVID, typename lEID,
@@ -1043,6 +1053,9 @@ private:
     hash_set_type & build_hash_set( VID rv, VID ov, VID cth ) const {
 	hash_set_type & a = m_adjacency[rv];
 
+	// TEMP: to test with next optimisation
+	build_seq( rv, ov, cth );
+
 	std::lock_guard<std::mutex> guard( a.get_lock() );
 	if( is_hash_set_initialised( rv ) )
 	    return a;
@@ -1071,7 +1084,9 @@ private:
 	    // Try to get allocation size right from the start
 	    a.create_if_uninitialised( m_degree[rv] );
 
-	    // There is a risk that we concurrently expose a sequential
+	    // There is an option to remove elements from the list as the
+	    // threshold has increased since construction. However:
+	    // there is a risk that we concurrently expose a sequential
 	    // representation in the progress of being modified. The assumption
 	    // is that because the list is compressed, (i) no important elements
 	    // are being lost and (ii) all intersection algorithms remain
@@ -1079,16 +1094,20 @@ private:
 	    // element, e.g., 10, 11, 12, 15 -> 10, 15, 12, 15 when 11 and 12
 	    // are removed).
 	    // This is not obviously correct, hence we disable the update.
+	    VID prev = a.invalid_element;
 	    for( ; re != ree; ++re ) {
 		VID ru = edges[re];
 		if( m_coreness[ru] >= cth ) {
-		    a.insert( ru );
+		    a.insert_prev( ru, prev );
+		    prev = ru;
 		    // edges[rn++] = ru;
 		}
 	    }
 
 	    assert( a.size() <= m_degree[rv] );
 	} else {
+	    assert( 0 );
+#if 0
 	    const EID * const gindex = m_orig_graph.getIndex();
 	    const VID * const gedges = m_orig_graph.getEdges();
 
@@ -1103,6 +1122,7 @@ private:
 	    }
 
 	    assert( a.size() <= gindex[ov+1] - gindex[ov] );
+#endif
 	}
 #else
 	const EID * const gindex = m_orig_graph.getIndex();

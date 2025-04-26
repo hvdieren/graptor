@@ -11,6 +11,10 @@
 #include "graptor/target/vector.h"
 #include "graptor/frontier/type.h"
 
+#ifndef WIDEN_APPROACH
+#define WIDEN_APPROACH 1
+#endif
+
 alignas(64) extern const uint8_t avx2_1x32_array_encoding_permute_lut_vl4[32];
 // alignas(64) extern const uint32_t avx512_4x16_evenodd_intlv_epi32_vl4[16];
 alignas(64) extern const uint8_t avx512_1x32_array_encoding_permute_lut_vl8[64];

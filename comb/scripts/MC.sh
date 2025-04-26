@@ -4,7 +4,7 @@
 #what="phase 1 (one vertex per degeneracy):"
 #what="filter"
 #what="early pruning"
-what="Enumeration"
+#what="Enumeration"
 #what="Calculting coreness"
 #what="Calculating degeneracy time:"
 #what="Constructing remap info:"
@@ -12,7 +12,7 @@ what="Enumeration"
 #what="Completed MC in"
 #what="Completed search in"
 #what="filter0"
-#what="filter1"
+what="filter1"
 #what="filter2"
 whatn=$((`echo "$what" | sed -e 's/[^ ]//g' | wc -c` + 1))
 
@@ -42,7 +42,7 @@ function get_avg() {
     local count=0
     local fail=0
     
-    #echo graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r0.${bench}_${version}_${opts}.${graph}_undir 
+    #echo graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r[0-9].h${heur}.d${density}.ep${early}.${bench}_${version}_${opts}.${graph}_undir
     for file in `ls -1 graptor_$arch/$dir/output.${commit}.t${threads}.c${part}.r[0-9].h${heur}.d${density}.ep${early}.${bench}_${version}_${opts}.${graph}_undir 2> /dev/null` ; do
 	if [ -e $file ] ; then
 	    if grep FAIL $file > /dev/null 2>&1 ; then
@@ -89,6 +89,7 @@ function get_stats() {
     local part=$7
     local dir=$8
     local arch=$9
+    local early=${10}
 
     local sum=0
     local count=0
@@ -235,11 +236,9 @@ function mce() {
 	dir=$commit
     fi
 
-    #local variants="ins0_$vl ins1_$vl ins2_$vl ins3_$vl ins4_$vl ins5_$vl ins6_$vl ins7_$vl ins8_$vl itrim_ins0_$vl itrim_ins1_$vl itrim_ins2_$vl itrim_ins3_$vl itrim_ins4_$vl itrim_ins5_$vl itrim_ins6_$vl itrim_ins7_$vl itrim_ins8_$vl"
-    #local variants="itrim_sort5_trav1_$vl itrim_sort5_trav1_vccc_$vl itrim_sort5_trav1_nopivc_$vl itrim_sort5_trav1_nopivd_$vl itrim_sort5_trav1_nopivc_nopivd_$vl"
-    #local variants="itrim_sort4_trav0_$vl itrim_sort4_trav1_$vl itrim_sort4_trav3_$vl itrim_sort5_trav1_$vl itrim_sort4_trav3_onesided_$vl itrim_sort4_trav3_vccc_$vl itrim_sort4_trav3_nopivc_nopivd_$vl itrim_sort4_trav3_${vl}_noavx512"
-    #local variants="itrim_sort4_trav3_$vl itrim_sort4_trav3_mcins1_$vl itrim_sort4_trav3_hopscotch1_$vl itrim_sort4_trav3_hopscotch1_mcins1_$vl itrim_sort4_trav3_ld1_$vl itrim_sort4_trav3_ld2_$vl itrim_sort4_trav3_ld3_$vl itrim_sort4_trav3_ld1_hopscotch1_$vl itrim_sort4_trav3_ld2_hopscotch1_$vl itrim_sort4_trav3_ld3_hopscotch1_$vl"
-    local variants="itrim_sort4_trav3_geabove_$vl itrim_sort4_trav3_geabove_noadvins_$vl itrim_sort4_trav3_geabove_nolazy_$vl itrim_sort4_trav3_geabove_nolazy_nohopscotch_$vl itrim_sort2_trav3_geabove_$vl itrim_sort4_trav3_geabove_nolhf_$vl itrim_sort4_trav3_$vl"
+    #local variants="itrim_sort4_trav3_geabove_$vl itrim_sort4_trav3_geabove_noadvins_$vl itrim_sort4_trav3_geabove_nolazy_$vl itrim_sort4_trav3_geabove_nolazy_nohopscotch_$vl itrim_sort2_trav3_geabove_$vl itrim_sort4_trav3_geabove_nolhf_$vl itrim_sort4_trav3_$vl"
+    #local variants="itrim_sort4_trav3_mcins0_$vl itrim_sort4_trav3_mcins2_$vl itrim_sort4_trav3_mcins0_nolazy_$vl itrim_sort4_trav3_mcins2_nolazy_$vl"
+    local variants="itrim_sort4_trav3_mcins0_$vl itrim_sort4_trav3_mcins2_$vl itrim_sort4_trav3_mcins5_$vl"
     #local variants="itrim_sort4_trav3_$vl"
 
     echo "VL=$vl threads=$threads commit=$commit part=$part"
@@ -345,11 +344,13 @@ function steps() {
     local part=$3
     local commit=$4
     local arch=$5
+    local ins=$6
     local dir=$commit
 
     local metrics="early remap hashed heuristic enumeration complete"
-    local variant="itrim_sort4_trav3_geabove_vl${vl}"
-    echo "VL=$vl commit=$commit part=$part"
+    #local variant="itrim_sort4_trav3_mcins${ins}_vl$vl"
+    local variant="itrim_sort4_trav3_mcins${ins}_noadvins_vl$vl"
+    echo "VL=$vl commit=$commit part=$part ins=$ins"
     (
         echo -ne "\"\" "
         echo " $metrics" | tr ' ' "\n"
@@ -417,17 +418,39 @@ function maymust() {
 }
 
 
-#commit=b3d0aed7
-#commit=9319a5a3
-#commit=d0d47f7d
-#commit=093ea1c1
-#commit=66356e5c
-commit=28c5ddae
+#commit=28c5ddae
+#commit=eeca5a19
+#commit=fa535754
+commit=04913b93
+#commit=847fef41
 
 #mce 16 128 $commit 1024 avx512 $commit
 #mce 16 1 $commit 1024 avx512 $commit
 
-scalability 16 1024 $commit avx512
+#mce 16 1 04913b93 1024 avx512
+#mce 16 1 847fef41 1024 avx512
+#mce 16 1 ec5b1ac4 1024 avx512
+#mce 16 1 76953ce1 1024 avx512
+
+#commit=76953ce1
+#commit=3a0e6f74
+#commit=e2a5cfe9
+#commit=8bd367cc
+#commit=c655ccff
+#commit=fc3ac72c
+#commit=febd574f
+#commit=b927d53c
+#commit=bf318cc5
+#commit=11435acb
+#commit=09d62d52
+#commit=64ec7a45
+commit=ecaa07c9
+
+steps 16 1 1024 $commit avx512 0
+steps 16 1 1024 $commit avx512 5
+
+
+#scalability 16 1024 $commit avx512
 
 #vc 16 128 1024 $commit avx512
 

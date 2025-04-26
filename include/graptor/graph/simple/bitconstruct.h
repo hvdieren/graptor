@@ -330,6 +330,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 #else
     static constexpr unsigned RVL = 1;
 #endif
+    // std::cerr << "RVL=" << RVL << "\n";
     sVID l = 0;
 #if !ABLATION_BITCONSTRUCT_XP_VEC
     if constexpr ( sizeof(sVID)*8 <= Bits && Bits <= 64
@@ -492,7 +493,7 @@ std::pair<typename tr::type,sVID> construct_row_hash_xp_vec(
 #endif // !ABLATION_BITCONSTRUCT_XP_VEC
     while( l < udeg ) {
 	sVID v = ngh[l];
-	sVID sv = xp_hash.contains( v ); // translates ID
+	sVID sv = xp_hash.lookup /* contains */( v ); // translates ID
 	if( sv >= col_start && sv < col_end ) {
 	    row_u = tr::bitwise_or(
 		row_u, tr::setglobaloneval( sv - off ) );

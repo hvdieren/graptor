@@ -108,6 +108,10 @@ public:
 	return rt_ilog2( num_elements ) + HASH_SET_LOAD_FACTOR;
     }
 
+    bool insert_prev( type value, type ) {
+	return insert( value );
+    }
+
     bool insert( type value ) {
 	size_type index = m_hash( value ) & ( capacity() - 1 );
 	while( m_table[index] != invalid_element && m_table[index] != value )
@@ -448,6 +452,30 @@ struct hash_insert_iterator<hash_set<T,Hash>> {
     void push_back( const T * t, const T * = nullptr ) {
 	m_table.insert( t - m_start );
     }
+
+    // Interface for intersection collectors
+    template<bool rhs>
+    bool record( const T * l, const T * r, bool ins ) {
+	static_assert( rhs == true, "alternate case not considered" );
+	if( ins )
+	    m_table.insert( l - m_start );
+	return true;
+    }
+
+    template<bool rhs>
+    bool record( const T * l, T value, bool ins ) {
+	static_assert( rhs == true, "alternate case not considered" );
+	if( ins )
+	    m_table.insert( l - m_start );
+	return true;
+    }
+
+    template<bool rhs>
+    void remainder( size_t l, size_t r ) { }
+
+    auto & return_value() const { return *this; }
+
+    bool terminated() const { return false; }
     
 private:
     hash_set<T,Hash> & m_table;

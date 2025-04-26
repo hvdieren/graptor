@@ -353,11 +353,11 @@ struct vector_type_traits<
 template<bool S, unsigned short E, unsigned short M, bool Z, int B,
 	 unsigned short nbytes>
 struct vector_type_traits<detail::customfp_em<S,E,M,Z,B>,nbytes>
-    : public target::vint_traits_select<detail::customfp_em<S,E,M,Z,B>,(7+detail::customfp_em<S,E,M,Z,B>::bit_size)/8,nbytes>::template type<detail::customfp_em<S,E,M,Z,B>> { };
+    : public target::vint_traits_select<detail::customfp_em<S,E,M,Z,B>,(7+detail::customfp_em<S,E,M,Z,B>::bit_size)/8,nbytes>::type { };
 
 template<typename Cfg, unsigned short nbytes>
 struct vector_type_traits<vcustomfp<Cfg>,nbytes>
-    : public target::vint_traits_select<vcustomfp<Cfg>,(7+Cfg::bit_size)/8,nbytes>::template type<vcustomfp<Cfg>> { };
+    : public target::vint_traits_select<vcustomfp<Cfg>,(7+Cfg::bit_size)/8,nbytes>::type { };
 
 template<typename T, unsigned short nbytes>
 struct vector_type_traits<T,

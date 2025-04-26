@@ -124,6 +124,7 @@ done
 fi
 
 
+if false ; then
 one MC _itrim_sort4_trav3_vl16 &
 one MC _itrim_sort4_trav3_geabove_noadvins_vl16 &
 one MC _itrim_sort4_trav3_geabove_nolazy_vl16 
@@ -131,6 +132,7 @@ one MC _itrim_sort4_trav3_geabove_nolazy_vl16
 one MC _itrim_sort4_trav3_geabove_nolhf_vl16 &
 #one MC _itrim_sort2_trav3_vl16  &
 one MC _itrim_sort4_trav3_geabove_vl16 
+fi
 
 if false ; then
 one MC _itrim_sort4_trav3_ld1_vl16 &
@@ -188,5 +190,15 @@ one MC _itrim_sort4_trav3_vl16_noavx512
 one MC _itrim_sort4_trav3_vl16_papi
 
 fi
+
+#one MC _itrim_sort4_trav3_mcins0_vl16 &
+#one MC _itrim_sort4_trav3_mcins5_vl16 &
+one MC _itrim_sort4_trav3_mcins0_noadvins_vl16  &
+one MC _itrim_sort4_trav3_mcins5_noadvins_vl16 
+
+#one MC _itrim_sort4_trav3_mcins2_vl16 &
+#one MC _itrim_sort4_trav3_mcins0_nolazy_vl16 
+#one MC _itrim_sort4_trav3_mcins2_nolazy_vl16 
+#one MC _itrim_sort4_trav3_mcins3_vl16 &
 
 wait

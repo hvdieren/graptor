@@ -184,6 +184,8 @@ public:
 		return m_ne;
 	}
 
+	size_t capacity() const { return 0; }
+
 	const hash_set_interface & trim_l( const lVID * l ) const {
 	    // TODO: trim P or X range; may adjust ne to accomplish this
 	    return *this;
@@ -205,7 +207,8 @@ public:
 	}
 
 	//! Is the sequential representation valid?
-	constexpr bool has_sequential() const { return true; }
+	//  The sequential representation must be sorted in order to be valid.
+	constexpr bool has_sequential() const { return m_xp.is_sorted(); }
 
 	//! Is the hash set representation valid?
 	constexpr bool has_hash_set() const { return true; }
@@ -293,8 +296,10 @@ public:
 	    vtype vc = tr::gather( m_xp.m_set, pos, mc );
 	    // check which certificates are valid
 	    auto mv = tr::cmpeq( mc, vc, index, MT() );
+	    // squash lanes with invalid certificates
+	    vtype posf = tr::blend( mv, tr::setone(), pos );
 
-	    return std::make_pair( mv, pos );
+	    return std::make_pair( mv, posf );
 	}
 
     private:
@@ -303,7 +308,8 @@ public:
 
 public:
     XPSetBase( VID n, VID ce_max )
-	: m_pos( new lVID[n+ce_max] ), m_set( m_pos+n ), m_fill( 0 ) {
+	: m_pos( new lVID[n+ce_max] ), m_set( m_pos+n ), m_fill( 0 ),
+	  m_is_sorted( true ) {
 	// Silent errors occur when allocating zero elements...
 	assert( n > 0 && "require non-empty graph" );
     }
@@ -311,10 +317,12 @@ protected:
     XPSetBase( XPSetBase && xp )
 	: m_set( std::forward<lVID*>( xp.m_set ) ),
 	  m_pos( std::forward<lVID*>( xp.m_pos ) ),
-	  m_fill( std::forward<lVID>( xp.m_fill ) ) {
+	  m_fill( std::forward<lVID>( xp.m_fill ) ),
+	  m_is_sorted( std::forward<bool>( xp.m_is_sorted ) ) {
 	xp.m_set = nullptr;
 	xp.m_pos = nullptr;
 	xp.m_fill = 0;
+	xp.m_is_sorted = true;
     }
     XPSetBase( const XPSetBase & ) = delete;
     XPSetBase & operator = ( const XPSetBase & ) = delete;
@@ -324,6 +332,8 @@ public:
 	if( m_pos )
 	    delete[] m_pos;
     }
+
+    bool is_sorted() const { return m_is_sorted; }
 
     // A top level iteration for a cut-out graph. v is currently being visited
     // and we are setting up an XPSet to describe its position
@@ -344,6 +354,9 @@ public:
 		xp.m_pos[ngh[i]] = i;
 	    }
 	    xp.m_fill = deg;
+	    // Note: m_is_sorted attributed really depends on whether ngh
+	    //       is sorted. We assume it is.
+	    xp.m_is_sorted = true;
 	} else {
 	    const auto & adj = G.get_adjacency( v ); 
 	    auto end = std::copy_if(
@@ -360,6 +373,7 @@ public:
 		xp.m_pos[xp.m_set[i]] = i;
 	    }
 	    xp.m_fill = deg;
+	    xp.m_is_sorted = true; 	// We have explicitly sorted m_set
 	}
 
 	// v is not a neighbour of itself, hence not a member of this set.
@@ -387,6 +401,7 @@ public:
 	    xp.m_pos[i] = i;
 	}
 	xp.m_fill = n;
+	xp.m_is_sorted = true; // trivial
 
 	return xp;
     }
@@ -402,6 +417,13 @@ public:
 	return hash_set_interface<true>( *this, ne );
     }
 
+    //!< Present sequential sorted set interface for P set
+    auto P_sequential_set( lVID ne ) const {
+	assert( is_sorted()
+		&& "Sequential interface only meaningful if set is sorted" );
+	return make_array_slice( &m_set[ne], &m_set[m_fill] );
+    }
+
     // present hash_table-like interface for X and P (vertex ID translation)
     auto hash_table() const {
 	return hash_table_interface( *this );
@@ -414,6 +436,7 @@ public:
 	    m_pos[v] = m_fill;
 	    m_set[m_fill++] = v;
 	}
+	m_is_sorted = false; // Would need to check...
     }
 
     /*const*/ lVID * get_set() const { return m_set; }
@@ -428,6 +451,7 @@ protected:
     lVID * m_pos;
     lVID * m_set;
     lVID m_fill;
+    bool m_is_sorted;
 };
     
 template<typename _lVID = VID>
@@ -476,6 +500,8 @@ public:
 		    break;
 	    }
 	}
+
+	this->m_is_sorted = false;
     }
 
     template<typename Adj>
@@ -500,6 +526,7 @@ public:
 	assert( p_ins == ce );
 
 	this->m_fill = ce;
+	this->m_is_sorted = false;
     }
 
     template<typename Adj>
@@ -515,6 +542,7 @@ public:
 	lVID mx = std::min( deg, ce );
 	XPSet ins( n, mx+16 ); // hash_vector requires extra space
 
+#if 0
 	if( ce > 2*deg ) {
 	    // TODO: find split point for X/P to reduce ranges?
 	    //       or make single traversal and determine X/P on the fly?
@@ -532,6 +560,14 @@ public:
 	    ce_new = graptor::hash_vector::intersect(
 		this->m_set+i+1, this->m_set+ce, adj, ins.m_set+ne_new ) - ins.m_set;
 	}
+#else
+	// std::cerr << "intersect...\n";
+	// Note: skip m_set[i] as we know there are no self-loops.
+	ne_new = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+	    this->X_hash_set( i ), adj, ins.m_set ) - ins.m_set;
+	ce_new = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+	    this->P_hash_set( i+1 ), adj, ins.m_set+ne_new ) - ins.m_set;
+#endif
 
 	// Construct ins.m_pos 
 	for( lVID i=0; i < ce_new; ++i ) {
@@ -540,6 +576,8 @@ public:
 	}
 
 	ins.m_fill = ce_new;
+	ins.m_is_sorted // adj.has_sequential() is proxy for is_sorted()
+	    = this->is_sorted() && adj.has_sequential();
 
 	return ins;
     }
@@ -599,12 +637,15 @@ public:
 	for( lVID i=0; i < ins.m_fill; ++i )
 	    ins.m_pos[ins.m_set[i]] = i;
 
+	ins.m_is_sorted = true;
+
 	return ins;
     }
 
     void sort( lVID ne ) {
 	std::sort( this->m_set, this->m_set+ne );
 	std::sort( this->m_set+ne, this->m_set+this->m_fill );
+	this->m_is_sorted = true; // Well, parts of it are...
     }
 };
 
@@ -671,6 +712,8 @@ public:
 
 	size_t size() const { return m_xp.get_fill(); }
 
+	size_t capacity() const { return 0; }
+
 	const lVID * begin() const { return m_xp.begin(); }
 	const lVID * end() const { return m_xp.end(); }
 
@@ -695,7 +738,8 @@ public:
 	}
 
 	//! Is the sequential representation valid?
-	constexpr bool has_sequential() const { return true; }
+	//  The sequential representation must be sorted in order to be valid.
+	constexpr bool has_sequential() const { return m_xp.is_sorted(); }
 
 	//! Is the hash set representation valid?
 	constexpr bool has_hash_set() const { return true; }
@@ -716,6 +760,9 @@ protected:
     PSet & operator = ( const PSet & ) = delete;
 
 public:
+    // A PSet is always sorted
+    bool is_sorted() const { return true; }
+    
     // A hash interface supporting contains, multi_contains
     auto hash_set() const {
 	return p_hash_set_interface( *this );
@@ -739,6 +786,7 @@ public:
 	lVID mx = std::min( deg, ce );
 	PSet ins( n, mx+16 ); // hash_vector requires extra space
 
+#if 0
 	if( ce > 2*deg ) {
 	    // TODO: find split point for X/P to reduce ranges?
 	    //       or make single traversal and determine X/P on the fly?
@@ -752,6 +800,10 @@ public:
 	    ce_new = graptor::hash_vector::intersect(
 		this->m_set+i+1, this->m_set+ce, adj, ins.m_set ) - ins.m_set;
 	}
+#else
+	ce_new = graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+	    this->P_hash_set( i+1 ), adj, ins.m_set ) - ins.m_set;
+#endif
 
 	// Construct ins.m_pos 
 	for( lVID i=0; i < ce_new; ++i )
@@ -905,6 +957,7 @@ public:
     // that are higher-numbered than i (right-neighbourhood), and the
     // lower-numbered vertices that are also neighbours of the pivot.
     // Keep the PSet sorted, if it was sorted.
+#if 0
     template<typename Adj>
     [[deprecated]]
     PSet intersect_pivot( lVID n, lVID i, lVID ce,
@@ -938,7 +991,7 @@ public:
 
 	return ins;
     }
-
+#endif
 
     // Intersect-size PSet with adjacency list.
     // Consider all vertices.

@@ -154,6 +154,10 @@ public:
 	return m_keys[index] == key ? m_values[index] : ~value_type(0);
     }
 
+    value_type lookup( key_type key ) const {
+	return contains( key ); // misnomer !!
+    }
+
     bool contains( key_type key, value_type & ret_val ) const {
 	size_type index = m_hash( key ) & ( capacity() - 1 );
 	while( m_keys[index] != invalid_element && m_keys[index] != key )

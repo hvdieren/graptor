@@ -41,6 +41,45 @@ struct java_hash<uint32_t> {
     }
 };
 
+template<typename T, T a0, T a1, T b0, T b1>
+struct java_hash_variation {
+    using type = T;
+
+    explicit java_hash_variation( T log_size ) { }
+
+    void resize( T ) { }
+
+    type operator() ( T h ) const {
+	h ^= (h >> a0) ^ (h >> a1);
+	return h ^ (h >> b0) ^ (h >> b1);
+    }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+
+	vtype h0 = tr::srli( h, a0 );
+	vtype h1 = tr::srli( h, a1 );
+	h = tr::bitwise_xor( h0, h, h1 );
+	vtype g0 = tr::srli( h, b0 );
+	vtype g1 = tr::srli( h, b1 );
+	h = tr::bitwise_xor( g1, h, g0 );
+	return h;
+    }
+};
+
+template<typename T>
+using java_hash_variation_A = java_hash_variation<T,14,18,3,8>;
+
+template<typename T>
+using java_hash_variation_B = java_hash_variation<T,5,9,13,21>;
+
+template<typename T>
+using java_hash_variation_C = java_hash_variation<T,3,6,11,18>;
+
+
 template<typename T, typename Enable = void>
 struct rand_hash;
 
@@ -142,6 +181,44 @@ struct murmur_hash<uint32_t> {
     }
 };
 
+template<typename T, typename H1, typename H2>
+struct hash_fn_pair {
+    using type = T;
+
+    explicit hash_fn_pair( uint32_t log_size )
+	: m_hash1( log_size ), m_hash2( log_size ) { }
+
+    void resize( uint32_t log_size ) {
+	m_hash1.resize( log_size );
+	m_hash2.resize( log_size );
+    }
+
+    type operator() ( uint32_t h ) const { return fn1( h ); }
+
+    type fn1( uint32_t h ) const { return m_hash1( h ); }
+    type fn2( uint32_t h ) const { return m_hash2( h ); }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	return m_hash1.template vectorized<VL>( h );
+    }
+
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized1( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	return m_hash1.template vectorized<VL>( h );
+    }
+    template<unsigned short VL>
+    typename vector_type_traits_vl<uint32_t,VL>::type
+    vectorized2( typename vector_type_traits_vl<uint32_t,VL>::type h ) const {
+	return m_hash2.template vectorized<VL>( h );
+    }
+
+private:
+    H1 m_hash1;
+    H2 m_hash2;
+};
 
 } // namespace graptor
 

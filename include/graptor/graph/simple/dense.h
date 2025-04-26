@@ -707,6 +707,9 @@ public:
 		m_fully_connected = tr::bitwise_or(
 		    m_fully_connected, su_only );
 
+	    // Vertex should not be its own neighbour
+	    assert( tr::is_bitwise_and_zero( su_only, row_u ) );
+
 #if !ABLATION_PDEG
 	    m_degree[su] = adeg;
 #endif
@@ -1192,8 +1195,9 @@ private:
 		// High number of vertices to process + density
 		parallel_loop( (VID)0, (VID)m_n, 1, [&,x]( VID u ) {
 		    row_type u_only = tr::setglobaloneval( u );
-		    row_type ins = tr::bitwise_and( u_only, x );
-		    if( !tr::is_zero( ins ) )
+		    // row_type ins = tr::bitwise_and( u_only, x );
+		    // if( !tr::is_zero( ins ) )
+		    if( !tr::is_bitwise_and_zero( u_only, x ) )
 			// Vertex needs to be processed
 			task( u, u_only );
 		} );

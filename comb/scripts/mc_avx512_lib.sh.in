@@ -58,7 +58,9 @@ function run()
 
     # persia node numbering due to SMT
     local numa=''
-    if [ $threads -le 16 ] ; then
+    if [ $threads -eq 1 ] ; then
+	numa="numactl --membind 0 --physcpubind 0"
+    elif [ $threads -le 16 ] ; then
 	numa="numactl --membind 0"
     elif [ $threads -le 32 ] ; then
 	numa="numactl --membind 0,1"
@@ -120,105 +122,19 @@ function for_gg()
     local is_avx512f=0
     if cat /proc/cpuinfo | grep avx512 > /dev/null ; then is_avx512f=1 ; fi
 
-    if false ; then
-    for r in 20 ; do
-	for op in 3 ; do # 2 1 0 4 ; do
-	    for trim in itrim ; do # noitrim ; do # noitrim ; do
-		for side in onesided ; do # twosided ; do # ; do
-		    for above in nogeabove ; do # geabove ; do # ; do
-			ins intersect_ds__op${op}_${trim}_${side}_${above}_vl16 $graph_path $g 128 $commit $r 0.75
-			ins intersect_ds__op${op}_${trim}_${side}_${above}_hopscotch1_vl16 $graph_path $g 128 $commit $r 0.75
-			ins intersect_ds__op${op}_${trim}_${side}_${above}_hopscotch2_vl16 $graph_path $g 128 $commit $r 0.75
-			ins intersect_ds__op${op}_${trim}_${side}_${above}_pset_vl16 $graph_path $g 128 $commit $r 0.75
-		    done
-		done
-	    done
-	done
+    # Try single-threaded...
+    for r in `seq 0 3` ; do
+	#run MC__itrim_sort4_trav3_mcins0_vl16 $graph_path $g 1 $commit $r 1024 2 0.1 128
+	#run MC__itrim_sort4_trav3_mcins5_vl16 $graph_path $g 1 $commit $r 1024 2 0.1 128
+
+	run MC__itrim_sort4_trav3_mcins0_noadvins_vl16 $graph_path $g 1 $commit $r 1024 2 0.1 128
+	run MC__itrim_sort4_trav3_mcins5_noadvins_vl16 $graph_path $g 1 $commit $r 1024 2 0.1 128
+
+	# merge_scalar only will fail:
+	#run MC__itrim_sort4_trav3_mcins3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	#run MC__itrim_sort4_trav3_mcins0_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
+	#run MC__itrim_sort4_trav3_mcins2_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
     done
-fi
-
-#    #for r in `seq 0 2` ; do
-#    for r in 0 ; do
-##	for t in `seq 0 1` ; do
-##	    for s in `seq 0 3` ; do
-##		run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-##	    done
-##	done
-#	#for s in `seq 4 6` ; do
-#	for s in `seq 4 5` ; do
-#	    #for t in `seq 0 5` 8 10 12 ; do
-#	    for t in 3 10 12 ; do
-#		#run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 1
-#		#run MC__itrim_sort${s}_trav${t}_vl16 $graph_path $g 128 $commit $r 1024 2
-#		run MC__itrim_sort${s}_trav${t}_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
-#	    done
-#	done
-#    done
-
-    for r in `seq 0 9` ; do
-    #for r in `seq 10 11` ; do
-    #for r in 0 ; do
-	#run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128 0
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128 -2
-
-	# ablation early pruning
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 0
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 32 $commit $r 1024 2 0.1 128
-	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 16 $commit $r 1024 2 0.1 128
-	run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 8 $commit $r 1024 2 0.1 128
-	#run MC__itrim_sort4_trav3_geabove_nolhf_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-
-	#run MC__itrim_sort4_trav3_geabove_noadvins_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-	#run MC__itrim_sort4_trav3_geabove_nolazy_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-	##run MC__itrim_sort4_trav3_nolazy_nohopscotch_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-	##run MC__itrim_sort2_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 0.1 128
-
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.5 128
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.9 128
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.7 128
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 0.3 128
-	#run MC__itrim_sort4_trav3_geabove_vl16 $graph_path $g 128 $commit $r 1024 2 1.0 128
-
-
-	
-
-	#run MC__itrim_sort4_trav3_hopscotch1_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_hopscotch1_mcins1_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_mcins1_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_onesided_vl16 $graph_path $g 128 $commit $r 1024 2
-#	run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2
-#	run MC__itrim_sort4_trav3_vl16_papi $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_vccc_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_novc_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_vcabs_vl16 $graph_path $g 128 $commit $r 1024 2
-	#run MC__itrim_sort4_trav3_nopivc_nopivd_vl16 $graph_path $g 128 $commit $r 1024 2
-    done
-
-#    for r in `seq 0 2` ; do
-#	for d in 0.9 0.7 0.95 1 ; do
-#	    run MC__itrim_sort4_trav3_vl16 $graph_path $g 128 $commit $r 1024 2 $d
-#	done
-#    done
-
-#    for r in `seq 0 2` ; do
-#	for threads in 1 4 8 16 32 64 128 ; do
-#	    run MC__itrim_sort4_trav3_vl16 $graph_path $g $threads $commit $r 1024 2
-#	done
-#    done
-
-#    for r in `seq 0 2` ; do
-#	run MC__itrim_sort4_trav3_vl16_noavx512 $graph_path $g 128 $commit $r 1024 2
-#    done
-
-    # Incumbent clique profiling
-    #verbose=0
-    #run MC__itrim_sort4_trav3_density_vl16 $graph_path $g 128 $commit 0 1024 0
-#    run MC__itrim_sort4_trav3_incumbent1_vl16 $graph_path $g 1 $commit 0 1024 0
-#    run MC__itrim_sort4_trav3_incumbent2_vl16 $graph_path $g 1 $commit 0 1024 0
-#    run MC__itrim_sort4_trav3_incumbent2_vcabs_vl16 $graph_path $g 1 $commit 0 1024 0
 }
 
 true

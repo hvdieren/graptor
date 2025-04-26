@@ -60,8 +60,9 @@
 #define ABLATION_DISABLE_TOP_DENSE 0
 #endif
 
+// Currently erroneous counts with ABLATION_SORT_ORDER_TIES == 1
 #ifndef ABLATION_SORT_ORDER_TIES
-#define ABLATION_SORT_ORDER_TIES 1
+#define ABLATION_SORT_ORDER_TIES 0
 #endif
 
 #ifndef ABLATION_RECPAR_CUTOUT
@@ -161,6 +162,12 @@
 #include "graptor/container/hash_fn.h"
 #include "graptor/container/intersect.h"
 
+#undef MONITOR_URJA
+
+#ifdef MONITOR_URJA
+#include "urja/phasecom.h"
+#endif
+
 #ifndef TUNABLE_SMALL_AVOID_CUTOUT_LEAF
 #define TUNABLE_SMALL_AVOID_CUTOUT_LEAF 0
 #endif
@@ -176,17 +183,20 @@
 #undef NOBENCH
 
 //! Choice of hash function for compilation unit
+// using hash_fn = graptor::java_hash<uint32_t>;
+// using hash_set_type = graptor::hash_set_hopscotch<VID,hash_fn>;
 using hash_fn = graptor::rand_hash<uint32_t>;
+using hash_set_type = graptor::hash_set<VID,hash_fn>;
 
 #if ABLATION_BLOCKED_DISABLE_XP_HASH	\
     && ABLATION_HADJPA_DISABLE_XP_HASH	\
     && ABLATION_PIVOT_DISABLE_XP_HASH
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,true,false,hash_set_type>;
 #else
-using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
+using HGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,true,false,hash_set_type>;
 #endif
 // using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,false,hash_fn>;
-using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,hash_fn>;
+using HFGraphTy = graptor::graph::GraphHAdjPA<VID,EID,true,false,false,hash_set_type>;
 
 using graptor::graph::DenseMatrix;
 using graptor::graph::BinaryMatrix;
@@ -684,21 +694,34 @@ mc_get_pivot_xp(
 	// Note: hash_vector is much slower in this instance
 #if !ABLATION_GENERIC_EXCEED
 #if !ABLATION_DISABLE_PIVOT_XP_HASH
+#if 0
 	size_t tv;
 	if( ce-ne > deg ) {
 	    const VID * n = G.get_neighbours( v );
 	    tv = graptor::hash_scalar::intersect_size_gt_val(
-		n, n+deg, xp_set.P_hash_set( ne ), tv_max );
+		    n, n+deg, xp_set.P_hash_set( ne ), tv_max );
 	} else {
 	    tv = graptor::hash_scalar::intersect_size_gt_val(
-		XP+ne, XP+ce, hadj, tv_max );
+		    XP+ne, XP+ce, hadj, tv_max );
 	}
 #else
-	size_t tv = graptor::hash_scalar::intersect_size_gt_val(
-	    XP+ne, XP+ce, hadj, tv_max );
+	size_t tv = graptor::set_operations<graptor::MC_intersect>::
+	    intersect_size_gt_val_ds(
+		G.get_neighbours_set( v ), xp_set.P_hash_set( ne ), tv_max );
+	size_t tv2 = graptor::set_operations<graptor::MC_intersect>::
+	    intersect_size_ds(
+		G.get_neighbours_set( v ), xp_set.P_hash_set( ne ) );
+	assert( tv == tv2 || tv < tv_max );
+#endif
+#else
+hoeba
+	size_t tv = graptor::set_operations<graptor::MC_intersect>::
+	    intersect_size_gt_val_ds( xp_set.P_sequential_set( ne ), hadj,
+				      tv_max );
 #endif
 #else
 #if !ABLATION_DISABLE_PIVOT_XP_HASH
+#if 0
 	size_t tv;
 	if( ce-ne > deg ) {
 	    const VID * n = G.get_neighbours( v );
@@ -709,8 +732,13 @@ mc_get_pivot_xp(
 		XP+ne, XP+ce, hadj );
 	}
 #else
-	size_t tv = graptor::hash_scalar::intersect_size(
-	    XP+ne, XP+ce, hadj );
+	size_t tv = graptor::set_operations<graptor::MC_intersect>::
+	    intersect_size_ds( xp_set.P_hash_set( ne ), hadj );
+#endif
+#else
+hoeba
+	size_t tv = graptor::set_operations<graptor::MC_intersect>::
+	    intersect_size_ds( xp_set.P_sequential_set( ne ), hadj );
 #endif
 #endif
 	    
@@ -1004,179 +1032,6 @@ bool mce_leaf(
     VID ne,
     VID ce );
 
-#if 0
-template<bool with_leaf = true, typename HGraph = HGraphTy>
-void
-mce_iterate_xp_iterative(
-    const HGraph & G,
-    MCE_Enumerator_stage2 & Ee,
-    StackLikeAllocator & alloc,
-    VID degeneracy,
-    VID * XP,
-    VID ne, // not edges
-    VID ce ) { // candidate edges
-
-    struct frame_t {
-	VID * XP;
-	VID ne;
-	VID ce;
-	VID pivot;
-	VID * XP_new;
-	VID * prev_tgt;
-	VID i;
-    };
-
-    // Base case - trivial problem
-    if( ce == ne ) {
-	if( ne == 0 )
-	    Ee.record( 0 );
-	return;
-    }
-
-    frame_t * frame = new frame_t[degeneracy+1];
-    int depth = 1;
-
-    // If space is an issue, could put alloc/dealloc inside loop and tune
-    // space depending on neighbour list length (each of X and P can not
-    // be longer than number of neighbours of u, nor longer than their
-    // current size, so allocate std::min( ce, degree(u) ).
-
-    new ( &frame[0] ) frame_t { XP, ne, ce, 0, nullptr, XP, ne };
-    frame[0].pivot = mc_get_pivot_xp( G, XP, ne, ce ).first;
-    frame[0].XP_new = alloc.template allocate<VID>( ce );
-
-    while( depth >= 1 ) {
-	frame_t & fr = frame[depth-1];
-	assert( fr.ce >= fr.ne );
-
-	// Loop iteration control
-	if( fr.i >= fr.ce ) {
-	    // Pop frame
-	    assert( depth > 0 );
-	    // assert( R.size() == depth );
-	    --depth;
-	    alloc.deallocate_to( fr.XP_new );
-	    fr.XP_new = 0;
-
-	    // Finish off vertex in higher-level frame
-	    if( depth > 0 ) {
-		frame_t & fr = frame[depth-1];
-		if( fr.i+1 < fr.ce ) {
-		    VID u = fr.XP[fr.i];
-		
-		    // R.pop();
-
-		    // Move candidate (u) from original position to appropriate
-		    // place in X part (maintaining sort order).
-		    // Cache tgt for next iteration as next iteration's u
-		    // will be strictly larger.
-		    VID * tgt = std::upper_bound( fr.prev_tgt, fr.XP+fr.ne, u );
-		    if( tgt != &fr.XP[fr.i] ) { // equality when u moves to tgt == XP+ne
-			std::copy_backward( tgt, &fr.XP[fr.i], &fr.XP[fr.i+1] );
-			*tgt = u;
-		    }
-		    fr.prev_tgt = tgt+1;
-		    ++fr.ne;
-		}
-		++fr.i;
-	    }
-	    continue;
-	}
-
-	// Next step on frame
-	VID u = fr.XP[fr.i];
-
-	// Is u in the neighbour list of the pivot? If so, skip
-	auto & p_ngh = G.get_adjacency( fr.pivot );
-	if( !p_ngh.contains( u ) ) {
-	    auto & adj = G.get_adjacency( u );
-	    VID deg = adj.size();
-	    VID * XP = fr.XP;
-	    VID ne = fr.ne;
-	    VID ce = fr.ce;
-	    VID * XP_new = fr.XP_new;
-	    VID ne_new = graptor::hash_vector::intersect(
-		XP, XP+ne, adj, XP_new ) - XP_new;
-	    VID ce_new = graptor::hash_vector::intersect(
-		XP+ne, XP+ce, adj, XP_new+ne_new ) - XP_new;
-	    assert( ce_new <= ce );
-	    // R.push( u );
-	    // assert( R.size() == depth+1 );
-
-	    // Recursion, check base case (avoid pushing on stack)
-	    if( ce_new == ne_new ) {
-		if( ne_new == 0 )
-		    Ee.record( depth ); // R.size() );
-		// done
-	    // Tunable
-	    } else {
-		bool ok = false;
-
-		// Clear min/max size requirements to attempt
-		if constexpr ( with_leaf ) {
-		    if( ce_new - ne_new >= TUNABLE_SMALL_AVOID_CUTOUT_LEAF
-			&& ( ce_new <= (1<<N_MAX_SIZE)
-			     || ( ne_new <= (1<<X_MAX_SIZE)
-				  && ce_new - ne_new <= (1<<P_MAX_SIZE) ) )
-			) {
-
-			/* xp_iterative retains sort order
-			if constexpr ( HGraphTy::has_dual_rep ) {
-			    assert( std::is_sorted( XP_new, XP_new+ne_new ) );
-			    std::sort( XP_new, XP_new+ne_new );
-			    assert( std::is_sorted(
-					XP_new+ne_new, XP_new+ce_new ) );
-			    std::sort( XP_new+ne_new, XP_new+ce_new );
-			}
-			*/
-
-			// ok = mce_leaf<VID,EID>(
-			// G, Ee, depth, XP_new, ne_new, ce_new );
-			ok = false; // tmp
-		    }
-		}
-
-		if( !ok ) { // Need recursion
-		    // Recursion - push new frame
-		    assert( depth+1 < degeneracy+1 );
-		    frame_t & nfr = frame[depth++];
-		    new ( &nfr ) frame_t {
-			fr.XP_new, ne_new, ce_new, 0, nullptr, nullptr, ne_new };
-
-		    nfr.pivot = mc_get_pivot_xp( G, XP_new, ne_new, ce_new ).first;
-		    nfr.XP_new = alloc.template allocate<VID>( ce_new );
-		    nfr.prev_tgt = XP_new;
-		    // assert( R.size() == depth );
-		    // Go to handle top frame
-		    continue;
-		}
-	    }
-
-	    // R.pop();
-	    
-	    // Move candidate (u) from original position to appropriate
-	    // place in X part (maintaining sort order).
-	    // Cache tgt for next iteration as next iteration's u
-	    // will be strictly larger.
-	    VID * tgt = std::upper_bound( fr.prev_tgt, XP+ne, u );
-	    if( tgt != &XP[fr.i] ) { // equality when u moves to tgt == XP+ne
-		std::copy_backward( tgt, &XP[fr.i], &XP[fr.i+1] );
-		*tgt = u;
-	    }
-	    fr.prev_tgt = tgt+1;
-	    ++fr.ne;
-	}
-
-	++fr.i;
-    }
-
-    // alloc.deallocate_to( frame[0].XP_new );
-    assert( frame[0].XP_new == 0 );
-    delete[] frame;
-}
-#endif
-
-
 template<typename GraphType>
 class GraphBuilderInduced;
 
@@ -1245,8 +1100,13 @@ public:
 	    auto & Sadj = S.get_adjacency( su );
 	    graptor::hash_insert_iterator<typename HGraph::hash_set_type>
 		out( Sadj, XP );
+#if 0
 	    graptor::hash_scalar::intersect<true>(
 		su < ne ? XP+ne : XP, XP+ce, Hadj, out );
+#else
+	    graptor::set_operations<graptor::MC_intersect>::intersect_ds(
+		make_array_slice( su < ne ? XP+ne : XP, XP+ce ), Hadj, out );
+#endif
 	}
 
 	S.sum_up_edges(); // necessary?
@@ -1260,8 +1120,8 @@ private:
     VID start_pos;
 };
 
-template<typename VID, typename EID, bool dual_rep, typename Hash>
-class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash>> {
+template<typename VID, typename EID, bool dual_rep, bool prealloc, bool lazy, typename Hash>
+class GraphBuilderInduced<graptor::graph::GraphHAdjPA<VID,EID,dual_rep,prealloc,lazy,Hash>> {
 public:
     template<typename HGraph>
     GraphBuilderInduced(
@@ -1286,7 +1146,7 @@ public:
     VID get_start_pos() const { return start_pos; }
 
 private:
-    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,Hash> S;
+    graptor::graph::GraphHAdjPA<VID,EID,dual_rep,prealloc,lazy,Hash> S;
     std::vector<VID> s2g;
     VID start_pos;
 };
@@ -1415,12 +1275,13 @@ mce_bron_kerbosch_recpar_xps(
     //       In the recursive part: need to ensure that the neighbours of the
     //       pivot remain in the P set.
 
-    parallel_loop( ne, pe, 1, [&,ne,pe,ce]( VID i ) {
+    parallel_loop( ne, ce, 1, [&,ne,ce]( VID i ) {
 	VID v = xp.at( i );
 
 	// Not keeping track of R
 
-	const auto & adj = G.get_adjacency( v ); 
+	const auto & adj = G.get_neighbours_set( v ); 
+	// const auto & adj = G.get_adjacency( v ); 
 	VID deg = adj.size();
 
 	if constexpr ( io_trace ) {
@@ -1443,7 +1304,7 @@ mce_bron_kerbosch_recpar_xps(
 	    // + In sequential execution, we can update XP incrementally,
 	    //   however in parallel execution we cannot.
 	    const VID * ngh = G.get_neighbours( v ); 
-	    const VID * pngh = G.get_neighbours( pivot ); 
+	    // const VID * pngh = G.get_neighbours( pivot ); 
 	    VID ne_new, ce_new;
 	    XPSet<VID> xp_new
 		= xp.intersect( G.numVertices(),
@@ -1652,12 +1513,14 @@ mce_bron_kerbosch_recpar_top_xps(
     // std::tie( pivot, pivot_degree ) = mincost_pivot( G, degeneracy, E, ne );
 
     sum = pivot_degree;
-    const auto & padj = G.get_adjacency( pivot );
+    const auto & padj = G.get_neighbours_set( pivot );
+    // const auto & padj = G.get_adjacency( pivot );
 
     parallel_loop( ne, n, 1, [&,ne,n]( VID v ) {
 	// Not keeping track of R
 	if( !padj.contains( v ) ) {
-	    const auto & adj = G.get_adjacency( v ); 
+	    const auto & adj = G.get_neighbours_set( v ); 
+	    // const auto & adj = G.get_adjacency( v ); 
 	    VID deg = adj.size();
 
 	    MCE_linked_list Rp( v, R );
@@ -1861,48 +1724,6 @@ mce_bron_kerbosch_recpar_top(
 
 #endif
 }
-
-#if 0
-template<typename VID, typename EID, typename Hash>
-void
-mce_bron_kerbosch_par_xp(
-    const graptor::graph::GraphHAdjTable<VID,EID,Hash> & G,
-    VID start_pos,
-    VID degeneracy,
-    MCE_Enumerator_stage2 & E ) {
-    VID n = G.numVertices();
-
-    // start_pos calculated to avoid revisiting vertices ordered before the
-    // reference vertex of this cut-out
-    parallel_loop( start_pos, n, 1, [&]( VID v ) {
-	StackLikeAllocator alloc;
-	// contract::vertex_set<VID> R;
-
-	// R.push( v );
-
-	// Consider as candidates only those neighbours of v that are larger
-	// than u to avoid revisiting the vertices unnecessarily.
-	auto & adj = G.get_adjacency( v ); 
-
-	VID deg = adj.size();
-	VID * XP = alloc.template allocate<VID>( deg );
-	auto end = std::copy_if(
-	    adj.begin(), adj.end(), XP,
-	    [&]( VID v ) { return v != adj.invalid_element; } );
-	assert( end - XP == deg );
-	std::sort( XP, XP+deg );
-	const VID * const start = std::upper_bound( XP, XP+deg, v );
-	VID ne = start - XP;
-	VID ce = deg;
-
-	// TODO: further parallel decomposition
-	// mce_iterate_xp( G, E, alloc, R, XP, ne, ce, 1 );
-	MCE_Enumerator_stage2 Ee( E, 1 );
-	mce_iterate_xp_iterative( G, Ee, alloc, degeneracy, XP, ne, ce );
-    } );
-}
-#endif
-
 
 void check_clique_edges( EID m, const VID * assigned_clique, EID ce ) {
     EID cce = 0;
@@ -2272,6 +2093,7 @@ bool mce_leaf(
 	nlg = N_MIN_SIZE;
 
     if( nlg <= N_MIN_SIZE+1 ) { // up to 64 bits
+	// std::cerr << "LEAF-small nlg=" << nlg << " ne=" << ne << " ce=" << ce << "\n";
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
@@ -2285,6 +2107,7 @@ bool mce_leaf(
 	plg = P_MIN_SIZE;
 
     if( nlg <= xlg + plg && nlg <= N_MAX_SIZE ) {
+	// std::cerr << "LEAF nlg=" << nlg << " xlg=" << xlg << " plg=" << plg << "\n";
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
@@ -2296,6 +2119,7 @@ bool mce_leaf(
     }
 
     if( nlg <= N_MAX_SIZE ) {
+	// std::cerr << "LEAF2 nlg=" << nlg << " xlg=" << xlg << " plg=" << plg << "\n";
 	leaf_dense_func[nlg-N_MIN_SIZE]( H, E, R, r, xp_set, ne, ce );
 	return true;
     }
@@ -2314,10 +2138,23 @@ int main( int argc, char *argv[] ) {
     timer tm;
     tm.start();
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 0, "I/O" );
+#endif
+    
+    if( ifile == nullptr ) {
+	std::cerr << "Error: missing input file (option -i)\n";
+	return 1;
+    }
+
     GraphCSx G0( ifile, -1, symmetric );
 
     std::cout << "Reading graph: " << tm.next() << "\n";
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 1, "setup" );
+#endif
+    
     GraphCSx G = graptor::graph::remove_self_edges( G0, true );
     G0.del();
     std::cout << "Removed self-edges: " << tm.next() << "\n";
@@ -2336,6 +2173,10 @@ int main( int argc, char *argv[] ) {
 	      << " davg=" << davg
 	      << std::endl;
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 2, "benchmark" );
+#endif
+    
     GraphCSRAdaptor GA( G, npart );
     KCv<GraphCSRAdaptor> kcore( GA, P );
     kcore.run();
@@ -2349,9 +2190,12 @@ int main( int argc, char *argv[] ) {
     sort_order( n, kcore.getLargestCore(), coreness.get_ptr(),
 		order.get(), rev_order.get(), true );
 #else
-    sort_order_ties( order.get(), rev_order.get(),
-		     coreness.get_ptr(), n, kcore.getLargestCore(),
-		     GA.getOutDegree() );
+    std::vector<VID> histo( kcore.getLargestCore()+2 );
+    sort_order_ties( n, kcore.getLargestCore(),
+		     GA.getOutDegree(),
+		     coreness.get_ptr(),
+		     order.get(), rev_order.get(),
+		     &histo[0] );
 #endif
     global_coreness = coreness.get_ptr();
     std::cout << "Determining sort order: " << tm.next() << "\n";
@@ -2380,6 +2224,8 @@ int main( int argc, char *argv[] ) {
 	      << ABLATION_PIVOT_DISABLE_XP_HASH
 	      << "\n\tTUNABLE_SMALL_AVOID_CUTOUT_LEAF="
 	      << TUNABLE_SMALL_AVOID_CUTOUT_LEAF
+	      << "\n\tABLATION_BITCONSTRUCT_XP_VEC="
+	      << ABLATION_BITCONSTRUCT_XP_VEC
 	      << "\n\tABLATION_SORT_ORDER_TIES=" << ABLATION_SORT_ORDER_TIES
 	      << "\n\tABLATION_RECPAR_CUTOUT=" << ABLATION_RECPAR_CUTOUT
 	      << "\n\tPAR_LOOP=" << PAR_LOOP
@@ -2415,6 +2261,7 @@ int main( int argc, char *argv[] ) {
 	      <<  ABLATION_BLOCKED_PIVOT_FILTER
 	      << "\n\tUSE_512_VECTOR="
 	      <<  USE_512_VECTOR
+	      << "\n\tMC_INTERSECTION_ALGORITHM=" <<  MC_INTERSECTION_ALGORITHM
 	      << '\n';
     
     MCE_Enumerator_Farm farm( kcore.getLargestCore() );
@@ -2623,6 +2470,10 @@ int main( int argc, char *argv[] ) {
 
     std::cout << "Enumeration: " << tm.next() << "\n";
 
+#ifdef MONITOR_URJA
+    urja_enter_phase( 3, "cleanup" );
+#endif
+    
     all_variant_statistics stats = mce_stats.sum();
 
     double duration = tm.total();

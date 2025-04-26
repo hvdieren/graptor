@@ -1128,9 +1128,8 @@ struct arg_record_method_op {
 				    encoding>::type;
     using ptrset_ty = PtrSet;
 
-    using method_expr = decltype(
-	static_cast<self_type*>( nullptr )->
-	m_method( expr::value<simd::ty<VID,1>,expr::vk_dst>() ) );
+    using method_expr =
+	std::invoke_result_t<Fn,expr::value<simd::ty<VID,1>,expr::vk_dst>>;
     
     static constexpr bool is_scan = true;
     static constexpr bool defines_frontier = true;

@@ -62,14 +62,28 @@ public:
     using reference = type &;
     using const_reference = const type &;
 
+    // Decoupling the displacement distance from the collision count.
+    // H = distance over which an element may be displaced from the home index
+    // C = collision count within H, i.e., at most C out of H elements may have
+    //     the same home index.
+    // The reason for decoupling them is that H controls the normal Hopscotch
+    // locality, whereas C determines the worst case number of gather operations
+    // we need to perform per lookup.
 #if __AVX512F__
-    static constexpr size_type H = 64 / sizeof( type );
+    static constexpr size_type H = 64 / sizeof( type ) / 4;
 #else // assuming AVX2
     static constexpr size_type H = 32 / sizeof( type );
 #endif
 
-    using bitmask_t = int_type_of_size_t<H/8>;
+    // static constexpr size_type C = std::min( size_type(3), H );
+    static constexpr size_type C = std::min( size_type(1), H );
 
+    using bitmask_t = int_type_of_size_t<std::max( size_type(1), H/8 )>;
+
+    using delta_t = uint32_t;
+
+    // tr is defined for scalar access to simultaneously inspect all elements
+    // in the deplacement window
     using tr = vector_type_traits_vl<type,H>;
     using vtype = typename tr::type;
 #if __AVX512F__
@@ -81,6 +95,7 @@ public:
 #endif
 
     static constexpr type invalid_element = ~type(0);
+    static constexpr delta_t max_delta = std::numeric_limits<delta_t>::max();
 
 public:
     explicit hash_set_hopscotch()
@@ -88,20 +103,23 @@ public:
 	  m_log_size( 0 ),
 	  m_table( nullptr ),
 	  m_bitmask( nullptr ),
+	  m_delta( nullptr ),
+	  m_prev( ~type(0) ),
 	  m_hash( m_log_size ) { }
     explicit hash_set_hopscotch( size_t expected_elms )
 	: m_elements( 0 ),
 	  m_log_size( required_log_size( expected_elms ) ),
 	  m_table( new type[(1<<m_log_size)+2*H-1] ),
 	  m_bitmask( new bitmask_t[(1<<m_log_size)+3] ), // to allow reads of size 4
+	  m_delta( new delta_t[(1<<m_log_size)+3] ), // to allow reads of size 4
+	  m_prev( ~type(0) ),
 	  m_hash( m_log_size ) {
 	clear();
     }
     template<typename It>
     explicit hash_set_hopscotch( It begin, It end )
 	: hash_set_hopscotch( std::distance( begin, end ) ) {
-	for( It i=begin; i != end; ++i )
-	    insert( *i );
+	insert( begin, end );
     }
     hash_set_hopscotch( hash_set_hopscotch && ) = delete;
     hash_set_hopscotch( const hash_set_hopscotch & ) = delete;
@@ -112,6 +130,8 @@ public:
 	    delete[] m_table;
 	if( m_bitmask != nullptr )
 	    delete[] m_bitmask;
+	if( m_delta != nullptr )
+	    delete[] m_delta;
     }
 
     void clear() {
@@ -119,6 +139,7 @@ public:
 	    m_elements = 0;
 	    std::fill( m_table, m_table+capacity()+2*H-1, invalid_element );
 	    std::fill( m_bitmask, m_bitmask+capacity()+3, bitmask_t(0) );
+	    std::fill( m_delta, m_delta+capacity()+3, delta_t(0) );
 	}
     }
 
@@ -141,7 +162,33 @@ public:
 	    + HASH_SET_HOPSCOTCH_LOAD_FACTOR;
     }
 
-    bool insert( type value ) {
+    // Assumes insert is called sequentially
+    bool insert_prev( type value, type prev ) {
+#if 0
+	if( m_prev != ~(type)0 ) {
+	    size_type index = m_hash( m_prev ) & ( capacity() - 1 );
+	    vtype v = tr::set1( m_prev );
+
+	    // We don't need wrap-around in this, as we allocated H
+	    // extra positions.
+	    vtype data = tr::loadu( &m_table[index] );
+
+	    // Check for presence of value.
+	    uint32_t mask = tr::cmpeq( data, v, target::mt_mask() );
+	    assert( mask != 0 && "element was inserted" );
+	    uint32_t off = _tzcnt_u32( mask );
+	    // type d = value - m_prev;
+	    // m_delta[index+off] = d > type(max_delta) ? max_delta : delta_t(d);
+	    m_delta[index+off] = value;
+	    m_prev = value;
+	}
+#endif
+
+	return insert_value( value, prev );
+    }
+
+private:
+    bool insert_value( type value, type prev ) {
 	create_if_uninitialised();
 
 	size_type home_index = m_hash( value ) & ( capacity() - 1 );
@@ -163,10 +210,11 @@ public:
 	if( e != 0 ) {
 	    size_type lane = tr::mask_traits::tzcnt( e );
 	    index += lane;
-	    m_table[index] = value;
-	    set_bitmask( home_index, index );
-	    ++m_elements;
-	    return true;
+	    if( set_bitmask( home_index, index ) ) {
+		m_table[index] = value;
+		++m_elements;
+		return true;
+	    }
 	}
 
 	// Find first empty bucket.
@@ -192,42 +240,54 @@ public:
 		assert( index - home_index < H );
 		assert( m_table[index] == invalid_element );
 
-		m_table[index] = value;
-		set_bitmask( home_index, index );
-		++m_elements;
-		return true;
+		if( set_bitmask( home_index, index ) ) {
+		    m_table[index] = value;
+		    ++m_elements;
+		    return true;
+		}
 	    }
 	}
 
 	// Could not identify a free bucket close enough to the home_index.
+	// Or, the displacement window contains too many collisions on the
+	// same home index.
 	// Resize and retry.
 	size_type old_log_size = m_log_size + 1;
 	type * old_table = new type[(size_type(1)<<old_log_size) + 2*H-1];
 	bitmask_t * old_bitmask = new bitmask_t[(size_type(1)<<old_log_size)+3];
+	delta_t * old_delta = new delta_t[(size_type(1)<<old_log_size)+3];
 	using std::swap;
 	swap( old_log_size, m_log_size );
 	swap( old_table, m_table );
 	swap( old_bitmask, m_bitmask );
+	swap( old_delta, m_delta );
 	clear(); // sets m_elements=0; will be reset when rehashing
 
 	size_type old_size = size_type(1) << old_log_size;
 	m_hash.resize( m_log_size );
 	for( size_type i=0; i < old_size+H; ++i )
 	    if( old_table[i] != invalid_element )
-		insert( old_table[i] );
+		insert_prev( old_table[i], old_delta[i] );
 	delete[] old_table;
 	delete[] old_bitmask;
+	delete[] old_delta;
 
 	// Retry insertion. Hope for tail recursion optimisation.
-	return insert( value );
+	return insert_prev( value, prev );
     }
 
+public:
     template<typename It>
     void insert( It && I, It && E ) {
 	create_if_uninitialised();
 	
-	while( I != E )
-	    insert( *I++ );
+	type prev = invalid_element;
+	while( I != E ) {
+	    type cur = *I;
+	    insert( cur, prev );
+	    prev = cur;
+	    ++I;
+	}
     }
 
     bool contains( type value ) const {
@@ -248,6 +308,7 @@ public:
     std::conditional_t<std::is_same_v<MT,target::mt_mask>,
 	typename vector_type_traits_vl<U,VL>::mask_type,
 	typename vector_type_traits_vl<U,VL>::vmask_type>
+    __attribute__((noinline))
     multi_contains( typename vector_type_traits_vl<U,VL>::type
 			 v, MT ) const {
 	static_assert( sizeof( U ) == sizeof( type ) );
@@ -300,14 +361,15 @@ public:
 
 	b = tr::srli( b, 1 ); // helps to count +1 for the position of 1-bit
 
-	while( !mtr::is_zero( active ) ) {
-	    vtype off = tr::lzcnt( b );
-	    vidx = tr::add( vidx, off );
-	    e = tr::gather( m_table, vidx, active );
-	    b = tr::sllv( b, off );
-	    b = tr::bitwise_and( b, hi ); // disable 1-bit in top position
-	    notfound = tr::cmpne( notfound, e, v, mkind() );
-	    active = tr::cmpne( notfound, b, zero, mkind() );
+	if( !mtr::is_zero( active ) ) {
+	    do {
+		vtype off = tr::lzcnt( b );
+		vidx = tr::add( vidx, off );
+		e = tr::gather( m_table, vidx, active );
+		b = tr::sllv( b, off );
+		b = tr::bitwise_and( b, hi ); // disable 1-bit in top position
+		notfound = tr::cmpne( notfound, e, v, mkind() );
+	    } while( tr::cmpne( notfound, b, zero, target::mt_bool() ) );
 	}
 #endif
 
@@ -319,9 +381,114 @@ public:
 	    return tr::asvector( mtr::logical_invert( notfound ) );
     }
 
+    template<typename U, unsigned short VL, typename MT>
+    std::pair<
+	std::conditional_t<std::is_same_v<MT,target::mt_mask>,
+			   typename vector_type_traits_vl<U,VL>::mask_type,
+			   typename vector_type_traits_vl<U,VL>::vmask_type>,
+	type>
+    __attribute__((noinline))
+    multi_contains_next( typename vector_type_traits_vl<U,VL>::type
+			 v, MT ) const {
+	static_assert( sizeof( U ) == sizeof( type ) );
+	using tr = vector_type_traits_vl<type,VL>;
+	using vtype = typename tr::type;
+#if __AVX512F__
+	using mtr = typename tr::mask_traits;
+	using mkind = target::mt_mask;
+#else
+	using mtr = typename tr::vmask_traits;
+	using mkind = target::mt_vmask;
+#endif
+	using mtype = typename mtr::type;
+
+	if( empty() ) { // also catches uninitialised case
+	    if constexpr ( std::is_same_v<MT,target::mt_vmask> )
+		return std::make_pair( tr::setzero(), (type)0 );
+	    else
+		return std::make_pair( tr::mask_traits::setzero(), (type)0 );
+	}
+
+	const vtype zero = tr::setzero();
+	const vtype ones = tr::setone();
+	const vtype hmask = tr::srli( ones, tr::B - m_log_size );
+	const vtype hi = tr::srli( ones, 1 );
+
+#if 0
+	// This is a simplistic version that probes all H possible locations.
+	// Retained for debugging purposes.
+	vtype hval = m_hash.template vectorized<VL>( v );
+	vtype home_index = tr::bitwise_and( hval, hmask );
+	vtype vidx = home_index;
+
+	mtype notfound = mtr::setone();
+
+	for( size_type h=0; h < H; ++h ) {
+	    vtype e = tr::gather( m_table+h, vidx );
+	    notfound = mtr::logical_and( notfound, tr::cmpne( e, v, mkind() ) );
+	}
+#else
+	vtype hval = m_hash.template vectorized<VL>( v );
+	vtype home_index = tr::bitwise_and( hval, hmask );
+	vtype vidx = home_index;
+
+	vtype e = tr::gather( m_table, vidx );
+	// Aligns bitmask to top such that sllv drops consumed bits
+	vtype b = vget_bitmask<VL>( vidx );
+	mtype notfound = tr::cmpne( e, v, mkind() );
+	mtype active = tr::cmpne( notfound, b, zero, mkind() );
+
+	b = tr::srli( b, 1 ); // helps to count +1 for the position of 1-bit
+
+	// if( !mtr::is_zero( active ) ) {
+	    // do {
+	while( !mtr::is_zero( active ) ) {
+		vtype off = tr::lzcnt( b );
+		vidx = tr::add( vidx, active, vidx, off );
+		e = tr::gather( m_table, vidx, active );
+		b = tr::sllv( b, off );
+		b = tr::bitwise_and( b, hi ); // disable 1-bit in top position
+		notfound = tr::cmpne( notfound, e, v, mkind() );
+		active = tr::cmpne( notfound, b, zero, mkind() );
+		// } while( !mtr::is_zero( active ) );
+		// } while( tr::cmpne( notfound, b, zero, target::mt_bool() ) );
+	}
+// why is active not updated??
+#endif
+
+	uint32_t fnd = /*mtr::asmask*/( mtr::logical_invert( notfound ) );
+	type nxt = 0;
+	// if( fnd ) {
+	uint32_t last;
+	bool z;
+	asm( "bsr %[fnd], %[last] \n\t"
+	     : [last] "=r"(last), "=@ccz"(z)
+	     : [fnd] "mr" (fnd)
+	     : "cc" );
+	if( !z ) {
+	// if( _BitScanReverse( &last, fnd ) ) {
+	    // uint32_t last = 31 - _lzcnt_u32( fnd );
+	    delta_t d = m_delta[tr::lane( vidx, last )];
+	    // nxt = type(d) + tr::lane( v, last );
+	    nxt = d;
+	}
+
+	if constexpr ( std::is_same_v<MT,mkind> )
+	    return std::make_pair( mtr::logical_invert( notfound ), nxt );
+	else if constexpr ( std::is_same_v<MT,target::mt_mask> )
+	    return std::make_pair(
+		tr::mask_traits::logical_invert( tr::asmask( notfound ) ),
+		nxt );
+	else
+	    return std::make_pair(
+		tr::asvector( mtr::logical_invert( notfound ) ),
+		nxt );
+    }
+
+
     template<typename Fn>
     void for_each( Fn && fn ) const {
-	if( empty() ) // also catched uninitialised case
+	if( empty() ) // also catches uninitialised case
 	    return;
 	
 	for( size_type i=0; i < capacity()+H; ++i )
@@ -335,10 +502,11 @@ public:
 
     void create_if_uninitialised( size_t elements = H ) {
 	if( !is_initialised() ) {
-	    m_elements = H;
+	    m_elements = elements;
 	    m_log_size = required_log_size( m_elements );
 	    m_table = new type[(1<<m_log_size)+2*H-1];
 	    m_bitmask = new bitmask_t[(1<<m_log_size)+3];
+	    m_delta = new delta_t[(1<<m_log_size)+3];
 	    m_hash.resize( m_log_size );
 	    clear();
 	}
@@ -361,6 +529,8 @@ private:
 
 			m_table[free_index] = m_table[idx];
 			m_table[idx] = invalid_element; // redundant
+			m_delta[free_index] = m_delta[idx];
+			m_delta[idx] = 0;
 			free_index = idx;
 			fnd = true;
 			break;
@@ -374,11 +544,16 @@ private:
 	return free_index;
     }
 
-    void set_bitmask( size_type home_index, size_type index ) {
+    bool set_bitmask( size_type home_index, size_type index ) {
 	if( index != home_index ) {
-	    size_type pos = 8*sizeof(bitmask_t) - ( index - home_index );
-	    m_bitmask[home_index] |= bitmask_t(1) << pos;
+	    if( _popcnt32( (uint32_t)m_bitmask[home_index] ) < C ) {
+		size_type pos = 8*sizeof(bitmask_t) - ( index - home_index );
+		m_bitmask[home_index] |= bitmask_t(1) << pos;
+		return true;
+	    } else
+		return false;
 	}
+	return true;
     }
 
     void move_bitmask( size_type home_index,
@@ -412,6 +587,8 @@ private:
     size_type m_log_size;
     type * m_table;
     bitmask_t * m_bitmask;
+    delta_t * m_delta;
+    type m_prev;
     hash_type m_hash;
     std::mutex m_mux;
 };

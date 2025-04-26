@@ -74,6 +74,20 @@ enum set_operation {
     so_N = 6 	 	 	 	//!< number of set operations
 };
 
+/*! Call site ID
+ * The purpose is to associate predictive information to the call site,
+ * assuming that some intersection methods are more efficient for some call
+ * sites than for others
+ */
+enum call_site_id {
+    cs_generic = 0,	//!< No specific information about the call site
+    cs_filter1 = 1,	//!< First filtering step for MC
+    cs_filter2 = 2,	//!< Second filtering step for MC
+    cs_dheur = 3,	//!< Degree-based heuristic search
+    cs_cheur = 4,	//!< Coreness-based heuristic search
+    cs_N,
+};
+
 /*! Trait for multi-element (vectorized) collector
  *
  * \tparam C Collector type.
@@ -851,6 +865,7 @@ constexpr bool is_intersection_size_gt_val_v =
  */
 struct hash_scalar;
 struct hash_vector;
+struct hash_vector_jump;
 struct merge_scalar;
 struct merge_vector;
 struct merge_vector_opt;
@@ -954,7 +969,8 @@ struct intersection_task<so_intersect_size_gt_val,void> {
 	// we can cheaply relate the hashed data structure to the sequential
 	// representation.
 	if constexpr ( std::is_same_v<so_traits,hash_scalar>
-		       || std::is_same_v<so_traits,hash_vector> ) {
+		       || std::is_same_v<so_traits,hash_vector>
+		       || std::is_same_v<so_traits,hash_vector_jump> ) {
 	    return intersection_size_gt_val<
 		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
 	} else {
@@ -996,7 +1012,8 @@ struct intersection_task<so_intersect_size_ge,void> {
 	// we can cheaply relate the hashed data structure to the sequential
 	// representation.
 	if constexpr ( std::is_same_v<so_traits,hash_scalar>
-		       || std::is_same_v<so_traits,hash_vector> ) {
+		       || std::is_same_v<so_traits,hash_vector>
+		       || std::is_same_v<so_traits,hash_vector_jump> ) {
 	    return intersection_size_ge<
 		typename std::decay_t<LSet>::type>( lset, rset, m_threshold );
 	} else {
@@ -1033,7 +1050,8 @@ struct set_operations {
     template<typename LSet, typename RSet, typename Collector>
     static
     auto
-    intersect_ds( LSet && lset, RSet && rset, Collector & out ) {
+    intersect_ds( LSet && lset, RSet && rset, Collector && out,
+		  call_site_id cs = cs_generic ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
@@ -1047,17 +1065,17 @@ struct set_operations {
 	    intersection_collector<false,typename std::decay_t<LSet>::type>
 		cout( out );
 	    auto task = create_intersection_task<so_intersect>( cout );
-	    auto ret = apply( lset, rset, task );
+	    auto ret = apply( lset, rset, task, cs );
 #if DEBUG_INTERSECTIONS
 	    intersection_task<so_intersect_size,void> task2;
 	    auto size =
-		set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+		set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
 	    assert( std::distance( out, ret ) == size && "debug failure" );
 #endif
 	    return ret;
 	} else {
 	    auto task = create_intersection_task<so_intersect>( out );
-	    return apply( lset, rset, task );
+	    return apply( lset, rset, task, cs );
 	}
     }
 
@@ -1065,14 +1083,14 @@ struct set_operations {
     static
     auto
     intersect_gt_ds( LSet && lset, RSet && rset, size_t threshold,
-		     Collector & out ) {
+		     Collector & out, call_site_id cs = cs_generic ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
 #if ABLATION_DISABLE_ADV_INTERSECT
-	return intersect_ds( lset, rset, out );
+	return intersect_ds( lset, rset, out, cs );
 #else
 	// Collector is of type pointer to element of set
 	// Construct custom collector object to have unified code base
@@ -1081,11 +1099,11 @@ struct set_operations {
 		       std::add_pointer_t<typename std::decay_t<LSet>::type>> ) {
 	    using type = typename std::decay_t<LSet>::type;
 	    intersection_task<so_intersect_gt,type> task( out, threshold );
-	    auto ret = apply( lset, rset, task );
+	    auto ret = apply( lset, rset, task, cs );
 #if DEBUG_INTERSECTIONS
 	    intersection_task<so_intersect_size,void> task2;
 	    size_t size =
-		set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+		set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
 	    assert( std::distance( out, ret ) == size && "debug failure" );
 #endif
 	    return ret;
@@ -1093,7 +1111,7 @@ struct set_operations {
 	    // In the case of a custom collector, we cannot guarantee the
 	    // ability to apply the threshold.
 	    auto task = create_intersection_task<so_intersect>( out );
-	    return apply( lset, rset, task );
+	    return apply( lset, rset, task, cs );
 	}
 #endif
     }
@@ -1101,7 +1119,8 @@ struct set_operations {
     template<typename LSet, typename RSet, typename Collector>
     static
     auto
-    intersect_xlat_ds( LSet && lset, RSet && rset, Collector & out ) {
+    intersect_xlat_ds( LSet && lset, RSet && rset, Collector & out,
+		       call_site_id cs = cs_generic ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
@@ -1115,29 +1134,30 @@ struct set_operations {
 	    intersection_collector<true,typename std::decay_t<LSet>::type>
 		cout( out );
 	    auto task = create_intersection_task<so_intersect_xlat>( cout );
-	    // return apply( lset, rset, task );
-	    return set_operations<MC_intersect_old>::apply( lset, rset, task );
+	    // return apply( lset, rset, task, cs );
+	    return set_operations<MC_intersect_old>::apply( lset, rset, task, cs );
 	} else {
 	    auto task = create_intersection_task<so_intersect_xlat>( out );
-	    // return apply( lset, rset, task );
-	    return set_operations<MC_intersect_old>::apply( lset, rset, task );
+	    // return apply( lset, rset, task, cs );
+	    return set_operations<MC_intersect_old>::apply( lset, rset, task, cs );
 	}
     }
 
     template<typename LSet, typename RSet>
     static
     size_t
-    intersect_size_ds( LSet && lset, RSet && rset ) {
+    intersect_size_ds( LSet && lset, RSet && rset,
+		       call_site_id cs = cs_generic  ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 	
 	intersection_task<so_intersect_size,void> task;
-	size_t ret = apply( lset, rset, task );
+	size_t ret = apply( lset, rset, task, cs );
 #if DEBUG_INTERSECTIONS
 	intersection_task<so_intersect_size,void> task2;
-	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
 	assert( ret == size && "debug failure" );
 #endif
 	return ret;
@@ -1146,20 +1166,21 @@ struct set_operations {
     template<typename LSet, typename RSet>
     static
     size_t
-    intersect_size_gt_val_ds( LSet && lset, RSet && rset, size_t threshold ) {
+    intersect_size_gt_val_ds( LSet && lset, RSet && rset, size_t threshold,
+			      call_site_id cs = cs_generic  ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
 #if ABLATION_DISABLE_ADV_INTERSECT
-	return intersect_size_ds( lset, rset );
+	return intersect_size_ds( lset, rset, cs );
 #else
 	intersection_task<so_intersect_size_gt_val,void> task( threshold );
-	size_t ret = apply( lset, rset, task );
+	size_t ret = apply( lset, rset, task, cs );
 #if DEBUG_INTERSECTIONS
 	intersection_task<so_intersect_size,void> task2;
-	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
 	assert( ret == size
 		|| ( size <= threshold && ret <= threshold )
 		&& "debug failure" );
@@ -1171,20 +1192,21 @@ struct set_operations {
     template<typename LSet, typename RSet>
     static
     bool
-    intersect_size_ge_ds( LSet && lset, RSet && rset, size_t threshold ) {
+    intersect_size_ge_ds( LSet && lset, RSet && rset, size_t threshold,
+			  call_site_id cs = cs_generic ) {
 	static_assert( std::is_same_v<
 		       typename std::decay_t<LSet>::type,
 		       typename std::decay_t<RSet>::type>,
 		       "Sets must contain elements of the same type" );
 
 #if ABLATION_DISABLE_ADV_INTERSECT
-	return intersect_size_ds( lset, rset ) >= threshold;
+	return intersect_size_ds( lset, rset, cs ) >= threshold;
 #else
 	intersection_task<so_intersect_size_ge,void> task( threshold );
-	bool ret = apply( lset, rset, task );
+	bool ret = apply( lset, rset, task, cs );
 #if DEBUG_INTERSECTIONS
 	intersection_task<so_intersect_size,void> task2;
-	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2 );
+	size_t size = set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
 	assert( ( size >= threshold ) == ret && "debug failure" );
 #endif
 	return ret;
@@ -1194,7 +1216,7 @@ struct set_operations {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return task.return_value_empty_set();
@@ -1208,7 +1230,7 @@ struct set_operations {
 	auto tlset = rset.has_sequential()
 	    ? lset.trim_front( rset.front() ) : lset;
 #endif
-	return so_traits::apply( tlset, rset, task );
+	return so_traits::apply( tlset, rset, task, cs );
     }
 };
 
@@ -1265,7 +1287,7 @@ struct merge_scalar {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out = task.template create_collector<merge_scalar>( lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
 	return out.return_value();
@@ -1414,7 +1436,7 @@ struct merge_scalar_jump {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out =
 	    task.template create_collector<merge_scalar_jump>( lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
@@ -1740,7 +1762,7 @@ struct merge_vector_jump {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out =
 	    task.template create_collector<merge_vector_jump>( lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
@@ -1800,7 +1822,9 @@ struct hash_scalar {
 #else
 	auto tlset = rset.has_sequential()
 	    ? lset.trim_back( rset.back() ) : lset;
-	out.swap( tlset, rset );
+	// Note that if elements are removed from lset by trimming, these
+	// need to be recorded as not in the intersection.
+	out.template remainder<rhs>( lset.size() - tlset.size(), 0 );
 #endif
 	auto lb = tlset.begin();
 	auto le = tlset.end();
@@ -1810,7 +1834,7 @@ struct hash_scalar {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	static_assert( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
@@ -2019,7 +2043,7 @@ struct hash_scalar_jump {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	static_assert( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
@@ -2429,7 +2453,7 @@ public:
 #else
 	auto tlset = rset.has_sequential()
 	    ? lset.trim_back( rset.back() ) : lset;
-	out.swap( tlset, rset );
+	out.template remainder<rhs>( lset.size() - tlset.size(), 0 );
 #endif
 
 	auto lb = tlset.begin();
@@ -2440,13 +2464,15 @@ public:
 #elif defined( __AVX2__ )
 	lb = intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rset, out );
 #endif
+	// Note: for ge/gt, need to make sure the collector state is not
+	//       thrashed by calling swap in the method below.
 	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
     }
 
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	static_assert( is_multi_hash_set_v<std::decay_t<LSet>>
 		       || is_multi_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
@@ -2484,6 +2510,192 @@ public:
     }
     
 };
+
+struct hash_vector_jump {
+
+    static constexpr bool uses_hash = true;
+
+    template<unsigned VL, typename It, typename T>
+    static
+    It jump( It b, It e, T ref ) {
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+	using mtr = typename tr::mask_traits_preferred;
+	using mkind = typename tr::mt_preferred;
+	using mtype = typename mtr::type;
+
+	type vref = tr::set1( ref );
+	const type one = tr::setoneval();
+	const type seq = tr::set1inc0();
+	const type steps = tr::srli( tr::sllv( one, seq ), 1 );
+
+	bool z;
+	do {
+	    type mx = tr::set1( std::distance( b, e ) );
+	    mtype inrange = tr::cmplt( steps, mx, mkind() );
+	    if( mtr::is_zero( inrange ) )
+		break;
+	    
+	    type lhs = tr::gather( b, steps, inrange );
+	    mtype lt = tr::cmplt( inrange, lhs, vref, mkind() );
+	    uint64_t msk = /*mtr::asmask*/( lt );
+
+	    // we may advance b to the lane where:
+	    // - lowest lane in ge that is non-zero
+	    // - highest lane in inrange that is non-zero if ge is zero
+	    // eg: inrange 00111111 and ge 00110000 -> lane 4
+	    // eg: inrange 00111111 and ge 00000000 -> lane 5
+	    // with lt:
+	    // eg: inrange 00111111 and lt 00001111 -> lane 4
+	    // eg: inrange 00111111 and lt 00111111 -> lane 5
+
+	    // use 64-bit variables to avoid 32->64 zero-extension
+	    uint64_t bit, res;
+	    asm( "bsr %[msk], %[bit] \n\t"
+		 "bts %[bit], %[res] \n\t"
+		 "cmovz %[zero], %[res] \n\t"
+		 : [bit] "=&r"(bit), [res] "=&r"(res), "=@ccz"(z)
+		 : [msk] "mr" (msk), [zero] "r"(0UL), "[res]"(0UL)
+		 : "cc" );
+	    // we advance to least of:
+	    // - highest lane that is in range
+	    // - highest lane that is below the reference
+	    b = std::next( b, res >> 1 );
+	    if( !z ) {
+		// is lt non-zero in some position, i.e.,
+		// we found a termination point
+		break;
+	    } else if( !mtr::is_all_true( inrange ) ) {
+		// some lane out of range
+		break;
+	    }
+	} while( true );
+
+	return b;
+    }
+
+    template<set_operation so, typename T, unsigned VL, bool rhs,
+	     typename LIt, typename RSet, typename Collector>
+    static
+    LIt
+    intersect_task_vl( LIt lb, LIt le, RSet && rset, Collector & out ) {
+	if( out.terminated() )
+	    return lb;
+
+	using tr = vector_type_traits_vl<T,VL>;
+	using type = typename tr::type;
+
+	while( lb+VL <= le ) {
+	    // Load sequence of values from left-hand argument
+	    type v = tr::loadu( lb );
+
+	    if constexpr ( so == so_intersect_xlat ) {
+		// Convert through hash table
+		// Returns a pair of { present, translated }
+		auto m = rset.template multi_lookup<T,VL>(
+		    v, target::mt_mask() );
+
+		// Record / count common values
+		if( !out.template multi_record<rhs,T,VL>( lb, m.second, m.first, 0 ) )
+		    break;
+
+		lb += VL;
+	    } else {
+		// Check present in hash set. Returns a mask.
+		auto p = rset.template multi_contains_next<T,VL>(
+		    v, target::mt_mask() );
+		auto m = p.first;
+
+		// Record / count common values
+		if( !out.template multi_record<rhs,T,VL>( lb, v, m, VL, 0 ) )
+		    break;
+
+		lb += VL;
+
+		// Galloping
+		// if( lb != le && p.second > *lb ) {
+		    // LIt ln = jump<VL>( lb, le, p.second );
+		    LIt ln = merge_scalar_jump::jump( lb, le, p.second );
+		    out.template remainder<rhs>( std::distance( lb, ln ), 0 );
+		    lb = ln;
+		// }
+	    }
+	}
+
+	return lb;
+    }
+
+    template<set_operation so, bool rhs,
+	     typename LSet, typename RSet, typename Collector>
+    static
+    void
+    intersect_task( LSet && lset, RSet && rset, Collector & out ) {
+	using T = typename std::decay_t<LSet>::type;
+
+#if INTERSECTION_TRIM == 0
+	auto & tlset = lset;
+#else
+	auto tlset = rset.has_sequential()
+	    ? lset.trim_back( rset.back() ) : lset;
+	out.template remainder<rhs>( lset.size() - tlset.size(), 0 );
+#endif
+
+	auto lb = tlset.begin();
+	auto le = tlset.end();
+
+#if defined( __AVX512F__ )
+	lb = intersect_task_vl<so,T,64/sizeof(T),rhs>( lb, le, rset, out );
+#elif defined( __AVX2__ )
+	lb = intersect_task_vl<so,T,32/sizeof(T),rhs>( lb, le, rset, out );
+#endif
+	hash_scalar::intersect_task<so,rhs>( lb, le, rset, out );
+    }
+
+    template<typename LSet, typename RSet, typename Task>
+    static
+    auto
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
+	static_assert( is_multi_hash_set_v<std::decay_t<LSet>>
+		       || is_multi_hash_set_v<std::decay_t<RSet>>,
+		       "at least one of arguments should be hash set" );
+	if constexpr ( is_multi_hash_next_set_v<std::decay_t<LSet>>
+		       && is_multi_hash_next_set_v<std::decay_t<RSet>> ) {
+	    if( lset.size() <= rset.size() ) {
+		auto out = task.template create_collector<hash_vector>(
+		    lset, rset );
+		intersect_task<Task::operation,true>( lset, rset, out );
+		return out.return_value();
+	    } else {
+		auto out = task.template create_collector<hash_vector>(
+		    rset, lset );
+		intersect_task<Task::operation,false>( rset, lset, out );
+		return out.return_value();
+	    }
+	} else if constexpr ( is_multi_hash_next_set_v<std::decay_t<RSet>> ) {
+	    auto out = task.template create_collector<hash_vector>(
+		lset, rset );
+	    intersect_task<Task::operation,true>( lset, rset, out );
+	    return out.return_value();
+	} else {
+	    // It is important to keep the smallest set on the LHS.
+	    // This provides scope for deciding which intersection algorithm
+	    // to use prior to calling this method.
+#if INTERSECTION_TRIM == 0
+	    auto & trset = rset;
+#else
+	    auto trset = lset.has_sequential()
+		? rset.trim_front( lset.front() ) : rset;
+#endif
+
+	    auto out = task.template create_collector<hash_vector>(
+		trset, lset );
+	    intersect_task<Task::operation,false>( trset, lset, out );
+	    return out.return_value();
+	}
+    }
+    
+};
+
 
 #if 0
 struct hash_vector_jump {
@@ -2554,7 +2766,7 @@ struct hash_vector_jump {
 	     typename LSet, typename RSet, typename Collector>
     static
     auto
-    apply( LSet && lset, RSet && rset, Collector & out ) {
+    apply( LSet && lset, RSet && rset, Collector & out, call_site_id cs ) {
 	static_assert( is_multi_hash_set_v<std::decay_t<LSet>>
 		       || is_multi_hash_set_v<std::decay_t<RSet>>,
 		       "at least one of arguments should be hash set" );
@@ -2670,7 +2882,7 @@ struct merge_vector {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out = task.template create_collector<merge_vector>(
 	    lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
@@ -3213,7 +3425,7 @@ struct merge_vector_opt {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out = task.template create_collector<merge_vector>(
 	    lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
@@ -3450,7 +3662,7 @@ struct something {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out = task.template create_collector<something>(
 	    lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
@@ -3480,6 +3692,8 @@ struct baeza_yates {
 	    return;
 	}
 
+	// TODO: Make sure binary search is performed on the shorter argument.
+	//       Select this recursively as it may change.
 	auto lm = std::next( lb, ( le - lb ) / 2 );
 	auto p = *lm;
 	auto rm = std::lower_bound( rb, re, p );
@@ -3516,7 +3730,7 @@ struct baeza_yates {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	auto out = task.template create_collector<merge_scalar>( lset, rset );
 	intersect_task<Task::operation,true>( lset, rset, out );
 	return out.return_value();
@@ -3562,7 +3776,7 @@ struct bandit_intersect {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return task.return_value_empty_set();
@@ -3576,23 +3790,23 @@ struct bandit_intersect {
 	size_t cr = predictor<NUM_PRED>::get_size_class( rsz );
 
 	// Check if hashing is eligible
-	size_t eligibility = 0x3full;
+	size_t eligibility = 0x3ful;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0xful; // disable hash sets
 	else if( !lset.has_hash_set() && !rset.has_hash_set() )
-	    eligibility &= 0xfull; // disable hash sets
+	    eligibility &= 0xful; // disable hash sets
 	else if( !lset.has_sequential() || !rset.has_sequential() )
-	    eligibility &= 0x30ull; // disable merge intersections
+	    eligibility &= 0x30ul; // disable merge intersections
 
-	assert( eligibility != 0ull
+	assert( eligibility != 0ul
 		&& "needs some options for intersection algorithm" );
 
 	size_t best_i = bandit.predict( cl, cr, eligibility );
 
 	unsigned int pc0;
 	uint64_t tm0 = __rdtscp( &pc0 );
-	auto ret = effect( best_i, lset, rset, task );
+	auto ret = effect( best_i, lset, rset, task, cs );
 	unsigned int pc1;
 	uint64_t tm1 = __rdtscp( &pc1 );
 
@@ -3617,23 +3831,23 @@ struct bandit_intersect {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+    effect( int ins, LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>> ) {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    case 3: return merge_vector_jump::apply( lset, rset, task );
-	    case 4: return hash_scalar::apply( lset, rset, task );
-	    default: return hash_vector::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    case 3: return merge_vector_jump::apply( lset, rset, task, cs );
+	    case 4: return hash_scalar::apply( lset, rset, task, cs );
+	    default: return hash_vector::apply( lset, rset, task, cs );
 	    }
 	} else {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    default: return merge_vector_jump::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    default: return merge_vector_jump::apply( lset, rset, task, cs );
 	    }
 	}
     }
@@ -3649,7 +3863,7 @@ struct MC_intersect_old {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return task.return_value_empty_set();
@@ -3657,21 +3871,23 @@ struct MC_intersect_old {
 #if MC_INTERSECTION_ALGORITHM == 1
 	if constexpr ( graptor::is_fast_array_v<std::decay_t<LSet>>
 		       || graptor::is_fast_array_v<std::decay_t<RSet>> )
-	    return hash_vector::apply( lset, rset, task );
+	    return hash_vector::apply( lset, rset, task, cs );
 	else if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 			      || is_hash_set_v<std::decay_t<RSet>> )
-	    return hash_scalar::apply( lset, rset, task );
+	    return hash_scalar::apply( lset, rset, task, cs );
 	else
-	    return merge_vector_jump::apply( lset, rset, task );
+	    return merge_vector_jump::apply( lset, rset, task, cs );
 #else
     if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		   || is_hash_set_v<std::decay_t<RSet>> ) {
 	if( lset.has_hash_set() || rset.has_hash_set() )
-	    return hash_vector::apply( lset, rset, task );
+	    return hash_vector::apply( lset, rset, task, cs );
+	    // return hash_vector_jump::apply( lset, rset, task, cs );
+	    // return merge_vector_jump::apply( lset, rset, task, cs );
 	else
-	    return merge_vector_jump::apply( lset, rset, task );
+	    return merge_vector_jump::apply( lset, rset, task, cs );
     } else
-	return merge_vector_jump::apply( lset, rset, task );
+	return merge_vector_jump::apply( lset, rset, task, cs );
 #endif
     }
 };
@@ -3679,7 +3895,7 @@ struct MC_intersect_old {
 #if UCB
     
 struct bandit2_intersect {
-    static constexpr size_t NUM_PRED = 7;
+    static constexpr size_t NUM_PRED = 6;
 
     template<size_t NUM_PRED>
     class predictor {
@@ -3959,11 +4175,11 @@ struct bandit2_intersect {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	// Corner case: zero-sized sets
 	// Omit effort on very small sets
 	if( lset.size() < 64 || rset.size() < 64 )
-	    return MC_intersect_old::apply( lset, rset, task );
+	    return MC_intersect_old::apply( lset, rset, task, cs );
 	    // return task.return_value_empty_set();
 
 	// Extracting set sizes and constructing feature index typically
@@ -3996,14 +4212,14 @@ struct bandit2_intersect {
 #endif
 
 	// Check if hashing is eligible
-	size_t eligibility = 0x7full;
+	size_t eligibility = 0x3full;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    eligibility &= 0x4full; // disable hash sets
+	    eligibility &= 0xfull; // disable hash sets
 	else if( !lset.has_hash_set() && !rset.has_hash_set() )
-	    eligibility &= 0x4full; // disable hash sets
+	    eligibility &= 0x7full; // disable hash sets
 	else if( !lset.has_sequential() || !rset.has_sequential() )
-	    eligibility &= 0x30ull; // disable merge intersections
+	    eligibility &= 0x70ull; // disable merge intersections
 
 	assert( eligibility != 0ull
 		&& "needs some options for intersection algorithm" );
@@ -4026,7 +4242,7 @@ struct bandit2_intersect {
 
 	unsigned int pc0;
 	uint64_t tm0 = __rdtscp( &pc0 );
-	auto ret = effect( best_i, lset, rset, task );
+	auto ret = effect( best_i, lset, rset, task, cs );
 	// auto ret = MC_intersect_old::apply( lset, rset, task );
 	unsigned int pc1;
 	uint64_t tm1 = __rdtscp( &pc1 );
@@ -4067,25 +4283,25 @@ struct bandit2_intersect {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+    effect( int ins, LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>> ) {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    case 3: return merge_vector_jump::apply( lset, rset, task );
-	    case 4: return hash_scalar::apply( lset, rset, task );
-	    case 5: return hash_vector::apply( lset, rset, task );
-	    default: return merge_vector_opt::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    case 3: return merge_vector_jump::apply( lset, rset, task, cs );
+	    case 4: return hash_scalar::apply( lset, rset, task, cs );
+	    case 5: return hash_vector::apply( lset, rset, task, cs );
+	    default: return merge_vector_opt::apply( lset, rset, task, cs );
 	    }
 	} else {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    case 3: return merge_vector_jump::apply( lset, rset, task );
-	    default: return merge_vector_opt::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    case 3: return merge_vector_jump::apply( lset, rset, task, cs );
+	    default: return merge_vector_opt::apply( lset, rset, task, cs );
 	    }
 	}
     }
@@ -4110,7 +4326,7 @@ struct compare_intersections {
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    apply( LSet && lset, RSet && rset, Task & task ) {
+    apply( LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	// Corner case
 	if( lset.size() == 0 || rset.size() == 0 )
 	    return task.return_value_empty_set();
@@ -4127,31 +4343,39 @@ struct compare_intersections {
 	    bandit2_intersect::predictor<NUM_PRED>::get_index( lsz, rsz, th, is_xp, rp );
 
 	// Check if hashing is eligible
-	size_t eligibility = 0x7full;
+	size_t eligibility = 0x7ful;
 	if constexpr ( !is_hash_set_v<std::decay_t<LSet>>
 		       && !is_hash_set_v<std::decay_t<RSet>> )
-	    eligibility &= 0x4full; // disable hash sets
-	else if( !lset.has_hash_set() && !rset.has_hash_set() )
-	    eligibility &= 0x4full; // disable hash sets
-	else if( !lset.has_sequential() || !rset.has_sequential() )
-	    eligibility &= 0x30ull; // disable merge intersections
+	    eligibility &= 0xful; // disable hash sets
+	else if constexpr ( !is_multi_hash_next_set_v<std::decay_t<LSet>>
+		       && !is_multi_hash_next_set_v<std::decay_t<RSet>> )
+	    eligibility &= 0x3ful; // disable next hash sets
+	if( !lset.has_hash_set() && !rset.has_hash_set() )
+	    eligibility &= 0xful; // disable hash sets
+	if( !lset.has_sequential() && !rset.has_sequential() )
+	    eligibility &= 0x70ul; // disable merge intersections
 
-	assert( eligibility != 0ull
+	assert( eligibility != 0ul
 		&& "needs some options for intersection algorithm" );
 
 	// Calculate the size of the intersection
 	intersection_task<so_intersect_size,void> task_sz;
-	size_t size = effect( _tzcnt_u64( eligibility ), lset, rset, task_sz );
+	size_t size = effect( _tzcnt_u64( eligibility ), lset, rset, task_sz, cs );
 
 	bandit2_intersect::predictor<NUM_PRED> & bandit =
 	    bandit2_intersect::predictor_holder<NUM_PRED>::per_thread_predictor;
 	size_t best_i = bandit.predict( idx, Task::operation, eligibility );
+	size_t rcap = 0;
+	if constexpr ( is_hash_set_v<std::decay_t<RSet>> )
+	    rcap = rset.capacity();
 
 	size_t last_i = 0;
 	size_t e = eligibility;
 	std::cout << "analysis: lsz=" << lsz << " rsz=" << rsz
 		  << " th=" << th << " xp=" << is_xp
-		  << " rp=" << rp
+	    // << " rp=" << rp
+	    // << " cs=" << (int)cs
+		  << " rcap=" << rcap
 	    // << " cl=" << cl << " cr=" << cr
 		  << " idx=" << idx
 		  << " eligible=" << std::hex << eligibility << std::dec
@@ -4163,7 +4387,7 @@ struct compare_intersections {
 	    if( e & 1 ) {
 		unsigned int pc0;
 		uint64_t tm0 = __rdtscp( &pc0 );
-		auto ret = effect( i, lset, rset, task );
+		auto ret = effect( i, lset, rset, task, cs );
 		static decltype(ret) perm; // avoid compile-time removal of code
 		perm = ret;
 		unsigned int pc1;
@@ -4195,31 +4419,34 @@ struct compare_intersections {
 	} 
 	std::cout << "\n";
 
-	return effect( last_i, lset, rset, task );
+	return effect( last_i, lset, rset, task, cs );
     }
 
     template<typename LSet, typename RSet, typename Task>
     static
     auto
-    effect( int ins, LSet && lset, RSet && rset, Task & task ) {
+    effect( int ins, LSet && lset, RSet && rset, Task & task, call_site_id cs ) {
 	if constexpr ( is_hash_set_v<std::decay_t<LSet>>
 		       || is_hash_set_v<std::decay_t<RSet>> ) {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    case 3: return merge_vector_jump::apply( lset, rset, task );
-	    case 4: return hash_scalar::apply( lset, rset, task );
-	    case 5: return hash_vector::apply( lset, rset, task );
-	    default: return merge_vector_opt::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    case 3: return merge_vector_jump::apply( lset, rset, task, cs );
+	    case 4: return hash_scalar::apply( lset, rset, task, cs );
+	    case 6:
+		if constexpr ( is_multi_hash_next_set_v<std::decay_t<LSet>>
+			       || is_multi_hash_next_set_v<std::decay_t<RSet>> )
+		    return hash_vector_jump::apply( lset, rset, task, cs );
+		// else fall-through
+	    default: return hash_vector::apply( lset, rset, task, cs );
 	    }
 	} else {
 	    switch( ins ) {
-	    case 0: return merge_scalar::apply( lset, rset, task );
-	    case 1: return merge_vector::apply( lset, rset, task );
-	    case 2: return merge_scalar_jump::apply( lset, rset, task );
-	    case 3: return merge_vector_jump::apply( lset, rset, task );
-	    default: return merge_vector_opt::apply( lset, rset, task );
+	    case 0: return merge_scalar::apply( lset, rset, task, cs );
+	    case 1: return merge_vector::apply( lset, rset, task, cs );
+	    case 2: return merge_scalar_jump::apply( lset, rset, task, cs );
+	    default: return merge_vector_jump::apply( lset, rset, task, cs );
 	    }
 	}
     }
