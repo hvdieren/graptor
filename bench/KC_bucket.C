@@ -162,7 +162,8 @@ public:
 		    for( VID v=s; v < e; ++v ) {
 			if( GA.getOutDegree( v ) == 1 ) {
 			    // just the one neighbour
-			    VID ngh = GA.getOutNeighbor( v, 0 );
+			    // VID ngh = GA.getOutNeighbor( v, 0 );
+			    VID ngh = GA.getCSR().getNeighbor( v, 0 );
 			    // race condition...
 			    VID * p = &coreness.get_ptr()[ngh];
 			    if( *p > 1 ) {
