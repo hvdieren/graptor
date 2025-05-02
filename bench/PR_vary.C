@@ -2,6 +2,10 @@
 #include <fstream>
 #include <limits>
 
+#ifndef WIDEN_APPROACH
+#define WIDEN_APPROACH 1
+#endif
+
 #include "graptor/graptor.h"
 #include "graptor/api.h"
 
