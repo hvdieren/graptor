@@ -5,6 +5,10 @@
 #ifndef GRAPHGRIND_DRIVER_H
 #define GRAPHGRIND_DRIVER_H
 
+#ifdef MONITOR_URJA
+#include "urja/phasecom.h"
+#endif
+
 // This method can be overloaded if needed
 template<class GraphType>
 struct helper {
@@ -198,6 +202,10 @@ int main(int argc, char* argv[])
     std::cerr << "driver: number of NUMA nodes: " << num_numa_node << "\n";
 #endif
     
+#ifdef MONITOR_URJA
+    urja_enter_phase( 0, "I/O" );
+#endif
+    
     GraphCSx G( iFile, -1, symmetric, weights );
     auto PG = createGraph( G, P );
     G.del(); // G no longer needed
@@ -205,6 +213,10 @@ int main(int argc, char* argv[])
     if( P.getOption( "-stats:padding" ) ) {
 	ShowPaddingStatistics( PG, P.getOptionLongValue("-l", 16) );
     }
+
+#ifdef MONITOR_URJA
+    urja_enter_phase( 1, "setup" );
+#endif
     
 #if PAPI_CACHE 
     PAPI_initial();         /*PAPI Event inital*/
@@ -232,7 +244,13 @@ int main(int argc, char* argv[])
 #endif
 	startTime();
 
+#ifdef MONITOR_URJA
+	urja_enter_phase( 2, "benchmark" );
+#endif
 	problem.run();
+#ifdef MONITOR_URJA
+	urja_enter_phase( 1, "setup" );
+#endif
 
 	nextTime("Running");
 #if PAPI_CACHE 
