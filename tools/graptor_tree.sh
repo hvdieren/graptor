@@ -569,10 +569,10 @@ then
 fi
 
 if [ x${command[0]} = xmaterialise ] ; then
-    eval "${command[1]}_graph ${command[2]} ${command[3]} ${command[4]}"
-    eval "${command[1]}_graph_path ${command[2]} ${command[3]} ${command[4]}"
+    eval "${command[1]}_graph ${command[2]} ${command[3]} ${command[4]} ${command[5]}"
+    eval "${command[1]}_graph_path ${command[2]} ${command[3]} ${command[4]} ${command[5]}"
 elif [ x${command[0]} = xpath ] ; then
-    eval "${command[1]}_graph_path ${command[2]} ${command[3]} ${command[4]}"
+    eval "${command[1]}_graph_path ${command[2]} ${command[3]} ${command[4]} ${command[5]}"
 elif [ x${command[0]} = xcleanup ] ; then
     eval "echo cleanup ..."
 else
