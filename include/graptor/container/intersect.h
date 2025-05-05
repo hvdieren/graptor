@@ -1104,7 +1104,9 @@ struct set_operations {
 	    intersection_task<so_intersect_size,void> task2;
 	    size_t size =
 		set_operations<MC_intersect_old>::apply( lset, rset, task2, cs );
-	    assert( std::distance( out, ret ) == size && "debug failure" );
+	    assert( ( std::distance( out, ret ) == size
+		      || ( out == ret && size <= threshold ) )
+		    && "debug failure" );
 #endif
 	    return ret;
 	} else {
@@ -1246,6 +1248,11 @@ struct merge_scalar {
 	static_assert( so != so_intersect_xlat,
 		       "intersect-with-translate not supported in merge-based"
 		       " intersection" );
+
+#if DEBUG_INTERSECTIONs
+	assert( std::is_sorted( lb, le ) && "debug failure: sortedness" );
+	assert( std::is_sorted( rb, re ) && "debug failure: sortedness" );
+#endif
 
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
@@ -1393,6 +1400,11 @@ struct merge_scalar_jump {
 	static_assert( so != so_intersect_xlat,
 		       "intersect-with-translate not supported in merge-based"
 		       " intersection" );
+
+#if DEBUG_INTERSECTIONs
+	assert( std::is_sorted( lb, le ) && "debug failure: sortedness" );
+	assert( std::is_sorted( rb, re ) && "debug failure: sortedness" );
+#endif
 
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
@@ -1684,6 +1696,11 @@ struct merge_vector_jump {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 	using mask_type = typename tr::mask_type;
+
+#if DEBUG_INTERSECTIONs
+	assert( std::is_sorted( lb, le ) && "debug failure: sortedness" );
+	assert( std::is_sorted( rb, re ) && "debug failure: sortedness" );
+#endif
 
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
@@ -2819,6 +2836,11 @@ struct merge_vector {
 	using tr = vector_type_traits_vl<T,VL>;
 	using type = typename tr::type;
 	using mask_type = typename tr::mask_type;
+
+#if DEBUG_INTERSECTIONs
+	assert( std::is_sorted( lb, le ) && "debug failure: sortedness" );
+	assert( std::is_sorted( rb, re ) && "debug failure: sortedness" );
+#endif
 
 	if( out.terminated() )
 	    return std::make_pair( lb, rb );
