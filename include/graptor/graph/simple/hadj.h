@@ -1159,6 +1159,7 @@ private:
 	    return build_seq( rv, m_remap_to_orig[rv], cth );
     }
     VID * build_seq( VID rv, VID ov, VID cth ) const {
+	// Acquire exclusive access using the lock contained in the hash set
 	hash_set_type & a = m_adjacency[rv];
 
 	const EID * const index = m_remap_graph.getIndex();
