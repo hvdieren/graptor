@@ -2,6 +2,8 @@
 #ifndef GRAPTOR_CONTAINER_MAYBE_DUAL_SET_H
 #define GRAPTOR_CONTAINER_MAYBE_DUAL_SET_H
 
+#include "graptor/container/array_slice.h"
+
 /*!**********************************************************************
  * \file maybe_dual_set.h
  * \brief Defines abstract types that model sets of elements in a dual
@@ -29,6 +31,16 @@ namespace graptor {
  * It is possible also to store a hashed representation as a sequential type,
  * which may be useful when this representation provides constant-time
  * iterators.
+ *
+ * No assumptions are made whether the two representations store precisely
+ * the same set of elements. It is tacitly assumed that this is the case, with
+ * most queries (like size) being answered from the sequential representation,
+ * if present. However, in some use cases the representations may not be
+ * precisely the same. For instance, in the lazy-mapped-and-filtered graph
+ * representation used in maximum clique search, the hashed representation
+ * contains a subset of the sequential representation. This can lead to
+ * inconsistencies, for instance when different components of the
+ * maybe_dual_set are used in different contexts.
  *
  * \tparam Seq Sequential set representation
  * \tparam Hash Hash-based set representation
@@ -219,6 +231,28 @@ private:
     seq_type m_seq; 	 	//!< Sequential representation
     const hash_type * m_hash;	//!< Hashed representation
 };
+
+/*! \brief Short-hand construction method for constructing a maybe_dual_set
+ * \sa maybe_dual_set
+ */
+template<typename Seq, typename Hash>
+auto make_maybe_dual_set( Seq && seq, const Hash & hash ) {
+    if constexpr ( std::is_reference_v<Seq> ) {
+	using Seq2 = std::decay_t<Seq>;
+	return maybe_dual_set<Seq2,Hash>( seq, hash );
+    } else
+	return maybe_dual_set<Seq,Hash>( seq, hash );
+}
+
+/*! \brief Short-hand construction method for constructing a maybe_dual_set
+ * \sa maybe_dual_set
+ */
+template<typename Hash>
+auto make_maybe_dual_set( const Hash & hash ) {
+    using type = std::remove_cv_t<typename std::decay_t<Hash>::type>;
+    using Seq = array_slice<type>;
+    return maybe_dual_set<Seq,Hash>( hash );
+}
 
 } // namespace graptor
 

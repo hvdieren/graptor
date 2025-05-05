@@ -281,6 +281,7 @@ struct dual_set {
     }
 
     //! Is the sequential representation valid?
+    //  This implies that it is sorted.
     constexpr bool has_sequential() const { return true; }
 
     //! Is the hash set representation valid?
