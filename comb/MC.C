@@ -1483,10 +1483,17 @@ public:
 	for( lVID p=0; p < ns; ++p ) {
 	    VID v = pset.at( p );
 
-	    // Degree of vertex
-	    // lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    // Assumption is that pset is a sequential array, whereas
+	    // G contains both sequential and hash set. The hash set may
+	    // have been lazily filtered, and so it may be smaller than the
+	    // sequential set. As such, pass the hash set only to the
+	    // intersection.
+	    // Degree of vertex, looking at vertices in the cut-out.
+	    auto && ngh = G.get_neighbours_set( v );
+	    auto & ngh_h = ngh.get_hash();
 	    lVID deg = graptor::set_operations<graptor::MC_intersect>
-		::intersect_size_ds( pset, G.get_neighbours_set( v ) );
+		::intersect_size_ds( pset,
+				     graptor::make_maybe_dual_set( ngh_h ) );
 
 	    tmp_index[p] = ns - 1 - deg;
 	}
@@ -1503,28 +1510,28 @@ public:
 	lVID * depth = S.getDepth();
 	lVID * degree = S.getDegree();
 
+	assert( std::is_sorted( pset.begin(), pset.end() ) );
+
 	// Set up index array
 	std::copy( &tmp_index[0], &tmp_index[ns+1], index );
 	index[ns] = ms;
 
-	// Set edges
+	// Set edges. Note that this code would vectorise quite nicely if the
+	// hash representation of the neighbours of G allows.
 	for( lVID vs=0; vs < ns; ++vs ) {
 	    gVID v = pset.at( vs );
 	    lEID e = index[vs];
-	    const gVID * gedges = G.get_neighbours( v );
-	    gVID deg = G.getDegree( v );
+	    const auto & ngh = G.get_neighbours_set( v ).get_hash();
 
-	    gVID ge = 0, gee = deg;
 	    for( lVID us=0; us < ns; ++us ) {
-		gVID u = pset.at( us );
-		while( ge != gee && gedges[ge] < u )
-		    ++ge;
-		assert( ge == gee || gedges[ge] >= u );
-		if( ( ge == gee || u != gedges[ge] )
-		    && us != vs ) // no self-edges
-		    edges[e++] = us;
+		if( us != vs ) { // no self-edges
+		    gVID u = pset.at( us );
+		    bool cnt = ngh.contains( u );
+		    if( !cnt )
+			edges[e++] = us;
+		}
 	    }
-	    // assert( ge == gee || ge == gee-1 );
+
 	    assert( e == index[vs+1] );
 
 	    degree[vs] = index[vs+1] - index[vs];
@@ -1559,10 +1566,17 @@ public:
 	for( lVID p=0; p < ns; ++p ) {
 	    VID v = pset.at( p );
 
-	    // Degree of vertex
-	    // lVID deg = pset.intersect_size( G.get_neighbours_set( v ) );
+	    // Assumption is that pset is a sequential array, whereas
+	    // G contains both sequential and hash set. The hash set may
+	    // have been lazily filtered, and so it may be smaller than the
+	    // sequential set. As such, pass the hash set only to the
+	    // intersection.
+	    // Degree of vertex, looking at vertices in the cut-out.
+	    auto && ngh = G.get_neighbours_set( v );
+	    auto & ngh_h = ngh.get_hash();
 	    lVID deg = graptor::set_operations<graptor::MC_intersect>
-		::intersect_size_ds( pset, G.get_neighbours_set( v ) );
+		::intersect_size_ds( pset,
+				     graptor::make_maybe_dual_set( ngh_h ) );
 
 	    tmp_index[p] = ns - 1 - deg;
 	}
@@ -1572,34 +1586,39 @@ public:
 	// Construct selected graph
 	// Edges: complement, not including diagonal
 	lEID ms = tmp_index[ns];
-	new ( &S ) graptor::graph::GraphCSx(
+	new ( &S ) graptor::graph::GraphCSxDepth(
 	    ns, ms /*, numa_allocation_unbound()*/ );
 	lEID * index = S.getIndex();
 	lVID * edges = S.getEdges();
+	lVID * depth = S.getDepth();
+	lVID * degree = S.getDegree();
+
+	assert( std::is_sorted( pset.begin(), pset.end() ) );
 
 	// Set up index array
 	std::copy( &tmp_index[0], &tmp_index[ns+1], index );
 	index[ns] = ms;
 
-	// Set edges
+	// Set edges. Note that this code would vectorise quite nicely if the
+	// hash representation of the neighbours of G allows.
 	for( lVID vs=0; vs < ns; ++vs ) {
 	    gVID v = pset.at( vs );
 	    lEID e = index[vs];
-	    const gVID * gedges = G.get_neighbours( v );
-	    gVID deg = G.getDegree( v );
-	    gVID ge = 0, gee = deg;
+	    const auto & ngh = G.get_neighbours_set( v ).get_hash();
 
 	    for( lVID us=0; us < ns; ++us ) {
-		gVID u = pset.at( us );
-		while( ge != gee && gedges[ge] < u )
-		    ++ge;
-		assert( ge == gee || gedges[ge] >= u );
-		if( ( ge == gee || u != gedges[ge] )
-		    && us != vs ) // no self-edges
-		    edges[e++] = us;
+		if( us != vs ) { // no self-edges
+		    gVID u = pset.at( us );
+		    bool cnt = ngh.contains( u );
+		    if( !cnt )
+			edges[e++] = us;
+		}
 	    }
-	    // assert( ge == gee || ge == gee-1 );
+
 	    assert( e == index[vs+1] );
+
+	    degree[vs] = index[vs+1] - index[vs];
+	    depth[vs] = S.initial_depth;
 	}
     }
 
