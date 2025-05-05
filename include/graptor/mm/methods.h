@@ -279,14 +279,16 @@ struct methods {
 	MM_DEBUG_DEL( reinterpret_cast<void *>( alc.ptr() ), reason );
 	if( alc.is_mapped() ) {
 	    // Adjust offset to coincide with small page size boundary
-	    off_t diff = 0;
 	    intptr_t mem = reinterpret_cast<intptr_t>( alc.ptr() );
 	    size_t size = alc.size();
+	    /* dead code
+	    off_t diff = 0;
 	    if( alc.is_aligned() ) {
 		config::small_page_start_adjustment( mem );
 		size += diff;
 		mem -= diff;
 	    }
+	    */
 
             int munmapres = munmap( reinterpret_cast<void *>( mem ), size );
             if( munmapres == -1 ) {
