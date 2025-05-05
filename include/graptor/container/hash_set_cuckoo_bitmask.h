@@ -172,7 +172,7 @@ private:
 	size_type old_size = size_type(1) << old_log_size;
 	for( size_type i=0; i < old_size; ++i )
 	    if( old_table[i] != invalid_element )
-		insert_gvalue( old_table[i], group );
+		insert_gvalue( old_table[i], old_group[i] );
 	delete[] old_table;
 
 	// Retry insertion. Hope for tail recursion optimisation.
