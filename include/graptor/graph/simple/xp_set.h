@@ -814,6 +814,12 @@ public:
 	return ins;
     }
 
+    /*! intersect this PSet with a vertex's adjacency
+     *
+     * \param n size of the universe of the set (same as this)
+     * \param adj adjacency description of a vertex
+     * \return new PSet structure containing the intersection of this with adj
+     */
     template<typename DualSet>
     PSet intersect( lVID n, const DualSet & adj ) const {
 	lVID deg = adj.size();
