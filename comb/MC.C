@@ -3244,7 +3244,8 @@ mc_bron_kerbosch_recpar_xps(
 	// Add pivot vertex to running clique
 	clique_set<VID> R_new( pivot, R );
 
-	PSet<VID> xp_new = xp.intersect( pivot, p_adj );
+	// Arguments are the universe size and p_adj
+	PSet<VID> xp_new = xp.intersect( n, p_adj );
 	bk_recursive_call<allow_dense>(
 	    G, degeneracy, E, &R_new, xp_new, depth+1 );
 
@@ -4219,6 +4220,7 @@ void leaf_dense_fn(
 
     // std::cout << "leaf-dense<" << Bits << "> n_req=" << xp_set.get_fill()
     // << " n=" << n << " m=" << m << " d=" << d
+    // << " algo=" << ( av == av_vc ? "VC" : "BK" )
     // << " delay=" << tbk << "\n";
 }
 
