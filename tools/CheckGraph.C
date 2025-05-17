@@ -83,5 +83,5 @@ int main( int argc, char *argv[] ) {
 	      << "\nself-edges: " << m_self
 	      << "\n";
 
-    return error ? 0 : 1;
+    return any_error ? 1 : 0;
 }

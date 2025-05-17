@@ -39,6 +39,9 @@ enum update_method {
     um_flags_only_unique
 };
 
+extern int abc;
+
+
 #include "graptor/dsl/emap/fusion.h"
 #include "graptor/dsl/emap/edgechunk.h"
 

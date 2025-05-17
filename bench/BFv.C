@@ -491,6 +491,7 @@ if waiting until F is empty, we still need 3-4 dense steps
 			    _0, // insufficient progress, return in frontier
 			    _1 ) ); // sufficient progress to propagate further
 		} ),
+#endif
 		api::filter( filter_strength, api::src, F ),
 		api::relax( [&]( auto s, auto d, auto e ) {
 #if LEVEL_ASYNC

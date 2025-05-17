@@ -38,6 +38,13 @@ Sample analytics programs are located in the graptor/bench directory. They can b
 
 ```
 $ bench/CCv_GGVEBO -rounds 3 -c 16 -itimes -s -b ../rMatGraph_J_5_100_b2
+```
+
+* Executing maximum clique search
+
+```
+$ PARLAY_NUM_THREADS=128 ./MC -d 0.1 -H 2 -p 128 -c 1024 -s -i ../rMatGraph_J_5_100_b2
+```
 
 Common flags:
 

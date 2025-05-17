@@ -234,6 +234,3 @@ add_subdirectory(tools)
 
 # comb
 add_subdirectory(comb)
-
-# experiments
-add_subdirectory(experiments)

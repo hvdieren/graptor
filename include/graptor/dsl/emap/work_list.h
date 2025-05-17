@@ -415,11 +415,7 @@ public:
 	// If we don't have a buffer, or the buffer has insufficient space,
 	// or if the amount of parallelism is low, then push out the buffer
 	// and start a new one.
-	if( !buf || !buf->has_space( num )
-	    || ( 4*m_working.load() < 3*m_threads && m_threads > 1
-		 && !buf->is_empty() ) ) {
-	    if( buf )
-		push_buffer( buf, self_id );
+	if( !buf )
 	    m_active[self_id] = buf = queue_type::create_list_node();
 	else if( !buf->is_empty() ) {
 	    if( !buf->has_space( num, edges )

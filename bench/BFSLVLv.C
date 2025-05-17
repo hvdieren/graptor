@@ -215,7 +215,7 @@ public:
 		)
 		.materialize();
 #if DEFERRED_UPDATE || !LEVEL_ASYNC
-	    maintain_copies( part, /*output,*/ prev_level, level );
+	    maintain_copies( part, output, a_prev_level, a_level );
 #endif
 
 	    // print( std::cerr, part, a_level );
