@@ -178,26 +178,6 @@ if(GRAPTOR_DMALLOC)
     list(APPEND EXTRA_LIBS "-ldmallocth")
 endif(GRAPTOR_DMALLOC)
 
-#set(var URJA_INSTALL "native" CACHE STRING "URJA installation")
-option(GRAPTOR_URJA "Use urja" OFF)
-if(GRAPTOR_URJA)
-    ExternalProject_Add(
-	    urja_pin_project
-	    GIT_REPOSITORY "git@hpdc-gitlab.eeecs.qub.ac.uk:hvandierendonck/kll-urja-pin"
-	    GIT_TAG "main"
-	    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=.
-    )
-
-    SET(URJA_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/Source/urja_pin_project/include)
-    SET(URJA_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/Build/urja_pin_project)
-    SET(URJA_LIB_DIR ${URJA_INSTALL_DIR}/lib)
-
-    add_library(LIBURJA STATIC IMPORTED)
-    set_target_properties(LIBURJA PROPERTIES IMPORTED_LOCATION ${URJA_LIB_DIR}/liburja.a)
-    target_include_directories(LIBURJA INTERFACE ${URJA_INCLUDE_DIR})
-    add_dependencies(LIBURJA urja_pin_project)
-endif(GRAPTOR_URJA)
-
 add_library(LIBCONFIG SHARED IMPORTED GLOBAL)
 ExternalProject_Get_Property(libconfig_project BINARY_DIR)
 string(APPEND graptor_cflags " -I${BINARY_DIR}/include")
