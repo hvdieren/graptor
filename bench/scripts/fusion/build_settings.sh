@@ -20,8 +20,8 @@ function build() {
     #local CXX=g++ # 10.3.0
     #local LIB="${GRAPTOR}/build/libgraptorlib.a ${CILKLDPATH}/libcilkrts.so"
     local LIB=${LD_FLAGS}
-    #local CXXFLAGS="-g -I${GRAPTOR}/build -I${GRAPTOR}/include -I${CILK_INC}/include -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -DLONG -ldl -std=c++17 -march=$arch ${LIB}"
-    local cxxflags="${CXXFLAGS} -O4 -std=c++17"
+    #local CXXFLAGS="-g -I${GRAPTOR}/build -I${GRAPTOR}/include -I${CILK_INC}/include -Wno-ignored-attributes -ftemplate-backtrace-limit=0 -O4 -DLONG -ldl -std=c++20 -march=$arch ${LIB}"
+    local cxxflags="${CXXFLAGS} -O4 -std=c++20"
     local PAPIFLAGS=
     if echo $flags | grep PAPI_REGION=1 > /dev/null 2>&1 ; then
 	PAPI_FLAGS=-lpapi
