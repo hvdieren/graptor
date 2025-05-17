@@ -19,7 +19,7 @@ $ cmake -D FLAG=value
 Relevant flags:
 
 * CMAKE_CXX_COMPILER (or define CXX in the shell environment): the C++ compiler of your choice
-* GRAPTOR_PARALLEL={cilk,cilk_numa,openmp,openmp_numa,seq} sets the way thread-level parallelism is handled
+* GRAPTOR_PARALLEL={parlay,parlay_numa,cilk,cilk_numa,openmp,openmp_numa,seq} sets the way thread-level parallelism is handled
 * GRAPTOR_TEST={ON,OFF} determines whether unit tests should be run
 * GRAPTOR_BUILD_DOC={ON,OFF} determines whether documentation should be built
 
@@ -28,7 +28,7 @@ Configuration example
 ```
 $ mkdir build
 $ cd build
-$ cmake -D GRAPTOR_PARALLEL=openmp_numa /path/to/graptor/CMakeLists.txt
+$ cmake -D GRAPTOR_PARALLEL=parlay /path/to/graptor/CMakeLists.txt
 $ make
 ```
 
@@ -82,5 +82,4 @@ Currently, Graptor comes with the following example analytics:
 * bench/PR_vary.C: PageRank using reduced precision (16-bit floats)
 * bench/APR_vary.C: Accelerated PageRank using reduced precision (16-bit floats)
 * bench/BFv.C: Bellman-Ford mock-up
-* bench/KCv.C: K-core decomposition
-* bench/KCdss*v.C: K-core decomposition (multiple variations)
+* bench/KC_bucket.C: K-core decomposition
