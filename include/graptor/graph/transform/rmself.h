@@ -26,7 +26,7 @@ remove_self_edges( const ::GraphCSx & G, bool verbose = true ) {
 	std::cerr << "  |E|=" << m << "\n";
     }
 
-    mmap_ptr<EID> new_index( n );
+    mmap_ptr<EID> new_index( n+1 );
 
     if( verbose )
 	std::cerr << "Finding self-edges\n";
