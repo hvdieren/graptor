@@ -1489,8 +1489,7 @@ public:
 	    // sequential set. As such, pass the hash set only to the
 	    // intersection.
 	    // Degree of vertex, looking at vertices in the cut-out.
-	    auto && ngh = G.get_neighbours_set( v );
-	    auto & ngh_h = ngh.get_hash();
+	    auto & ngh_h = G.get_adjacency( v );
 	    lVID deg = graptor::set_operations<graptor::MC_intersect>
 		::intersect_size_ds( pset,
 				     graptor::make_maybe_dual_set( ngh_h ) );
@@ -1521,7 +1520,7 @@ public:
 	for( lVID vs=0; vs < ns; ++vs ) {
 	    gVID v = pset.at( vs );
 	    lEID e = index[vs];
-	    const auto & ngh = G.get_neighbours_set( v ).get_hash();
+	    const auto & ngh = G.get_adjacency( v );
 
 	    for( lVID us=0; us < ns; ++us ) {
 		if( us != vs ) { // no self-edges
