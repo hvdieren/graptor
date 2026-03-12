@@ -1224,7 +1224,7 @@ struct set_operations {
 	// Trim front of range.
 	// There is no benefit in trimming the end of the range for merge
 	// intersections, although there is for hash intersection.
-	auto tlset = rset.has_sequential()
+	auto tlset = lset.has_sequential() && rset.has_sequential()
 	    ? lset.trim_front( rset.front() ) : lset;
 #endif
 	return so_traits::apply( tlset, rset, task, cs );
@@ -1832,7 +1832,7 @@ struct hash_scalar {
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 #else
-	auto tlset = rset.has_sequential()
+	auto tlset = lset.has_sequential() && rset.has_sequential()
 	    ? lset.trim_back( rset.back() ) : lset;
 	// Note that if elements are removed from lset by trimming, these
 	// need to be recorded as not in the intersection.
@@ -1872,7 +1872,7 @@ struct hash_scalar {
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
-	    auto trset = lset.has_sequential()
+	    auto trset = lset.has_sequential() && rset.has_sequential()
 		? rset.trim_front( lset.front() ) : rset;
 #endif
 	    auto out = task.template create_collector<hash_scalar>(
@@ -2463,7 +2463,7 @@ public:
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 #else
-	auto tlset = rset.has_sequential()
+	auto tlset = lset.has_sequential() && rset.has_sequential()
 	    ? lset.trim_back( rset.back() ) : lset;
 	out.template remainder<rhs>( lset.size() - tlset.size(), 0 );
 #endif
@@ -2510,7 +2510,7 @@ public:
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
-	    auto trset = lset.has_sequential()
+	    auto trset = lset.has_sequential() && rset.has_sequential()
 		? rset.trim_front( lset.front() ) : rset;
 #endif
 
@@ -2647,7 +2647,7 @@ struct hash_vector_jump {
 #if INTERSECTION_TRIM == 0
 	auto & tlset = lset;
 #else
-	auto tlset = rset.has_sequential()
+	auto tlset = lset.has_sequential() && rset.has_sequential()
 	    ? lset.trim_back( rset.back() ) : lset;
 	out.template remainder<rhs>( lset.size() - tlset.size(), 0 );
 #endif
@@ -2695,7 +2695,7 @@ struct hash_vector_jump {
 #if INTERSECTION_TRIM == 0
 	    auto & trset = rset;
 #else
-	    auto trset = lset.has_sequential()
+	    auto trset = lset.has_sequential() && rset.has_sequential()
 		? rset.trim_front( lset.front() ) : rset;
 #endif
 
