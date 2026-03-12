@@ -447,7 +447,8 @@ public:
 
 	    const VID * n = G.get_neighbours( u );
 	    VID deg = G.getDegree( u );
-	    const auto & u_adj = H.get_neighbours_set( u );
+	    // Force a hash set as we'll be using scalar hash intersection
+	    const auto & u_adj = H.get_neighbours_set_adj( u );
 
 	    // Intersection u_adj and XP_slice
 	    // Common elements need to be remapped to position in XP
@@ -937,6 +938,18 @@ public:
     }
     hash_set_type & get_adjacency( VID v, VID cth = -1 ) {
 	return get_hash_set( v, cth );
+    }
+    maybe_dual_set_type get_neighbours_set_adj( VID v ) const {
+	// Force creation of the hash structure; return sequential if available
+	auto & a = get_adjacency( v );
+	bool has_s = is_seq_initialised( v );
+	if( has_s ) {
+	    const VID * ngh = get_seq( v, -1 );
+	    VID deg = get_degree( v );
+	    return maybe_dual_set_type(
+		ngh_set_type( ngh, deg ), a );
+	} else
+	    return maybe_dual_set_type( a );
     }
 
 public:
